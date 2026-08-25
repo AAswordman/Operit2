@@ -200,7 +200,7 @@ class _GitHubOAuthLoginDialogState extends State<GitHubOAuthLoginDialog> {
                   const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
-                      'GitHub 登录',
+                      'GitHub にログイン',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w600,
@@ -214,7 +214,7 @@ class _GitHubOAuthLoginDialogState extends State<GitHubOAuthLoginDialog> {
                     )
                   else
                     IconButton(
-                      tooltip: '取消登录',
+                      tooltip: 'ログインをキャンセル',
                       onPressed: _cancelLogin,
                       icon: const Icon(Icons.close),
                     ),

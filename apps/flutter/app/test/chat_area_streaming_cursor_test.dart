@@ -253,12 +253,12 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey<String>('live-markdown')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('live-markdown')), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('structured-parts')),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.byType(CompactToolDisplay), findsOneWidget);
+    expect(find.byType(CompactToolDisplay), findsNothing);
   });
 
   testWidgets('hides the scroll navigator after the scroll view detaches', (

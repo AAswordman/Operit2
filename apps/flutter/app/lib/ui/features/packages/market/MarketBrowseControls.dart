@@ -36,7 +36,7 @@ class MarketBrowseControls extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
               Text(
-                '排序',
+                '並べ替え',
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w500,
@@ -44,23 +44,23 @@ class MarketBrowseControls extends StatelessWidget {
               ),
               _MarketSortChip(
                 selected: sortOption == MarketSortOption.updated,
-                label: '最近更新',
+                label: '更新順',
                 onSelected: () => onSortChanged(MarketSortOption.updated),
               ),
               _MarketSortChip(
                 selected: sortOption == MarketSortOption.likes,
-                label: '点赞',
+                label: '高評価順',
                 onSelected: () => onSortChanged(MarketSortOption.likes),
               ),
               _MarketSortChip(
                 selected: sortOption == MarketSortOption.downloads,
-                label: '下载',
+                label: 'ダウンロード順',
                 onSelected: () => onSortChanged(MarketSortOption.downloads),
               ),
               FilterChip(
                 selected: featuredOnly,
                 showCheckmark: true,
-                label: const Text('精选'),
+                label: const Text('おすすめ'),
                 labelStyle: Theme.of(context).textTheme.labelMedium,
                 labelPadding: const EdgeInsets.symmetric(horizontal: 8),
                 padding: EdgeInsets.zero,
@@ -169,7 +169,7 @@ class _MarketTopBarSearchFieldState extends State<MarketTopBarSearchField> {
         context,
       ).textTheme.bodyMedium?.copyWith(color: contentColor),
       decoration: InputDecoration(
-        hintText: '搜索市场',
+        hintText: 'マーケットを検索',
         hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
           color: contentColor.withValues(alpha: 0.72),
         ),
@@ -180,7 +180,7 @@ class _MarketTopBarSearchFieldState extends State<MarketTopBarSearchField> {
         suffixIcon: IconButton(
           onPressed: widget.onClose,
           icon: Icon(Icons.close, color: contentColor.withValues(alpha: 0.9)),
-          tooltip: '取消',
+          tooltip: 'キャンセル',
         ),
         border: InputBorder.none,
         focusedBorder: InputBorder.none,

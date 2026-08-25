@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/interactions/MessagePressShield.dart';
 import '../../../../util/ChatMarkupRegex.dart';
 import '../viewmodel/ChatViewModel.dart';
@@ -202,11 +203,12 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
 
   List<PopupMenuEntry<_MessageMenuAction>> _menuItems(BuildContext context) {
     final message = widget.message;
+    final l10n = AppLocalizations.of(context)!;
     final items = <PopupMenuEntry<_MessageMenuAction>>[
       _menuItem(
         value: _MessageMenuAction.copy,
         icon: Icons.content_copy,
-        label: '复制消息',
+        label: l10n.messageMenuCopy,
       ),
     ];
     if (message.sender == 'user') {
@@ -214,12 +216,12 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         _menuItem(
           value: _MessageMenuAction.editAndResend,
           icon: Icons.edit,
-          label: '编辑并重发',
+          label: l10n.messageMenuEditAndResend,
         ),
         _menuItem(
           value: _MessageMenuAction.rollback,
           icon: Icons.delete_sweep,
-          label: '回滚到此处',
+          label: l10n.messageMenuRollback,
         ),
       ]);
     }
@@ -228,17 +230,17 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         _menuItem(
           value: _MessageMenuAction.regenerate,
           icon: Icons.refresh,
-          label: '重新生成',
+          label: l10n.messageMenuRegenerate,
         ),
         _menuItem(
           value: _MessageMenuAction.modifyMemory,
           icon: Icons.auto_fix_high,
-          label: '修改记忆',
+          label: l10n.messageMenuModifyMemory,
         ),
         _menuItem(
           value: _MessageMenuAction.playVoice,
           icon: Icons.volume_up,
-          label: '生成/播放语音',
+          label: l10n.messageMenuPlayVoice,
         ),
       ]);
       if (message.variantCount > 1) {
@@ -246,7 +248,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
           _menuItem(
             value: _MessageMenuAction.deleteVariant,
             icon: Icons.delete,
-            label: '删除当前变体',
+            label: l10n.messageMenuDeleteVariant,
           ),
         );
       }
@@ -255,7 +257,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       _menuItem(
         value: _MessageMenuAction.delete,
         icon: Icons.delete,
-        label: '删除',
+        label: l10n.delete,
       ),
     ]);
     if (message.sender == 'ai') {
@@ -263,7 +265,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         _menuItem(
           value: _MessageMenuAction.reply,
           icon: Icons.reply,
-          label: '回复',
+          label: l10n.messageMenuReply,
         ),
       );
     }
@@ -271,18 +273,22 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       _menuItem(
         value: _MessageMenuAction.insertSummary,
         icon: Icons.summarize,
-        label: '插入总结',
+        label: l10n.messageMenuInsertSummary,
       ),
       _menuItem(
         value: _MessageMenuAction.createBranch,
         icon: Icons.account_tree,
-        label: '创建分支',
+        label: l10n.messageMenuCreateBranch,
       ),
-      _menuItem(value: _MessageMenuAction.info, icon: Icons.info, label: '信息'),
+      _menuItem(
+        value: _MessageMenuAction.info,
+        icon: Icons.info,
+        label: l10n.messageMenuInfo,
+      ),
       _menuItem(
         value: _MessageMenuAction.multiSelect,
         icon: Icons.check_circle,
-        label: '多选',
+        label: l10n.messageMenuMultiSelect,
       ),
     ]);
     return items;
@@ -365,7 +371,11 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
   }
 
   Future<void> _confirmDelete() async {
-    final confirmed = await _confirm('确认删除', '确定删除这条消息？');
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await _confirm(
+      l10n.messageMenuDeleteConfirmTitle,
+      l10n.messageMenuDeleteConfirmMessage,
+    );
     if (!confirmed) {
       return;
     }
@@ -383,11 +393,11 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
+              child: Text(AppLocalizations.of(context)!.cancel),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
+              child: Text(AppLocalizations.of(context)!.delete),
             ),
           ],
         );
@@ -398,32 +408,47 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
 
   Future<void> _showInfoDialog() {
     final message = widget.message;
+    final l10n = AppLocalizations.of(context)!;
     return showDialog<void>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('消息信息'),
+          title: Text(l10n.messageMenuInfoTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text('发送者: ${message.sender}'),
-              Text('时间戳: ${message.timestamp}'),
-              if (message.roleName.isNotEmpty) Text('角色: ${message.roleName}'),
+              Text(l10n.messageMenuSender(message.sender)),
+              Text(l10n.messageMenuTimestamp(message.timestamp.toString())),
+              if (message.roleName.isNotEmpty)
+                Text(l10n.messageMenuRole(message.roleName)),
               if (message.modelName.isNotEmpty)
-                Text('模型: ${message.modelName}'),
-              if (message.provider.isNotEmpty) Text('提供商: ${message.provider}'),
-              Text('输入 token: ${message.inputTokens}'),
-              Text('缓存输入 token: ${message.cachedInputTokens}'),
-              Text('输出 token: ${message.outputTokens}'),
-              Text('等待耗时: ${message.waitDurationMs}ms'),
-              Text('输出耗时: ${message.outputDurationMs}ms'),
+                Text(l10n.messageMenuModel(message.modelName)),
+              if (message.provider.isNotEmpty)
+                Text(l10n.messageMenuProvider(message.provider)),
+              Text(l10n.messageMenuInputTokens(message.inputTokens.toString())),
+              Text(
+                l10n.messageMenuCachedInputTokens(
+                  message.cachedInputTokens.toString(),
+                ),
+              ),
+              Text(
+                l10n.messageMenuOutputTokens(message.outputTokens.toString()),
+              ),
+              Text(
+                l10n.messageMenuWaitDuration(message.waitDurationMs.toString()),
+              ),
+              Text(
+                l10n.messageMenuOutputDuration(
+                  message.outputDurationMs.toString(),
+                ),
+              ),
             ],
           ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('确定'),
+              child: Text(l10n.messageMenuConfirm),
             ),
           ],
         );

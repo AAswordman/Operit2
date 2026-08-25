@@ -123,7 +123,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '终端启动失败',
+                    'ターミナルの起動に失敗しました',
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -140,7 +140,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
                   FilledButton.icon(
                     onPressed: _restartSession,
                     icon: const Icon(Icons.refresh),
-                    label: const Text('重试'),
+                    label: const Text('再試行'),
                   ),
                 ],
               ),
@@ -339,7 +339,6 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
       _altLatched = false;
     });
   }
-
 }
 
 class _LatchedTerminalInputHandler implements TerminalInputHandler {
@@ -407,21 +406,13 @@ class _TerminalShortcutBar extends StatelessWidget {
                 ),
                 _TerminalShortcutButton(
                   label: '/',
-                  onPressed: () => onText(
-                    '/',
-                    modifiedKey: TerminalKey.slash,
-                  ),
+                  onPressed: () => onText('/', modifiedKey: TerminalKey.slash),
                 ),
                 _TerminalShortcutButton(
                   label: '―',
-                  onPressed: () => onText(
-                    '-',
-                    modifiedKey: TerminalKey.minus,
-                  ),
-                  onSwipeUp: () => onText(
-                    '|',
-                    modifiedKey: TerminalKey.backslash,
-                  ),
+                  onPressed: () => onText('-', modifiedKey: TerminalKey.minus),
+                  onSwipeUp: () =>
+                      onText('|', modifiedKey: TerminalKey.backslash),
                   popupLabel: '|',
                 ),
                 _TerminalShortcutButton(
@@ -514,7 +505,8 @@ class _TerminalShortcutButton extends StatefulWidget {
   final String? popupLabel;
 
   @override
-  State<_TerminalShortcutButton> createState() => _TerminalShortcutButtonState();
+  State<_TerminalShortcutButton> createState() =>
+      _TerminalShortcutButtonState();
 }
 
 class _TerminalShortcutButtonState extends State<_TerminalShortcutButton> {

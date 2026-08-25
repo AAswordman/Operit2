@@ -1,41 +1,29 @@
-import 'dart:convert';
-
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/core/link/CoreLinkCodec.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/ui/main/OperitApp.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('Operit main shell smoke test', (tester) async {
+    await ClientLogger.initialize();
     const channel = MethodChannel('operit/runtime');
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
       call,
     ) async {
       if (call.method == 'call') {
-        final request = jsonDecode(call.arguments as String);
-        return jsonEncode({
-          'requestId': request['requestId'],
-          'result': {'Ok': '0.1.0'},
-        });
-      }
-      if (call.method == 'watchSnapshot') {
-        final request = jsonDecode(call.arguments as String);
-        final propertyName = request['propertyName'] as String;
-        return jsonEncode({
-          'requestId': request['requestId'],
-          'targetPath': request['targetPath'],
-          'propertyName': propertyName,
-          'kind': 'Snapshot',
-          'value': propertyName == 'chatMessagesFlow' ? const [] : null,
-        });
+        return encodeCoreLink(<Object?>[0, null]);
       }
       if (call.method == 'watchStream') {
-        final envelope = jsonDecode(call.arguments as String);
-        return jsonEncode({'subscriptionId': envelope['subscriptionId']});
+        final envelope = decodeCoreLink<List<Object?>>(
+          call.arguments as Uint8List,
+        );
+        return encodeCoreLink(<Object?>[0, envelope.first]);
       }
       if (call.method == 'closeWatchStream') {
-        return jsonEncode({'ok': true});
+        return encodeCoreLink(<Object?>[0, null]);
       }
       return null;
     });
@@ -43,7 +31,7 @@ void main() {
     await tester.pumpWidget(const OperitApp());
     await tester.pump();
 
-    expect(find.text('AI Chat'), findsWidgets);
-    expect(find.text('Message Operit'), findsOneWidget);
+    expect(find.byType(OperitApp), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

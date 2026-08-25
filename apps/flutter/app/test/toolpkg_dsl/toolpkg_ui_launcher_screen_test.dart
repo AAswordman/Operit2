@@ -983,10 +983,25 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   var _count = 0;
   var _checked = false;
 
-  /// Rejects encoded calls because this test models decoded tool package calls.
+  CoreEvent _encodedEvent(
+    CoreWatchRequest request, {
+    required String kind,
+    required Object? value,
+  }) {
+    return CoreEvent.raw(
+      requestId: request.requestId,
+      targetPath: request.targetPath,
+      propertyName: request.propertyName,
+      kind: kind,
+      valueBytes: encodeCoreLink(value),
+      decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
+    );
+  }
+
+  /// Encodes the existing decoded fixture responses for generated proxy clients.
   @override
-  Future<Uint8List> callBytes(CoreCallRequest request) {
-    throw UnimplementedError();
+  Future<Uint8List> callBytes(CoreCallRequest request) async {
+    return encodeCoreLink(<Object?>[0, await call(request)]);
   }
 
   @override
@@ -1067,10 +1082,8 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     if (holdActionCompletion) {
       actionCompletion = Completer<void>();
     }
-    yield CoreEvent(
-      requestId: request.requestId,
-      targetObjectId: request.targetObjectId,
-      propertyName: request.propertyName,
+    yield _encodedEvent(
+      request,
       kind: 'Changed',
       value: jsonEncode(<String, Object?>{
         'phase': 'intermediate',
@@ -1080,17 +1093,13 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     if (actionCompletion != null) {
       await actionCompletion!.future;
     }
-    yield CoreEvent(
-      requestId: request.requestId,
-      targetObjectId: request.targetObjectId,
-      propertyName: request.propertyName,
+    yield _encodedEvent(
+      request,
       kind: 'Changed',
       value: jsonEncode(<String, Object?>{'phase': 'final', 'result': result}),
     );
-    yield CoreEvent(
-      requestId: request.requestId,
-      targetObjectId: request.targetObjectId,
-      propertyName: request.propertyName,
+    yield _encodedEvent(
+      request,
       kind: 'Completed',
       value: jsonEncode(<String, Object?>{'phase': 'complete'}),
     );

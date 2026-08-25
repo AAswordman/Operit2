@@ -326,7 +326,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       return;
     }
     if (sourceMemory == null || targetMemory == null) {
-      _showSnack('无法定位记忆节点');
+      _showSnack('メモリー項目を見つけられません');
       return;
     }
     final edited = await _MemoryLinkEditorDialog.show(
@@ -352,7 +352,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       if (!mounted) {
         return;
       }
-      _showSnack('记忆关系已创建');
+      _showSnack('メモリーの関連付けを作成しました');
       setState(() {
         _linkSourceNodeId = null;
         _future = _loadData();
@@ -361,7 +361,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       });
     } catch (error) {
       if (mounted) {
-        _showSnack('创建关系失败：$error');
+        _showSnack('関連付けの作成に失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -397,11 +397,11 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       if (!mounted) {
         return;
       }
-      _showSnack('记忆已创建');
+      _showSnack('メモリーを作成しました');
       _reload();
     } catch (error) {
       if (mounted) {
-        _showSnack('创建记忆失败：$error');
+        _showSnack('メモリーの作成に失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -440,11 +440,11 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       if (!mounted) {
         return;
       }
-      _showSnack('记忆已保存');
+      _showSnack('メモリーを保存しました');
       _reload();
     } catch (error) {
       if (mounted) {
-        _showSnack('保存记忆失败：$error');
+        _showSnack('メモリーの保存に失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -456,9 +456,9 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   /// Deletes a memory after user confirmation.
   Future<void> _deleteMemory(core_proxy.Memory memory) async {
     final confirmed = await _confirm(
-      title: '删除记忆',
-      message: '确定删除「${memory.title}」吗？关联关系也会被移除。',
-      confirmLabel: '删除',
+      title: 'メモリーを削除',
+      message: '「${memory.title}」を削除しますか？関連付けも削除されます。',
+      confirmLabel: '削除',
     );
     if (!confirmed) {
       return;
@@ -469,11 +469,11 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       if (!mounted) {
         return;
       }
-      _showSnack('记忆已删除');
+      _showSnack('メモリーを削除しました');
       _reload();
     } catch (error) {
       if (mounted) {
-        _showSnack('删除记忆失败：$error');
+        _showSnack('メモリーの削除に失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -485,9 +485,9 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   /// Deletes a memory link after user confirmation.
   Future<void> _deleteEdge(core_proxy.MemoryGraphEdge edge) async {
     final confirmed = await _confirm(
-      title: '删除关系',
-      message: '确定删除这条记忆关系吗？',
-      confirmLabel: '删除',
+      title: '関連付けを削除',
+      message: 'このメモリーの関連付けを削除しますか？',
+      confirmLabel: '削除',
     );
     if (!confirmed) {
       return;
@@ -498,11 +498,11 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       if (!mounted) {
         return;
       }
-      _showSnack('记忆关系已删除');
+      _showSnack('メモリーの関連付けを削除しました');
       _reload();
     } catch (error) {
       if (mounted) {
-        _showSnack('删除关系失败：$error');
+        _showSnack('関連付けの削除に失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -528,11 +528,11 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         return;
       }
       if (mounted) {
-        _showSnack('已导出到 $savedPath');
+        _showSnack('$savedPathへ書き出しました');
       }
     } catch (error) {
       if (mounted) {
-        _showSnack('导出失败：$error');
+        _showSnack('書き出しに失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -548,11 +548,11 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       final jsonText = await _repository.exportMemoriesToJson();
       await Clipboard.setData(ClipboardData(text: jsonText));
       if (mounted) {
-        _showSnack('记忆 JSON 已复制');
+        _showSnack('メモリーJSONをコピーしました');
       }
     } catch (error) {
       if (mounted) {
-        _showSnack('复制失败：$error');
+        _showSnack('コピーに失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -587,12 +587,12 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         return;
       }
       _showSnack(
-        '导入完成：新增 ${result.newMemories}，更新 ${result.updatedMemories}，跳过 ${result.skippedMemories}，关系 ${result.newLinks}',
+        '読み込み完了：新規 ${result.newMemories}件、更新 ${result.updatedMemories}件、スキップ ${result.skippedMemories}件、関連付け ${result.newLinks}件',
       );
       _reload();
     } catch (error) {
       if (mounted) {
-        _showSnack('导入失败：$error');
+        _showSnack('読み込みに失敗しました：$error');
       }
     } finally {
       if (mounted) {
@@ -623,7 +623,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: const Text('キャンセル'),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
@@ -658,17 +658,17 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         ),
         actions: <Widget>[
           IconButton(
-            tooltip: '导入 JSON',
+            tooltip: 'JSONを読み込む',
             onPressed: _busy ? null : _importJson,
             icon: const Icon(Icons.upload_file_outlined),
           ),
           IconButton(
-            tooltip: '导出 JSON',
+            tooltip: 'JSONを書き出す',
             onPressed: _busy ? null : _exportJson,
             icon: const Icon(Icons.download_outlined),
           ),
           IconButton(
-            tooltip: '复制 JSON',
+            tooltip: 'JSONをコピー',
             onPressed: _busy ? null : _copyJson,
             icon: const Icon(Icons.copy_all_outlined),
           ),
@@ -684,7 +684,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         children: <Widget>[
           FloatingActionButton.small(
             heroTag: 'memory-link',
-            tooltip: '创建关系',
+            tooltip: '関連付けを作成',
             backgroundColor: _linkMode
                 ? colorScheme.primary
                 : colorScheme.secondaryContainer,
@@ -697,7 +697,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
           const SizedBox(height: 10),
           FloatingActionButton(
             heroTag: 'memory-create',
-            tooltip: '新建记忆',
+            tooltip: 'メモリーを作成',
             onPressed: _busy ? null : _createMemory,
             child: const Icon(Icons.add),
           ),
@@ -826,7 +826,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
                                       top: 12,
                                       child: _MemoryGraphCounter(
                                         text:
-                                            '${graph.nodes.length} 节点 · ${graph.edges.length} 关系',
+                                            '${graph.nodes.length}項目 · ${graph.edges.length}件の関連付け',
                                       ),
                                     ),
                                     if (_linkMode)
@@ -835,8 +835,8 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
                                         top: 12,
                                         child: _MemoryGraphCounter(
                                           text: _linkSourceNodeId == null
-                                              ? '关系模式：选择起点'
-                                              : '关系模式：选择终点',
+                                              ? '関連付け：開始項目を選択'
+                                              : '関連付け：終了項目を選択',
                                         ),
                                       ),
                                     if (selectedNode != null ||
@@ -1233,7 +1233,7 @@ class _MemoryToolbar extends StatelessWidget {
         child: Row(
           children: <Widget>[
             IconButton(
-              tooltip: '文件夹',
+              tooltip: 'フォルダー',
               onPressed: busy ? null : onToggleFolders,
               icon: const Icon(Icons.folder_outlined),
             ),
@@ -1250,11 +1250,11 @@ class _MemoryToolbar extends StatelessWidget {
                   suffixIcon: controller.text.isEmpty
                       ? null
                       : IconButton(
-                          tooltip: '清空',
+                          tooltip: '消去',
                           onPressed: busy ? null : onClearSearch,
                           icon: const Icon(Icons.clear),
                         ),
-                  hintText: '搜索标题、正文、来源或标签',
+                  hintText: 'タイトル、本文、取得元、タグを検索',
                   border: const OutlineInputBorder(),
                 ),
               ),
@@ -1263,12 +1263,12 @@ class _MemoryToolbar extends StatelessWidget {
             FilledButton.icon(
               onPressed: busy ? null : onSearch,
               icon: const Icon(Icons.search, size: 18),
-              label: const Text('搜索'),
+              label: const Text('検索'),
             ),
             const SizedBox(width: 10),
             _MemoryStatusChip(
               icon: linkMode ? Icons.link : Icons.account_tree_outlined,
-              text: linkMode ? '关系模式' : _folderLabel(folderPath),
+              text: linkMode ? '関連付け' : _folderLabel(folderPath),
             ),
           ],
         ),
@@ -1305,7 +1305,10 @@ class _MemoryFolderPanel extends StatelessWidget {
               children: <Widget>[
                 Icon(Icons.folder_outlined, color: colorScheme.primary),
                 const SizedBox(width: 8),
-                Text('记忆文件夹', style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  'メモリーフォルダー',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
               ],
             ),
           ),
@@ -1315,7 +1318,7 @@ class _MemoryFolderPanel extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 6),
               children: <Widget>[
                 _FolderTile(
-                  title: '全部',
+                  title: 'すべて',
                   selected: selectedFolderPath.isEmpty,
                   depth: 0,
                   onTap: () => onSelected(''),
@@ -1354,7 +1357,7 @@ class _FolderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final displayTitle = title.isEmpty ? '未分类' : title.split('/').last;
+    final displayTitle = title.isEmpty ? '未分類' : title.split('/').last;
     return Padding(
       padding: EdgeInsets.only(left: 8.0 + depth * 14.0, right: 8, top: 2),
       child: ListTile(
@@ -1455,7 +1458,7 @@ class _MemoryEmptyState extends StatelessWidget {
     final hasFilter = query.isNotEmpty || folderPath.isNotEmpty;
     return Center(
       child: Text(
-        hasFilter ? '当前筛选没有记忆节点' : '当前记忆库还没有节点',
+        hasFilter ? '条件に一致するメモリーはありません' : 'メモリーはまだありません',
         style: textTheme.bodyMedium?.copyWith(
           color: colorScheme.onSurfaceVariant,
         ),
@@ -1562,7 +1565,7 @@ class _MemoryGraphSelectionCard extends StatelessWidget {
                   if (memory == null) {
                     return const Padding(
                       padding: EdgeInsets.only(top: 8),
-                      child: Text('未读取到完整记忆内容'),
+                      child: Text('メモリーの全文を読み取れませんでした'),
                     );
                   }
                   return _MemoryDetailsBlock(
@@ -1579,7 +1582,7 @@ class _MemoryGraphSelectionCard extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: () => onDeleteEdge(edge!),
                   icon: const Icon(Icons.delete_outline),
-                  label: const Text('删除关系'),
+                  label: const Text('関連付けを削除'),
                 ),
               ),
           ],
@@ -1626,19 +1629,19 @@ class _MemoryDetailsBlock extends StatelessWidget {
             runSpacing: 6,
             children: <Widget>[
               _InfoChip(
-                label: '文件夹',
+                label: 'フォルダー',
                 value: _folderLabel(memory.folderPath ?? ''),
               ),
-              _InfoChip(label: '来源', value: memory.source),
+              _InfoChip(label: '取得元', value: memory.source),
               _InfoChip(
-                label: '可信度',
+                label: '信頼度',
                 value: memory.credibility.toStringAsFixed(2),
               ),
               _InfoChip(
-                label: '重要性',
+                label: '重要度',
                 value: memory.importance.toStringAsFixed(2),
               ),
-              _InfoChip(label: '更新', value: _formatMillis(memory.updatedAt)),
+              _InfoChip(label: '更新日時', value: _formatMillis(memory.updatedAt)),
             ],
           ),
           if (memory.tags.isNotEmpty) ...<Widget>[
@@ -1678,13 +1681,13 @@ class _MemoryDetailsBlock extends StatelessWidget {
               TextButton.icon(
                 onPressed: () => onEditMemory(memory, folders),
                 icon: const Icon(Icons.edit_outlined),
-                label: const Text('编辑'),
+                label: const Text('編集'),
               ),
               const SizedBox(width: 6),
               TextButton.icon(
                 onPressed: () => onDeleteMemory(memory),
                 icon: const Icon(Icons.delete_outline),
-                label: const Text('删除'),
+                label: const Text('削除'),
               ),
             ],
           ),
@@ -1854,7 +1857,7 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
       _folderController.text,
     }.map((folder) => folder.trim()).toSet().toList(growable: false)..sort();
     return AlertDialog(
-      title: Text(widget.memory == null ? '新建记忆' : '编辑记忆'),
+      title: Text(widget.memory == null ? 'メモリーを作成' : 'メモリーを編集'),
       content: SizedBox(
         width: 720,
         child: Form(
@@ -1865,9 +1868,10 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
               children: <Widget>[
                 TextFormField(
                   controller: _titleController,
-                  decoration: const InputDecoration(labelText: '标题'),
-                  validator: (value) =>
-                      value == null || value.trim().isEmpty ? '请输入标题' : null,
+                  decoration: const InputDecoration(labelText: 'タイトル'),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'タイトルを入力してください'
+                      : null,
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
@@ -1886,14 +1890,14 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
                     Expanded(
                       child: TextFormField(
                         controller: _contentTypeController,
-                        decoration: const InputDecoration(labelText: '内容类型'),
+                        decoration: const InputDecoration(labelText: '内容の種類'),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: TextFormField(
                         controller: _sourceController,
-                        decoration: const InputDecoration(labelText: '来源'),
+                        decoration: const InputDecoration(labelText: '取得元'),
                       ),
                     ),
                   ],
@@ -1911,7 +1915,7 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
                         child: Text(_folderLabel(folder)),
                       ),
                   ],
-                  decoration: const InputDecoration(labelText: '文件夹'),
+                  decoration: const InputDecoration(labelText: 'フォルダー'),
                   onChanged: (value) {
                     _folderController.text = value ?? '';
                   },
@@ -1919,21 +1923,21 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _folderController,
-                  decoration: const InputDecoration(labelText: '文件夹路径'),
+                  decoration: const InputDecoration(labelText: 'フォルダーの場所'),
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _tagsController,
-                  decoration: const InputDecoration(labelText: '标签（逗号分隔）'),
+                  decoration: const InputDecoration(labelText: 'タグ（カンマ区切り）'),
                 ),
                 const SizedBox(height: 12),
                 _SliderEditor(
-                  label: '可信度',
+                  label: '信頼度',
                   value: _credibility,
                   onChanged: (value) => setState(() => _credibility = value),
                 ),
                 _SliderEditor(
-                  label: '重要性',
+                  label: '重要度',
                   value: _importance,
                   onChanged: (value) => setState(() => _importance = value),
                 ),
@@ -1945,7 +1949,7 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: const Text('キャンセル'),
         ),
         FilledButton(onPressed: _save, child: const Text('保存')),
       ],
@@ -2064,7 +2068,7 @@ class _MemoryLinkEditorDialogState extends State<_MemoryLinkEditorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('创建记忆关系'),
+      title: const Text('メモリーの関連付けを作成'),
       content: SizedBox(
         width: 520,
         child: Column(
@@ -2075,11 +2079,11 @@ class _MemoryLinkEditorDialogState extends State<_MemoryLinkEditorDialog> {
             const SizedBox(height: 12),
             TextField(
               controller: _typeController,
-              decoration: const InputDecoration(labelText: '关系类型'),
+              decoration: const InputDecoration(labelText: '関連付けの種類'),
             ),
             const SizedBox(height: 10),
             _SliderEditor(
-              label: '权重',
+              label: '重み',
               value: _weight,
               onChanged: (value) => setState(() => _weight = value),
             ),
@@ -2089,7 +2093,7 @@ class _MemoryLinkEditorDialogState extends State<_MemoryLinkEditorDialog> {
               minLines: 2,
               maxLines: 4,
               decoration: const InputDecoration(
-                labelText: '描述',
+                labelText: '説明',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -2099,9 +2103,9 @@ class _MemoryLinkEditorDialogState extends State<_MemoryLinkEditorDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: const Text('キャンセル'),
         ),
-        FilledButton(onPressed: _save, child: const Text('创建')),
+        FilledButton(onPressed: _save, child: const Text('作成')),
       ],
     );
   }
@@ -2125,17 +2129,17 @@ class _ImportStrategyDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('导入记忆 JSON'),
-      content: const Text('请选择同名记忆的处理方式。'),
+      title: const Text('メモリーJSONを読み込む'),
+      content: const Text('同じ名前のメモリーがある場合の処理を選択してください。'),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: const Text('キャンセル'),
         ),
         TextButton(
           onPressed: () =>
               Navigator.of(context).pop(core_proxy.ImportStrategy.skip),
-          child: const Text('跳过'),
+          child: const Text('スキップ'),
         ),
         TextButton(
           onPressed: () =>
@@ -2145,7 +2149,7 @@ class _ImportStrategyDialog extends StatelessWidget {
         FilledButton(
           onPressed: () =>
               Navigator.of(context).pop(core_proxy.ImportStrategy.createNew),
-          child: const Text('创建新记忆'),
+          child: const Text('新しいメモリーとして作成'),
         ),
       ],
     );
@@ -2258,7 +2262,7 @@ bool _matchesFolderTree(String memoryFolderPath, String folderPath) {
 /// Returns the display label for a folder path.
 String _folderLabel(String folderPath) {
   final trimmed = folderPath.trim();
-  return trimmed.isEmpty ? '全部' : trimmed;
+  return trimmed.isEmpty ? 'すべて' : trimmed;
 }
 
 /// Returns the visible tree depth of a folder path.

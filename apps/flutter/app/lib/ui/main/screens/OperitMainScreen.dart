@@ -10,6 +10,7 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/notifications/NotificationActivationService.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../l10n/generated/app_localizations.dart';
 import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../components/AppContent.dart';
 import '../components/DrawerConversationState.dart';
@@ -677,9 +678,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       final messenger = ScaffoldMessenger.of(context);
       messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
-        const SnackBar(
-          content: Text('再按一次退出应用'),
-          duration: Duration(milliseconds: _backPressedIntervalMs),
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.mainExitConfirm),
+          duration: const Duration(milliseconds: _backPressedIntervalMs),
           behavior: SnackBarBehavior.floating,
         ),
       );

@@ -49,15 +49,19 @@ class PluginTabContent extends StatelessWidget {
             if (plugins.isEmpty && morePlugins.isEmpty)
               EmptyState(
                 icon: Icons.extension_off_outlined,
-                title: '没有插件',
-                message: isSearchActive ? '没有匹配的插件。' : '当前没有可显示的 ToolPkg 插件。',
+                title: 'プラグインがありません',
+                message: isSearchActive
+                    ? '一致するプラグインがありません。'
+                    : '表示できる ToolPkg プラグインがありません。',
                 scrollable: false,
               )
             else ...<Widget>[
-              const _PluginSectionHeader(title: '当前插件'),
+              const _PluginSectionHeader(title: '現在のプラグイン'),
               if (plugins.isEmpty)
                 _PluginSectionEmpty(
-                  message: isSearchActive ? '没有匹配的当前插件。' : '当前没有可显示的插件。',
+                  message: isSearchActive
+                      ? '一致する現在のプラグインがありません。'
+                      : '表示できるプラグインがありません。',
                 )
               else
                 PackageInlineGrid(
@@ -71,7 +75,7 @@ class PluginTabContent extends StatelessWidget {
                       metadata: <String>[
                         plugin.packageName,
                         'v${plugin.version}',
-                        '${plugin.subpackages.length} 子包',
+                        '${plugin.subpackages.length} サブパッケージ',
                       ],
                       enabled: enabledPluginNames.contains(plugin.packageName),
                       onTap: () => onPluginTap(plugin),
@@ -84,8 +88,8 @@ class PluginTabContent extends StatelessWidget {
                                     enabledPluginNames.contains(
                                       plugin.packageName,
                                     )
-                                    ? '打开'
-                                    : '启用后打开',
+                                    ? '開く'
+                                    : '有効化して開く',
                                 onPressed:
                                     enabledPluginNames.contains(
                                       plugin.packageName,
@@ -102,14 +106,16 @@ class PluginTabContent extends StatelessWidget {
               if (morePlugins.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 16),
                 const _PluginSectionHeader(
-                  title: '更多插件',
-                  subtitle: 'App 自带的官方额外插件，加载后进入当前插件。',
+                  title: 'その他のプラグイン',
+                  subtitle: 'アプリ付属の公式追加プラグインです。読み込むと現在のプラグインになります。',
                 ),
                 PackageInlineGrid(
                   itemCount: morePlugins.length,
                   itemBuilder: (context, index) {
                     final plugin = morePlugins[index];
-                    final kindLabel = plugin.isToolPkg ? 'ToolPkg' : '脚本包';
+                    final kindLabel = plugin.isToolPkg
+                        ? 'ToolPkg'
+                        : 'スクリプトパッケージ';
                     return PackageListItem(
                       icon: plugin.isToolPkg
                           ? Icons.extension_outlined
@@ -121,10 +127,10 @@ class PluginTabContent extends StatelessWidget {
                         kindLabel,
                         if (plugin.version.trim().isNotEmpty)
                           'v${plugin.version}',
-                        '${plugin.toolCount} 工具',
+                        '${plugin.toolCount} ツール',
                         if (plugin.subpackageCount > 0)
-                          '${plugin.subpackageCount} 子包',
-                        '官方额外',
+                          '${plugin.subpackageCount} サブパッケージ',
+                        '公式追加',
                       ],
                       enabled: false,
                       onEnabledChanged: (_) {},
@@ -133,7 +139,7 @@ class PluginTabContent extends StatelessWidget {
                         FilledButton.tonalIcon(
                           onPressed: () => onLoadMorePlugin(plugin),
                           icon: const Icon(Icons.add, size: 18),
-                          label: const Text('加载'),
+                          label: const Text('読み込む'),
                           style: FilledButton.styleFrom(
                             visualDensity: VisualDensity.compact,
                             padding: const EdgeInsets.symmetric(horizontal: 10),

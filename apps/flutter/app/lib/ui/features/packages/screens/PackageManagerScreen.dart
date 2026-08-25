@@ -200,12 +200,14 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('删除包'),
-          content: Text('确定删除 ${toolPackageDisplayName(package)}？此操作不可撤销。'),
+          title: const Text('パッケージを削除'),
+          content: Text(
+            '${toolPackageDisplayName(package)} を削除しますか？この操作は元に戻せません。',
+          ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
+              child: const Text('キャンセル'),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
@@ -213,7 +215,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
                 backgroundColor: Theme.of(context).colorScheme.error,
                 foregroundColor: Theme.of(context).colorScheme.onError,
               ),
-              child: const Text('删除'),
+              child: const Text('削除'),
             ),
           ],
         );
@@ -231,7 +233,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         return;
       }
       if (!deleted) {
-        _showSnackBar('删除失败：${package.name}');
+        _showSnackBar('削除に失敗しました: ${package.name}');
       }
     } catch (error, stackTrace) {
       debugPrint('Failed to delete package: $error\n$stackTrace');
@@ -248,12 +250,14 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('删除插件'),
-          content: Text('确定删除 ${toolPkgContainerDisplayName(plugin)}？此操作不可撤销。'),
+          title: const Text('プラグインを削除'),
+          content: Text(
+            '${toolPkgContainerDisplayName(plugin)} を削除しますか？この操作は元に戻せません。',
+          ),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
+              child: const Text('キャンセル'),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
@@ -261,7 +265,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
                 backgroundColor: Theme.of(context).colorScheme.error,
                 foregroundColor: Theme.of(context).colorScheme.onError,
               ),
-              child: const Text('删除'),
+              child: const Text('削除'),
             ),
           ],
         );
@@ -279,7 +283,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         return;
       }
       if (!deleted) {
-        _showSnackBar('删除失败：${plugin.packageName}');
+        _showSnackBar('削除に失敗しました: ${plugin.packageName}');
       }
     } catch (error, stackTrace) {
       debugPrint('Failed to delete plugin: $error\n$stackTrace');
@@ -366,12 +370,12 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     if (error != null && _snapshot.isEmpty) {
       return EmptyState(
         icon: Icons.error_outline,
-        title: '加载失败',
+        title: '読み込みに失敗しました',
         message: error,
         action: TextButton.icon(
           onPressed: _loadSnapshot,
           icon: const Icon(Icons.refresh),
-          label: const Text('刷新'),
+          label: const Text('更新'),
         ),
       );
     }
@@ -458,10 +462,10 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       PackageTab.mcp => MarketHomeTab.all,
     };
     final marketTooltip = switch (_selectedTab) {
-      PackageTab.plugins => '打开 Artifact 市场',
-      PackageTab.packages => '打开 Artifact 市场',
-      PackageTab.skills => '打开技能市场',
-      PackageTab.mcp => '打开 MCP 市场',
+      PackageTab.plugins => 'Artifact マーケットを開く',
+      PackageTab.packages => 'Artifact マーケットを開く',
+      PackageTab.skills => 'Skill マーケットを開く',
+      PackageTab.mcp => 'MCP マーケットを開く',
     };
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -485,19 +489,19 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
 
   String get _searchHintText {
     return switch (_selectedTab) {
-      PackageTab.plugins => '搜索插件',
-      PackageTab.packages => '搜索包',
-      PackageTab.skills => '搜索技能',
-      PackageTab.mcp => '搜索 MCP',
+      PackageTab.plugins => 'プラグインを検索',
+      PackageTab.packages => 'パッケージを検索',
+      PackageTab.skills => 'Skill を検索',
+      PackageTab.mcp => 'MCP を検索',
     };
   }
 
   String get _addActionTooltip {
     return switch (_selectedTab) {
-      PackageTab.plugins => '导入插件',
-      PackageTab.packages => '导入包',
-      PackageTab.skills => '添加技能',
-      PackageTab.mcp => '添加 MCP',
+      PackageTab.plugins => 'プラグインをインポート',
+      PackageTab.packages => 'パッケージをインポート',
+      PackageTab.skills => 'Skill を追加',
+      PackageTab.mcp => 'MCP を追加',
     };
   }
 
@@ -876,17 +880,17 @@ class _PackageTabBarState extends State<_PackageTabBar>
           _PackageTabItem(
             selected: widget.selectedTab == PackageTab.plugins,
             icon: Icons.apps,
-            label: '插件',
+            label: 'プラグイン',
           ),
           _PackageTabItem(
             selected: widget.selectedTab == PackageTab.packages,
             icon: Icons.extension,
-            label: '包',
+            label: 'パッケージ',
           ),
           _PackageTabItem(
             selected: widget.selectedTab == PackageTab.skills,
             icon: Icons.build,
-            label: '技能',
+            label: 'Skill',
           ),
           _PackageTabItem(
             selected: widget.selectedTab == PackageTab.mcp,
@@ -998,7 +1002,7 @@ class _PackageSearchBar extends StatelessWidget {
               trailing: <Widget>[
                 if (query.isNotEmpty)
                   IconButton(
-                    tooltip: '清空',
+                    tooltip: 'クリア',
                     onPressed: () => onChanged(''),
                     icon: const Icon(Icons.close, size: 18),
                     visualDensity: VisualDensity.compact,

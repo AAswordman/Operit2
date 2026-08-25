@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/features/chat/components/MessageEditorDialog.dart';
+import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Verifies visual message editing keeps protocol separators out of text fields.
 void main() {
@@ -17,10 +18,16 @@ void main() {
         'Second paragraph.\n\n'
         '<status type="complete">finished</status>\n';
     String? saved;
+    tester.binding.platformDispatcher.localesTestValue = const <Locale>[
+      Locale('ja'),
+    ];
+    addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
+      OperitTheme(
+        unconfiguredChildEnabled: true,
+        hostInteractionHostsEnabled: false,
+        child: Scaffold(
           body: MessageEditorDialog(
             initialText: original,
             showResendButton: false,
@@ -39,7 +46,9 @@ void main() {
         .toList(growable: false);
     expect(editableTexts, <String>['First paragraph.', 'Second paragraph.']);
 
-    await tester.tap(find.text('更新记忆'));
+    expect(find.text('記憶を編集'), findsOneWidget);
+    expect(find.text('修改记忆'), findsNothing);
+    await tester.tap(find.text('記憶を更新'));
     await tester.pumpAndSettle();
     expect(saved, original);
   });

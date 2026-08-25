@@ -224,7 +224,7 @@ class NewConversationButton extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        '新建对话',
+                        '新しいチャット',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -253,7 +253,7 @@ class NewConversationButton extends StatelessWidget {
                 size: 24,
                 color: appearance.titleColor,
               ),
-              tooltip: '新建分组',
+              tooltip: 'グループを作成',
               style: IconButton.styleFrom(
                 shape: const CircleBorder(),
                 backgroundColor: Colors.transparent,
@@ -292,7 +292,7 @@ class ConversationSearchField extends StatelessWidget {
       ).textTheme.bodyMedium?.copyWith(color: appearance.titleColor),
       decoration: InputDecoration(
         isDense: true,
-        hintText: '搜索对话',
+        hintText: 'チャットを検索',
         hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
           color: appearance.itemColor.withValues(alpha: 0.62),
         ),
@@ -432,13 +432,13 @@ class ConversationDrawerItem extends StatelessWidget {
                       alignment: AlignmentDirectional.centerStart,
                       color: Theme.of(context).colorScheme.primary,
                       icon: Icons.edit,
-                      label: '重命名',
+                      label: '名前を変更',
                     ),
                     secondaryBackground: _SwipeActionBackground(
                       alignment: AlignmentDirectional.centerEnd,
                       color: Theme.of(context).colorScheme.error,
                       icon: Icons.delete,
-                      label: '删除',
+                      label: '削除',
                     ),
                     child: Material(
                       color: selected
@@ -735,7 +735,7 @@ class _HistoryDragHandle extends StatelessWidget {
       width: 28,
       height: 28,
       child: Tooltip(
-        message: '拖动对话',
+        message: 'チャットを移動',
         child: Material(
           color: Colors.transparent,
           shape: const CircleBorder(),

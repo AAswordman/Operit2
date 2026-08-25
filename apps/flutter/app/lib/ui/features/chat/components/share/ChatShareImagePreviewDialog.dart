@@ -24,7 +24,7 @@ class ChatShareImagePreviewDialog extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     return OperitDialogScaffold(
-      title: '长图预览',
+      title: '共有画像の確認',
       maxWidth: 560,
       maxHeight: 760,
       showCloseButton: true,
@@ -85,6 +85,6 @@ class ChatShareImagePreviewDialog extends StatelessWidget {
     }
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('已保存：$storagePath')));
+    ).showSnackBar(SnackBar(content: Text('保存しました：$storagePath')));
   }
 }

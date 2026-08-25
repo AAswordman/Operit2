@@ -46,9 +46,7 @@ class _SectionCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: SettingsControlStyles.sectionTitleTextStyle(
-                      context,
-                    ),
+                    style: SettingsControlStyles.sectionTitleTextStyle(context),
                   ),
                 ),
                 ?action,
@@ -210,10 +208,10 @@ class _TtsProviderGroupTile extends StatelessWidget {
                         onPressed: onAddVoice,
                         style: SettingsControlStyles.sectionTextButton(),
                         icon: const Icon(Icons.playlist_add, size: 18),
-                        label: const Text('添加'),
+                        label: const Text('追加'),
                       ),
                       SettingsEntityIconButton(
-                        tooltip: '编辑供应商',
+                        tooltip: '接続先を編集',
                         icon: Icons.edit_outlined,
                         onPressed: onEditProvider,
                       ),
@@ -365,7 +363,7 @@ class _TtsVoiceTile extends StatelessWidget {
                 )
               else
                 SettingsEntityIconButton(
-                  tooltip: '试听',
+                  tooltip: '試聴',
                   icon: Icons.volume_up_outlined,
                   onPressed: () {
                     onTest();
@@ -373,10 +371,10 @@ class _TtsVoiceTile extends StatelessWidget {
                 ),
               const SizedBox(width: 4),
               if (current)
-                const SettingsActivePill(label: '全局当前')
+                const SettingsActivePill(label: '共通設定で使用中')
               else
                 SettingsSetActiveButton(
-                  label: '设为全局',
+                  label: '共通設定にする',
                   onPressed: onSetCurrent,
                 ),
             ],

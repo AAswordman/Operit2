@@ -77,7 +77,7 @@ class _MarketGridRow<T> {
 String _marketUpdatedDateLabel(String value) {
   final trimmed = value.trim();
   if (trimmed.isEmpty) {
-    return '更早';
+    return '以前';
   }
   return trimmed.length >= 10 ? trimmed.substring(0, 10) : trimmed;
 }
@@ -174,7 +174,7 @@ class MarketBrowseList<T> extends StatelessWidget {
                       child: EmptyState(
                         icon: Icons.store_outlined,
                         title: emptyTitle,
-                        message: '刷新或调整关键词后重试。',
+                        message: '更新するか、検索キーワードを変更して再試行してください。',
                         scrollable: false,
                       ),
                     ),

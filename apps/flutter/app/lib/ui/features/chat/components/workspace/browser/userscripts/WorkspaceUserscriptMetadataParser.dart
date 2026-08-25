@@ -25,7 +25,7 @@ WorkspaceUserscriptMetadata parseWorkspaceUserscriptMetadata(String source) {
     values.putIfAbsent(key, () => <String>[]).add(value);
   }
   return WorkspaceUserscriptMetadata(
-    name: _first(values, 'name') ?? '未命名脚本',
+    name: _first(values, 'name') ?? '名前のないスクリプト',
     namespace: _first(values, 'namespace') ?? '',
     version: _first(values, 'version') ?? '',
     description: _first(values, 'description') ?? '',

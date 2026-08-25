@@ -4,16 +4,19 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../l10n/generated/app_localizations.dart';
 import 'OperitLogoMark.dart';
 
 class RuntimeBootstrapScreen extends StatefulWidget {
   const RuntimeBootstrapScreen({
     super.key,
-    this.message = '正在准备本地运行时',
+    this.state = 'preparing',
+    this.message,
     this.errorText,
   });
 
-  final String message;
+  final String state;
+  final String? message;
   final String? errorText;
 
   /// Creates the animated runtime bootstrap screen state.
@@ -53,6 +56,10 @@ class _RuntimeBootstrapScreenState extends State<RuntimeBootstrapScreen>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final l10n = AppLocalizations.of(context)!;
+    final visibleMessage =
+        widget.message ?? _messageForState(l10n, widget.state);
+    final visibleError = _visibleRuntimeError(context, widget.errorText);
     return Material(
       color: colorScheme.surface,
       child: Center(
@@ -94,7 +101,7 @@ class _RuntimeBootstrapScreenState extends State<RuntimeBootstrapScreen>
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    widget.message,
+                    visibleMessage,
                     textAlign: TextAlign.center,
                     style: textTheme.labelMedium?.copyWith(
                       color: colorScheme.onSurfaceVariant,
@@ -102,12 +109,12 @@ class _RuntimeBootstrapScreenState extends State<RuntimeBootstrapScreen>
                       letterSpacing: 0,
                     ),
                   ),
-                  if (widget.errorText != null) ...<Widget>[
+                  if (visibleError != null) ...<Widget>[
                     const SizedBox(height: 18),
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 560),
                       child: SelectableText(
-                        widget.errorText!,
+                        visibleError,
                         textAlign: TextAlign.center,
                         style: textTheme.bodySmall?.copyWith(
                           color: colorScheme.error,
@@ -124,6 +131,29 @@ class _RuntimeBootstrapScreenState extends State<RuntimeBootstrapScreen>
       ),
     );
   }
+}
+
+String _messageForState(AppLocalizations l10n, String state) {
+  return switch (state) {
+    'preparingAssets' => l10n.runtimeBootstrapPreparingAssets,
+    'initializingCore' => l10n.runtimeBootstrapInitializingCore,
+    'failed' => l10n.runtimeBootstrapFailed,
+    'ready' => l10n.runtimeBootstrapReady,
+    'unconfigured' => l10n.runtimeBootstrapUnconfigured,
+    _ => l10n.onboardingPreparingLocalRuntime,
+  };
+}
+
+String? _visibleRuntimeError(BuildContext context, String? error) {
+  if (error == null || error.trim().isEmpty) {
+    return null;
+  }
+  if (Localizations.localeOf(context).languageCode != 'ja') {
+    return error;
+  }
+  final hasHan = RegExp(r'[\u3400-\u9fff]').hasMatch(error);
+  final hasKana = RegExp(r'[\u3040-\u30ff]').hasMatch(error);
+  return hasHan && !hasKana ? null : error;
 }
 
 class RuntimeBootstrapLiquidProgress extends StatelessWidget {

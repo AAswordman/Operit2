@@ -187,12 +187,12 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     if (error != null && _servers.isEmpty && _metadata.isEmpty) {
       return EmptyState(
         icon: Icons.error_outline,
-        title: '加载失败',
+        title: '読み込みに失敗しました',
         message: error,
         action: TextButton.icon(
           onPressed: _loadMcp,
           icon: const Icon(Icons.refresh),
-          label: const Text('刷新'),
+          label: const Text('更新'),
         ),
       );
     }
@@ -211,10 +211,10 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
               if (ids.isEmpty)
                 EmptyState(
                   icon: Icons.extension_outlined,
-                  title: '没有 MCP',
+                  title: 'MCP がありません',
                   message: widget.searchQuery.trim().isEmpty
-                      ? '当前没有可显示的 MCP 服务。'
-                      : '没有匹配的 MCP 服务。',
+                      ? '表示できる MCP サービスがありません。'
+                      : '一致する MCP サービスがありません。',
                   scrollable: false,
                 )
               else
@@ -240,8 +240,8 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
                         serverId,
                         if (metadata?.version.trim().isNotEmpty == true)
                           metadata!.version,
-                        if (toolCount != null) '$toolCount 工具',
-                        if (hasError) '错误',
+                        if (toolCount != null) '$toolCount ツール',
+                        if (hasError) 'エラー',
                       ],
                       enabled: enabled,
                       onTap: () => _showDetails(serverId),
@@ -342,7 +342,7 @@ class _MCPHeaderCard extends StatelessWidget {
               ),
             ),
             IconButton(
-              tooltip: '刷新',
+              tooltip: '更新',
               onPressed: onRefresh,
               icon: const Icon(Icons.refresh),
             ),

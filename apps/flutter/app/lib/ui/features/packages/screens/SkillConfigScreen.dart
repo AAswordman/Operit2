@@ -158,7 +158,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
             children: <Widget>[
               M3LoadingIndicator(size: 18),
               SizedBox(width: 12),
-              Text('加载技能详情'),
+              Text('Skill の詳細を読み込み中'),
             ],
           ),
         );
@@ -188,7 +188,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
             if (!deleted) {
               scaffoldMessenger.showSnackBar(
                 SnackBar(
-                  content: Text('删除失败 ${skill.name}'),
+                  content: Text('${skill.name} を削除できませんでした'),
                   behavior: SnackBarBehavior.floating,
                 ),
               );
@@ -208,12 +208,12 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
     if (error != null && _skills.isEmpty && _moreSkills.isEmpty) {
       return EmptyState(
         icon: Icons.error_outline,
-        title: '加载失败',
+        title: '読み込みに失敗しました',
         message: error,
         action: TextButton.icon(
           onPressed: _loadSkills,
           icon: const Icon(Icons.refresh),
-          label: const Text('刷新'),
+          label: const Text('更新'),
         ),
       );
     }
@@ -241,15 +241,19 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
               if (displayedSkills.isEmpty && displayedMoreSkills.isEmpty)
                 EmptyState(
                   icon: Icons.build_outlined,
-                  title: '没有技能',
-                  message: searchActive ? '没有匹配的技能。' : '当前没有可显示的技能。',
+                  title: 'Skill がありません',
+                  message: searchActive
+                      ? '一致する Skill がありません。'
+                      : '表示できる Skill がありません。',
                   scrollable: false,
                 )
               else ...<Widget>[
-                const _SkillSectionHeader(title: '当前技能'),
+                const _SkillSectionHeader(title: '現在の Skill'),
                 if (displayedSkills.isEmpty)
                   _SkillSectionEmpty(
-                    message: searchActive ? '没有匹配的当前技能。' : '当前没有可显示的技能。',
+                    message: searchActive
+                        ? '一致する現在の Skill がありません。'
+                        : '表示できる Skill がありません。',
                   )
                 else
                   PackageInlineGrid(
@@ -261,7 +265,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                         icon: Icons.build_outlined,
                         title: skill.name,
                         subtitle: skill.description,
-                        metadata: <String>[visible ? 'AI 可见' : 'AI 隐藏'],
+                        metadata: <String>[visible ? 'AI に表示' : 'AI から非表示'],
                         enabled: visible,
                         onTap: () => _showSkillDetails(skill),
                         onEnabledChanged: (value) =>
@@ -272,8 +276,8 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                 if (displayedMoreSkills.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 16),
                   const _SkillSectionHeader(
-                    title: '更多技能',
-                    subtitle: 'App 自带的官方额外技能，加载后进入当前技能。',
+                    title: 'その他の Skill',
+                    subtitle: 'アプリ付属の公式追加 Skill です。読み込むと現在の Skill になります。',
                   ),
                   PackageInlineGrid(
                     itemCount: displayedMoreSkills.length,
@@ -283,7 +287,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                         icon: Icons.build_outlined,
                         title: skill.name,
                         subtitle: skill.description,
-                        metadata: const <String>['官方额外'],
+                        metadata: const <String>['公式追加'],
                         enabled: false,
                         onEnabledChanged: (_) {},
                         showEnabledSwitch: false,
@@ -291,7 +295,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
                           FilledButton.tonalIcon(
                             onPressed: () => _loadBundledSkill(skill),
                             icon: const Icon(Icons.add, size: 18),
-                            label: const Text('加载'),
+                            label: const Text('読み込む'),
                             style: FilledButton.styleFrom(
                               visualDensity: VisualDensity.compact,
                               padding: const EdgeInsets.symmetric(
@@ -373,7 +377,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
       builder: (context) {
         return AlertDialog(
           icon: const Icon(Icons.error_outline),
-          title: const Text('技能加载错误'),
+          title: const Text('Skill の読み込みエラー'),
           content: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560, maxHeight: 420),
             child: SingleChildScrollView(
@@ -394,7 +398,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
+              child: const Text('閉じる'),
             ),
           ],
         );
@@ -511,7 +515,7 @@ class _SkillHeaderCard extends StatelessWidget {
             ),
             if (errorCount > 0)
               IconButton(
-                tooltip: '加载错误',
+                tooltip: '読み込みエラー',
                 onPressed: onShowErrors,
                 icon: Badge(
                   label: Text(errorCount.toString()),
@@ -519,7 +523,7 @@ class _SkillHeaderCard extends StatelessWidget {
                 ),
               ),
             IconButton(
-              tooltip: '刷新',
+              tooltip: '更新',
               onPressed: onRefresh,
               icon: const Icon(Icons.refresh),
             ),
@@ -555,8 +559,8 @@ class _SkillDetailsDialog extends StatelessWidget {
             children: <Widget>[
               if (skill.description.trim().isNotEmpty) Text(skill.description),
               const SizedBox(height: 12),
-              Text('目录: ${skill.directory}'),
-              Text('入口: ${skill.skillFile}'),
+              Text('ディレクトリ: ${skill.directory}'),
+              Text('エントリ: ${skill.skillFile}'),
               if (content != null) ...<Widget>[
                 const SizedBox(height: 12),
                 SelectableText(content!),
@@ -566,10 +570,10 @@ class _SkillDetailsDialog extends StatelessWidget {
         ),
       ),
       actions: <Widget>[
-        TextButton(onPressed: onDelete, child: const Text('删除')),
+        TextButton(onPressed: onDelete, child: const Text('削除')),
         FilledButton.tonal(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: const Text('閉じる'),
         ),
       ],
     );

@@ -28,10 +28,7 @@ class ArtifactVersionAssetDetail {
 }
 
 class ArtifactVersionListDialog extends StatelessWidget {
-  const ArtifactVersionListDialog({
-    super.key,
-    required this.entry,
-  });
+  const ArtifactVersionListDialog({super.key, required this.entry});
 
   final core_proxy.MarketEntrySummary entry;
 
@@ -65,10 +62,7 @@ class ArtifactVersionListDialog extends StatelessWidget {
         height: 520,
         child: versions.isEmpty
             ? Center(
-                child: Text(
-                  '暂无可用版本',
-                  style: textTheme.bodyMedium,
-                ),
+                child: Text('利用可能なバージョンはありません', style: textTheme.bodyMedium),
               )
             : ListView.separated(
                 padding: const EdgeInsets.only(top: 8),
@@ -77,7 +71,8 @@ class ArtifactVersionListDialog extends StatelessWidget {
                     const Divider(height: 1, indent: 72),
                 itemBuilder: (context, index) {
                   final version = versions[index];
-                  final isLatest = version.versionId == latestVersionId ||
+                  final isLatest =
+                      version.versionId == latestVersionId ||
                       (latestVersionId.isEmpty && index == 0);
                   final compatibility = resolveMarketAppVersionCompatibility(
                     appVersion: currentAppVersion,
@@ -86,11 +81,15 @@ class ArtifactVersionListDialog extends StatelessWidget {
                   );
 
                   return ListTile(
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
                     leading: Icon(
                       isLatest ? Icons.check_circle : Icons.circle_outlined,
-                      color: isLatest ? colorScheme.primary : colorScheme.outline,
+                      color: isLatest
+                          ? colorScheme.primary
+                          : colorScheme.outline,
                     ),
                     title: Row(
                       children: <Widget>[
@@ -102,7 +101,9 @@ class ArtifactVersionListDialog extends StatelessWidget {
                           const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: colorScheme.primaryContainer,
                               borderRadius: BorderRadius.circular(999),
@@ -132,7 +133,9 @@ class ArtifactVersionListDialog extends StatelessWidget {
                             (version.maxAppVer?.isNotEmpty ?? false))
                           Text(
                             _formatVersionRange(
-                                version.minAppVer, version.maxAppVer),
+                              version.minAppVer,
+                              version.maxAppVer,
+                            ),
                             style: textTheme.labelSmall?.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
@@ -166,7 +169,9 @@ class ArtifactVersionListDialog extends StatelessWidget {
     );
   }
 
-  List<ArtifactVersionAssetDetail> _versionAssets(core_proxy.MarketEntrySummary entry) {
+  List<ArtifactVersionAssetDetail> _versionAssets(
+    core_proxy.MarketEntrySummary entry,
+  ) {
     final assetsByVersionId = <String, core_proxy.MarketEntryAsset>{
       for (final asset in entry.assets) asset.versionId: asset,
     };

@@ -134,7 +134,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
               ],
             ),
             _SectionCard(
-              title: '系统授权',
+              title: 'システム権限',
               children: <Widget>[
                 _HostAuthorizationList(
                   requirements: data.hostRequirements,
@@ -143,7 +143,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
               ],
             ),
             _SectionCard(
-              title: '高级设置',
+              title: '詳細設定',
               initiallyExpanded: false,
               children: <Widget>[
                 _PermissionChain(data: data),
@@ -218,9 +218,9 @@ enum _PermissionMode {
 
   String get label {
     return switch (this) {
-      _PermissionMode.readOnly => '只读',
-      _PermissionMode.workspaceWrite => '读写',
-      _PermissionMode.full => '完整权限',
+      _PermissionMode.readOnly => '読み取り専用',
+      _PermissionMode.workspaceWrite => '読み書き',
+      _PermissionMode.full => 'すべて許可',
     };
   }
 }
@@ -284,7 +284,7 @@ class _HostAuthorizationList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (requirements.isEmpty) {
-      return const Text('当前设备没有需要用户处理的授权项。');
+      return const Text('この端末で確認が必要な権限はありません。');
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -338,7 +338,7 @@ class _HostAuthorizationTile extends StatelessWidget {
                     if (!requirement.isRequired) ...<Widget>[
                       const SizedBox(width: 8),
                       Text(
-                        '可选',
+                        '任意',
                         style: textTheme.labelMedium?.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
@@ -437,23 +437,23 @@ class _PermissionChain extends StatelessWidget {
       children: <Widget>[
         _ChainStep(
           index: '0',
-          title: '应用运行隔离',
+          title: 'アプリの実行分離',
           value: '${data.host.isolation}',
         ),
         _ChainStep(
           index: '1',
-          title: '系统授权',
+          title: 'システム権限',
           value: '${data.host.displayName} / ${data.host.platform}',
         ),
         _ChainStep(
           index: '2',
-          title: 'AI 能力限制',
+          title: 'AIの操作制限',
           value: '${mode.label}：${mode.description}',
         ),
         const _ChainStep(
           index: '3',
-          title: '工具调用确认',
-          value: '按 AI 直接调用的工具执行审批。',
+          title: 'ツール実行の確認',
+          value: 'AIが直接呼び出すツールの実行を確認します。',
         ),
       ],
     );
@@ -470,18 +470,18 @@ class _AdvancedHostSummary extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        _InfoRow(label: '当前运行环境', value: host.displayName),
-        _InfoRow(label: '平台', value: '${host.platform}'),
-        _InfoRow(label: '外层隔离', value: '${host.isolation}'),
-        _InfoRow(label: '文件能力', value: host.fileSystemHost ? '已注册' : '未注册'),
-        _InfoRow(label: '终端能力', value: host.terminalHost ? '已注册' : '未注册'),
+        _InfoRow(label: '現在の実行環境', value: host.displayName),
+        _InfoRow(label: 'OS', value: '${host.platform}'),
+        _InfoRow(label: '外部の分離', value: '${host.isolation}'),
+        _InfoRow(label: 'ファイル操作', value: host.fileSystemHost ? '利用可能' : '未登録'),
+        _InfoRow(label: 'ターミナル操作', value: host.terminalHost ? '利用可能' : '未登録'),
         _InfoRow(
-          label: '授权项',
-          value: '${host.onboardingRequirements.length} 项',
+          label: '権限項目',
+          value: '${host.onboardingRequirements.length}件',
         ),
         _InfoRow(
-          label: '结构化能力',
-          value: '${host.structuredCapabilities.length} 项',
+          label: '利用可能な機能',
+          value: '${host.structuredCapabilities.length}件',
         ),
       ],
     );
@@ -613,9 +613,9 @@ class _HostAuthorizationBridge {
 
 String _statusLabel(String status) {
   return switch (status) {
-    'Satisfied' => '已授予',
-    'Missing' => '未授予',
-    'Unavailable' => '需要由系统处理',
+    'Satisfied' => '許可済み',
+    'Missing' => '未許可',
+    'Unavailable' => 'システム側での操作が必要',
     _ => status,
   };
 }
@@ -640,14 +640,14 @@ Color _statusColor(String status, ColorScheme colorScheme) {
 
 String _actionLabel(_HostRequirement requirement) {
   if (requirement.status == 'Satisfied') {
-    return '已授予';
+    return '許可済み';
   }
   return switch (requirement.action) {
-    'RuntimePermission' => '授予',
-    'OpenSystemSettings' => '打开设置',
-    'HostManaged' => '授予',
-    'None' => '不可操作',
-    _ => '处理',
+    'RuntimePermission' => '許可する',
+    'OpenSystemSettings' => '設定を開く',
+    'HostManaged' => '許可する',
+    'None' => '操作できません',
+    _ => '確認する',
   };
 }
 
@@ -661,16 +661,16 @@ class _ModeSummary {
 _ModeSummary _modeFor(core_proxy.AiPermissionMode mode) {
   return switch (mode) {
     core_proxy.AiPermissionMode.readOnly => const _ModeSummary(
-      label: '只读',
-      description: 'AI 可以读取当前工作区，不能启动写入工具。',
+      label: '読み取り専用',
+      description: 'AIは現在の作業フォルダーを読み取れますが、書き込みツールは実行できません。',
     ),
     core_proxy.AiPermissionMode.workspaceWrite => const _ModeSummary(
-      label: '读写',
-      description: 'AI 可以读写当前工作区，应用内沙盒保持开启。',
+      label: '読み書き',
+      description: 'AIは現在の作業フォルダーを読み書きできます。アプリ内の分離機能は維持されます。',
     ),
     core_proxy.AiPermissionMode.full => const _ModeSummary(
-      label: '完整权限',
-      description: 'AI 可以读写当前工作区，并关闭应用内沙盒。',
+      label: 'すべて許可',
+      description: 'AIは現在の作業フォルダーを読み書きでき、アプリ内の分離機能も解除できます。',
     ),
   };
 }

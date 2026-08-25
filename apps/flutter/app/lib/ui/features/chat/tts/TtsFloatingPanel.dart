@@ -115,14 +115,14 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        state.title.isEmpty ? '语音朗读' : state.title,
+                        state.title.isEmpty ? '読み上げ' : state.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                     ),
                     IconButton(
-                      tooltip: '关闭',
+                      tooltip: '閉じる',
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.close, size: 18),
                       onPressed: () {
@@ -170,8 +170,8 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
                   children: <Widget>[
                     IconButton.filledTonal(
                       tooltip: state.phase == TtsPlaybackPhase.paused
-                          ? '继续'
-                          : '暂停',
+                          ? '再開'
+                          : '一時停止',
                       icon: Icon(
                         state.phase == TtsPlaybackPhase.paused
                             ? Icons.play_arrow
@@ -211,18 +211,18 @@ String _statusText(TtsPlaybackState state) {
   final segment = state.audioCount > 0
       ? ' · ${state.audioIndex}/${state.audioCount}'
       : '';
-  final queued = state.queueLength > 0 ? ' · 队列 ${state.queueLength}' : '';
+  final queued = state.queueLength > 0 ? ' · 待機 ${state.queueLength}件' : '';
   return '${_phaseText(state.phase)}$segment$queued';
 }
 
 /// Maps a playback phase to its localized label.
 String _phaseText(TtsPlaybackPhase phase) {
   return switch (phase) {
-    TtsPlaybackPhase.idle => '空闲',
-    TtsPlaybackPhase.preparing => '生成中',
-    TtsPlaybackPhase.playing => '播放中',
-    TtsPlaybackPhase.paused => '已暂停',
-    TtsPlaybackPhase.stopped => '已停止',
-    TtsPlaybackPhase.error => '出错',
+    TtsPlaybackPhase.idle => '待機中',
+    TtsPlaybackPhase.preparing => '準備中',
+    TtsPlaybackPhase.playing => '再生中',
+    TtsPlaybackPhase.paused => '一時停止中',
+    TtsPlaybackPhase.stopped => '停止済み',
+    TtsPlaybackPhase.error => 'エラー',
   };
 }

@@ -62,7 +62,7 @@ class AiChatScreenRoute extends OperitScreen {
 
 class PackageManagerScreenRoute extends OperitScreen {
   const PackageManagerScreenRoute({this.initialTab = PackageTab.plugins})
-    : super(routeTypeName: 'PackageManager', title: '包管理', keepAlive: true);
+    : super(routeTypeName: 'PackageManager', title: 'パッケージ管理', keepAlive: true);
 
   final PackageTab initialTab;
 
@@ -87,7 +87,7 @@ class MarketScreenRoute extends OperitScreen {
     this.initialTab = MarketHomeTab.all,
     this.categoryId,
     this.categoryName,
-  }) : super(routeTypeName: 'Market', title: '市场', keepAlive: true);
+  }) : super(routeTypeName: 'Market', title: 'マーケット', keepAlive: true);
 
   final MarketHomeTab initialTab;
   final String? categoryId;
@@ -119,7 +119,7 @@ class MarketScreenRoute extends OperitScreen {
 
 class SettingsScreenRoute extends OperitScreen {
   const SettingsScreenRoute({this.category})
-    : super(routeTypeName: 'Settings', title: '设置', keepAlive: true);
+    : super(routeTypeName: 'Settings', title: '設定', keepAlive: true);
 
   final SettingsCategory? category;
 

@@ -752,7 +752,7 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   Future<void> _createSharedMemoryStore() async {
     final edited = await _SharedMemoryStoreEditorDialog.show(
       context: context,
-      title: '新建共享记忆库',
+      title: '共有メモリーを作成',
     );
     if (edited == null) {
       return;
@@ -767,7 +767,7 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   ) async {
     final edited = await _SharedMemoryStoreEditorDialog.show(
       context: context,
-      title: '编辑共享记忆库',
+      title: '共有メモリーを編集',
       store: store,
     );
     if (edited == null) {
@@ -948,8 +948,8 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
               title: l10n.settingsAdvanced,
               children: <Widget>[
                 _AdvancedSettingsGroup(
-                  title: '共享记忆',
-                  description: '配置可被多个角色卡挂载的共享记忆库。',
+                  title: '共有メモリー',
+                  description: '複数のキャラクターで利用できる共有メモリーを設定します。',
                   action: FilledButton.icon(
                     onPressed: _createSharedMemoryStore,
                     style: SettingsControlStyles.sectionFilledButton(),

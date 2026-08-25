@@ -2397,7 +2397,7 @@ Future<Color?> _showSingleColorPickerDialog(
                     _ColorPickerPreview(color: color),
                     const SizedBox(height: 16),
                     _ColorPickerSlider(
-                      label: '色相',
+                      label: '色合い',
                       value: hsvColor.hue,
                       min: 0,
                       max: 360,
@@ -2416,7 +2416,7 @@ Future<Color?> _showSingleColorPickerDialog(
                       },
                     ),
                     _ColorPickerSlider(
-                      label: '饱和度',
+                      label: '鮮やかさ',
                       value: hsvColor.saturation,
                       min: 0,
                       max: 1,
@@ -2435,7 +2435,7 @@ Future<Color?> _showSingleColorPickerDialog(
                       },
                     ),
                     _ColorPickerSlider(
-                      label: '明度',
+                      label: '明るさ',
                       value: hsvColor.value,
                       min: 0,
                       max: 1,
@@ -2454,7 +2454,10 @@ Future<Color?> _showSingleColorPickerDialog(
                       },
                     ),
                     const SizedBox(height: 12),
-                    Text('预设', style: Theme.of(context).textTheme.labelLarge),
+                    Text(
+                      'プリセット',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,

@@ -24,7 +24,7 @@ class WorkspaceUserscriptRuntime {
     for (final item in scripts) {
       final wrapped = _wrap(item, url);
       await controller.runJavaScript(wrapped);
-      store.addLog(item.metadata.name, '已注入 $url');
+      store.addLog(item.metadata.name, '$urlへ適用しました');
     }
   }
 
@@ -278,7 +278,7 @@ JSON.stringify((window.__operitUserscriptMenuCommands || []).map(function(item, 
   try {
 $requireSources
 $source
-    reportRuntime('ran', '已运行 ' + pageUrl);
+    reportRuntime('ran', '実行しました：' + pageUrl);
   } catch (error) {
     reportRuntime('error', String(error));
     console.error('[Operit userscript] ' + scriptName + ': ' + error);

@@ -181,17 +181,17 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
                 NavigationDestination(
                   icon: Icon(Icons.storefront_outlined),
                   selectedIcon: Icon(Icons.storefront),
-                  label: '全部',
+                  label: 'すべて',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.category_outlined),
                   selectedIcon: Icon(Icons.category),
-                  label: '分类',
+                  label: 'カテゴリ',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.person_outline),
                   selectedIcon: Icon(Icons.person),
-                  label: '我的',
+                  label: 'マイページ',
                 ),
               ],
             ),
@@ -250,7 +250,7 @@ class _UnifiedMarketScreenState extends State<UnifiedMarketScreen>
             _syncTopBar();
           },
           icon: const Icon(Icons.search),
-          tooltip: '搜索',
+          tooltip: '検索',
         ),
       ];
     }, owner: this);
@@ -625,13 +625,13 @@ class _MarketListPaneState extends State<_MarketListPane> {
       content = _buildRefreshableStatus(
         EmptyState(
           icon: Icons.error_outline,
-          title: '加载失败',
+          title: '読み込みに失敗しました',
           message: error,
           scrollable: false,
           action: TextButton.icon(
             onPressed: _refreshMarket,
             icon: const Icon(Icons.refresh),
-            label: const Text('刷新'),
+            label: const Text('更新'),
           ),
         ),
       );
@@ -660,7 +660,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
         isLoadingMore: _loadingMore || _featuredPrefetching,
         hasMore: _hasMore && rawQuery.isEmpty && !widget.featuredOnly,
         isEmpty: displayed.isEmpty,
-        emptyTitle: rawQuery.isEmpty ? '暂无项目' : '没有匹配结果',
+        emptyTitle: rawQuery.isEmpty ? '項目はまだありません' : '一致する結果がありません',
         onRefresh: _refreshMarket,
         onLoadMore: _loadMore,
         items: displayed,
@@ -772,7 +772,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
   Future<void> _installSkill(core_proxy.MarketEntrySummary item) async {
     final repoUrl = item.source?.url.trim() ?? '';
     if (repoUrl.isEmpty) {
-      throw StateError('技能缺少仓库地址');
+      throw StateError('Skill にリポジトリ URL がありません');
     }
     final result = await widget.clients.application
         .skillRepository()
@@ -788,7 +788,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
   Future<void> _installMcp(core_proxy.MarketEntrySummary item) async {
     final repoUrl = item.source?.url.trim() ?? '';
     if (repoUrl.isEmpty) {
-      throw StateError('MCP 缺少仓库地址');
+      throw StateError('MCP にリポジトリ URL がありません');
     }
     final result = await widget.clients.application
         .mcpRepository()
@@ -812,7 +812,9 @@ class _MarketListPaneState extends State<_MarketListPane> {
 }
 
 String _actionLabel(core_proxy.MarketEntrySummary item) {
-  return (item.type == 'script' || item.type == 'package') ? '下载' : '安装';
+  return (item.type == 'script' || item.type == 'package')
+      ? 'ダウンロード'
+      : 'インストール';
 }
 
 int _reactionTotal(core_proxy.MarketEntrySummary item, String reaction) {
@@ -1031,7 +1033,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '被打回后的修改版提交仍在冷却中，还需等待 ${_formatRevisionCooldown(revisionRemaining)}。',
+            '差し戻し後の修正版提出はまだクールダウン中です。${_formatRevisionCooldown(revisionRemaining)} お待ちください。',
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -1127,7 +1129,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       context: context,
       builder: (context) {
         final stateLabel = entry.listingState == 'pending_listing'
-            ? '待上架'
+            ? '掲載待ち'
             : _marketStateLabel(entry.stateCode);
         final reasons = entry.reasonCodes
             .map(_marketReasonLabel)
@@ -1141,17 +1143,17 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text('状态：$stateLabel'),
+                Text('状態: $stateLabel'),
                 const SizedBox(height: 8),
-                Text('关系：${_marketRelationLabel(entry.relation)}'),
+                Text('関係: ${_marketRelationLabel(entry.relation)}'),
                 if ((entry.categoryId ?? '').trim().isNotEmpty) ...<Widget>[
                   const SizedBox(height: 8),
-                  Text('分类：${entry.categoryId}'),
+                  Text('カテゴリ: ${entry.categoryId}'),
                 ],
                 if (reasons.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 12),
                   Text(
-                    '审核原因',
+                    '審査理由',
                     style: Theme.of(context).textTheme.labelLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -1162,7 +1164,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
                 if (reviewDetail.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 12),
                   Text(
-                    '审核说明',
+                    '審査メモ',
                     style: Theme.of(context).textTheme.labelLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -1176,7 +1178,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('知道了'),
+              child: const Text('了解'),
             ),
           ],
         );
@@ -1191,12 +1193,12 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
       backgroundColor: Colors.transparent,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        title: const Text('我的市场'),
+        title: const Text('マイマーケット'),
         actions: <Widget>[
           IconButton(
             onPressed: _loading ? null : _loadMine,
             icon: const Icon(Icons.refresh),
-            tooltip: '刷新',
+            tooltip: '更新',
           ),
         ],
       ),
@@ -1208,12 +1210,12 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
           if (error != null && _entries.isEmpty && _notifications.isEmpty) {
             return EmptyState(
               icon: Icons.error_outline,
-              title: '加载失败',
+              title: '読み込みに失敗しました',
               message: error,
               action: TextButton.icon(
                 onPressed: _loadMine,
                 icon: const Icon(Icons.refresh),
-                label: const Text('刷新'),
+                label: const Text('更新'),
               ),
             );
           }
@@ -1223,14 +1225,14 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 32),
               children: <Widget>[
                 Text(
-                  '我的发布',
+                  '自分の公開',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 10),
                 if (_entries.isEmpty)
-                  const Text('暂无发布记录')
+                  const Text('公開履歴はまだありません')
                 else
                   for (final entry in _entries) ...<Widget>[
                     _MarketManageEntryTile(
@@ -1251,7 +1253,7 @@ class _ArtifactManageScreenState extends State<_ArtifactManageScreen> {
                 ),
                 const SizedBox(height: 10),
                 if (_notifications.isEmpty)
-                  const Text('暂无通知')
+                  const Text('通知はまだありません')
                 else
                   for (final notice in _notifications) ...<Widget>[
                     _MarketNotificationTile(notice: notice),
@@ -1291,7 +1293,7 @@ class _MarketManageEntryTile extends StatelessWidget {
     final reviewDetail = entry.reviewDetail?.trim() ?? '';
     final isPendingListing = entry.listingState == 'pending_listing';
     final stateLabel = isPendingListing
-        ? '待上架'
+        ? '掲載待ち'
         : _marketStateLabel(entry.stateCode);
     final canPublishVersion =
         entry.stateCode == 'approved' && !isPendingListing;
@@ -1334,7 +1336,7 @@ class _MarketManageEntryTile extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 4),
-              Text('更新于 ${formatMarketDate(entry.updatedAt)}'),
+              Text('更新: ${formatMarketDate(entry.updatedAt)}'),
             ],
           ),
         ),
@@ -1351,10 +1353,10 @@ class _MarketManageEntryTile extends StatelessWidget {
                     : onOpen,
                 child: Text(
                   canSubmitRevision
-                      ? '修改后提交新版本'
+                      ? '修正して新バージョンを提出'
                       : canPublishVersion
-                      ? '发布新版本'
-                      : '查看状态',
+                      ? '新バージョンを公開'
+                      : '状態を確認',
                 ),
               ),
       ),
@@ -1382,12 +1384,12 @@ String _formatRevisionCooldown(Duration remaining) {
   final hours = totalMinutes ~/ 60;
   final minutes = totalMinutes % 60;
   if (hours > 0 && minutes > 0) {
-    return '$hours小时$minutes分钟';
+    return '$hours 時間 $minutes 分';
   }
   if (hours > 0) {
-    return '$hours小时';
+    return '$hours 時間';
   }
-  return '$minutes分钟';
+  return '$minutes 分';
 }
 
 class _MarketNotificationTile extends StatelessWidget {
@@ -1416,8 +1418,8 @@ class _MarketNotificationTile extends StatelessWidget {
 }
 
 String _marketTypeLabel(String type) => switch (type) {
-  'script' => '脚本',
-  'package' => '包',
+  'script' => 'スクリプト',
+  'package' => 'パッケージ',
   'skill' => 'Skill',
   'mcp' => 'MCP',
   _ => type,
@@ -1432,28 +1434,28 @@ IconData _marketTypeIcon(String type) => switch (type) {
 };
 
 String _marketStateLabel(String stateCode) => switch (stateCode) {
-  'pending' => '待审核',
-  'approved' => '已发布',
-  'changes_requested' => '需修改',
-  'rejected' => '已拒绝',
-  'withdrawn' => '已撤回',
+  'pending' => '審査待ち',
+  'approved' => '公開済み',
+  'changes_requested' => '修正が必要',
+  'rejected' => '却下',
+  'withdrawn' => '取り下げ済み',
   _ => stateCode,
 };
 
 String _marketRelationLabel(String relation) => switch (relation) {
-  'owner' => '归属者',
-  'contributor' => '贡献者',
+  'owner' => '所有者',
+  'contributor' => '共同作成者',
   _ => relation,
 };
 
 String _marketReasonLabel(String reasonCode) => switch (reasonCode) {
-  'metadata-incomplete' => '元信息不完整',
-  'repository-unreachable' => '仓库无法访问',
-  'invalid-artifact' => '资源文件无效',
-  'invalid-version' => '版本信息无效',
-  'malware-risk' => '存在安全风险',
-  'policy-violation' => '不符合市场规范',
-  'duplicate-entry' => '重复条目',
+  'metadata-incomplete' => 'メタデータが不完全です',
+  'repository-unreachable' => 'リポジトリにアクセスできません',
+  'invalid-artifact' => 'アセットが無効です',
+  'invalid-version' => 'バージョン情報が無効です',
+  'malware-risk' => 'セキュリティリスクがあります',
+  'policy-violation' => 'マーケットポリシーに違反しています',
+  'duplicate-entry' => '重複した項目です',
   _ => reasonCode,
 };
 
@@ -1470,12 +1472,12 @@ IconData _marketNotificationIcon(String kind) => switch (kind) {
 String _marketNotificationTitle(core_proxy.MarketNotification notice) {
   final entrySuffix = notice.entryId == null ? '' : ' · ${notice.entryId}';
   return switch (notice.kind) {
-    'comment_new' => '收到新评论$entrySuffix',
-    'comment_reply' => '评论有新回复$entrySuffix',
-    'review_approved' => '审核已通过$entrySuffix',
-    'review_rejected' => '审核已拒绝$entrySuffix',
-    'review_changes' => '审核要求修改$entrySuffix',
-    'entry_curated' => '精选状态已更新$entrySuffix',
+    'comment_new' => '新しいコメントがあります$entrySuffix',
+    'comment_reply' => 'コメントに新しい返信があります$entrySuffix',
+    'review_approved' => '審査が承認されました$entrySuffix',
+    'review_rejected' => '審査で却下されました$entrySuffix',
+    'review_changes' => '審査で修正が求められました$entrySuffix',
+    'entry_curated' => 'おすすめの状態が更新されました$entrySuffix',
     _ => notice.title.isEmpty ? notice.kind : notice.title,
   };
 }
@@ -1483,13 +1485,13 @@ String _marketNotificationTitle(core_proxy.MarketNotification notice) {
 String _marketNotificationBody(core_proxy.MarketNotification notice) {
   final body = notice.body.trim();
   return switch (notice.kind) {
-    'comment_new' => body.isEmpty ? '有人在你的条目下发表了评论。' : body,
-    'comment_reply' => body.isEmpty ? '有人回复了你的评论。' : body,
-    'review_approved' => '你的提交已通过审核。',
-    'review_rejected' => '你的提交未通过审核。',
-    'review_changes' => '审核员要求你修改后重新提交。',
-    'entry_curated' => '条目的精选状态发生变化。',
-    _ => body.isEmpty ? '你有一条新的市场通知。' : body,
+    'comment_new' => body.isEmpty ? 'あなたの項目にコメントが投稿されました。' : body,
+    'comment_reply' => body.isEmpty ? 'あなたのコメントに返信がありました。' : body,
+    'review_approved' => 'あなたの提出は審査で承認されました。',
+    'review_rejected' => 'あなたの提出は審査で承認されませんでした。',
+    'review_changes' => '審査担当者が修正後の再提出を求めています。',
+    'entry_curated' => '項目のおすすめ状態が変更されました。',
+    _ => body.isEmpty ? '新しいマーケット通知があります。' : body,
   };
 }
 
@@ -1536,8 +1538,8 @@ class _MarketCategoryScopeHeader extends StatelessWidget {
       child: ListTile(
         dense: true,
         leading: const Icon(Icons.category_outlined),
-        title: Text('分类：$title'),
-        subtitle: const Text('可按类型、排序和精选继续筛选'),
+        title: Text('カテゴリ: $title'),
+        subtitle: const Text('種類、並べ替え、おすすめでさらに絞り込めます'),
       ),
     );
   }
@@ -1601,10 +1603,10 @@ class _MarketTypeFilterBar extends StatelessWidget {
 }
 
 const List<_MarketTypeTabSpec> _marketTypeTabs = <_MarketTypeTabSpec>[
-  _MarketTypeTabSpec(type: null, label: '全部'),
-  _MarketTypeTabSpec(type: 'script', label: '脚本'),
-  _MarketTypeTabSpec(type: 'package', label: '包'),
-  _MarketTypeTabSpec(type: 'skill', label: '技能'),
+  _MarketTypeTabSpec(type: null, label: 'すべて'),
+  _MarketTypeTabSpec(type: 'script', label: 'スクリプト'),
+  _MarketTypeTabSpec(type: 'package', label: 'パッケージ'),
+  _MarketTypeTabSpec(type: 'skill', label: 'Skill'),
   _MarketTypeTabSpec(type: 'mcp', label: 'MCP'),
 ];
 
@@ -1683,12 +1685,12 @@ class _MarketCategoriesPaneState extends State<_MarketCategoriesPane> {
     if (error != null && _categories.isEmpty) {
       return EmptyState(
         icon: Icons.error_outline,
-        title: '加载失败',
+        title: '読み込みに失敗しました',
         message: error,
         action: TextButton.icon(
           onPressed: _loadCategories,
           icon: const Icon(Icons.refresh),
-          label: const Text('刷新'),
+          label: const Text('更新'),
         ),
       );
     }
@@ -1943,30 +1945,30 @@ class _MarketMinePaneState extends State<_MarketMinePane> {
         _MineSectionTitle(text: '管理'),
         _MineActionCard(
           icon: Icons.settings_outlined,
-          title: '我的市场',
-          subtitle: '查看发布记录、通知和审核状态。',
+          title: 'マイマーケット',
+          subtitle: '公開履歴、通知、審査状況を確認します。',
           onTap: () => _openArtifactManage(context),
         ),
         const SizedBox(height: 16),
-        _MineSectionTitle(text: '发布'),
+        _MineSectionTitle(text: '公開'),
         _MineActionCard(
           icon: Icons.add,
-          title: '发布 Artifact',
-          subtitle: '发布脚本、包或运行时资源。',
+          title: 'Artifact を公開',
+          subtitle: 'スクリプト、パッケージ、ランタイムアセットを公開します。',
           onTap: () => _openArtifactPublish(context),
         ),
         const SizedBox(height: 10),
         _MineActionCard(
           icon: Icons.psychology_outlined,
-          title: '发布 Skill',
-          subtitle: '发布 GitHub 仓库形式的技能。',
+          title: 'Skill を公開',
+          subtitle: 'GitHub リポジトリ形式の Skill を公開します。',
           onTap: () => _openRepoPublish(context, 'skill'),
         ),
         const SizedBox(height: 10),
         _MineActionCard(
           icon: Icons.hub_outlined,
-          title: '发布 MCP',
-          subtitle: '发布 GitHub 仓库形式的 MCP 服务。',
+          title: 'MCP を公開',
+          subtitle: 'GitHub リポジトリ形式の MCP サービスを公開します。',
           onTap: () => _openRepoPublish(context, 'mcp'),
         ),
       ],
@@ -2041,8 +2043,8 @@ class _MineAccountLoadingCard extends StatelessWidget {
       material: true,
       child: const ListTile(
         leading: M3LoadingIndicator(size: 24),
-        title: Text('GitHub 账号'),
-        subtitle: Text('正在读取登录状态'),
+        title: Text('GitHub アカウント'),
+        subtitle: Text('ログイン状態を読み込み中'),
       ),
     );
   }
@@ -2133,23 +2135,23 @@ class _MineAccountCard extends StatelessWidget {
         title: Text(
           loggedIn && currentUser != null
               ? _githubDisplayName(currentUser)
-              : 'GitHub 账号',
+              : 'GitHub アカウント',
         ),
         subtitle: Text(
           loggedIn && currentUser != null
               ? '@${currentUser.login}'
-              : '发布和管理市场内容需要登录。',
+              : 'マーケットコンテンツの公開と管理にはログインが必要です。',
         ),
         trailing: loggedIn
             ? IconButton.outlined(
                 onPressed: onLogout,
                 icon: const Icon(Icons.logout, size: 18),
-                tooltip: '退出',
+                tooltip: 'ログアウト',
               )
             : FilledButton.tonalIcon(
                 onPressed: onLogin,
                 icon: const Icon(Icons.login, size: 18),
-                label: const Text('登录'),
+                label: const Text('ログイン'),
               ),
       ),
     );

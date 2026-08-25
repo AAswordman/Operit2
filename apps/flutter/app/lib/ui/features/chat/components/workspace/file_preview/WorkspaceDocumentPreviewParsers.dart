@@ -10,7 +10,7 @@ String workspaceDocxPreviewText(Uint8List bytes) {
   final archive = ZipDecoder().decodeBytes(bytes);
   final document = archive.findFile('word/document.xml');
   if (document == null) {
-    throw const FormatException('无法读取 Word 文档内容');
+    throw const FormatException('Word文書を読み取れません');
   }
   final xml = XmlDocument.parse(utf8.decode(document.content as List<int>));
   final paragraphs = xml
@@ -32,7 +32,7 @@ String workspacePptxPreviewText(Uint8List bytes) {
           .toList(growable: false)
         ..sort((a, b) => a.name.compareTo(b.name));
   if (slideFiles.isEmpty) {
-    throw const FormatException('无法读取 PowerPoint 幻灯片内容');
+    throw const FormatException('PowerPointスライドを読み取れません');
   }
   final buffer = StringBuffer();
   for (var index = 0; index < slideFiles.length; index++) {
@@ -50,7 +50,7 @@ String workspacePptxPreviewText(Uint8List bytes) {
     if (buffer.isNotEmpty) {
       buffer.writeln();
     }
-    buffer.writeln('幻灯片 ${index + 1}');
+    buffer.writeln('スライド ${index + 1}');
     buffer.write(lines.join('\n'));
   }
   return buffer.toString();
@@ -71,7 +71,7 @@ List<List<String>> workspaceSpreadsheetPreviewRows(
   final sharedStrings = _xlsxSharedStrings(archive);
   final sheet = archive.findFile('xl/worksheets/sheet1.xml');
   if (sheet == null) {
-    throw const FormatException('无法读取 Excel 工作表');
+    throw const FormatException('Excelワークシートを読み取れません');
   }
   final xml = XmlDocument.parse(utf8.decode(sheet.content as List<int>));
   return xml

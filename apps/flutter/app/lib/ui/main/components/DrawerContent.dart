@@ -723,7 +723,7 @@ class _DrawerContentState extends State<DrawerContent> {
           _shortIdentifier(characterGroupId);
     }
     final name = history.characterCardName?.trim();
-    return name == null || name.isEmpty ? '未绑定' : name;
+    return name == null || name.isEmpty ? '未設定' : name;
   }
 
   /// Resolves the runtime avatar path for a character-card history section.
@@ -746,7 +746,7 @@ class _DrawerContentState extends State<DrawerContent> {
 
   String _groupLabel(core_proxy.ChatHistoryListItem history) {
     final group = history.group?.trim();
-    return group == null || group.isEmpty ? '未分组' : group;
+    return group == null || group.isEmpty ? 'グループなし' : group;
   }
 
   void _toggleCharacterSection(String sectionKey) {
@@ -877,7 +877,7 @@ class _DrawerContentState extends State<DrawerContent> {
                         children: <Widget>[
                           Expanded(
                             child: Text(
-                              '会话',
+                              'チャット',
                               style: Theme.of(context).textTheme.titleSmall
                                   ?.copyWith(
                                     color: widget.appearance.titleColor
@@ -889,7 +889,9 @@ class _DrawerContentState extends State<DrawerContent> {
                           IconButton(
                             onPressed: () => themeController.toggle(context),
                             visualDensity: VisualDensity.compact,
-                            tooltip: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
+                            tooltip: darkThemeActive
+                                ? '明るい表示に切り替える'
+                                : '暗い表示に切り替える',
                             icon: Icon(
                               darkThemeActive
                                   ? Icons.light_mode_outlined
@@ -901,7 +903,7 @@ class _DrawerContentState extends State<DrawerContent> {
                           IconButton(
                             onPressed: _toggleSearchExpanded,
                             visualDensity: VisualDensity.compact,
-                            tooltip: _searchExpanded ? '收起搜索' : '搜索对话',
+                            tooltip: _searchExpanded ? '検索欄を閉じる' : 'チャットを検索',
                             icon: Icon(
                               _searchExpanded ? Icons.search_off : Icons.search,
                               size: 20,
@@ -1028,7 +1030,7 @@ class _DrawerContentState extends State<DrawerContent> {
                     SliverToBoxAdapter(
                       child: _HistoryLimitButton(
                         icon: Icons.expand_more,
-                        label: '展开更多 $hiddenHistoryCount',
+                        label: 'さらに$hiddenHistoryCount件表示',
                         appearance: widget.appearance,
                         onClick: () => _showMoreHistories(hiddenHistoryCount),
                       ),
@@ -1038,7 +1040,7 @@ class _DrawerContentState extends State<DrawerContent> {
                     SliverToBoxAdapter(
                       child: _HistoryLimitButton(
                         icon: Icons.keyboard_arrow_up,
-                        label: '收起',
+                        label: '折りたたむ',
                         appearance: widget.appearance,
                         onClick: _collapseHistories,
                       ),
@@ -1053,7 +1055,7 @@ class _DrawerContentState extends State<DrawerContent> {
                           bottom: 2,
                         ),
                         child: Text(
-                          '插件',
+                          'プラグイン',
                           style: Theme.of(context).textTheme.titleSmall
                               ?.copyWith(
                                 color: widget.appearance.titleColor.withValues(
@@ -1101,7 +1103,7 @@ class _DrawerContentState extends State<DrawerContent> {
               Expanded(
                 child: BottomSidebarAction(
                   icon: Icons.inventory_2_outlined,
-                  label: '包管理',
+                  label: '追加機能',
                   appearance: widget.appearance,
                   selected: widget.selectedRouteId == packageManagerRouteId,
                   onClick: _openPackageManager,
@@ -1111,7 +1113,7 @@ class _DrawerContentState extends State<DrawerContent> {
               Expanded(
                 child: BottomSidebarAction(
                   icon: Icons.settings_outlined,
-                  label: '设置',
+                  label: '設定',
                   appearance: widget.appearance,
                   selected: widget.selectedRouteId == settingsRouteId,
                   onClick: _openSettings,

@@ -14,10 +14,11 @@ class FreshPluginCreationIntent extends PluginCreationIntent {
   @override
   String toPrompt() {
     return _buildCreationPrompt(
-      taskLine: '请你使用 PackageBuilder skill 和 operit_editor 包，开发新的沙盒包。',
-      packageRuleLine: '先确定新的沙盒包 id，后续不要改名。',
+      taskLine:
+          'PackageBuilder skill と operit_editor パッケージを使い、新しいサンドボックスパッケージを開発してください。',
+      packageRuleLine: '最初に新しいサンドボックスパッケージ ID を決め、その後は名前を変更しないでください。',
       devDirectoryLine:
-          '开发目录固定为 手机下载/Operit/dev_package/你确定的id。开发、安装和测试都只在这里完成。',
+          '開発ディレクトリは Download/Operit/dev_package/決定したID に固定します。開発、インストール、テストはすべてここで完了してください。',
       requirement: requirement,
     );
   }
@@ -35,11 +36,11 @@ class ContinuePluginCreationIntent extends PluginCreationIntent {
   String toPrompt() {
     return _buildCreationPrompt(
       taskLine:
-          '请你使用 PackageBuilder skill 和 operit_editor 包，查找沙盒包 $runtimePackageId 的位置，在此版本基础上继续开发并测试。',
+          'PackageBuilder skill と operit_editor パッケージを使い、サンドボックスパッケージ $runtimePackageId の場所を探し、このバージョンを基に開発とテストを続けてください。',
       packageRuleLine:
-          '当前沙盒包 id 是 $runtimePackageId。包 id 和插件名字都必须沿用，不要改名，也不要新起包。',
+          '現在のサンドボックスパッケージ ID は $runtimePackageId です。パッケージ ID とプラグイン名は必ず引き継ぎ、改名や新規パッケージ作成はしないでください。',
       devDirectoryLine:
-          '开发目录固定为 手机下载/Operit/dev_package/$runtimePackageId。开发、安装和测试都只在这里完成。',
+          '開発ディレクトリは Download/Operit/dev_package/$runtimePackageId に固定します。開発、インストール、テストはすべてここで完了してください。',
       requirement: requirement,
     );
   }
@@ -57,11 +58,11 @@ class MergePluginCreationIntent extends PluginCreationIntent {
   String toPrompt() {
     return _buildCreationPrompt(
       taskLine:
-          '请你使用 PackageBuilder skill 和 operit_editor 包，查找沙盒包 $runtimePackageId 的位置，在此版本基础上做合并开发并测试。',
+          'PackageBuilder skill と operit_editor パッケージを使い、サンドボックスパッケージ $runtimePackageId の場所を探し、このバージョンを基に統合開発とテストを行ってください。',
       packageRuleLine:
-          '当前沙盒包 id 是 $runtimePackageId。包 id 和插件名字都必须沿用，不要改名，也不要新起包。',
+          '現在のサンドボックスパッケージ ID は $runtimePackageId です。パッケージ ID とプラグイン名は必ず引き継ぎ、改名や新規パッケージ作成はしないでください。',
       devDirectoryLine:
-          '开发目录固定为 手机下载/Operit/dev_package/$runtimePackageId。开发、安装和测试都只在这里完成。',
+          '開発ディレクトリは Download/Operit/dev_package/$runtimePackageId に固定します。開発、インストール、テストはすべてここで完了してください。',
       requirement: requirement,
     );
   }
@@ -75,14 +76,14 @@ String _buildCreationPrompt({
 }) {
   return <String>[
     taskLine,
-    '使用 PackageBuilder/types 中的当前版本类型定义。',
-    '需要操作包、Skill、MCP、日志或模型时，读取 operit_editor 包说明后调用 execute_cli_command。',
+    'PackageBuilder/types にある現在のバージョンの型定義を使用してください。',
+    'パッケージ、Skill、MCP、ログ、モデルを操作する必要がある場合は、operit_editor パッケージの説明を読んでから execute_cli_command を呼び出してください。',
     devDirectoryLine,
     packageRuleLine,
-    '把 PackageBuilder/types 复制到 手机下载/Operit/dev_package/types，具体包目录通过 ../types 引用。',
-    '用终端完成开发，编写 ts 和 js，编译出最终 js。tsconfig 参考 examples。',
-    '为了方便二次开发，打包需要把 ts 部分和 tsconfig 打包进去。',
-    '需求:',
+    'PackageBuilder/types を Download/Operit/dev_package/types にコピーし、各パッケージのディレクトリからは ../types を参照してください。',
+    'ターミナルで開発を行い、ts と js を記述して最終的な js をコンパイルしてください。tsconfig は examples を参考にしてください。',
+    '再開発しやすいよう、パッケージには ts 部分と tsconfig を含めてください。',
+    '要件:',
     requirement.trim(),
   ].join('\n');
 }

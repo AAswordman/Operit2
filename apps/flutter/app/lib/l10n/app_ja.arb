@@ -1,0 +1,2184 @@
+{
+  "@@locale": "ja",
+  "askOperitHint": "Operitに相談",
+  "aiChat": "AIチャット",
+  "fullscreenInput": "入力欄を全画面表示",
+  "expandInput": "入力欄を広げる",
+  "collapseInput": "入力欄を戻す",
+  "settings": "設定",
+  "packageManager": "パッケージ管理",
+  "market": "マーケット",
+  "addAttachment": "添付を追加",
+  "attachmentPhoto": "写真",
+  "attachmentCamera": "カメラ",
+  "attachmentMemory": "メモリー",
+  "attachmentFile": "ファイル",
+  "attachmentScreenContent": "画面の内容",
+  "attachmentNotifications": "現在の通知",
+  "attachmentLocation": "現在地",
+  "attachmentPackage": "パッケージ",
+  "attachmentPackageSelectTitle": "パッケージを選択",
+  "attachmentPackageEmpty": "利用できるパッケージはありません",
+  "attachmentPackageSearchPlaceholder": "パッケージ名や説明を検索",
+  "attachmentPackageSearchEmpty": "一致するパッケージはありません",
+  "attachmentPackageKindPackage": "パッケージ",
+  "attachmentPackageKindSkill": "スキル",
+  "attachmentPackageKindMcp": "MCP",
+  "attachmentCameraUnavailable": "Flutter版ではカメラ撮影をまだ利用できません",
+  "attachmentMemoryUnavailable": "Flutter版ではメモリーフォルダーをまだ選択できません",
+  "clearSearch": "検索をクリア",
+  "chatPendingQueueTitle": "送信待ちのメッセージ（{count}件）",
+  "@chatPendingQueueTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatQueueAddMessage": "送信待ちに追加",
+  "chatQueueAdded": "送信待ちに追加しました",
+  "chatPleaseCreateNewChat": "新しいチャットを作成してください",
+  "cancel": "キャンセル",
+  "send": "送信",
+  "model": "モデル",
+  "processingInput": "入力を処理しています…",
+  "processingMessage": "メッセージを処理しています…",
+  "connectingAiService": "AIサービスに接続しています…",
+  "receivingAiResponse": "AIの回答を受信しています…",
+  "receivingToolResultAiResponse": "ツール実行後のAI回答を受信しています…",
+  "roleResponsePlannerPlanning": "グループの発言順を考えています…",
+  "roleResponsePlannerMemberReplying": "「{memberName}」の回答を作成しています…",
+  "@roleResponsePlannerMemberReplying": {
+    "placeholders": {
+      "memberName": {
+        "type": "String"
+      }
+    }
+  },
+  "roleResponsePlannerFailed": "グループの発言計画に失敗しました",
+  "summarizingMemories": "メモリーを要約しています…",
+  "executingPlan": "計画を実行しています…",
+  "executingTool": "ツールを実行しています: {toolName}",
+  "@executingTool": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "processingToolResult": "ツールの結果を処理しています: {toolName}",
+  "@processingToolResult": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "statusWarningAiErrorSummary": "AIでエラーが発生しました",
+  "statusWarningAiErrorDetailTitle": "AIエラーの原因",
+  "toolRunning": "ツールを実行しています…",
+  "toolRunningWithName": "{toolName}: 実行中…",
+  "@toolRunningWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "toolStatusWithName": "{toolName}: {message}",
+  "@toolStatusWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "close": "閉じる",
+  "create": "作成",
+  "save": "保存",
+  "delete": "削除",
+  "search": "検索",
+  "loading": "読み込み中",
+  "toolApprovalTitle": "ツールの許可確認",
+  "toolApprovalToolLabel": "ツール",
+  "toolApprovalActionLabel": "実行内容",
+  "toolApprovalDeny": "許可しない",
+  "toolApprovalAllowOnce": "今回だけ許可",
+  "toolApprovalAlwaysAllow": "このセッションでは常に許可",
+  "createGroupTitle": "新しいグループ",
+  "groupNameLabel": "グループ名",
+  "renameConversationTitle": "タイトルを変更",
+  "newTitleLabel": "新しいタイトル",
+  "deleteConversationTitle": "会話を削除しますか？",
+  "deleteConversationMessage": "「{title}」を削除しますか？",
+  "@deleteConversationMessage": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHistory": "チャット履歴",
+  "editTitle": "タイトルを変更",
+  "moveUp": "上へ移動",
+  "moveDown": "下へ移動",
+  "pin": "固定",
+  "unpin": "固定を解除",
+  "lock": "ロック",
+  "unlock": "ロックを解除",
+  "chatLockedCannotDelete": "このチャットはロックされているため削除できません",
+  "messageLocatorTitle": "メッセージを探す",
+  "messageLocatorCurrent": "{current} / {total}",
+  "@messageLocatorCurrent": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "messageLocatorSearchHint": "メッセージの内容を検索",
+  "messageLocatorInstruction": "一覧をスクロールするか検索してメッセージへ移動します",
+  "messageLocatorResultCount": "{count}件",
+  "@messageLocatorResultCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "messageLocatorNoMatches": "一致するメッセージはありません",
+  "messageSenderUser": "あなた",
+  "messageSenderSummary": "要約",
+  "messageSenderSystem": "システム",
+  "messageSenderThinking": "思考中",
+  "thinkingProcess": "考えた内容",
+  "thinkingToolsGroupTitleWithCount": "思考とツール実行（{count}件）",
+  "@thinkingToolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "toolsGroupTitleWithCount": "ツール実行（{count}件）",
+  "@toolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "messageSenderOther": "その他",
+  "hiddenUserMessage": "非表示のユーザーメッセージ",
+  "workspaceSetupTitle": "作業フォルダーを準備",
+  "workspaceSetupSubtitle": "AIに作業を任せるための専用フォルダーを用意します",
+  "workspaceCreateDefaultTitle": "新しく作成",
+  "workspaceCreateDefaultDescription": "アプリ内に新しい作業フォルダーを作成します",
+  "workspaceBindExistingTitle": "既存フォルダーを選択",
+  "workspaceBindExistingDescription": "この端末にあるフォルダーを使用します",
+  "workspaceProjectTypeDialogTitle": "プロジェクトの種類を選択",
+  "workspaceProjectTypeDialogDescription": "作成する作業フォルダーの種類を選んでください",
+  "workspaceBindDialogTitle": "既存の作業フォルダーを選択",
+  "workspacePathLabel": "選択中の作業フォルダー",
+  "workspaceEnvLabel": "作業環境",
+  "optionalHint": "オプション",
+  "workspacePathRequired": "作業フォルダーを選択してください",
+  "bind": "バインド",
+  "workspaceProjectBlankTitle": "空の作業フォルダー",
+  "workspaceProjectBlankDescription": "ひな形なしの空フォルダーを作成します",
+  "workspaceProjectOfficeTitle": "文書作業",
+  "workspaceProjectOfficeDescription": "文書編集、ファイル処理などの一般的な事務作業向け",
+  "workspaceProjectWebTitle": "Webプロジェクト",
+  "workspaceProjectWebDescription": "HTML、CSS、JavaScriptと自動ローカルサーバーを使うWeb開発向け",
+  "workspaceProjectAndroidTitle": "Androidプロジェクト",
+  "workspaceProjectAndroidDescription": "よく使うGradle操作を備えたAndroid開発向け",
+  "workspaceProjectFlutterTitle": "Flutterプロジェクト",
+  "workspaceProjectFlutterDescription": "安定したひな形と基本操作を備えたFlutter開発向け",
+  "workspaceProjectNodeTitle": "Node.jsプロジェクト",
+  "workspaceProjectNodeDescription": "npmの基本操作を備えたNode.jsバックエンド開発向け",
+  "workspaceProjectTypeScriptTitle": "TypeScriptプロジェクト",
+  "workspaceProjectTypeScriptDescription": "TypeScriptとpnpmを使う型安全な開発向け",
+  "workspaceProjectPythonTitle": "Pythonプロジェクト",
+  "workspaceProjectPythonDescription": "pipとHTTPサーバーを使うPython開発向け",
+  "workspaceProjectJavaTitle": "Javaプロジェクト",
+  "workspaceProjectJavaDescription": "GradleとMavenを使うJava開発向け",
+  "workspaceProjectGoTitle": "Goプロジェクト",
+  "workspaceProjectGoDescription": "go modとビルド操作を備えたGo開発向け",
+  "version": "バージョン",
+  "author": "著者",
+  "entry": "エントリー",
+  "source": "ソース",
+  "category": "カテゴリ",
+  "defaultStatus": "デフォルトステータス",
+  "builtIn": "内蔵",
+  "external": "外部",
+  "enabledByDefault": "デフォルトで有効になっています",
+  "disabledByDefault": "デフォルトでは無効になっています",
+  "toolPkgResources": "ツールパッケージのリソース",
+  "resourcesCount": "リソース {count}",
+  "@resourcesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "uiModulesCount": "UIモジュール {count}",
+  "@uiModulesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "navigationEntriesCount": "ナビゲーションエントリ {count}",
+  "@navigationEntriesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "desktopWidgetsCount": "デスクトップウィジェット {count}",
+  "@desktopWidgetsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workflowTemplatesCount": "ワークフロー テンプレート {count}",
+  "@workflowTemplatesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workspaceTemplatesCount": "ワークスペース テンプレート {count}",
+  "@workspaceTemplatesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "pluginConfiguration": "プラグインの設定",
+  "subpackages": "サブパッケージ",
+  "toolPkgNoSubpackages": "この ToolPkg はサブパッケージを宣言していません",
+  "subpackageToolCount": "{packageName} · {count} ツール",
+  "@subpackageToolCount": {
+    "placeholders": {
+      "packageName": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workflowTemplates": "ワークフローテンプレート",
+  "workspaceTemplates": "ワークスペーステンプレート",
+  "disable": "無効にする",
+  "enable": "有効にする",
+  "environmentVariables": "環境変数",
+  "required": "必須",
+  "states": "州",
+  "stateToolSummary": "{condition} · {toolCount} ツール · {excludeCount} を除く",
+  "@stateToolSummary": {
+    "placeholders": {
+      "condition": {
+        "type": "String"
+      },
+      "toolCount": {
+        "type": "int"
+      },
+      "excludeCount": {
+        "type": "int"
+      }
+    }
+  },
+  "inherit": "継承する",
+  "tools": "ツール",
+  "packageNoTools": "このパッケージはツールを宣言していません",
+  "permissionsTitle": "権限",
+  "clear": "クリア",
+  "noPermissionRecords": "まだ許可記録がありません",
+  "allow": "許可する",
+  "deny": "拒否する",
+  "camera": "カメラ",
+  "microphone": "マイク",
+  "protectedMedia": "保護されたメディア",
+  "midiDevice": "MIDIデバイス",
+  "browserPermissionRequestTitle": "ウェブサイトの許可リクエスト",
+  "chatSpeechInputFailed": "音声入力に失敗しました: {error}",
+  "@chatSpeechInputFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "chatSpeechInputConfigurationRequired": "音声入力を使う前に、設定の「音声と認識」で音声認識を選択してください。",
+  "chatSpeechNoTextRecognized": "音声を認識できませんでした。",
+  "history": "歴史",
+  "bookmarks": "ブックマーク",
+  "downloads": "ダウンロード",
+  "scripts": "スクリプト",
+  "zoom": "ズーム",
+  "zoomIn": "ズームイン",
+  "zoomOut": "ズームアウト",
+  "desktopMode": "デスクトップモード",
+  "clearLocalStorage": "ローカルストレージをクリアする",
+  "searchHistory": "検索履歴",
+  "noDownloadTasks": "ダウンロードタスクはまだありません",
+  "openFile": "ファイルを開く",
+  "openLocation": "オープンロケーション",
+  "retry": "もう一度試す",
+  "removeRecord": "履歴から削除",
+  "pending": "保留中",
+  "completed": "完了しました",
+  "failed": "失敗しました",
+  "back": "戻る",
+  "forward": "進む",
+  "stop": "停止",
+  "refresh": "リフレッシュ",
+  "home": "ホーム",
+  "newTab": "新しいタブ",
+  "openExternalApplication": "外部アプリケーションを開く",
+  "open": "開く",
+  "ok": "OK",
+  "webPage": "ウェブページ",
+  "tabs": "タブ",
+  "noBookmarks": "まだブックマークはありません",
+  "removeBookmark": "ブックマークを解除",
+  "addBookmark": "ブックマークに追加",
+  "menu": "メニュー",
+  "siteData": "サイトデータ",
+  "clearAllWebViewCookies": "すべての WebView Cookie をクリアする",
+  "clearCookies": "クリアクッキー",
+  "noData": "データなし",
+  "local": "ローカル",
+  "pageLoadFailed": "ページの読み込みに失敗しました",
+  "pause": "一時停止",
+  "resume": "再開",
+  "paused": "一時停止中",
+  "cancelled": "キャンセルしました",
+  "downloading": "ダウンロード中",
+  "savedTo": "保存先: {path}",
+  "@savedTo": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "sslCertificateError": "SSL証明書エラー",
+  "edit": "編集",
+  "files": "ファイル",
+  "terminal": "ターミナル",
+  "browser": "ブラウザ",
+  "filePreview": "ファイルのプレビュー",
+  "workspaceBoundTitle": "使用中の作業フォルダー",
+  "selectFile": "ファイルを選択",
+  "selectFileDescription": "ワークスペースからファイルを選択して、表示、編集、または AI に送信します",
+  "openTerminal": "ターミナルを開く",
+  "openTerminalDescription": "現在のワークスペースのコマンド ラインを入力します",
+  "openBrowser": "ブラウザを開く",
+  "openBrowserDescription": "フルブラウザセッション、プロジェクトプレビュー、Webオートメーションを開きます。",
+  "noWorkspaceBound": "この会話にはバインドされたワークスペースがありません。",
+  "terminalSessionPlaceholder": "現在の作業フォルダーのターミナルがここに表示されます。",
+  "emptyFolder": "このフォルダは空です",
+  "imagePreview": "画像プレビュー",
+  "audioPreview": "オーディオプレビュー",
+  "videoPreview": "ビデオプレビュー",
+  "pdfPreview": "PDF プレビュー",
+  "wordPreview": "単語のプレビュー",
+  "spreadsheetPreview": "スプレッドシートのプレビュー",
+  "presentationPreview": "プレゼンテーションのプレビュー",
+  "webPagePreview": "Webページのプレビュー",
+  "markdownPreview": "マークダウンプレビュー",
+  "textPreview": "テキストプレビュー",
+  "file": "ファイル",
+  "unsupportedReadOnlyPreview": "このファイルは、組み込みの読み取り専用プレビュー タイプではありません。",
+  "cannotPreview": "プレビューできない",
+  "openProjectInFullBrowser": "フルブラウザでプロジェクトを開く",
+  "openInBrowser": "ブラウザで開く",
+  "emptySpreadsheet": "スプレッドシートが空です",
+  "settingsCategoryModelTitle": "モデルとAI",
+  "settingsCategoryModelSubtitle": "モデル、APIキー、コンテキスト",
+  "settingsCategoryModelDescription": "AIへの接続、チャット用モデル、思考、コンテキスト、画像や音声の利用を設定します。",
+  "settingsCategoryLocalModelsTitle": "端末内モデル",
+  "settingsCategoryLocalModelsSubtitle": "ダウンロード、実行エンジン、音声認識・読み上げ",
+  "settingsCategoryLocalModelsDescription": "必要に応じて端末へ入れるモデルと実行エンジンを管理します。",
+  "settingsCategoryCharactersTitle": "キャラクターとメモリー",
+  "settingsCategoryCharactersSubtitle": "カード、グループ、割り当て",
+  "settingsCategoryCharactersDescription": "キャラクター、グループ、使用中の役割、モデル・メモリー・ツールの割り当てを管理します。",
+  "settingsCategoryToolsTitle": "ツールと権限",
+  "settingsCategoryToolsSubtitle": "AIの操作範囲、端末の許可、拡張機能",
+  "settingsCategoryToolsDescription": "AIに許可する操作範囲を選び、端末側の権限状態を確認します。",
+  "settingsCategoryWorkspaceTitle": "作業フォルダーとブラウザー",
+  "settingsCategoryWorkspaceSubtitle": "ファイル、ターミナル、ブラウザー",
+  "settingsCategoryWorkspaceDescription": "標準の作業フォルダー、ターミナル、ブラウザー、自動操作を管理します。",
+  "settingsCategoryGlobalBehaviorTitle": "基本動作",
+  "settingsCategoryGlobalBehaviorSubtitle": "入力処理と操作方法",
+  "settingsCategoryGlobalBehaviorDescription": "キャラクターによらない入力と操作の動作を設定します。",
+  "settingsCategoryAppearanceTitle": "表示と言語",
+  "settingsCategoryAppearanceSubtitle": "テーマと言語",
+  "settingsCategoryAppearanceDescription": "画面のテーマと表示言語を変更します。",
+  "settingsCategoryDataTitle": "データとバックアップ",
+  "settingsCategoryDataSubtitle": "バックアップ、復元、統計",
+  "settingsCategoryDataDescription": "チャット、キャラクター、モデル設定をバックアップ・復元し、利用状況を確認します。",
+  "settingsCategoryAccessLinksTitle": "端末と接続",
+  "settingsCategoryAccessLinksSubtitle": "接続、同期、アクセス",
+  "settingsCategoryAccessLinksDescription": "別の端末を接続し、データ同期やブラウザーからのアクセスを設定します。",
+  "settingsCategoryGroupAssistant": "AIと作成",
+  "settingsCategoryGroupWorkspace": "作業フォルダーと自動化",
+  "settingsCategoryGroupExperience": "表示と操作",
+  "settingsCategoryGroupSystem": "データとシステム",
+  "settingsGlobalBehaviorChatInputSection": "チャット入力",
+  "settingsGlobalBehaviorLongPastedTextAsAttachment": "長く貼り付けられたテキストをファイルに変換する",
+  "settingsGlobalBehaviorLongPastedTextThreshold": "変換しきい値",
+  "settingsGlobalBehaviorLongPastedTextThresholdValue": "{count} 文字",
+  "@settingsGlobalBehaviorLongPastedTextThresholdValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsComingSoon": "この領域では、引き続き既存のランタイム機能が接続されます。モデル、キャラクター、ツールが先に完成しています。",
+  "settingsAdvanced": "詳細設定",
+  "settingsActive": "使用中",
+  "settingsActivate": "使用する",
+  "settingsModelCurrentSection": "現在のチャットモデル",
+  "settingsModelCurrentChatModel": "チャットで使用",
+  "settingsModelCurrentActive": "使用中",
+  "settingsModelSetCurrentActive": "このモデルを使用",
+  "settingsChatThinkingMode": "思考モード",
+  "settingsChatThinkingModeDescription": "対応モデルに、より安定した推論を行わせます。",
+  "settingsChatStreamOutput": "回答を順次表示",
+  "settingsChatStreamOutputDescription": "生成中の回答を少しずつ表示します。",
+  "agentModelSelectorThinkingSettings": "思考設定",
+  "agentModelSelectorThinkingSettingsDescription": "現在のチャットモデルの考え方を調整します。",
+  "agentModelSelectorThinkingQuality": "思考の深さ",
+  "agentModelSelectorThinkingQualityDescription": "思考モードでのみ有効です。数値が高いほど深く考え、1は自動調整です。",
+  "agentModelSelectorMaxModeDescription": "最大コンテキストモードをオンにすると{enabledLength}k、オフでは{disabledLength}kのコンテキストを使います。",
+  "@agentModelSelectorMaxModeDescription": {
+    "placeholders": {
+      "enabledLength": {
+        "type": "String"
+      },
+      "disabledLength": {
+        "type": "String"
+      }
+    }
+  },
+  "agentModelSelectorModelConfiguration": "モデル設定",
+  "agentModelSelectorModelConfigurationDescription": "設定済みモデルを選びます。追加や変更は下の「モデル設定を管理」から行えます。",
+  "agentModelSelectorModel": "モデル",
+  "agentModelSelectorNoModels": "利用できるモデルがありません",
+  "agentModelSelectorManageConfiguration": "モデル設定を管理",
+  "agentModelSelectorModelCount": "{count}個のモデル",
+  "@agentModelSelectorModelCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agentModelSelectorOn": "オン",
+  "agentModelSelectorOff": "オフ",
+  "settingsModelProfilesSection": "モデル設定",
+  "settingsModelFunctionMappingsSection": "機能別モデル設定",
+  "settingsModelFunctionMappingsDescription": "チャット、要約、記憶、画像認識などの機能で使用するモデルプロファイルと具体的なモデルを選択します。",
+  "settingsModelFunctionMappingsReset": "すべてリセット",
+  "settingsModelFunctionMappingsChange": "変更",
+  "settingsModelFunctionMappingsSelect": "{name}モデルを選択してください",
+  "@settingsModelFunctionMappingsSelect": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelFunctionMappingsCurrent": "{configName} · {modelName}",
+  "@settingsModelFunctionMappingsCurrent": {
+    "placeholders": {
+      "configName": {
+        "type": "String"
+      },
+      "modelName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelFunctionMappingsMissing": "バインドされたモデルが存在しません: {providerId} · {modelId}",
+  "@settingsModelFunctionMappingsMissing": {
+    "placeholders": {
+      "providerId": {
+        "type": "String"
+      },
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteBlocked": "このモデルは次の機能で使用されます。最初にモデルの割り当てを変更します: {functions}",
+  "@settingsModelDeleteBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderBlocked": "このプロバイダーのモデルは、次の機能で使用されます。最初にモデルの割り当てを変更します: {functions}",
+  "@settingsModelDeleteProviderBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirm": "プロバイダー「{name}」を削除しますか？ この操作で、その配下のモデル {count} 件も削除されます。",
+  "@settingsModelDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirmAction": "プロバイダーの削除",
+  "settingsTtsDeleteProvider": "TTSプロバイダーの削除",
+  "settingsTtsDeleteProviderConfirm": "TTSプロバイダー「{name}」と、その音声設定 {count} 件を削除しますか？",
+  "@settingsTtsDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsTtsDeleteProviderFailed": "TTS プロバイダーの削除に失敗しました: {error}",
+  "@settingsTtsDeleteProviderFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsTtsCurrentConfigCannotDelete": "現在使用されている TTS 構成は削除できません。",
+  "settingsTtsConfigUsedByCharacter": "この TTS 設定はキャラクター カードによって使用されるため、削除できません。",
+  "settingsModelChatAutoGlmWarning": "AutoGLM をメインのチャット モデルとして使用することはできません。チャットと UI コントロールは個別のモデル割り当てを使用します。別の大きなモデルを選択してください。",
+  "settingsModelFunctionChat": "チャット",
+  "settingsModelFunctionChatDescription": "主要な会話の応答に使用されるモデル。",
+  "settingsModelFunctionSummary": "概要",
+  "settingsModelFunctionSummaryDescription": "長いコンテキストの自動要約に使用されるモデル。",
+  "settingsModelFunctionTitleGeneration": "会話のタイトル",
+  "settingsModelFunctionTitleGenerationDescription": "最初のメッセージと添付ファイルを会話のタイトルに要約するために使用されるモデル。",
+  "settingsModelFunctionMemory": "記憶",
+  "settingsModelFunctionMemoryDescription": "記憶の抽出、整理、更新に使用されるモデル。",
+  "settingsModelFunctionUiController": "UIコントロール",
+  "settingsModelFunctionUiControllerDescription": "インターフェース制御と軽量アクションプランニングに使用されるモデル。",
+  "settingsModelFunctionTranslation": "翻訳",
+  "settingsModelFunctionTranslationDescription": "テキストとローカライズされたコンテンツを翻訳するために使用されるモデル。",
+  "settingsModelFunctionGrep": "テキスト検索",
+  "settingsModelFunctionGrepDescription": "検索結果をフィルタリングし、テキストの一致を判断するために使用されるモデル。",
+  "settingsModelFunctionRoleResponsePlanner": "グループ返信プランナー",
+  "settingsModelFunctionRoleResponsePlannerDescription": "グループ会話における話し手の役割と順序を計画するために使用されるモデル。",
+  "settingsModelFunctionImageRecognition": "画像認識",
+  "settingsModelFunctionImageRecognitionDescription": "画像を理解し、画像コンテンツを抽出するために使用されるモデル。",
+  "settingsModelFunctionAudioRecognition": "音声認識",
+  "settingsModelFunctionAudioRecognitionDescription": "音声を理解し、音声コンテンツを抽出するために使用されるモデル。",
+  "settingsModelFunctionVideoRecognition": "ビデオ認識",
+  "settingsModelFunctionVideoRecognitionDescription": "ビデオを理解し、ビデオ コンテンツを抽出するために使用されるモデル。",
+  "settingsModelFunctionImageUnsupported": "選択したモデル プロファイルでは、直接画像入力が無効になっています。",
+  "settingsModelFunctionAudioUnsupported": "選択したモデル プロファイルでは、直接オーディオ入力が無効になっています。",
+  "settingsModelFunctionVideoUnsupported": "選択したモデル プロファイルでは、直接ビデオ入力が無効になっています。",
+  "settingsModelCreateProfile": "新しいモデル設定",
+  "settingsModelEditProfile": "モデル設定を編集",
+  "settingsModelProfileName": "設定名",
+  "settingsModelApiEndpoint": "API接続先",
+  "settingsModelModelNames": "モデル名",
+  "settingsModelApiKey": "APIキー",
+  "settingsModelProviderTypeOpenaiCodex": "ChatGPT Codex（サブスク利用）",
+  "settingsModelCodexTitle": "ChatGPT / Codex ログイン",
+  "settingsModelCodexDescription": "ChatGPTプランに含まれるCodex利用枠を使います。APIキーや中継サーバーは不要です。",
+  "settingsModelCodexSignIn": "ChatGPTでログイン",
+  "settingsModelCodexConnected": "ログイン済み",
+  "settingsModelCodexSignedOut": "未ログイン",
+  "settingsModelCodexWaiting": "承認待ち",
+  "settingsModelCodexExpired": "コードの期限切れ",
+  "settingsModelCodexChecking": "確認中",
+  "settingsModelCodexCodeHelp": "ChatGPTの画面でこの1回限りのコードを入力してください。有効期限は15分です。",
+  "settingsModelCodexOpenBrowser": "ChatGPTの画面を開く",
+  "settingsModelCodexOpenFailed": "ChatGPTの画面を開けませんでした。もう一度ボタンを押してください。",
+  "settingsModelCodexLogout": "ログアウト",
+  "settingsModelCodexRequired": "この接続先を保存する前にChatGPTへログインしてください。",
+  "settingsModelCodexPlan": "プラン",
+  "settingsModelApiKeyPool": "APIキー一覧",
+  "settingsModelApiKeyPoolDescription": "複数のAPIキーを登録し、自動で切り替えて利用できます。",
+  "settingsModelApiKeyPoolCount": "{count} キー",
+  "@settingsModelApiKeyPoolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelApiKeyPoolEmpty": "まだ鍵がありません。キーを追加すると、このプロファイルはキー プールを使用します。",
+  "settingsModelAddApiKey": "APIキーを追加",
+  "settingsModelEditApiKey": "APIキーを編集",
+  "settingsModelApiKeyName": "キーの名前",
+  "settingsModelApiKeyEnabled": "このキーを使用する",
+  "settingsModelProviderId": "プロバイダーID",
+  "settingsModelProvidersSection": "接続先",
+  "settingsModelProviderType": "接続先の種類",
+  "settingsModelProviderTypeOption": "{name}（{original}）",
+  "@settingsModelProviderTypeOption": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "original": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelProviderTypeOpenai": "OpenAI",
+  "settingsModelProviderTypeOpenaiResponses": "OpenAI の応答",
+  "settingsModelProviderTypeOpenaiResponsesGeneric": "OpenAI レスポンスとの互換性",
+  "settingsModelProviderTypeOpenaiGeneric": "OpenAI対応",
+  "settingsModelProviderTypeAnthropic": "人間的",
+  "settingsModelProviderTypeAnthropicGeneric": "人間互換性",
+  "settingsModelProviderTypeGoogle": "Google ジェミニ",
+  "settingsModelProviderTypeGeminiGeneric": "ジェミニ対応",
+  "settingsModelProviderTypeBaidu": "百度",
+  "settingsModelProviderTypeAliyun": "アリユン",
+  "settingsModelProviderTypeXunfei": "シュンフェイ",
+  "settingsModelProviderTypeZhipu": "志浦AI",
+  "settingsModelProviderTypeBaichuan": "白川",
+  "settingsModelProviderTypeMoonshot": "ムーンショット",
+  "settingsModelProviderTypeMimo": "ミモ",
+  "settingsModelProviderTypeDeepseek": "ディープシーク",
+  "settingsModelProviderTypeMistral": "ミストラル",
+  "settingsModelProviderTypeSiliconflow": "シリコンフロー",
+  "settingsModelProviderTypeIflow": "iFlow",
+  "settingsModelProviderTypeOpenrouter": "オープンルーター",
+  "settingsModelProviderTypeFourRouter": "4ルーター",
+  "settingsModelProviderTypeNousPortal": "ヌースポータル",
+  "settingsModelProviderTypeInfiniai": "インフィニアイ",
+  "settingsModelProviderTypeAlipayBailing": "アリペイのバイリング",
+  "settingsModelProviderTypeDoubao": "豆宝",
+  "settingsModelProviderTypeNvidia": "エヌビディア",
+  "settingsModelProviderTypeLmstudio": "LMスタジオ",
+  "settingsModelProviderTypeOllama": "オラマ",
+  "settingsModelProviderTypeOpenaiLocal": "OpenAIローカル",
+  "settingsModelProviderTypeLocalModel": "ローカルモデル",
+  "localModelsLoadFailed": "ローカル モデル ステータスのロードに失敗しました: {error}",
+  "@localModelsLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsOperationFailed": "ローカル モデルの操作が失敗しました: {error}",
+  "@localModelsOperationFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsCatalog": "モデルカタログ",
+  "localModelsCategorySpeechToText": "音声テキスト変換モデル",
+  "localModelsCategoryTextToSpeech": "テキスト読み上げモデル",
+  "localModelsCategoryChat": "LLMモデル",
+  "localModelsCategoryEmbedding": "埋め込みモデル",
+  "localModelsInstalledEngines": "搭載エンジン",
+  "localModelsNoInstalledEngines": "このプラットフォームにはローカル推論エンジンはインストールされていません。",
+  "localModelsDeleteModelTitle": "ローカルモデルの削除",
+  "localModelsDeleteModelMessage": "{modelName} のモデル ファイルを削除しますか?",
+  "@localModelsDeleteModelMessage": {
+    "placeholders": {
+      "modelName": {}
+    }
+  },
+  "localModelsDeleteEngineTitle": "ローカルエンジンを削除する",
+  "localModelsDeleteEngineMessage": "{engineName} {version} を削除しますか？",
+  "@localModelsDeleteEngineMessage": {
+    "placeholders": {
+      "engineName": {},
+      "version": {}
+    }
+  },
+  "localModelsCancelling": "一時停止",
+  "localModelsDownloadPaused": "一時停止中: {downloaded} / {total}",
+  "@localModelsDownloadPaused": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsDownloadInstalling": "ダウンロード完了、インストール中",
+  "localModelsDownloading": "ダウンロード中: {downloaded} / {total}",
+  "@localModelsDownloading": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsLicense": "ライセンス: {license}",
+  "@localModelsLicense": {
+    "placeholders": {
+      "license": {}
+    }
+  },
+  "localModelsPlatformCompatible": "プラットフォーム互換性",
+  "localModelsPlatformIncompatible": "プラットフォームに互換性がない",
+  "localModelsModelInstalled": "搭載モデル",
+  "localModelsModelNotInstalled": "モデルがインストールされていません",
+  "localModelsEngineInstalled": "エンジン搭載",
+  "localModelsEngineNotInstalled": "エンジンが搭載されていない",
+  "localModelsVerifyModelAndEngine": "モデルとエンジンを確認する",
+  "localModelsDeleteModel": "モデルの削除",
+  "localModelsPauseDownload": "ダウンロードを一時停止する",
+  "localModelsDeleteDownload": "ダウンロードの削除",
+  "localModelsResumeDownload": "再開",
+  "localModelsInstalling": "インストール中",
+  "localModelsInstall": "インストール",
+  "localModelsDeleteEngine": "エンジンの削除",
+  "localModelDescriptionSherpaOnnxStreamingStt": "中国語と英語のバイリンガル音声認識のストリーミング。",
+  "localModelDescriptionSherpaOnnxVitsAishell3": "ローカル中国語のマルチスピーカー音声合成。",
+  "localModelDescriptionSherpaOnnxVitsZhLl": "地元の中国語の 5 人の話者による音声合成。",
+  "localModelDescriptionSherpaOnnxMatchaBaker": "地元の中国語のシングルスピーカー Matcha 音声合成。",
+  "localModelDescriptionSherpaOnnxKittenNano": "地元の英語 8 スピーカー KittenTTS 音声合成。",
+  "localModelDescriptionSherpaOnnxWebParaformer": "ブラウザにパッケージ化された中国語と英語の Paraformer 音声認識。",
+  "localModelDescriptionSherpaOnnxWebVitsPiper": "ブラウザパッケージ化された英語マルチスピーカーVITS音声合成。",
+  "settingsModelProviderTypeMnn": "MNN",
+  "settingsModelProviderTypeLlamaCpp": "ラマ.cpp",
+  "settingsModelProviderTypePpinfra": "PPインフラ",
+  "settingsModelProviderTypeNovita": "ノビタAI",
+  "settingsModelProviderTypeOther": "その他",
+  "settingsModelEditModelSettings": "モデル設定",
+  "settingsModelCreateProvider": "接続先を追加",
+  "settingsModelEditProvider": "接続先を編集",
+  "settingsModelAddModel": "モデルを追加",
+  "settingsModelAddModelShort": "追加",
+  "settingsModelCustomModel": "カスタムモデル",
+  "settingsModelModelId": "モデルID",
+  "settingsModelDuplicateModelId": "このモデルはすでにこのプロバイダーに追加されています。",
+  "settingsModelMaxTokens": "最大出力トークン数",
+  "settingsModelMaxTokensDescription": "1回の回答で生成できるトークン数を制限します。",
+  "settingsModelTemperature": "Temperature（ランダム性）",
+  "settingsModelTemperatureDescription": "低いほど安定し、高いほど多様な回答になります。",
+  "settingsModelTopP": "トップ",
+  "settingsModelTopPDescription": "累積上位確率範囲からのみサンプリングします。",
+  "settingsModelTopK": "トップk",
+  "settingsModelTopKDescription": "K 個の最も可能性の高い候補トークンからのサンプル。 0 は無効にします。",
+  "settingsModelPresencePenalty": "プレゼンスペナルティ",
+  "settingsModelPresencePenaltyDescription": "新しいトピックを奨励し、既存のコンテンツの再利用を減らします。",
+  "settingsModelFrequencyPenalty": "周波数ペナルティ",
+  "settingsModelFrequencyPenaltyDescription": "トークンが繰り返されると、頻度に応じてペナルティが課されます。",
+  "settingsModelRepetitionPenalty": "反復ペナルティ",
+  "settingsModelRepetitionPenaltyDescription": "繰り返し出力をさらに削減します。 1.0 はペナルティがないことを意味します。",
+  "settingsModelRequestLimit": "1分あたりのリクエスト数",
+  "settingsModelMaxConcurrent": "最大同時リクエスト",
+  "settingsModelContextLength": "コンテキスト長",
+  "settingsModelMaxContextLength": "最大コンテキスト長",
+  "settingsModelMaxContextLengthInvalid": "0 より大きい最大コンテキスト長を入力してください",
+  "settingsModelMaxContextMode": "マックスコンテキストモード",
+  "settingsModelSummaryThreshold": "サマリートークンのしきい値",
+  "settingsModelSummaryByMessageCount": "メッセージ数ごとに要約する",
+  "settingsModelSummaryMessageCount": "概要メッセージのしきい値",
+  "settingsModelCustomHeaders": "カスタムヘッダー",
+  "settingsModelCustomParameters": "カスタムパラメータJSON",
+  "settingsModelToolCall": "ツール呼び出し",
+  "settingsModelToolCallDescription": "モデルが構造化されたツール呼び出しを使えるようにします。",
+  "settingsModelDirectImage": "直接画像入力",
+  "settingsModelDirectImageDescription": "画像入力対応機種に直接画像を送信します。",
+  "settingsModelDirectAudio": "直接オーディオ入力",
+  "settingsModelDirectAudioDescription": "音声入力をサポートするモデルに音声を直接送信します。",
+  "settingsModelDirectVideo": "直接ビデオ入力",
+  "settingsModelDirectVideoDescription": "ビデオ入力をサポートするモデルにビデオを直接送信します。",
+  "settingsModelGoogleSearch": "Google検索",
+  "settingsModelGoogleSearchDescription": "プロバイダー側の検索機能を有効にします。",
+  "settingsModelContext": "コンテキストウィンドウ",
+  "settingsModelSummary": "自動サマリー",
+  "settingsModelMediaHistory": "メディアの歴史",
+  "settingsModelCapabilities": "能力",
+  "settingsModelBuiltinTools": "内蔵ツール",
+  "settingsModelBuiltinToolExclusive": "有効にすると外部ツールの呼び出しをオフにします",
+  "settingsModelConnectionTestSection": "接続テスト",
+  "settingsModelRunConnectionTest": "現在のモデルをテストする",
+  "settingsModelTestModel": "テストモデル",
+  "settingsModelTestingConnection": "現在のモデルの接続をテストしています…",
+  "settingsModelTestedModel": "テスト済みモデル",
+  "settingsModelConnectionTestPassed": "すべてのチェックに合格しました",
+  "settingsModelConnectionTestFailed": "いくつかのチェックが失敗しました",
+  "settingsModelCapabilitiesApplied": "モデルの機能スイッチがテスト結果から更新されました。",
+  "settingsModelCapabilitiesNeedChat": "チャット テストに合格しなかったため、モデル機能スイッチは更新されませんでした。",
+  "settingsModelConnectionTestError": "接続テストが失敗しました: {error}",
+  "@settingsModelConnectionTestError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelTestItemChat": "チャット",
+  "settingsModelTestItemToolCall": "ツール呼び出し",
+  "settingsModelTestItemImage": "画像",
+  "settingsModelTestItemAudio": "オーディオ",
+  "settingsModelTestItemVideo": "ビデオ",
+  "settingsModelTestItemUnknown": "不明なアイテム",
+  "settingsCharactersCreateCard": "新しいキャラクターカード",
+  "settingsCharactersEditCard": "キャラクターカードを編集する",
+  "settingsCharactersCardName": "キャラクター名",
+  "settingsCharactersCreateGroup": "新しいグループ",
+  "settingsCharactersEditGroup": "グループの編集",
+  "settingsCharactersGroupName": "グループ名",
+  "settingsCharactersDescription": "説明",
+  "settingsCharactersCharacterSetting": "キャラクター設定",
+  "settingsCharactersOpeningStatement": "冒頭陳述",
+  "settingsCharactersOtherContentChat": "追加のチャットコンテンツ",
+  "settingsCharactersOtherContentVoice": "追加音声コンテンツ",
+  "settingsCharactersAdvancedPrompt": "高度なカスタム プロンプト",
+  "settingsCharactersMarks": "注意事項",
+  "settingsCharactersTags": "タグ",
+  "settingsCharactersNoTags": "使用可能なタグがありません。タグ管理で作成し、このキャラクター カードにバインドします。",
+  "settingsCharactersImport": "インポート",
+  "settingsCharactersExport": "エクスポート",
+  "settingsCharactersImportJson": "JSONをインポートする",
+  "settingsCharactersCopyJson": "JSONをコピー",
+  "settingsCharactersImportTavernJson": "酒場のJSONをインポート",
+  "settingsCharactersCopyTavernJson": "酒場のJSONをコピー",
+  "settingsCharactersJsonInput": "JSONコンテンツ",
+  "settingsCharactersTavernJsonInput": "酒場のJSONコンテンツ",
+  "settingsCharactersJsonCopied": "「{name}」の JSON をコピーしました。",
+  "@settingsCharactersJsonCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTavernJsonCopied": "「{name}」の居酒屋 JSON をコピーしました。",
+  "@settingsCharactersTavernJsonCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersImportCardJson": "キャラクターカードJSONをインポート",
+  "settingsCharactersImportCardJsonDone": "キャラクターカードがインポートされました。",
+  "settingsCharactersImportTavernJsonDone": "酒場のキャラクターカードがインポートされました。",
+  "settingsCharactersImportGroupJson": "グループ JSON をインポートする",
+  "settingsCharactersImportGroupJsonDone": "グループがインポートされました。",
+  "settingsCharactersImportJsonError": "JSON インポートに失敗しました: {error}",
+  "@settingsCharactersImportJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersImportTavernJsonError": "酒場の JSON インポートに失敗しました: {error}",
+  "@settingsCharactersImportTavernJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTavernJsonCopyError": "酒場の JSON コピーに失敗しました: {error}",
+  "@settingsCharactersTavernJsonCopyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTagsSection": "タグ",
+  "settingsCharactersManageTags": "タグを管理する",
+  "settingsCharactersCreateTag": "新しいタグ",
+  "settingsCharactersEditTag": "タグを編集する",
+  "settingsCharactersDeleteTag": "タグの削除",
+  "settingsCharactersDeleteTagMessage": "「{name}」を削除しますか?",
+  "@settingsCharactersDeleteTagMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersTagName": "タグ名",
+  "settingsCharactersTagDescription": "タグの説明",
+  "settingsCharactersTagPromptContent": "プロンプトコンテンツ",
+  "settingsCharactersChatModelBindingMode": "チャットモデルバインディングモード",
+  "settingsCharactersChatModelConfigId": "チャットモデル構成ID",
+  "settingsCharactersChatModelIndex": "チャットモデルインデックス",
+  "settingsCharactersToolAccess": "ツール許可モード",
+  "settingsCharactersChatModelFollowGlobal": "グローバルモデルに従う",
+  "settingsCharactersChatModelFixedConfig": "固定モデル構成を使用する",
+  "settingsCharactersChatModelConfig": "モデル構成",
+  "settingsCharactersToolAccessFollowGlobal": "グローバルツール権限に従ってください",
+  "settingsCharactersToolAccessCustom": "カスタムキャラクターツールの権限",
+  "settingsCharactersToolAccessEmpty": "ツールが選択されていない場合に有効になります",
+  "settingsCharactersToolAccessSummaryCounts": "内蔵 {builtinCount} · パッケージ {packageCount} · スキル {skillCount} · MCP {mcpCount}",
+  "@settingsCharactersToolAccessSummaryCounts": {
+    "placeholders": {
+      "builtinCount": {
+        "type": "int"
+      },
+      "packageCount": {
+        "type": "int"
+      },
+      "skillCount": {
+        "type": "int"
+      },
+      "mcpCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsCharactersToolAccessConfigure": "ツールの許可リストを構成する",
+  "settingsCharactersToolAccessTitle": "カスタム許可ツール",
+  "settingsCharactersToolAccessTabBuiltin": "内蔵",
+  "settingsCharactersToolAccessTabPackage": "パッケージ",
+  "settingsCharactersToolAccessTabSkill": "スキル",
+  "settingsCharactersToolAccessTabMcp": "MCP",
+  "settingsCharactersToolAccessSearchPlaceholder": "名前、説明、または ID を検索します",
+  "settingsCharactersToolAccessEmptySearch": "一致するツールが見つかりませんでした",
+  "settingsCharactersToolAccessRequiresUsePackage": "パッケージ、スキル、または MCP を選択するには、組み込みの use_package ツールを許可する必要もあります。",
+  "settingsCharactersToolAccessEmptyBuiltin": "構成に使用できる組み込みツールはありません",
+  "settingsCharactersToolAccessEmptyPackages": "現在、世界中で利用可能なパッケージはありません",
+  "settingsCharactersToolAccessEmptySkills": "現在利用できる AI 可視スキルはありません",
+  "settingsCharactersToolAccessEmptyMcp": "現在使用できる有効な MCP サーバーはありません",
+  "settingsCharactersBuiltinTools": "許可される組み込みツール",
+  "settingsCharactersAllowedPackages": "許可されたパッケージ",
+  "settingsCharactersAllowedSkills": "許可されるスキル",
+  "settingsCharactersAllowedMcpServers": "許可された MCP サーバー",
+  "settingsCharactersGroupMembersTitle": "グループキャラクター",
+  "settingsCharactersOpenMemoryGraph": "メモリグラフを表示する",
+  "settingsCharactersMemoryGraphTitle": "{profileName} のメモリグラフ",
+  "@settingsCharactersMemoryGraphTitle": {
+    "placeholders": {
+      "profileName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersMemoryGraphEmpty": "メモリノードはまだありません",
+  "settingsCharactersMemoryGraphStats": "{nodes} ノード · {edges} リンク",
+  "@settingsCharactersMemoryGraphStats": {
+    "placeholders": {
+      "nodes": {
+        "type": "int"
+      },
+      "edges": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsCharactersMemoryGraphLink": "メモリーリンク",
+  "settingsCharactersEditUserMarkdown": "ユーザープロファイルを編集する",
+  "settingsCharactersUserMarkdownTitle": "{profileName}のユーザープロフィール",
+  "@settingsCharactersUserMarkdownTitle": {
+    "placeholders": {
+      "profileName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersUserMarkdownSaved": "ユーザープロファイルが保存されました",
+  "settingsCharactersUserMarkdownContent": "ユーザープロフィールの内容",
+  "settingsCharactersMemoryAutoUpdate": "メモリストアの自動更新",
+  "settingsCharactersMemoryAutoUpdateDescription": "AI が会話情報をメモリ ストアに整理できるようにします。",
+  "settingsCharactersPreferenceDescription": "ユーザープロファイルをモデルに提供する",
+  "settingsCharactersPreferenceDescriptionSubtitle": "現在のユーザー プロファイルをチャット プロンプトに含めます。",
+  "settingsCharactersCardsSection": "キャラクターカード",
+  "settingsCharactersGroupsSection": "グループ",
+  "settingsCharactersGroupMembers": "{count} メンバー",
+  "@settingsCharactersGroupMembers": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsPermissionMode": "AI機能モード",
+  "settingsToolsAsk": "尋ねる",
+  "settingsToolsExtensions": "拡張機能の管理",
+  "settingsToolsPlugins": "プラグイン",
+  "settingsToolsPluginsDescription": "ToolPkg プラグイン コンテナーと UI 拡張機能を管理します。",
+  "settingsToolsPackages": "ツールパッケージ",
+  "settingsToolsPackagesDescription": "組み込みまたは外部ツール パッケージを有効化、無効化、検査します。",
+  "settingsToolsSkills": "スキル",
+  "settingsToolsSkillsDescription": "スキル パッケージの表示とインポートを管理します。",
+  "settingsToolsMcp": "MCPサーバー",
+  "settingsToolsMcpDescription": "MCP 構成を管理します。起動待ち時間は{seconds}秒です。",
+  "@settingsToolsMcpDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsOverrides": "工具記録",
+  "settingsToolsToolGroups": "登録ツール",
+  "settingsToolsToolGroupsDescription": "AI で使用するために現在のランタイムによって登録されているツール。",
+  "settingsToolsAlwaysAllow": "このセッションでは許可されています",
+  "settingsToolsAlwaysAllowDescription": "これらのツールは現在のセッションで承認されました。",
+  "settingsToolsAlwaysForbid": "必ず禁止する",
+  "settingsToolsAlwaysForbidDescription": "AI はこれらのツールを呼び出しません。",
+  "settingsToolsAddTool": "ツールの追加",
+  "settingsToolsAddAllowTool": "許可されたツールを追加",
+  "settingsToolsAddForbidTool": "禁止ツールを追加する",
+  "settingsToolsSearchTools": "検索ツール",
+  "settingsToolsNoToolsInGroup": "このグループにはツールがありません。",
+  "settingsToolsMcpStartupTimeout": "MCP 起動タイムアウト",
+  "settingsToolsMcpStartupTimeoutSeconds": "数秒待ってください",
+  "settingsToolsToolPkgPreHookTimeout": "ToolPkg のフック前タイムアウト",
+  "settingsToolsToolPkgPreHookDescription": "1 つの ToolPkg プリフック チェーンの合計は {seconds} 秒です。",
+  "@settingsToolsToolPkgPreHookDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsToolPkgPreHookTimeoutSeconds": "合計秒数",
+  "settingsWorkspaceCurrentDesign": "現在のワークスペース構造",
+  "settingsWorkspaceCurrentDesignDescription": "ワークスペースはチャットに関連付けられています。ターミナル セッションとブラウザ セッションは、ワークスペース内にフラットに表示されるグローバル セッションです。",
+  "settingsWorkspaceOpenChat": "チャットワークスペースに戻る",
+  "settingsWorkspaceOpenChatDescription": "チャットの右側でファイル、ターミナル、ブラウザ、Web オートメーションを開きます。",
+  "settingsWorkspaceContains": "ワークスペースに含まれるもの",
+  "settingsWorkspacePerChat": "チャットごとに制限される",
+  "settingsWorkspaceGlobalSessions": "グローバルターミナルセッション",
+  "settingsWorkspaceBrowserSessions": "ブラウザーおよび WebVisit セッション",
+  "settingsWorkspaceBoundOverview": "ワークスペースバインディングの概要",
+  "settingsWorkspaceBoundOverviewDescription": "チャット履歴によって記録されたワークスペース パスがバインド ソースとして使用されます。",
+  "settingsWorkspaceBoundChats": "バウンドチャット",
+  "settingsWorkspaceInternalRoot": "内部ワークスペースルート",
+  "settingsWorkspaceExternalRoot": "従来の外部ワークスペースのルート",
+  "settingsWorkspaceUnboundTitle": "バインドされていないワークスペース",
+  "settingsWorkspaceUnboundSubtitle": "これらのワークスペース フォルダーはチャットでは使用されません。",
+  "settingsWorkspaceNoUnbound": "バインドされていないワークスペースはありません。",
+  "settingsWorkspaceSelectedCount": "選択済み {selected} / {total}",
+  "@settingsWorkspaceSelectedCount": {
+    "placeholders": {
+      "selected": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceSelectAllCurrentList": "すべて選択",
+  "settingsWorkspaceClearAll": "クリア",
+  "settingsWorkspaceInternalStorage": "内部ストレージ",
+  "settingsWorkspaceExternalStorage": "外部ストレージ",
+  "settingsWorkspaceNotUsedByAnyChat": "どのチャットでも使用されていません",
+  "settingsWorkspaceDeleteSelected": "選択したワークスペースを削除します ({count})",
+  "@settingsWorkspaceDeleteSelected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceConfirmDeleteTitle": "削除の確認",
+  "settingsWorkspaceDeleteConfirmation": "選択した {count} ワークスペース フォルダーを削除しますか?",
+  "@settingsWorkspaceDeleteConfirmation": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleted": "{count} 非バインド ワークスペースを削除しました。",
+  "@settingsWorkspaceDeleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleteFailed": "削除に失敗しました: {error}",
+  "@settingsWorkspaceDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceLoadFailed": "ワークスペースのロードに失敗しました: {error}",
+  "@settingsWorkspaceLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceRefresh": "リフレッシュ",
+  "runtimeIdentity": "現在のアイデンティティ",
+  "runtimeIdentityManage": "ID の切り替えまたは管理",
+  "runtimeIdentitySheetTitle": "アイデンティティ",
+  "runtimeIdentityCreate": "新しいアイデンティティ",
+  "runtimeIdentityCreateTitle": "新しいアイデンティティ",
+  "runtimeIdentityRename": "ID の名前を変更する",
+  "runtimeIdentityRenameTitle": "ID の名前を変更する",
+  "runtimeIdentityName": "名前 (オプション)",
+  "runtimeIdentitySwitchTitle": "{identityName} に切り替えますか?",
+  "@runtimeIdentitySwitchTitle": {
+    "placeholders": {
+      "identityName": {
+        "type": "String"
+      }
+    }
+  },
+  "runtimeIdentitySwitchDescription": "各 ID には、個別のチャット、設定、デバイス スペース、ペアリングされたデバイス、およびワークスペースがあります。切り替えると現在のランタイムが終了します。選択した ID は、次回アプリを起動するときに使用されます。",
+  "runtimeIdentitySwitchConfirm": "ID を切り替える",
+  "runtimeIdentityCurrent": "現在",
+  "settingsUserProfileTitle": "ユーザープロフィール",
+  "settingsUserProfileSubtitle": "アバター、名前、アイデンティティ、および GitHub",
+  "settingsUserProfileDescription": "このプロファイルを管理し、分離された ID を切り替えます。",
+  "settingsUserProfileUnnamed": "無名",
+  "settingsUserProfileNotLoggedIn": "ログインしていません",
+  "settingsUserProfileGitHubLoading": "GitHub アカウントを読み込んでいます...",
+  "settingsUserProfileGitHubAccount": "GitHub: @{account}",
+  "@settingsUserProfileGitHubAccount": {
+    "placeholders": {
+      "account": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUserProfileGitHubStatusError": "GitHub ステータス エラー: {error}",
+  "@settingsUserProfileGitHubStatusError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUserProfileOverview": "プロフィール",
+  "settingsUserProfileAvatar": "アバター",
+  "settingsUserProfileName": "名前",
+  "settingsUserProfileChooseAvatar": "アバターを選択",
+  "settingsUserProfileClearAvatar": "クリアアバター",
+  "settingsUserProfileEditName": "名前の編集",
+  "settingsUserProfileIdentities": "アイデンティティ",
+  "settingsUserProfileGitHub": "GitHub アカウント",
+  "settingsUserProfileGitHubDescription": "ログインしていません",
+  "settingsUserProfileLogin": "ログイン",
+  "settingsUserProfileLogout": "ログアウト",
+  "settingsAppearanceAvatarCustom": "カスタムアバター",
+  "settingsRuntimeConnection": "現在のデバイススペース",
+  "settingsRuntimeConnectionDescription": "このデバイスとそのデバイス空間の接続ステータス。",
+  "settingsRuntimeCurrentSpace": "現在のデバイススペース",
+  "settingsRuntimeRenameSpace": "デバイススペースの名前を変更する",
+  "settingsRuntimeLeaveSpace": "デバイスのスペースを残す",
+  "settingsRuntimeLeaveSpaceTitle": "現在のデバイススペースをそのままにしますか?",
+  "settingsRuntimeLeaveSpaceDescription": "このデバイスは、新しい単一デバイスのスペースを作成します。ビジネスデータとペアリングされたデバイスは保持されます。",
+  "settingsRuntimeLeaveSpaceConfirm": "休暇を取る",
+  "settingsRuntimeSpaceName": "デバイス空間名",
+  "settingsRuntimeSpaceId": "デバイス空間ID: {spaceId}",
+  "@settingsRuntimeSpaceId": {
+    "placeholders": {
+      "spaceId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceDeviceCount": "{count} デバイス",
+  "@settingsRuntimeSpaceDeviceCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeViewSpaceTopology": "デバイストポロジの表示",
+  "settingsRuntimeSpaceTopologyTitle": "{spaceName} デバイス トポロジ",
+  "@settingsRuntimeSpaceTopologyTitle": {
+    "placeholders": {
+      "spaceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceTopologySummary": "{deviceCount} デバイス · {connectionCount} 直接接続",
+  "@settingsRuntimeSpaceTopologySummary": {
+    "placeholders": {
+      "deviceCount": {
+        "type": "int"
+      },
+      "connectionCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnection": "切断する",
+  "settingsRuntimeDisconnectConnectionTitle": "ダイレクト接続を切断する",
+  "settingsRuntimeDisconnectConnectionMessage": "{deviceName} への直接接続を切断しますか?ペアリング記録は残ります。",
+  "@settingsRuntimeDisconnectConnectionMessage": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnectionFailed": "切断に失敗しました",
+  "settingsRuntimeCurrentDevice": "現在のデバイス",
+  "settingsRuntimeRemoteTitle": "接続されたデバイス",
+  "settingsRuntimeRemoteDescription": "直接ペアリングされたデバイス。ペアリングにより接続が確立されます。デバイス空間に参加すると、データとルーティングの共有が可能になります。",
+  "settingsRuntimePairRemote": "別のデバイスを接続する",
+  "settingsRuntimeNoPairedRemote": "まだ接続されているデバイスがありません。",
+  "settingsRuntimeConnectionInitiatedByOtherDevice": "他のデバイスによって開始された接続",
+  "settingsRuntimePairToken": "接続トークン",
+  "settingsRuntimePairCode": "ペアリングコード",
+  "settingsRuntimeStartPairing": "接続を開始する",
+  "settingsRuntimeFinishPairing": "接続を終了する",
+  "settingsRuntimeBaseUrl": "デバイスアドレス",
+  "settingsRuntimeConnectionFailed": "デバイスの接続に失敗しました: {error}",
+  "@settingsRuntimeConnectionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimePairingRejected": "デバイスの接続が拒否されました",
+  "settingsRuntimePairedChecking": "チェック中",
+  "settingsRuntimePairedOnline": "オンライン",
+  "settingsRuntimePairedOffline": "オフライン",
+  "settingsRuntimePairedError": "状態を取得できません",
+  "settingsRuntimePairedInvalid": "ペアリングが無効です",
+  "settingsRuntimePairedRemovedFromSpace": "デバイススペースから削除されました",
+  "settingsRuntimePairingRevokedTitle": "相手のデバイスがペアリングを解除しました",
+  "settingsRuntimePairingRevokedMessage": "相手のデバイスがこのデバイスとのペアリングを解除しました。このデバイスに保存されているペアリング情報は無効です。",
+  "settingsRuntimePairingRevokedConfirm": "確認しました",
+  "settingsRuntimeRemovedFromSpaceTitle": "デバイススペースから削除されました",
+  "settingsRuntimeRemovedFromSpaceMessage": "相手のデバイスによって、このデバイスがデバイススペースから削除されました。現在のデバイススペースを退出し、このデバイス専用のスペースを作成します。",
+  "settingsRuntimeRemovedFromSpaceConfirm": "退出して専用スペースを作成",
+  "settingsRuntimeJoinSpace": "デバイススペースに参加する",
+  "settingsRuntimeJoinSpaceTitle": "{deviceName} のデバイススペースに参加しますか?",
+  "@settingsRuntimeJoinSpaceTitle": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeJoinSpaceDescription": "現在のデバイス空間は他のデバイス空間とマージされ、その名前が使用されます。",
+  "settingsRuntimePairingComplete": "デバイスがペアリングされました",
+  "settingsRuntimeDeviceInCurrentSpace": "現在のデバイス空間内",
+  "settingsRuntimeDiscoverSpaces": "デバイススペースを発見する",
+  "settingsRuntimeDiscoverSpacesDescription": "近くのデバイスはデバイススペースごとにグループ化されます。デバイス スペースを拡張して、そのデバイスの 1 つに直接接続します。",
+  "settingsRuntimeDiscoveredSpaceSummary": "合計 {memberCount} デバイス · 近くのデバイス {nearbyCount} 台",
+  "@settingsRuntimeDiscoveredSpaceSummary": {
+    "placeholders": {
+      "memberCount": {
+        "type": "int"
+      },
+      "nearbyCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeScan": "スキャン",
+  "settingsRuntimeScanning": "スキャン中…",
+  "settingsRuntimeEnterManually": "手動で入力",
+  "settingsRuntimeConnect": "接続する",
+  "settingsRuntimeEnableDiscovery": "近くのデバイスがこのデバイススペースを検出できるようにする",
+  "settingsRuntimeEnableDiscoveryDescription": "同じネットワーク上のデバイスは、このデバイス スペースを見つけて、直接接続するためにこのデバイスを選択できます。",
+  "settingsRuntimeEnableDiscoveryFailed": "デバイススペース検出を有効にできませんでした: {error}",
+  "@settingsRuntimeEnableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisableDiscoveryFailed": "デバイススペースの検出を無効にできませんでした: {error}",
+  "@settingsRuntimeDisableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeUsingLocal": "使用: このデバイス",
+  "settingsRuntimeUsingRemote": "使用: {device}",
+  "@settingsRuntimeUsingRemote": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeRemoteInUseDescription": "チャットとツールは、この接続されたデバイス上で実行されます。",
+  "settingsWebAccessService": "アクセスを許可する",
+  "settingsWebAccessServiceDescription": "有効にすると、ブラウザはアドレスとトークンを使用してこのデバイスにアクセスできます。",
+  "settingsWebAccessEnable": "外部アクセスを許可する",
+  "settingsWebAccessPortMode": "ポートモード",
+  "settingsWebAccessPortAutomatic": "自動",
+  "settingsWebAccessPortFixed": "修正済み",
+  "settingsWebAccessPortAutomaticDescription": "アプリはポートを自動的に選択します。手動セットアップは必要ありません。",
+  "settingsWebAccessPortFixedDescription": "リッスン アドレスのポートのみが使用されます。",
+  "settingsWebAccessBindAddress": "リッスンアドレス",
+  "settingsWebAccessToken": "アクセストークン",
+  "settingsWebAccessRotateToken": "トークンの変更",
+  "settingsWebAccessCopyToken": "トークンをコピーする",
+  "settingsWebAccessAccessUrl": "アクセスアドレス",
+  "settingsWebAccessLocalUrl": "このデバイス",
+  "settingsWebAccessPairingUrl": "ペアリングアドレス",
+  "settingsWebAccessPairingUrlLocalOnly": "この端末のみ",
+  "settingsWebAccessPairingUrlUnavailable": "LANアドレスが見つかりません",
+  "settingsWebAccessCopyUrl": "URLをコピー",
+  "settingsWebAccessOpenUrl": "オープンアドレス",
+  "settingsWebAccessRunning": "オン",
+  "settingsWebAccessStopped": "オフ",
+  "settingsWebAccessSaved": "アクセス設定が保存されました。",
+  "settingsWebAccessTokenCopied": "アクセストークンがコピーされました。",
+  "settingsWebAccessUrlCopied": "アクセスURLがコピーされました。",
+  "settingsWebAccessPairedClients": "認可されたデバイス",
+  "settingsWebAccessNoPairedClients": "まだデバイスが認証されていません。",
+  "settingsWebAccessPairedDeleted": "認証されたデバイスが削除されました。",
+  "settingsWebAccessPairingRequest": "ペアリングリクエスト",
+  "settingsWebAccessPairingRequestMessage": "ペアリングコード: {code}\nデバイス: {client}",
+  "@settingsWebAccessPairingRequestMessage": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      },
+      "client": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessInvalidBindAddress": "バインド アドレスはホスト:ポートである必要があります。",
+  "settingsWebAccessStartFailed": "アクセスを有効にできませんでした: {error}",
+  "@settingsWebAccessStartFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessStopFailed": "アクセスをオフにできませんでした: {error}",
+  "@settingsWebAccessStopFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeSection": "テーマ",
+  "settingsAppearanceThemeMode": "現在のモード",
+  "settingsAppearanceThemeTarget": "テーマの保存先",
+  "settingsAppearanceThemeTargetGlobal": "グローバル",
+  "settingsAppearanceThemeTargetCharacter": "現在のキャラクター: {name}",
+  "@settingsAppearanceThemeTargetCharacter": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsAppearanceThemeTargetGroup": "現在のグループ: {name}",
+  "@settingsAppearanceThemeTargetGroup": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "settingsAppearanceThemeSystem": "システム",
+  "settingsAppearanceThemeLight": "ライト",
+  "settingsAppearanceThemeDark": "暗い",
+  "settingsAppearanceInputSection": "入力",
+  "settingsAppearanceInputStyle": "入力スタイル",
+  "settingsAppearanceInputStyleClassic": "クラシック",
+  "settingsAppearanceInputStyleAgent": "エージェント",
+  "settingsAppearanceInputFloating": "フローティング入力",
+  "settingsAppearanceColorSection": "テーマカラー",
+  "settingsAppearanceColorDescription": "シンプルな色のプリセットを選択します。システム バーと現在のアプリ クロムは自動的にテーマに従います。",
+  "settingsAppearanceColorDefault": "デフォルト",
+  "settingsAppearanceColorSky": "空",
+  "settingsAppearanceColorMatcha": "抹茶",
+  "settingsAppearanceColorEmber": "残り火",
+  "settingsAppearanceColorRose": "ローズ",
+  "settingsAppearanceColorCustom": "カスタムカラー",
+  "settingsAppearanceCustomColorsTitle": "カスタムテーマカラー",
+  "settingsAppearancePrimaryColor": "原色",
+  "settingsAppearanceSecondaryColor": "二次色",
+  "settingsAppearanceHexColorHint": "#RRGGBB",
+  "settingsAppearanceHexColorInvalid": "#RRGGBB 形式で色を入力してください",
+  "settingsAppearanceBackgroundSection": "背景",
+  "settingsAppearanceBackgroundDescription": "アプリの背景としてローカルの画像またはビデオを選択します。アプリのサーフェスとシステム バーは自動的にテーマに従います。",
+  "settingsAppearanceBackgroundImage": "バックグラウンドメディア",
+  "settingsAppearanceBackgroundNone": "何も選択されていません",
+  "settingsAppearanceBackgroundChooseImage": "画像を選択してください",
+  "settingsAppearanceBackgroundChooseVideo": "ビデオを選択してください",
+  "settingsAppearanceBackgroundDisable": "背景を無効にする",
+  "settingsAppearanceBackgroundEnabled": "バックグラウンドを有効にする",
+  "settingsAppearanceBackgroundOpacity": "背景の不透明度",
+  "settingsAppearanceBackgroundBlur": "背景をぼかす",
+  "settingsAppearanceBackgroundBlurRadius": "ぼかしの強さ",
+  "settingsAppearanceBackgroundVideoMuted": "ビデオの背景をミュートする",
+  "settingsAppearanceBackgroundVideoLoop": "ループビデオの背景",
+  "settingsAppearanceTextSection": "テキスト",
+  "settingsAppearanceFontFamily": "フォント",
+  "settingsAppearanceFontDefault": "デフォルト",
+  "settingsAppearanceCustomFont": "カスタムフォント",
+  "settingsAppearanceFontCustom": "カスタム",
+  "settingsAppearanceChooseCustomFont": "カスタムフォントを選択してください",
+  "settingsAppearanceClearCustomFont": "クリアカスタムフォント",
+  "settingsAppearanceFontSerif": "セリフ",
+  "settingsAppearanceFontMonospace": "モノラル",
+  "settingsAppearanceFontScale": "フォントサイズ",
+  "settingsAppearanceAvatarSection": "アバター",
+  "settingsAppearanceUserAvatar": "ユーザーのアバター",
+  "settingsAppearanceAiAvatar": "AIアバター",
+  "settingsAppearanceAvatarDefault": "デフォルトのアバター",
+  "settingsAppearanceAvatarShape": "アバターの形状",
+  "settingsAppearanceAvatarShapeCircle": "サークル",
+  "settingsAppearanceAvatarShapeSquare": "正方形",
+  "settingsAppearanceChooseUserAvatar": "ユーザーのアバターを選択",
+  "settingsAppearanceChooseAiAvatar": "AIアバターを選択",
+  "settingsAppearanceClearUserAvatar": "ユーザーアバターをクリアする",
+  "settingsAppearanceClearAiAvatar": "クリアAIアバター",
+  "settingsAppearanceChatDisplaySection": "チャット表示",
+  "settingsAppearanceMessageStyle": "メッセージスタイル",
+  "settingsAppearanceMessageStyleClean": "コマンド",
+  "settingsAppearanceMessageStyleCard": "バブル",
+  "settingsAppearanceMessageColors": "メッセージカラー",
+  "settingsAppearanceMessageColorsTheme": "テーマに従う",
+  "settingsAppearanceMessageColorsSky": "クリーンブルー",
+  "settingsAppearanceMessageColorsMatcha": "抹茶",
+  "settingsAppearanceMessageColorsInk": "暗い",
+  "settingsAppearanceMessageColorsCustom": "カスタムメッセージの色",
+  "settingsAppearanceCustomMessageColorsTitle": "カスタムメッセージの色",
+  "settingsAppearanceCursorUserBubbleColor": "コマンドユーザーバブル",
+  "settingsAppearanceUserBubbleColor": "ユーザーバブル",
+  "settingsAppearanceAiBubbleColor": "AIバブル",
+  "settingsAppearanceUserTextColor": "ユーザーテキスト",
+  "settingsAppearanceAiTextColor": "AIテキスト",
+  "settingsAppearanceMessageSurface": "グローバルテクスチャ",
+  "settingsAppearanceMessageSurfaceNormal": "ノーマル",
+  "settingsAppearanceMessageSurfaceTransparent": "透明",
+  "settingsAppearanceUserBubbleFont": "ユーザーバブルフォント",
+  "settingsAppearanceAiBubbleFont": "AIバブルフォント",
+  "settingsAppearanceAdjustUserBubbleFont": "ユーザーバブルフォントを調整する",
+  "settingsAppearanceAdjustAiBubbleFont": "AIバブルフォントを調整する",
+  "settingsAppearanceEnableBubbleFont": "バブル固有のフォントを有効にする",
+  "settingsAppearanceUserBubbleImage": "ユーザーのバブル画像",
+  "settingsAppearanceAiBubbleImage": "AIバブルイメージ",
+  "settingsAppearanceChooseUserBubbleImage": "ユーザーバブルを選択",
+  "settingsAppearanceChooseAiBubbleImage": "AIバブルを選択",
+  "settingsAppearanceClearUserBubbleImage": "ユーザーバブルをクリアする",
+  "settingsAppearanceClearAiBubbleImage": "クリアAIバブル",
+  "settingsAppearanceBubbleImageRenderMode": "バブル画像モード",
+  "settingsAppearanceBubbleImageTiledNineSlice": "タイル状 9 スライス",
+  "settingsAppearanceBubbleImageNinePatch": "ストレッチ9パッチ",
+  "settingsAppearanceBubbleImageAdjustUser": "ユーザーのバブル画像を調整する",
+  "settingsAppearanceBubbleImageAdjustAi": "AIバブル画像を調整する",
+  "settingsAppearanceBubbleImagePreview": "プレビュー",
+  "settingsAppearanceBubbleImagePreviewText": "9 スライス ガイドによるバブル プレビュー",
+  "settingsAppearanceBubbleImageCrop": "作物",
+  "settingsAppearanceBubbleImageRepeat": "リピート領域",
+  "settingsAppearanceBubbleImageScale": "画像スケール",
+  "settingsAppearanceBubbleImageCropLeft": "左をトリミング",
+  "settingsAppearanceBubbleImageCropTop": "クロップトップ",
+  "settingsAppearanceBubbleImageCropRight": "右にトリミング",
+  "settingsAppearanceBubbleImageCropBottom": "作物の底",
+  "settingsAppearanceBubbleImageRepeatStart": "リピートXスタート",
+  "settingsAppearanceBubbleImageRepeatEnd": "リピート X 終了",
+  "settingsAppearanceBubbleImageRepeatYStart": "リピートYスタート",
+  "settingsAppearanceBubbleImageRepeatYEnd": "リピートYエンド",
+  "settingsAppearanceMessageDensity": "メッセージの間隔",
+  "settingsAppearanceMessageDensityComfortable": "快適",
+  "settingsAppearanceMessageDensityCompact": "コンパクト",
+  "settingsAppearanceWideLayout": "より広いチャット レイアウトを使用する",
+  "settingsAppearanceRoundedMessages": "丸いメッセージカード",
+  "settingsAppearanceShowAvatars": "メッセージアバターを表示",
+  "settingsAppearanceMessageDisplaySection": "メッセージ表示",
+  "settingsAppearanceShowThinkingProcess": "思考プロセスを示す",
+  "settingsAppearanceShowRoleName": "ロール名を表示",
+  "settingsAppearanceShowUserName": "ユーザー名を表示",
+  "settingsAppearanceShowModelName": "モデル名を表示",
+  "settingsAppearanceShowModelProvider": "モデルプロバイダーを表示",
+  "settingsAppearanceShowMessageTokenStats": "トークンの統計を表示する",
+  "settingsAppearanceShowMessageTimingStats": "タイミング統計を表示する",
+  "settingsAppearanceShowMessageTimestamp": "メッセージ時間を表示する",
+  "settingsAppearanceShowInputProcessingStatus": "入力処理状況の表示",
+  "settingsAppearanceResetTheme": "テーマ設定をリセットする",
+  "settingsAppearanceLanguageSection": "言語",
+  "settingsAppearanceLanguage": "現在の言語",
+  "settingsAppearanceLanguageDescription": "言語は、アプリの起動時に読み込まれるローカリゼーション設定に従います。",
+  "settingsDataRuntimeSection": "データの概要",
+  "settingsDataCoreVersion": "現在のバージョン",
+  "settingsDataStorageSection": "保管場所",
+  "settingsDataStorageDescription": "ランタイム データとワークスペース データを、個別に選択したローカル フォルダーに移動します。",
+  "settingsDataRuntimeRoot": "ランタイムルート",
+  "settingsDataWorkspaceRoot": "ワークスペースルート",
+  "settingsDataChooseStorageRoots": "場所を編集する",
+  "settingsDataEditStorageRootsTitle": "保管場所を編集する",
+  "settingsDataStorageRootsRequired": "ランタイム ルートとワークスペース ルートが必要です。",
+  "settingsDataStorageConfirmTitle": "保存場所を変更する",
+  "settingsDataStorageConfirmMessage": "ランタイム データとワークスペース データは選択したディレクトリにコピーされ、アプリは再起動後にそれらを使用します。",
+  "settingsDataStorageConfirmAction": "場所を変更する",
+  "settingsDataStorageChanged": "保管場所が変更されました。アプリを再起動して使用してください。",
+  "settingsDataStorageChangeError": "保存場所の変更に失敗しました: {error}",
+  "@settingsDataStorageChangeError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataTokenSection": "使用状況の統計",
+  "settingsDataInputTokens": "入力",
+  "settingsDataOutputTokens": "出力",
+  "settingsDataOpenDetailedStats": "詳細な統計を表示する",
+  "settingsDataOpenDetailedStatsDescription": "毎日の傾向、入出力トークンの変化、プロバイダー、モデル、会話ごとの使用量の内訳を開きます。",
+  "settingsDataRefreshTokenStats": "統計を更新する",
+  "settingsDataResetTokenStats": "統計をリセットする",
+  "settingsDataDetailedStatsTitle": "詳細な統計",
+  "settingsDataDetailedStatsDescription": "統計は、専用のモデル要求レコードから計算されます。",
+  "settingsDataDetailedStatsEmpty": "詳細な使用記録はまだありません",
+  "settingsDataDetailedStatsDateRange": "{start} ～ {end}",
+  "@settingsDataDetailedStatsDateRange": {
+    "placeholders": {
+      "start": {
+        "type": "String"
+      },
+      "end": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsSourceLabel": "モデルリクエストレコード",
+  "settingsDataDetailedStatsSourceChat": "チャットの応答",
+  "settingsDataDetailedStatsSourceToolResult": "ツール結果の応答",
+  "settingsDataDetailedStatsSourceSummary": "サマリーの生成",
+  "settingsDataDetailedStatsSourceTitleGeneration": "タイトル生成",
+  "settingsDataDetailedStatsSourceMemory": "メモリ分析",
+  "settingsDataDetailedStatsTotalRequests": "リクエストの合計",
+  "settingsDataDetailedStatsCachedInput": "キャッシュされた入力",
+  "settingsDataDetailedStatsActiveDays": "活動的な日",
+  "settingsDataDetailedStatsChats": "会話",
+  "settingsDataDetailedStatsProviders": "プロバイダー",
+  "settingsDataDetailedStatsModels": "モデル",
+  "settingsDataDetailedStatsDailyUsageTitle": "日々の使用量の傾向",
+  "settingsDataDetailedStatsDailyUsageSubtitle": "日別のリクエスト数",
+  "settingsDataDetailedStatsRequestsSeries": "リクエスト",
+  "settingsDataDetailedStatsInputOutputTitle": "入出力消費傾向",
+  "settingsDataDetailedStatsInputOutputSubtitle": "入力と出力の毎日のトークン変更",
+  "settingsDataDetailedStatsProviderPieTitle": "プロバイダーの配布",
+  "settingsDataDetailedStatsModelPieTitle": "モデルの配布",
+  "settingsDataDetailedStatsChatPieTitle": "会話配信",
+  "settingsDataDetailedStatsTotalTokens": "総トークン数",
+  "settingsDataDetailedStatsTopRequestsTitle": "上位のリクエスト",
+  "settingsDataDetailedStatsTopRequestsSubtitle": "単一リクエストのトークン消費量が最も多い",
+  "settingsDataDetailedStatsTopChatsTitle": "よくある会話",
+  "settingsDataDetailedStatsTopChatsSubtitle": "会話による合計トークン消費量が最も多い",
+  "settingsDataDetailedStatsOther": "その他",
+  "settingsDataDetailedStatsInputOutputSummary": "入力 {input} · 出力 {output} · {chatTitle} · {time}",
+  "@settingsDataDetailedStatsInputOutputSummary": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      },
+      "chatTitle": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsRequestModelSummary": "{requests} リクエスト · {models} モデル",
+  "@settingsDataDetailedStatsRequestModelSummary": {
+    "placeholders": {
+      "requests": {
+        "type": "int"
+      },
+      "models": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataDetailedStatsUnlabeledProvider": "ラベルのないプロバイダー",
+  "settingsDataDetailedStatsUnlabeledModel": "ラベルなしモデル",
+  "settingsDataDetailedStatsUntitledChat": "無題の会話",
+  "settingsDataBackupSection": "バックアップと復元",
+  "settingsDataChatHistoriesBackup": "チャットデータ",
+  "settingsDataChatHistoriesBackupDescription": "すべてのチャットとメッセージをバックアップします。チャット ID によって更新を復元するか、チャットを作成します。",
+  "settingsDataCharacterCardsBackup": "キャラクターカードデータ",
+  "settingsDataCharacterCardsBackupDescription": "すべてのキャラクター カードと参照されているタグをバックアップします。元の ID に基づいて更新または項目を復元します。",
+  "settingsDataCharacterGroupsBackup": "グループデータ",
+  "settingsDataCharacterGroupsBackupDescription": "すべてのグループをバックアップします。復元では、メンバーの参照と順序が保持されます。",
+  "settingsDataModelConfigsBackup": "モデル設定",
+  "settingsDataModelConfigsBackupDescription": "モデル パラメーターや API キー プールを含むすべてのモデル設定をバックアップします。",
+  "settingsDataBackupCount": "{count} アイテム",
+  "@settingsDataBackupCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataCopyBackupJson": "バックアップのコピー",
+  "settingsDataImportBackupJson": "データを復元する",
+  "settingsDataBackupJsonInput": "コンテンツを復元する",
+  "settingsDataBackupCopied": "「{name}」のバックアップをコピーしました。",
+  "@settingsDataBackupCopied": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataBackupImportResult": "復元が完了しました: 新規 {newCount} 件、更新 {updatedCount} 件、スキップ {skippedCount} 件。",
+  "@settingsDataBackupImportResult": {
+    "placeholders": {
+      "newCount": {
+        "type": "int"
+      },
+      "updatedCount": {
+        "type": "int"
+      },
+      "skippedCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataBackupImportError": "復元に失敗しました: {error}",
+  "@settingsDataBackupImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataBackupCopyError": "コピーに失敗しました: {error}",
+  "@settingsDataBackupCopyError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotBackupTitle": "完全なスナップショット",
+  "settingsDataExportRawSnapshot": "スナップショットのエクスポート",
+  "settingsDataImportRawSnapshot": "スナップショットを復元する",
+  "settingsDataExportRawSnapshotDescription": "チャット、キャラクター、モデル設定、ローカルファイルを 1 つのバックアップ ファイルにまとめます。復元すると、現在のデータがバックアップに置き換えられます。",
+  "settingsDataSnapshotBytes": "スナップショットのサイズ: {bytes} バイト",
+  "@settingsDataSnapshotBytes": {
+    "placeholders": {
+      "bytes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataSnapshotImported": "スナップショットが復元されました。",
+  "settingsDataSnapshotExportError": "スナップショットのエクスポートに失敗しました: {error}",
+  "@settingsDataSnapshotExportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotImportError": "スナップショットの復元に失敗しました: {error}",
+  "@settingsDataSnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmTitle": "完全なスナップショットを復元する",
+  "settingsDataSnapshotRestoreConfirmMessage": "復元すると、現在のランタイムデータが置き換えられます。\n形式バージョン: {formatVersion}\nファイル数: {fileCount}\n作成日時: {createdAt}\nスナップショットサイズ: {bytes} バイト",
+  "@settingsDataSnapshotRestoreConfirmMessage": {
+    "placeholders": {
+      "formatVersion": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "createdAt": {
+        "type": "String"
+      },
+      "bytes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmAction": "復元",
+  "settingsDataImportOperit1Snapshot": "Operit 1から引き継ぐ",
+  "settingsDataOperit1SnapshotImported": "Operit 1の引き継ぎが完了しました。",
+  "settingsDataOperit1SnapshotImportError": "Operit 1の引き継ぎに失敗しました: {error}",
+  "@settingsDataOperit1SnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportConfirmMessage": "このOperit 1の引き継ぎファイルを現在のRuntimeへ読み込みます。\nファイル: {fileName}\n形式: {formatVersion}\nチャットモデル: {chatModelId}\nチャット: {chatCount}件、メッセージ: {messageCount}件\nデータファイル: {fileCount}件\nファイルサイズ: {byteCount}バイト",
+  "@settingsDataOperit1SnapshotImportConfirmMessage": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      },
+      "formatVersion": {
+        "type": "int"
+      },
+      "chatModelId": {
+        "type": "String"
+      },
+      "chatCount": {
+        "type": "int"
+      },
+      "messageCount": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "byteCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportAction": "引き継ぐ",
+  "settingsDataAdvancedBackupOptions": "詳細オプション",
+  "settingsDataAdvancedBackupOptionsDescription": "単一アイテムの JSON エクスポートと復元",
+  "onboardingIntroTagline": "毎日の作業を、ここからもっと簡単に",
+  "onboardingStart": "はじめる",
+  "onboardingPleaseWait": "しばらくお待ちください",
+  "onboardingAgree": "同意する",
+  "onboardingAgreementProgress": "利用規約",
+  "onboardingSkip": "スキップ",
+  "onboardingPrevious": "前のページ",
+  "onboardingAgreementTitle": "利用規約・プライバシー",
+  "onboardingAgreementDescription": "内容を確認し、同意すると端末の設定を続けられます。",
+  "onboardingAgreementVersion": "バージョン：{version}",
+  "@onboardingAgreementVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingAgreementWait": "あと{seconds}秒で同意できます。",
+  "@onboardingAgreementWait": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "onboardingAgreementPlainTitle": "わかりやすい要約（法的な正文ではありません）",
+  "onboardingAgreementPlainIntro": "Operitは端末上で動作するオープンソースのクライアントです。Operit自身はAIモデルの推論サービスやチャット履歴の保管、共用APIキーの提供を行いません。クラウドモデル、音声、検索、画像生成、MCPなどのネットワーク機能を設定すると、データは各サービス提供者へ直接送信され、その利用規約とプライバシーポリシーが適用されます。ローカルモデルは端末内で処理されます。",
+  "onboardingAgreementPlainCapabilities": "このアプリは、ファイル、ターミナル、自動操作、システム権限、Root、ADB、拡張機能などを利用する場合があります。実行内容を確認し、大切なデータをバックアップしたうえで、権限は慎重に許可してください。操作、設定、外部サービス、拡張機能によって端末・データ・アカウントなどに損害が生じた場合は、実際に操作した人が適用法令に従って対応する責任を負います。",
+  "onboardingAgreementPlainThirdParty": "マーケットのプラグイン、スクリプト、Skill、ツールパッケージなど第三者のコンテンツに関する著作権と責任は、各作者または権利者に帰属します。表示やインストールは、Operitによる保証・推奨・権利取得を意味しません。",
+  "onboardingAgreementLegalTitle": "正式な法的規約",
+  "onboardingAgreementLegalSection1": "1. 適用範囲と規約のバージョン\n本規約は、Operitが公式に公開するクライアントと任意のオンライン機能に適用されます。本アプリを使用すると、現在の規約を読み、同意したものとみなされます。アプリは同意したバージョンを記録し、重要な変更があった場合は改めて同意を求めます。オープンソースのライセンスは、リポジトリ直下のLICENSEに記載されたLGPLv3に従います。本規約は、適用法令やオープンソースライセンスによって認められた権利を除外または制限するものではありません。",
+  "onboardingAgreementLegalSection2": "2. 製品の位置づけと外部サービス\nOperitは、大規模言語モデルの推論、共用APIキー、チャット要求の中継、チャット履歴のクラウド保管を提供しません。外部サービスはご自身で選択・設定・有効化し、サービス提供者、モデル、接続先、拡張機能の安全性・適法性・適合性を判断して、認証情報を適切に管理してください。",
+  "onboardingAgreementLegalSection3": "3. データの処理とプライバシー\nチャット履歴、キャラクターカード、メモリー、モデル設定、APIキーは、通常、端末上のアプリデータに保存されます。エクスポート、バックアップ、ファイルのアップロード、外部ネットワーク機能、外部HTTPサービスへの送信を行うと、その操作に応じて関連データが複製・送信・開示されます。マーケット、お知らせ、更新確認、GitHubログイン、公開などの機能は、Operit、GitHub、または関連する外部サービスへアクセスします。",
+  "onboardingAgreementLegalSection4": "4. 外部公開と運用者の責任\n外部HTTPサービス、ボット、自動返信などの機能は、ご自身の判断で有効にします。他人や一般向けに公開する場合、実際の公開者・運用者として、アクセス制御、利用者の同意、コンテンツの安全性、データ保護、未成年者の保護、必要な表示など、適用される義務を負います。",
+  "onboardingAgreementLegalSection5": "5. 適法な利用とコンテンツへの責任\n適用法令、外部サービスの規約、プラットフォームのルールを守ってください。本アプリ、拡張機能、設定を、違法行為、他者の権利侵害、無許可でのシステムやデータへのアクセス、違法・有害コンテンツの配布に利用してはいけません。AIの出力には誤り、抜け、偏りが含まれる可能性があり、医療・法律・金融などの専門的な助言ではありません。",
+  "onboardingAgreementLegalSection6": "6. 現状のままでの提供\n適用法令で認められる範囲において、本ソフトウェアは「現状のまま」「利用可能な状態」で提供されます。貢献者は、本ソフトウェアや外部サービスの継続的な利用可能性、正確性、安全性、商品性、特定目的への適合性、第三者の権利を侵害しないことについて、明示・黙示を問わず保証しません。",
+  "onboardingAgreementLegalSection7": "7. 規約の更新と問い合わせ\n機能、法令、安全上の要件により本規約を更新し、アプリ内で現在のバージョンを提供する場合があります。利用者の権利に重要な影響がある更新は、規約のバージョンを上げ、改めて同意を求めることで有効になります。質問や意見は、プロジェクトのリポジトリ、アプリ内のフィードバック窓口、公開されている連絡先から送ることができます。",
+  "onboardingAgreementPrecedenceNote": "わかりやすい要約は理解を助けるためのものです。中国語の正式な規約と内容が異なる場合は、中国語の正式な規約が優先されます。",
+  "onboardingStorageRequired": "実行データと作業フォルダーの両方を指定してください。",
+  "onboardingModelLoadFirst": "先に利用できるモデルを取得してください。",
+  "onboardingModelSelectDefault": "利用するモデルを選んでください。",
+  "onboardingImportSelectSnapshotError": "Operit 1の引き継ぎファイルを選んでください。",
+  "onboardingRemoteCredentialsRequired": "接続先とアクセストークンの両方を入力してください。",
+  "onboardingRemoteCodeRequired": "1回限りの接続コードを入力してください。",
+  "onboardingActionSaving": "保存中",
+  "onboardingActionConfirm": "確認",
+  "onboardingActionPreparing": "準備中",
+  "onboardingActionContinue": "次へ",
+  "onboardingActionLoadingModels": "取得中",
+  "onboardingActionReading": "読み込み中",
+  "onboardingActionImporting": "引き継ぎ中",
+  "onboardingActionConnecting": "接続中",
+  "onboardingActionPairing": "確認中",
+  "onboardingActionStartPairing": "接続を始める",
+  "onboardingActionFinishConnection": "接続を完了",
+  "onboardingActionProcessing": "処理中",
+  "onboardingActionComplete": "完了",
+  "onboardingProgressStorage": "保存場所",
+  "onboardingProgressStartMode": "はじめ方",
+  "onboardingProgressModel": "モデル設定",
+  "onboardingProgressImport": "データ引き継ぎ",
+  "onboardingProgressRemote": "別の端末へ接続",
+  "onboardingProgressDeviceSpace": "デバイススペース",
+  "onboardingProgressPermissions": "端末の権限",
+  "onboardingProgressWelcome": "ようこそ",
+  "onboardingPreparingLocalRuntime": "端末内の実行環境を準備しています",
+  "onboardingModeTitle": "はじめ方を選ぶ",
+  "onboardingModeDescription": "初めて使う場合はかんたん設定を選びます。Operit 1のデータを引き継ぐことも、別のRuntimeへ接続することもできます。",
+  "onboardingModeQuickTitle": "かんたん設定",
+  "onboardingModeQuickSubtitle": "AIサービスとモデルを設定して使い始めます",
+  "onboardingModeImportTitle": "Operit 1から引き継ぐ",
+  "onboardingModeImportSubtitle": "Operit 1の設定とデータを移します",
+  "onboardingModeRemoteTitle": "別のRuntimeへ接続",
+  "onboardingModeRemoteSubtitle": "接続先、アクセストークン、1回限りの接続コードを入力します",
+  "onboardingModeDeviceSpaceTitle": "既存のデバイススペースに参加",
+  "onboardingModeDeviceSpaceSubtitle": "近くのデバイススペースを探し、参加後にモデルとデータを同期します",
+  "onboardingDeviceSpaceDescription": "近くのデバイススペースから端末を選びます。接続後は、モデル・設定・データを同期してからセットアップを完了します。",
+  "onboardingRemoteDescription": "このアプリを別のRuntimeの操作端末として使います。接続が完了すると、自動で接続先へ切り替わります。",
+  "onboardingRemoteAddress": "接続先",
+  "onboardingRemoteToken": "アクセストークン",
+  "onboardingRemotePairingStarted": "接続の準備ができました",
+  "onboardingRemotePairingSummary": "接続先：{platform} / {model}\n端末：{deviceId}\n接続先のアプリに表示された1回限りのコードを入力してください。",
+  "@onboardingRemotePairingSummary": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      },
+      "model": {
+        "type": "String"
+      },
+      "deviceId": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingRemotePairingCode": "1回限りの接続コード",
+  "onboardingRemoteBeforePairing": "接続先とアクセストークンを入力して、接続を始めます。",
+  "onboardingRemoteAfterPairing": "コードは今回の確認だけに使われます。完了後、このRuntimeが接続先として保存されます。",
+  "onboardingStorageTitle": "この端末の保存場所を確認",
+  "onboardingStorageDescription": "実行データと作業フォルダーは別々に保存されます。パスを直接入力するか、それぞれのフォルダーを選んでください。",
+  "onboardingStorageRuntimeFolder": "実行データのフォルダー",
+  "onboardingStorageWorkspaceFolder": "作業フォルダー",
+  "onboardingStorageReading": "保存場所を確認しています",
+  "onboardingStorageDetail": "実行状態と作業データを別々に保存します。確認後、この端末のHostが各フォルダーを使用します。",
+  "onboardingStorageChooseFolder": "{label}を選ぶ",
+  "@onboardingStorageChooseFolder": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingImportTitle": "Operit 1から引き継ぐ",
+  "onboardingImportDescription": "Operit 1の引き継ぎファイルを選び、設定、チャット、キャラクターカード、各種データをOperit 2へ移します。",
+  "onboardingImportReadingSnapshot": "引き継ぎファイルを確認中",
+  "onboardingImportSelectSnapshot": "引き継ぎファイルを選ぶ",
+  "onboardingImportDetected": "引き継げる内容",
+  "onboardingImportModelSettings": "モデル設定",
+  "onboardingImportChats": "チャット",
+  "onboardingImportMessages": "メッセージ",
+  "onboardingImportPreferences": "設定ファイル",
+  "onboardingImportResources": "データファイル",
+  "onboardingImportExternalResources": "外部データ",
+  "onboardingImportDefaultModel": "既定のチャットモデル：{modelId}",
+  "@onboardingImportDefaultModel": {
+    "placeholders": {
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingImportInProgress": "データを引き継いでいます。しばらくお待ちください。",
+  "onboardingImportReady": "「次へ」を押すと、すべてのデータを引き継ぎます。",
+  "onboardingModelTitle": "モデル設定を完了する",
+  "onboardingModelDescription": "AIサービスを選び、APIキーを入力して、利用するモデルを設定します。",
+  "onboardingModelProvider": "AIサービス",
+  "onboardingModelProviderRequired": "AIサービスを選んでください。",
+  "onboardingModelContinueSetup": "設定を続ける",
+  "onboardingModelEndpoint": "サービスの接続先",
+  "onboardingModelLoadingAvailable": "モデルを取得中",
+  "onboardingModelLoadAvailable": "利用できるモデルを取得",
+  "onboardingModelDefault": "利用するモデル",
+  "onboardingPermissionsTitle": "必要な権限だけを許可する",
+  "onboardingPermissionsDescription": "使う機能に合わせて権限を選べます。何も許可せず次へ進むこともできますが、許可していない機能は利用できません。",
+  "onboardingPermissionsEmptyTitle": "この端末で確認が必要な権限はありません",
+  "onboardingPermissionsEmptySubtitle": "初期設定で対応する権限はありません。そのまま次へ進めます。",
+  "onboardingPermissionsRefresh": "権限の状態を再確認",
+  "onboardingPermissionOptional": "任意",
+  "onboardingFieldRequired": "入力が必要です",
+  "onboardingPermissionGranted": "許可済み",
+  "onboardingPermissionGrant": "許可する",
+  "onboardingPermissionNoAction": "操作不要",
+  "networkErrorBadRequestTitle": "設定内容を確認してください",
+  "networkErrorBadRequestMessage": "モデル一覧の取得が拒否されました。AIサービスと接続先の組み合わせを確認してください。",
+  "networkErrorUnauthorizedTitle": "APIキーを確認できませんでした",
+  "networkErrorUnauthorizedMessage": "AIサービスがAPIキーを受け付けませんでした。キー全体を入力し直して、もう一度モデルを取得してください。",
+  "networkErrorForbiddenTitle": "利用する権限がありません",
+  "networkErrorForbiddenMessage": "このAPIキーではサービスを利用できません。アカウントの権限とモデルサービスの利用状態を確認してください。",
+  "networkErrorNotFoundTitle": "接続先が見つかりません",
+  "networkErrorNotFoundMessage": "この接続先にはモデル一覧がありません。アドレスとパスを確認してください。",
+  "networkErrorRateLimitedTitle": "しばらく待ってください",
+  "networkErrorRateLimitedMessage": "短時間の利用回数が上限に達しました。少し待ってから、もう一度モデルを取得してください。",
+  "networkErrorServerTitle": "AIサービスで問題が発生しています",
+  "networkErrorServerMessage": "現在、モデル一覧を取得できません。時間をおいて試してください。",
+  "networkErrorModelListTitle": "モデル一覧を取得できませんでした",
+  "networkErrorModelListMessage": "AIサービスからモデル一覧が返りませんでした。接続先、APIキー、ネットワークを確認してください。",
+  "networkErrorConnectionTitle": "ネットワークへ接続できませんでした",
+  "networkErrorConnectionMessage": "AIサービスへ接続できません。ネットワークとサービスの接続先を確認してください。",
+  "networkErrorDuplicateModelTitle": "追加済みのモデルです",
+  "networkErrorDuplicateModelMessage": "モデル「{modelId}」はAIサービス「{providerName}」へ追加済みです。",
+  "@networkErrorDuplicateModelMessage": {
+    "placeholders": {
+      "modelId": {
+        "type": "String"
+      },
+      "providerName": {
+        "type": "String"
+      }
+    }
+  },
+  "networkErrorDefaultTitle": "モデル設定を完了できませんでした",
+  "networkErrorDefaultMessage": "モデルの取得中に問題が発生しました。AIサービス、接続先、APIキーを確認してください。",
+  "onboardingRequirementWindowsAdminTitle": "管理者権限",
+  "onboardingRequirementWindowsAdminDescription": "Hostが管理者として動作しているか表示します。管理者として起動する操作はWindows側で行います。",
+  "onboardingRequirementAndroidFileManagementTitle": "ファイルへのアクセス",
+  "onboardingRequirementAndroidFileManagementDescription": "選んだAndroid共有フォルダーをHostが読み書きできるようにします。",
+  "onboardingRequirementAndroidNotificationsTitle": "通知",
+  "onboardingRequirementAndroidNotificationsDescription": "実行中のサービス、タスクの進み具合、ツールの結果を通知できるようにします。",
+  "onboardingRequirementAndroidAppListTitle": "インストール済みアプリ",
+  "onboardingRequirementAndroidAppListDescription": "Androidアプリの一覧表示、起動、停止をできるようにします。",
+  "onboardingRequirementAndroidUsageStatsTitle": "アプリの使用状況",
+  "onboardingRequirementAndroidUsageStatsDescription": "各アプリを画面上で使用した時間を読み取れるようにします。",
+  "onboardingRequirementAndroidWriteSettingsTitle": "システム設定の変更",
+  "onboardingRequirementAndroidWriteSettingsDescription": "対応しているAndroidのシステム設定をHostから変更できるようにします。",
+  "onboardingRequirementAndroidLocationTitle": "近くの機器の検出",
+  "onboardingRequirementAndroidLocationDescription": "近くの機器を見つける一部の機能で必要な位置情報を許可します。",
+  "onboardingRequirementAndroidBluetoothTitle": "Bluetooth",
+  "onboardingRequirementAndroidBluetoothDescription": "Bluetooth機器を見つけて接続できるようにします。",
+  "onboardingRequirementAndroidOverlayTitle": "他のアプリの上に表示",
+  "onboardingRequirementAndroidOverlayDescription": "他のアプリを使用中でもOperitの入口を表示できるようにします。",
+  "onboardingRequirementAndroidBatteryOptimizationTitle": "長い処理を継続",
+  "onboardingRequirementAndroidBatteryOptimizationDescription": "同期、連携、長い処理が止まりにくいように、Operitを電池最適化の対象外にします。",
+  "onboardingRequirementAndroidShizukuTitle": "Shizuku",
+  "onboardingRequirementAndroidShizukuDescription": "任意です。先にShizukuまたはSuiを起動し、対応しているAndroidシステム機能の利用を許可します。",
+  "onboardingRequirementAndroidRootTitle": "Root",
+  "onboardingRequirementAndroidRootDescription": "任意です。Rootが必要なAndroidシステム機能の利用を許可します。",
+  "onboardingRequirementOhosLocationTitle": "位置情報",
+  "onboardingRequirementOhosLocationDescription": "端末の位置情報と、位置情報を必要とする近くの機器の検出を許可します。",
+  "onboardingRequirementOhosBluetoothTitle": "Bluetooth",
+  "onboardingRequirementOhosBluetoothDescription": "BluetoothとBLE機器の検出、接続、読み書きを許可します。",
+  "runtimeBootstrapPreparingAssets": "端末内の実行ファイルを準備しています",
+  "runtimeBootstrapInitializingCore": "端末内の基本サービスを起動しています",
+  "runtimeBootstrapFailed": "端末内のRuntimeを起動できませんでした",
+  "runtimeBootstrapReady": "端末内のRuntimeを利用できます",
+  "runtimeBootstrapUnconfigured": "先にメイン画面で実行データと作業フォルダーを選んでください",
+  "mainExitConfirm": "もう一度戻ると終了します",
+  "messageMenuCopy": "メッセージをコピー",
+  "messageMenuEditAndResend": "編集して再送信",
+  "messageMenuRollback": "ここまで戻す",
+  "messageMenuRegenerate": "もう一度生成",
+  "messageMenuModifyMemory": "記憶を編集",
+  "messageMenuPlayVoice": "音声を生成・再生",
+  "messageMenuDeleteVariant": "現在の候補を削除",
+  "messageMenuReply": "返信",
+  "messageMenuInsertSummary": "要約を挿入",
+  "messageMenuCreateBranch": "分岐を作成",
+  "messageMenuInfo": "詳細情報",
+  "messageMenuMultiSelect": "複数選択",
+  "messageMenuDeleteConfirmTitle": "メッセージを削除しますか？",
+  "messageMenuDeleteConfirmMessage": "このメッセージを削除します。よろしいですか？",
+  "messageMenuInfoTitle": "メッセージの情報",
+  "messageMenuSender": "送信者：{value}",
+  "@messageMenuSender": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuTimestamp": "日時情報：{value}",
+  "@messageMenuTimestamp": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuRole": "役割：{value}",
+  "@messageMenuRole": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuModel": "モデル：{value}",
+  "@messageMenuModel": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuProvider": "AIサービス：{value}",
+  "@messageMenuProvider": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuInputTokens": "入力トークン：{value}",
+  "@messageMenuInputTokens": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuCachedInputTokens": "キャッシュ済み入力トークン：{value}",
+  "@messageMenuCachedInputTokens": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuOutputTokens": "出力トークン：{value}",
+  "@messageMenuOutputTokens": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuWaitDuration": "待ち時間：{value}ミリ秒",
+  "@messageMenuWaitDuration": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuOutputDuration": "出力時間：{value}ミリ秒",
+  "@messageMenuOutputDuration": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "messageMenuConfirm": "閉じる",
+  "messageCopyTitle": "メッセージをコピー",
+  "messageCopyPlainText": "通常のテキスト",
+  "messageCopyMarkdownSource": "Markdownの元データ",
+  "messageCopyPlainTextConversionFailed": "通常のテキストへ変換できませんでした：{error}",
+  "@messageCopyPlainTextConversionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "messageCopyCopyPlainText": "通常のテキストをコピー",
+  "messageCopyCopyMarkdownSource": "Markdownの元データをコピー",
+  "messageCopyFailed": "コピーできませんでした：{error}",
+  "@messageCopyFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "messageCopyCompleted": "メッセージをクリップボードへコピーしました",
+  "messageEditorTitle": "メッセージを編集",
+  "messageEditorMemoryTitle": "記憶を編集",
+  "messageEditorVisualMode": "見やすい表示",
+  "messageEditorPlainTextMode": "元データ",
+  "messageEditorSaveAndResend": "保存して再送信",
+  "messageEditorUpdateMemory": "記憶を更新",
+  "messageEditorPlainTextContent": "メッセージの元データ",
+  "messageEditorContentParts": "内容のまとまり",
+  "messageEditorAddText": "文章を追加",
+  "messageEditorAddTag": "タグを追加",
+  "messageEditorTextLabel": "文章",
+  "messageEditorTextHint": "文章を入力してください",
+  "messageEditorTagTitle": "タグを編集",
+  "messageEditorTagName": "タグ名",
+  "messageEditorTagNameHint": "例：memory",
+  "messageEditorAttributes": "属性（任意）",
+  "messageEditorAttributesHint": "例：type=\"note\"",
+  "messageEditorContent": "内容",
+  "aboutDescription": "スマートフォンとパソコンで使えるAI作業環境です。チャット、作業フォルダー、ツール、プラグイン、MCP、遠隔接続、Webアクセスを利用できます。",
+  "aboutVersion": "バージョン {version}",
+  "@aboutVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "aboutProjectSection": "プロジェクト",
+  "aboutSourceTitle": "ソースコード",
+  "aboutDocumentationTitle": "使い方",
+  "aboutDocumentationSubtitle": "READMEとコマンドラインの説明",
+  "aboutOpenSourceLicenses": "オープンソースライセンス",
+  "aboutOpenSourceLicensesSubtitle": "Operit2はAGPL-3.0で公開されています",
+  "aboutContactSection": "連絡先",
+  "aboutMaintainer": "開発者 AAswordman",
+  "aboutCopyright": "© 2025 - 2026 Operit. All rights reserved.",
+  "chatTtsNoMatchingCharacter": "このメッセージに対応するキャラクターがありません。",
+  "chatTtsMatchingCharacterCount": "「{name}」に一致するキャラクターカードは1件必要です。",
+  "@chatTtsMatchingCharacterCount": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chatTtsEmptyMessage": "音声にするメッセージ内容がありません。",
+  "chatTtsPlaybackFailed": "音声を生成または再生できませんでした：{error}",
+  "@chatTtsPlaybackFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "chatCopyFailed": "コピーできませんでした：{error}",
+  "@chatCopyFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "chatConfirmDeleteSelectedTitle": "選択したメッセージを削除しますか？",
+  "chatConfirmDeleteSelectedMessage": "選択したメッセージを{count}件削除しますか？",
+  "@chatConfirmDeleteSelectedMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatGeneratingShareImage": "共有画像を作成しています...",
+  "chatGenerateShareImageFailed": "共有画像を作成できませんでした：{error}",
+  "@chatGenerateShareImageFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  }
+}

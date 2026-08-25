@@ -96,7 +96,7 @@ class WorkspaceUserscriptStore {
     } else {
       _items.insert(0, item);
     }
-    addLog(metadata.name, '已安装脚本');
+    addLog(metadata.name, 'スクリプトをインストールしました');
     _persist();
     return item;
   }
@@ -125,7 +125,7 @@ class WorkspaceUserscriptStore {
       resourceTexts: resourceTexts,
       resourceUrls: resourceUrls,
     );
-    addLog(item.metadata.name, '依赖和资源已缓存');
+    addLog(item.metadata.name, '依存関係とリソースをキャッシュしました');
     _persist();
   }
 
@@ -156,18 +156,18 @@ class WorkspaceUserscriptStore {
     if (sourceUri.host.isNotEmpty &&
         updateUri.host.isNotEmpty &&
         sourceUri.host != updateUri.host) {
-      addLog(item.metadata.name, '更新来源和安装来源不一致');
+      addLog(item.metadata.name, '更新元とインストール元が一致しません');
       return false;
     }
     final response = await http.get(updateUri);
     final preview = createInstallPreview(response.body, sourceUrl: updateUrl);
     if (preview.metadata.version == item.metadata.version) {
-      addLog(item.metadata.name, '已经是最新版本');
+      addLog(item.metadata.name, 'すでに最新版です');
       return false;
     }
     final updated = installFromPreview(preview);
     await refreshDependencies(updated.id);
-    addLog(updated.metadata.name, '已更新到 ${updated.metadata.version}');
+    addLog(updated.metadata.name, '${updated.metadata.version}へ更新しました');
     return true;
   }
 

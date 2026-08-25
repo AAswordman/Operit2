@@ -196,16 +196,16 @@ class WorkspaceUserscriptCapabilityRegistry {
     final reasons = <String>[];
     final unknown = unknownGrants(grants);
     if (unknown.isNotEmpty) {
-      reasons.add('未知 grant：${unknown.join(', ')}');
+      reasons.add('不明なgrant：${unknown.join(', ')}');
     }
     if (canonicalGrants.contains('none') && canonicalGrants.length > 1) {
-      reasons.add('@grant none 不能和其他 grant 同时使用');
+      reasons.add('@grant noneは他のgrantと同時に使用できません');
     }
     final highRisk = canonicalGrants
         .where((grant) => _capabilityByCanonical[grant]?.highRisk == true)
         .toList(growable: false);
     if (highRisk.isNotEmpty) {
-      reasons.add('高危能力：${highRisk.join(', ')}');
+      reasons.add('危険性の高い権限：${highRisk.join(', ')}');
     }
     return reasons;
   }

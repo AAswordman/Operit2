@@ -88,7 +88,7 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
       }
       if (!success) {
         setState(() {
-          _toggleError = '子包状态切换失败：${subpackage.packageName}';
+          _toggleError = 'サブパッケージの状態を切り替えられませんでした: ${subpackage.packageName}';
         });
       }
       await _loadDetails();
@@ -183,7 +183,7 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
                           ? () => widget.onOpenUi(module.routeId)
                           : null,
                       icon: const Icon(Icons.open_in_new, size: 18),
-                      label: Text(widget.enabled ? '打开' : '启用后打开'),
+                      label: Text(widget.enabled ? l10n.open : '有効化して開く'),
                       style: FilledButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -254,7 +254,7 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
           OutlinedButton.icon(
             onPressed: widget.onDeletePackage,
             icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+            label: Text(l10n.delete),
             style: OutlinedButton.styleFrom(
               foregroundColor: Theme.of(context).colorScheme.error,
             ),
@@ -263,7 +263,7 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
           OutlinedButton.icon(
             onPressed: widget.enabled ? () => widget.onOpenUi(null) : null,
             icon: const Icon(Icons.open_in_new_outlined),
-            label: Text(widget.enabled ? '打开' : '启用后打开'),
+            label: Text(widget.enabled ? l10n.open : '有効化して開く'),
           ),
         FilledButton.icon(
           onPressed: () => widget.onEnabledChanged(!widget.enabled),
@@ -378,7 +378,7 @@ class PackageDetailsDialog extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onDeletePackage,
             icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+            label: Text(l10n.delete),
             style: OutlinedButton.styleFrom(
               foregroundColor: Theme.of(context).colorScheme.error,
             ),
@@ -408,7 +408,7 @@ class _ToolTile extends StatelessWidget {
       trailing: FilledButton.tonalIcon(
         onPressed: onRun,
         icon: const Icon(Icons.play_arrow, size: 18),
-        label: const Text('运行'),
+        label: const Text('実行'),
         style: FilledButton.styleFrom(
           visualDensity: VisualDensity.compact,
           padding: const EdgeInsets.symmetric(horizontal: 10),

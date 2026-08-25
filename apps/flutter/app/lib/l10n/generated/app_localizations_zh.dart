@@ -954,6 +954,54 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsChatStreamOutputDescription => '回复生成时逐步显示内容。';
 
   @override
+  String get agentModelSelectorThinkingSettings => '思考设置';
+
+  @override
+  String get agentModelSelectorThinkingSettingsDescription => '调整当前聊天模型的思考方式。';
+
+  @override
+  String get agentModelSelectorThinkingQuality => '思考质量';
+
+  @override
+  String get agentModelSelectorThinkingQualityDescription =>
+      '仅在思考模式下生效。数值越高思考越深，1 为自动。';
+
+  @override
+  String agentModelSelectorMaxModeDescription(
+    String enabledLength,
+    String disabledLength,
+  ) {
+    return '最大上下文模式开启时使用 ${enabledLength}k 上下文窗口，关闭时使用 ${disabledLength}k。';
+  }
+
+  @override
+  String get agentModelSelectorModelConfiguration => '模型配置';
+
+  @override
+  String get agentModelSelectorModelConfigurationDescription =>
+      '在这里选择已配置的模型，或使用下方的管理配置来新增或修改模型。';
+
+  @override
+  String get agentModelSelectorModel => '模型';
+
+  @override
+  String get agentModelSelectorNoModels => '没有可用的模型';
+
+  @override
+  String get agentModelSelectorManageConfiguration => '管理配置';
+
+  @override
+  String agentModelSelectorModelCount(int count) {
+    return '$count 个模型';
+  }
+
+  @override
+  String get agentModelSelectorOn => '开';
+
+  @override
+  String get agentModelSelectorOff => '关';
+
+  @override
   String get settingsModelProfilesSection => '模型档案';
 
   @override
@@ -1129,6 +1177,52 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelApiKey => 'API Key';
+
+  @override
+  String get settingsModelProviderTypeOpenaiCodex => 'ChatGPT Codex（订阅）';
+
+  @override
+  String get settingsModelCodexTitle => 'ChatGPT / Codex 登录';
+
+  @override
+  String get settingsModelCodexDescription =>
+      '使用 ChatGPT 套餐中包含的 Codex 用量。无需 API Key 或中转服务器。';
+
+  @override
+  String get settingsModelCodexSignIn => '使用 ChatGPT 登录';
+
+  @override
+  String get settingsModelCodexConnected => '已登录';
+
+  @override
+  String get settingsModelCodexSignedOut => '未登录';
+
+  @override
+  String get settingsModelCodexWaiting => '等待确认';
+
+  @override
+  String get settingsModelCodexExpired => '代码已过期';
+
+  @override
+  String get settingsModelCodexChecking => '正在检查';
+
+  @override
+  String get settingsModelCodexCodeHelp => '请在 ChatGPT 页面输入此一次性代码。有效期为 15 分钟。';
+
+  @override
+  String get settingsModelCodexOpenBrowser => '打开 ChatGPT 页面';
+
+  @override
+  String get settingsModelCodexOpenFailed => '无法打开 ChatGPT 页面。请再次点击按钮。';
+
+  @override
+  String get settingsModelCodexLogout => '退出登录';
+
+  @override
+  String get settingsModelCodexRequired => '保存此连接前，请先登录 ChatGPT。';
+
+  @override
+  String get settingsModelCodexPlan => '套餐';
 
   @override
   String get settingsModelApiKeyPool => 'API Key 池';
@@ -3244,4 +3338,805 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataAdvancedBackupOptionsDescription => '单项 JSON 导出与恢复';
+
+  @override
+  String get onboardingIntroTagline => '让日常任务，从这里变得简单';
+
+  @override
+  String get onboardingStart => '开始';
+
+  @override
+  String get onboardingPleaseWait => '请稍候';
+
+  @override
+  String get onboardingAgree => '同意';
+
+  @override
+  String get onboardingAgreementProgress => '用户协议';
+
+  @override
+  String get onboardingSkip => '跳过';
+
+  @override
+  String get onboardingPrevious => '上一页';
+
+  @override
+  String get onboardingAgreementTitle => '用户协议与隐私政策';
+
+  @override
+  String get onboardingAgreementDescription => '请阅读本协议。确认同意后，才能继续完成设备设置。';
+
+  @override
+  String onboardingAgreementVersion(String version) {
+    return '版本：$version';
+  }
+
+  @override
+  String onboardingAgreementWait(int seconds) {
+    return '阅读确认将在 $seconds 秒后开放。';
+  }
+
+  @override
+  String get onboardingAgreementPlainTitle => '人话版协议（非法律版本）';
+
+  @override
+  String get onboardingAgreementPlainIntro =>
+      'Operit 是在您的设备上运行的开源客户端。我们不运营模型推理服务、不托管聊天记录，也不向您提供共享 API Key。您配置云模型、语音、搜索、绘图、MCP 或其他网络功能时，数据会直接发送给相应服务商，并受其条款和隐私政策约束；本地模型在设备内推理。';
+
+  @override
+  String get onboardingAgreementPlainCapabilities =>
+      '应用可能使用文件、终端、自动化、系统授权、Root、ADB 和扩展等能力。请在执行前核对内容、备份重要数据并谨慎授予权限。因您的操作、配置、第三方服务或第三方扩展造成的设备、数据、账号或其他损失，应由实际操作人依适用法律处理。';
+
+  @override
+  String get onboardingAgreementPlainThirdParty =>
+      '市场中的插件、脚本、Skill、工具包和其他第三方内容，其著作权及责任归作者或权利人所有。展示或安装不代表 Operit 对其作出保证、背书或取得权利。';
+
+  @override
+  String get onboardingAgreementLegalTitle => '严谨版法律协议';
+
+  @override
+  String get onboardingAgreementLegalSection1 =>
+      '1. 适用范围与协议版本\n本协议适用于 Operit 官方发布的客户端及其可选在线功能。使用本应用即表示您已阅读并同意当前版本。应用会记录您确认的版本；协议发生实质更新时，将要求重新确认。开源代码许可由仓库根目录 LICENSE 所载 LGPLv3 规定，本协议不排除或缩减适用法律及开源许可证赋予您的权利。';
+
+  @override
+  String get onboardingAgreementLegalSection2 =>
+      '2. 产品定位与第三方服务\nOperit 不提供大语言模型推理、共享 API Key、聊天请求中转或聊天记录云端托管。您自行选择、配置和启用第三方服务，并自行判断服务商、模型、端点和扩展的安全性、合法性与适用性，妥善保管凭据。';
+
+  @override
+  String get onboardingAgreementLegalSection3 =>
+      '3. 数据处理与隐私\n聊天记录、角色卡、记忆、模型配置和 API Key 通常保存在设备的应用数据中。您主动导出、备份、上传文件、使用第三方网络功能或向外部 HTTP 服务提交请求时，相关数据将依您的操作被复制、传输或披露。市场、公告、更新检查、GitHub 登录和发布等功能会访问 Operit、GitHub 或相关第三方资源。';
+
+  @override
+  String get onboardingAgreementLegalSection4 =>
+      '4. 对外部署与运营责任\n外部 HTTP 服务、机器人、自动回复及类似能力由您选择启用。您将其开放给他人或公众使用时，应作为实际部署或运营者负责访问控制、用户授权、内容安全、数据保护、未成年人保护、必要提示和其他适用义务。';
+
+  @override
+  String get onboardingAgreementLegalSection5 =>
+      '5. 合法使用与内容责任\n您应遵守适用法律法规、第三方服务规则及平台规则，不得利用本应用、扩展或配置实施违法活动、侵害他人权益、未经授权访问系统或数据，或传播违法有害内容。AI 输出可能包含错误、遗漏或偏差，不构成医疗、法律、金融或其他专业建议。';
+
+  @override
+  String get onboardingAgreementLegalSection6 =>
+      '6. 软件按现状提供\n在适用法律允许的范围内，本软件按“现状”和“可用”状态提供。贡献者不对软件或第三方服务的持续可用性、准确性、安全性、适销性、特定用途适用性或不侵权作出明示或默示保证。';
+
+  @override
+  String get onboardingAgreementLegalSection7 =>
+      '7. 协议更新与联系\n我们可能因功能、法律或安全要求更新本协议，并在应用内提供当前版本。对用户权益有实质影响的更新，将通过提高协议版本并要求重新确认的方式生效。您可通过项目仓库、应用内反馈入口或公开联系渠道提出问题和意见。';
+
+  @override
+  String get onboardingAgreementPrecedenceNote =>
+      '人话版仅为便于理解；若与中文严谨版不一致，以中文严谨版为准。';
+
+  @override
+  String get onboardingStorageRequired => '运行时目录和工作区目录都不能为空';
+
+  @override
+  String get onboardingModelLoadFirst => '请先拉取可用模型';
+
+  @override
+  String get onboardingModelSelectDefault => '请选择默认模型';
+
+  @override
+  String get onboardingImportSelectSnapshotError => '请选择 Operit 1 快照文件';
+
+  @override
+  String get onboardingRemoteCredentialsRequired => '远程地址和外部访问令牌都不能为空';
+
+  @override
+  String get onboardingRemoteCodeRequired => '一次性配对码不能为空';
+
+  @override
+  String get onboardingActionSaving => '保存中';
+
+  @override
+  String get onboardingActionConfirm => '确认';
+
+  @override
+  String get onboardingActionPreparing => '准备中';
+
+  @override
+  String get onboardingActionContinue => '继续';
+
+  @override
+  String get onboardingActionLoadingModels => '拉取中';
+
+  @override
+  String get onboardingActionReading => '读取中';
+
+  @override
+  String get onboardingActionImporting => '导入中';
+
+  @override
+  String get onboardingActionConnecting => '连接中';
+
+  @override
+  String get onboardingActionPairing => '配对中';
+
+  @override
+  String get onboardingActionStartPairing => '开始配对';
+
+  @override
+  String get onboardingActionFinishConnection => '完成连接';
+
+  @override
+  String get onboardingActionProcessing => '处理中';
+
+  @override
+  String get onboardingActionComplete => '完成';
+
+  @override
+  String get onboardingProgressStorage => '存储位置';
+
+  @override
+  String get onboardingProgressStartMode => '启动方式';
+
+  @override
+  String get onboardingProgressModel => '模型配置';
+
+  @override
+  String get onboardingProgressImport => '导入配置';
+
+  @override
+  String get onboardingProgressRemote => '远程连接';
+
+  @override
+  String get onboardingProgressDeviceSpace => '设备空间';
+
+  @override
+  String get onboardingProgressPermissions => '系统授权';
+
+  @override
+  String get onboardingProgressWelcome => '欢迎';
+
+  @override
+  String get onboardingPreparingLocalRuntime => '正在准备本地运行时';
+
+  @override
+  String get onboardingModeTitle => '选择上手方式';
+
+  @override
+  String get onboardingModeDescription =>
+      '快速开始适合首次使用；已有 Operit 1 数据时可以导入，也可以直接连接远程 Runtime。';
+
+  @override
+  String get onboardingModeQuickTitle => '快速开始';
+
+  @override
+  String get onboardingModeQuickSubtitle => '配置模型供应商，直接完成基础设置';
+
+  @override
+  String get onboardingModeImportTitle => '从 Operit 1 导入';
+
+  @override
+  String get onboardingModeImportSubtitle => '导入旧版配置和数据';
+
+  @override
+  String get onboardingModeRemoteTitle => '连接远程 Runtime';
+
+  @override
+  String get onboardingModeRemoteSubtitle => '输入远程地址、外部访问令牌和一次性配对码';
+
+  @override
+  String get onboardingModeDeviceSpaceTitle => '加入已有设备空间';
+
+  @override
+  String get onboardingModeDeviceSpaceSubtitle => '扫描附近设备空间，加入后同步模型和数据';
+
+  @override
+  String get onboardingDeviceSpaceDescription =>
+      '扫描附近设备空间并选择一台设备。完成配对后会先同步模型、配置和数据，再结束引导。';
+
+  @override
+  String get onboardingRemoteDescription =>
+      '浏览器端作为独立客户端使用；完成配对后，会直接切换到远端 Runtime。';
+
+  @override
+  String get onboardingRemoteAddress => '远程地址';
+
+  @override
+  String get onboardingRemoteToken => '外部访问令牌';
+
+  @override
+  String get onboardingRemotePairingStarted => '已开始配对';
+
+  @override
+  String onboardingRemotePairingSummary(
+    String platform,
+    String model,
+    String deviceId,
+  ) {
+    return '远端：$platform / $model\n设备：$deviceId\n请输入软件端显示的一次性配对码。';
+  }
+
+  @override
+  String get onboardingRemotePairingCode => '一次性配对码';
+
+  @override
+  String get onboardingRemoteBeforePairing => '先用远程地址和外部访问令牌建立配对会话。';
+
+  @override
+  String get onboardingRemoteAfterPairing =>
+      '配对码只用于本次确认，完成后会保存为一个可选择的远程 Runtime。';
+
+  @override
+  String get onboardingStorageTitle => '确认本地存储位置';
+
+  @override
+  String get onboardingStorageDescription => '运行时数据和工作区数据相互独立，可以直接输入路径或分别选择目录。';
+
+  @override
+  String get onboardingStorageRuntimeFolder => '运行时目录';
+
+  @override
+  String get onboardingStorageWorkspaceFolder => '工作区目录';
+
+  @override
+  String get onboardingStorageReading => '正在读取存储路径';
+
+  @override
+  String get onboardingStorageDetail =>
+      '这两个目录会分别保存运行时状态和用户工作区，确认后由本机 Host 直接挂载。';
+
+  @override
+  String onboardingStorageChooseFolder(String label) {
+    return '选择$label';
+  }
+
+  @override
+  String get onboardingImportTitle => '从 Operit 1 导入';
+
+  @override
+  String get onboardingImportDescription =>
+      '选择旧版快照，将配置、聊天、角色卡、资源等数据迁移到 Operit 2。';
+
+  @override
+  String get onboardingImportReadingSnapshot => '正在读取快照';
+
+  @override
+  String get onboardingImportSelectSnapshot => '选择快照文件';
+
+  @override
+  String get onboardingImportDetected => '检测到可迁移内容';
+
+  @override
+  String get onboardingImportModelSettings => '模型配置';
+
+  @override
+  String get onboardingImportChats => '聊天';
+
+  @override
+  String get onboardingImportMessages => '消息';
+
+  @override
+  String get onboardingImportPreferences => '偏好文件';
+
+  @override
+  String get onboardingImportResources => '资源文件';
+
+  @override
+  String get onboardingImportExternalResources => '外部资源';
+
+  @override
+  String onboardingImportDefaultModel(String modelId) {
+    return '默认聊天模型：$modelId';
+  }
+
+  @override
+  String get onboardingImportInProgress => '正在导入快照内容，请稍候。';
+
+  @override
+  String get onboardingImportReady => '点击继续后会开始迁移整份快照。';
+
+  @override
+  String get onboardingModelTitle => '完成模型配置';
+
+  @override
+  String get onboardingModelDescription => '选择模型供应商，填写 API Key，拉取并设置默认模型。';
+
+  @override
+  String get onboardingModelProvider => '模型供应商';
+
+  @override
+  String get onboardingModelProviderRequired => '请选择模型供应商';
+
+  @override
+  String get onboardingModelContinueSetup => '继续配置';
+
+  @override
+  String get onboardingModelEndpoint => '服务地址';
+
+  @override
+  String get onboardingModelLoadingAvailable => '正在拉取模型';
+
+  @override
+  String get onboardingModelLoadAvailable => '拉取可用模型';
+
+  @override
+  String get onboardingModelDefault => '默认模型';
+
+  @override
+  String get onboardingPermissionsTitle => '按需授予系统权限';
+
+  @override
+  String get onboardingPermissionsDescription =>
+      '权限可按您要使用的功能选择授予。您可以不授予任何一项并继续；未授予权限对应的功能将无法使用。';
+
+  @override
+  String get onboardingPermissionsEmptyTitle => '当前设备没有需要处理的授权项';
+
+  @override
+  String get onboardingPermissionsEmptySubtitle => '当前运行环境没有需要在欢迎页处理的系统授权。';
+
+  @override
+  String get onboardingPermissionsRefresh => '刷新授权状态';
+
+  @override
+  String get onboardingPermissionOptional => '可选';
+
+  @override
+  String get onboardingFieldRequired => '必填';
+
+  @override
+  String get onboardingPermissionGranted => '已授权';
+
+  @override
+  String get onboardingPermissionGrant => '去授权';
+
+  @override
+  String get onboardingPermissionNoAction => '无需操作';
+
+  @override
+  String get networkErrorBadRequestTitle => '请求参数有误';
+
+  @override
+  String get networkErrorBadRequestMessage => '服务端拒绝了这次模型列表请求，请检查服务地址和供应商是否匹配。';
+
+  @override
+  String get networkErrorUnauthorizedTitle => '密钥验证失败';
+
+  @override
+  String get networkErrorUnauthorizedMessage =>
+      '访问密钥没有通过供应商验证，请重新粘贴完整密钥后再拉取模型。';
+
+  @override
+  String get networkErrorForbiddenTitle => '没有访问权限';
+
+  @override
+  String get networkErrorForbiddenMessage => '当前密钥无权访问该供应商接口，请确认账号权限和模型服务开通状态。';
+
+  @override
+  String get networkErrorNotFoundTitle => '服务地址不可用';
+
+  @override
+  String get networkErrorNotFoundMessage => '当前服务地址没有找到模型列表接口，请检查地址路径是否正确。';
+
+  @override
+  String get networkErrorRateLimitedTitle => '请求过于频繁';
+
+  @override
+  String get networkErrorRateLimitedMessage => '供应商限制了当前请求频率，请稍后再拉取模型。';
+
+  @override
+  String get networkErrorServerTitle => '供应商服务异常';
+
+  @override
+  String get networkErrorServerMessage => '供应商暂时无法处理模型列表请求，请稍后再试。';
+
+  @override
+  String get networkErrorModelListTitle => '模型列表拉取失败';
+
+  @override
+  String get networkErrorModelListMessage =>
+      '没有拿到供应商返回的模型列表，请检查服务地址、访问密钥和网络连接。';
+
+  @override
+  String get networkErrorConnectionTitle => '网络连接失败';
+
+  @override
+  String get networkErrorConnectionMessage => '无法连接到模型供应商，请检查网络连接和服务地址。';
+
+  @override
+  String get networkErrorDuplicateModelTitle => '模型已存在';
+
+  @override
+  String networkErrorDuplicateModelMessage(
+    String modelId,
+    String providerName,
+  ) {
+    return '模型“$modelId”已添加到供应商“$providerName”。';
+  }
+
+  @override
+  String get networkErrorDefaultTitle => '模型配置失败';
+
+  @override
+  String get networkErrorDefaultMessage => '拉取可用模型时出现异常，请检查供应商、服务地址和访问密钥。';
+
+  @override
+  String get onboardingRequirementWindowsAdminTitle => '管理员权限';
+
+  @override
+  String get onboardingRequirementWindowsAdminDescription =>
+      '显示当前 Host 是否以管理员身份运行；提升权限必须由系统启动边界决定。';
+
+  @override
+  String get onboardingRequirementAndroidFileManagementTitle => '文件管理';
+
+  @override
+  String get onboardingRequirementAndroidFileManagementDescription =>
+      'Host 需要文件管理授权来读取和写入用户选择的 Android 共享存储目录。';
+
+  @override
+  String get onboardingRequirementAndroidNotificationsTitle => '通知';
+
+  @override
+  String get onboardingRequirementAndroidNotificationsDescription =>
+      'Host 需要通知授权来显示前台服务、任务进度和工具执行结果。';
+
+  @override
+  String get onboardingRequirementAndroidAppListTitle => '应用列表';
+
+  @override
+  String get onboardingRequirementAndroidAppListDescription =>
+      'Host 需要包可见性声明来列出、启动和停止 Android 应用。';
+
+  @override
+  String get onboardingRequirementAndroidUsageStatsTitle => '应用使用统计';
+
+  @override
+  String get onboardingRequirementAndroidUsageStatsDescription =>
+      'Host 需要使用情况访问权限来读取应用前台使用时长。';
+
+  @override
+  String get onboardingRequirementAndroidWriteSettingsTitle => '系统设置修改';
+
+  @override
+  String get onboardingRequirementAndroidWriteSettingsDescription =>
+      'Host 需要修改系统设置权限来写入允许的 Android 系统设置项。';
+
+  @override
+  String get onboardingRequirementAndroidLocationTitle => '附近设备定位';
+
+  @override
+  String get onboardingRequirementAndroidLocationDescription =>
+      'Host 需要系统定位授权来完成部分附近设备发现能力。';
+
+  @override
+  String get onboardingRequirementAndroidBluetoothTitle => '蓝牙连接';
+
+  @override
+  String get onboardingRequirementAndroidBluetoothDescription =>
+      'Host 需要蓝牙扫描与连接授权来发现和连接设备。';
+
+  @override
+  String get onboardingRequirementAndroidOverlayTitle => '悬浮入口';
+
+  @override
+  String get onboardingRequirementAndroidOverlayDescription =>
+      'Host 需要系统悬浮窗授权来在其他应用中显示入口。';
+
+  @override
+  String get onboardingRequirementAndroidBatteryOptimizationTitle => '持续任务';
+
+  @override
+  String get onboardingRequirementAndroidBatteryOptimizationDescription =>
+      'Host 需要电池优化例外来保持同步、协作和长任务连续。';
+
+  @override
+  String get onboardingRequirementAndroidShizukuTitle => 'Shizuku';
+
+  @override
+  String get onboardingRequirementAndroidShizukuDescription =>
+      '可选。需先启动 Shizuku 或 Sui；授权后 Operit 可以使用支持 Shizuku 的 Android 系统能力。';
+
+  @override
+  String get onboardingRequirementAndroidRootTitle => 'Root';
+
+  @override
+  String get onboardingRequirementAndroidRootDescription =>
+      '可选。授权后 Operit 可以使用需要 Root 的 Android 系统能力。';
+
+  @override
+  String get onboardingRequirementOhosLocationTitle => '定位授权';
+
+  @override
+  String get onboardingRequirementOhosLocationDescription =>
+      'Host 需要系统定位授权来读取设备位置，并支持依赖位置权限的附近设备发现。';
+
+  @override
+  String get onboardingRequirementOhosBluetoothTitle => '蓝牙授权';
+
+  @override
+  String get onboardingRequirementOhosBluetoothDescription =>
+      'Host 需要蓝牙使用与发现授权来扫描、连接和读写经典蓝牙或 BLE 设备。';
+
+  @override
+  String get runtimeBootstrapPreparingAssets => '正在准备本地运行时资源';
+
+  @override
+  String get runtimeBootstrapInitializingCore => '正在初始化本地核心服务';
+
+  @override
+  String get runtimeBootstrapFailed => '本地运行时启动失败';
+
+  @override
+  String get runtimeBootstrapReady => '本地运行时已就绪';
+
+  @override
+  String get runtimeBootstrapUnconfigured => '请先在主窗口配置运行时目录和工作区目录';
+
+  @override
+  String get mainExitConfirm => '再按一次退出应用';
+
+  @override
+  String get messageMenuCopy => '复制消息';
+
+  @override
+  String get messageMenuEditAndResend => '编辑并重发';
+
+  @override
+  String get messageMenuRollback => '回滚到此处';
+
+  @override
+  String get messageMenuRegenerate => '重新生成';
+
+  @override
+  String get messageMenuModifyMemory => '修改记忆';
+
+  @override
+  String get messageMenuPlayVoice => '生成/播放语音';
+
+  @override
+  String get messageMenuDeleteVariant => '删除当前变体';
+
+  @override
+  String get messageMenuReply => '回复';
+
+  @override
+  String get messageMenuInsertSummary => '插入总结';
+
+  @override
+  String get messageMenuCreateBranch => '创建分支';
+
+  @override
+  String get messageMenuInfo => '信息';
+
+  @override
+  String get messageMenuMultiSelect => '多选';
+
+  @override
+  String get messageMenuDeleteConfirmTitle => '确认删除';
+
+  @override
+  String get messageMenuDeleteConfirmMessage => '确定删除这条消息？';
+
+  @override
+  String get messageMenuInfoTitle => '消息信息';
+
+  @override
+  String messageMenuSender(String value) {
+    return '发送者: $value';
+  }
+
+  @override
+  String messageMenuTimestamp(String value) {
+    return '时间戳: $value';
+  }
+
+  @override
+  String messageMenuRole(String value) {
+    return '角色: $value';
+  }
+
+  @override
+  String messageMenuModel(String value) {
+    return '模型: $value';
+  }
+
+  @override
+  String messageMenuProvider(String value) {
+    return '提供商: $value';
+  }
+
+  @override
+  String messageMenuInputTokens(String value) {
+    return '输入 token: $value';
+  }
+
+  @override
+  String messageMenuCachedInputTokens(String value) {
+    return '缓存输入 token: $value';
+  }
+
+  @override
+  String messageMenuOutputTokens(String value) {
+    return '输出 token: $value';
+  }
+
+  @override
+  String messageMenuWaitDuration(String value) {
+    return '等待耗时: ${value}ms';
+  }
+
+  @override
+  String messageMenuOutputDuration(String value) {
+    return '输出耗时: ${value}ms';
+  }
+
+  @override
+  String get messageMenuConfirm => '确定';
+
+  @override
+  String get messageCopyTitle => '复制消息';
+
+  @override
+  String get messageCopyPlainText => '纯文本';
+
+  @override
+  String get messageCopyMarkdownSource => 'Markdown 源码';
+
+  @override
+  String messageCopyPlainTextConversionFailed(String error) {
+    return '纯文本转换失败：$error';
+  }
+
+  @override
+  String get messageCopyCopyPlainText => '复制纯文本';
+
+  @override
+  String get messageCopyCopyMarkdownSource => '复制 Markdown 源码';
+
+  @override
+  String messageCopyFailed(String error) {
+    return '复制失败：$error';
+  }
+
+  @override
+  String get messageCopyCompleted => '消息已复制到剪贴板';
+
+  @override
+  String get messageEditorTitle => '编辑消息';
+
+  @override
+  String get messageEditorMemoryTitle => '修改记忆';
+
+  @override
+  String get messageEditorVisualMode => '可视';
+
+  @override
+  String get messageEditorPlainTextMode => '纯文本';
+
+  @override
+  String get messageEditorSaveAndResend => '保存并重发';
+
+  @override
+  String get messageEditorUpdateMemory => '更新记忆';
+
+  @override
+  String get messageEditorPlainTextContent => '纯文本内容';
+
+  @override
+  String get messageEditorContentParts => '内容片段';
+
+  @override
+  String get messageEditorAddText => '添加文本';
+
+  @override
+  String get messageEditorAddTag => '添加标签';
+
+  @override
+  String get messageEditorTextLabel => '文本';
+
+  @override
+  String get messageEditorTextHint => '输入文本内容';
+
+  @override
+  String get messageEditorTagTitle => '编辑标签';
+
+  @override
+  String get messageEditorTagName => '标签名';
+
+  @override
+  String get messageEditorTagNameHint => '例如 memory';
+
+  @override
+  String get messageEditorAttributes => '属性（可选）';
+
+  @override
+  String get messageEditorAttributesHint => '例如 type=\"note\"';
+
+  @override
+  String get messageEditorContent => '内容';
+
+  @override
+  String get aboutDescription =>
+      '面向终端与桌面的 AI 工作台，提供聊天会话、工作区、工具、插件、MCP、远程连接和 Web 访问。';
+
+  @override
+  String aboutVersion(String version) {
+    return '版本 $version';
+  }
+
+  @override
+  String get aboutProjectSection => '项目';
+
+  @override
+  String get aboutSourceTitle => '项目源码';
+
+  @override
+  String get aboutDocumentationTitle => '使用文档';
+
+  @override
+  String get aboutDocumentationSubtitle => 'README 与命令行说明';
+
+  @override
+  String get aboutOpenSourceLicenses => '开源许可证';
+
+  @override
+  String get aboutOpenSourceLicensesSubtitle => 'Operit2 使用 AGPL-3.0';
+
+  @override
+  String get aboutContactSection => '联系';
+
+  @override
+  String get aboutMaintainer => '开发者 AAswordman';
+
+  @override
+  String get aboutCopyright => '© 2025 - 2026 Operit. 保留所有权利。';
+
+  @override
+  String get chatTtsNoMatchingCharacter => '当前消息没有可匹配的角色';
+
+  @override
+  String chatTtsMatchingCharacterCount(String name) {
+    return '角色卡匹配数量不是 1：$name';
+  }
+
+  @override
+  String get chatTtsEmptyMessage => '消息内容为空，无法生成语音';
+
+  @override
+  String chatTtsPlaybackFailed(String error) {
+    return '生成/播放语音失败：$error';
+  }
+
+  @override
+  String chatCopyFailed(String error) {
+    return '复制失败：$error';
+  }
+
+  @override
+  String get chatConfirmDeleteSelectedTitle => '确认删除';
+
+  @override
+  String chatConfirmDeleteSelectedMessage(int count) {
+    return '确定删除已选的 $count 条消息？';
+  }
+
+  @override
+  String get chatGeneratingShareImage => '正在生成长图...';
+
+  @override
+  String chatGenerateShareImageFailed(String error) {
+    return '生成长图失败：$error';
+  }
 }

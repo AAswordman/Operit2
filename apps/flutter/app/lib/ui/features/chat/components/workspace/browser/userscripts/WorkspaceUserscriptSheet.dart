@@ -67,12 +67,12 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
           children: <Widget>[
             Row(
               children: <Widget>[
-                Text('脚本', style: Theme.of(context).textTheme.titleMedium),
+                Text('スクリプト', style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
                 TextButton.icon(
                   onPressed: () => setState(() => _showInstall = !_showInstall),
                   icon: const Icon(Icons.add),
-                  label: const Text('安装'),
+                  label: const Text('インストール'),
                 ),
               ],
             ),
@@ -84,7 +84,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                   hintText: 'https://example.com/script.user.js',
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
-                    tooltip: '从 URL 安装',
+                    tooltip: 'URLからインストール',
                     onPressed: _installingFromUrl ? null : _installFromUrl,
                     icon: _installingFromUrl
                         ? const SizedBox(
@@ -103,7 +103,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                   hintText: 'scripts/example.user.js',
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
-                    tooltip: '从工作区文件安装',
+                    tooltip: '作業フォルダーのファイルからインストール',
                     onPressed: _installingFromWorkspace
                         ? null
                         : _installFromWorkspaceFile,
@@ -123,7 +123,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                 minLines: 4,
                 maxLines: 8,
                 decoration: const InputDecoration(
-                  hintText: '粘贴 .user.js 内容',
+                  hintText: '.user.jsの内容を貼り付け',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -132,7 +132,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                 alignment: Alignment.centerRight,
                 child: FilledButton(
                   onPressed: _installFromSource,
-                  child: const Text('安装脚本'),
+                  child: const Text('スクリプトをインストール'),
                 ),
               ),
             ],
@@ -153,7 +153,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                   if (scripts.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(18),
-                      child: Text('还没有安装脚本'),
+                      child: Text('インストール済みスクリプトはありません'),
                     )
                   else
                     for (final script in scripts)
@@ -174,7 +174,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                             if (script.knownGrants.isNotEmpty)
                               script.knownGrants.join(', '),
                             if (script.unknownGrants.isNotEmpty)
-                              '未知：${script.unknownGrants.join(', ')}',
+                              '不明：${script.unknownGrants.join(', ')}',
                           ].join(' | '),
                         ),
                         secondary: _UserscriptItemActions(
@@ -195,7 +195,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(
-                        '日志',
+                        'ログ',
                         style: Theme.of(context).textTheme.labelLarge,
                       ),
                     ),
@@ -331,7 +331,7 @@ class _UserscriptItemActions extends StatelessWidget {
       child: Row(
         children: <Widget>[
           IconButton(
-            tooltip: '检查更新',
+            tooltip: '更新を確認',
             onPressed: canCheckUpdate && !checkingUpdate ? onCheckUpdate : null,
             icon: checkingUpdate
                 ? const SizedBox(
@@ -345,7 +345,7 @@ class _UserscriptItemActions extends StatelessWidget {
             padding: EdgeInsets.zero,
           ),
           IconButton(
-            tooltip: '删除',
+            tooltip: '削除',
             onPressed: onRemove,
             icon: const Icon(Icons.delete_outline, size: 18),
             visualDensity: VisualDensity.compact,
@@ -378,11 +378,11 @@ class _UserscriptPageRunSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text('页面运行状态', style: theme.textTheme.labelLarge),
+              Text('ページの実行状態', style: theme.textTheme.labelLarge),
               const SizedBox(height: 6),
               if (pageRuns.isEmpty)
                 Text(
-                  '当前还没有页面运行记录',
+                  'このページの実行記録はまだありません',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -440,10 +440,10 @@ class _UserscriptMenuCommandSection extends StatelessWidget {
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  Text('当前页面菜单', style: theme.textTheme.labelLarge),
+                  Text('現在のページメニュー', style: theme.textTheme.labelLarge),
                   const Spacer(),
                   IconButton(
-                    tooltip: '刷新菜单',
+                    tooltip: 'メニューを更新',
                     onPressed: onRefresh,
                     icon: const Icon(Icons.refresh, size: 18),
                     visualDensity: VisualDensity.compact,
@@ -458,7 +458,7 @@ class _UserscriptMenuCommandSection extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
-                    '当前页面没有脚本菜单',
+                    'このページにはスクリプトメニューがありません',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -492,7 +492,7 @@ class _UserscriptInstallPreviewDialog extends StatelessWidget {
     final theme = Theme.of(context);
     final metadata = preview.metadata;
     return AlertDialog(
-      title: const Text('安装脚本'),
+      title: const Text('スクリプトをインストール'),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -511,19 +511,19 @@ class _UserscriptInstallPreviewDialog extends StatelessWidget {
                 Text(metadata.description),
               ],
               const SizedBox(height: 12),
-              _PreviewLine(label: '版本', value: metadata.version),
-              _PreviewLine(label: '命名空间', value: metadata.namespace),
+              _PreviewLine(label: 'バージョン', value: metadata.version),
+              _PreviewLine(label: '名前空間', value: metadata.namespace),
               if (metadata.author.isNotEmpty)
                 _PreviewLine(label: '作者', value: metadata.author),
               if (preview.sourceUrl != null)
-                _PreviewLine(label: '来源', value: preview.sourceUrl!),
+                _PreviewLine(label: '取得元', value: preview.sourceUrl!),
               const SizedBox(height: 12),
-              _PreviewChips(label: '匹配', values: metadata.matches),
-              _PreviewChips(label: '包含', values: metadata.includes),
-              _PreviewChips(label: '排除', values: metadata.excludes),
-              _PreviewChips(label: '连接', values: metadata.connects),
-              _PreviewChips(label: '能力', values: preview.knownGrants),
-              _PreviewChips(label: '未知能力', values: preview.unknownGrants),
+              _PreviewChips(label: '一致', values: metadata.matches),
+              _PreviewChips(label: '対象', values: metadata.includes),
+              _PreviewChips(label: '除外', values: metadata.excludes),
+              _PreviewChips(label: '接続先', values: metadata.connects),
+              _PreviewChips(label: '権限', values: preview.knownGrants),
+              _PreviewChips(label: '不明な権限', values: preview.unknownGrants),
               if (preview.blockedReasons.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 10),
                 DecoratedBox(
@@ -537,7 +537,7 @@ class _UserscriptInstallPreviewDialog extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          '需要注意',
+                          '注意が必要です',
                           style: theme.textTheme.labelLarge?.copyWith(
                             color: theme.colorScheme.onErrorContainer,
                           ),
@@ -562,11 +562,11 @@ class _UserscriptInstallPreviewDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
+          child: const Text('キャンセル'),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('安装'),
+          child: const Text('インストール'),
         ),
       ],
     );
