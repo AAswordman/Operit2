@@ -46,7 +46,7 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
   @override
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    CoreObjectPath targetPath,
+    int targetObjectId,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,
@@ -68,7 +68,7 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
         CoreWatchRequest(
           requestId:
               'embedded-core-stream-${DateTime.now().microsecondsSinceEpoch}',
-          targetPath: targetPath,
+          targetObjectId: targetObjectId,
           propertyName: propertyName,
           args: args,
         ),
@@ -81,7 +81,7 @@ class ProxyCoreRuntimeBridge extends OperitRuntimeBridge {
         return decodeCoreLink<T>(
           valueBytes,
           decode: decode,
-          targetPath: event.targetPath,
+          targetObjectId: event.targetObjectId,
           embeddedStreamFactory: openEmbeddedCoreStream,
         );
       },

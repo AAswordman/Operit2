@@ -380,7 +380,7 @@ Binding 打开下一段 continuation，并把事件继续写入同一个上游 s
 继续定义 call、watch、push、event、error、stream 和 route context 的协议语义。它不读取
 Binding 存储，也不知道配对、Space 拓扑或任何 Chat 业务类型。
 
-### 8.3 operit-link-access
+### 8.3 operit-access-runtime
 
 负责现有配对、认证、session 和 Peer Link 承载，并增加：
 
@@ -391,7 +391,7 @@ RoutedLink 承载
 逐跳 call/watch/push 转发
 ```
 
-### 8.4 operit-core-proxy
+### 8.4 operit-proxy-local
 
 本机 `CoreNodeRouter` 负责：
 

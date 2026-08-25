@@ -1,7 +1,7 @@
 # Link Performance Scenarios
 
 This directory is for end-to-end Link performance runs that cross app or host
-boundaries. Keep protocol-only benchmarks in `core/crates/operit-link/benches`.
+boundaries. Keep protocol-only benchmarks in `core/crates/foundation/link/benches`.
 
 ## Scope
 
@@ -13,15 +13,13 @@ boundaries. Keep protocol-only benchmarks in `core/crates/operit-link/benches`.
 
 ## Scenario Files
 
-- `scenarios/local_call.json`: local one-shot `/link/call` latency.
-- `scenarios/local_call_stress.json`: local dispatcher call burst pressure.
-- `scenarios/local_watch.json`: local watch channel open and event stream cost.
-- `scenarios/cli_to_host_call.json`: CLI to host call path latency.
+跨节点性能场景必须针对 `CoreNodeRouter -> PeerLink -> CoreNode` 编写。旧的应用层
+HTTP RPC 场景已经删除，避免把本地 Proxy 链路误当成 Space 链路。
 
 ## Commands
 
 ```powershell
-.\tools\link-perf\run_link_perf.ps1 -Scenario .\tools\link-perf\scenarios\local_call.json
+.\tools\link-perf\run_link_perf.ps1 -Scenario .\tools\link-perf\scenarios\<peer-scenario>.json
 ```
 
 Rust warnings are ignored for performance runs. The script records commands and

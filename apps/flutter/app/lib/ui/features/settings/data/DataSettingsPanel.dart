@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/host/FileSaveService.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -205,13 +204,8 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
 
   /// Runs the core storage migration command for the selected roots.
   Future<void> _runStorageMigrate(RuntimeStoragePaths paths) async {
-    final value = await widget.clients.bridge.call(
-      CoreCallRequest(
-        requestId: 'flutter-storage-${DateTime.now().microsecondsSinceEpoch}',
-        targetPath: CoreObjectPath.parse('application'),
-        methodName: 'runCoreCommand',
-        args: <String, Object?>{
-          'args': <String>[
+    final value = await widget.clients.application.runCoreCommand(
+      args: <String>[
             'storage',
             'migrate',
             '--runtime',
@@ -219,8 +213,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
             '--workspace',
             paths.workspaceRoot,
           ],
-        },
-      ),
     );
     if (value is! Map<Object?, Object?>) {
       throw StateError('Invalid core command output');

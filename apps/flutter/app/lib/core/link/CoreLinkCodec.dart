@@ -8,7 +8,7 @@ import 'CoreLinkProtocol.dart';
 typedef CoreEmbeddedStreamFactory =
     Stream<T> Function<T>(
       String streamId,
-      CoreObjectPath targetPath,
+      int targetObjectId,
       String propertyName,
       Object? args,
       T Function(CoreLinkValueReader reader) decode,
@@ -24,12 +24,12 @@ Uint8List encodeCoreLink(Object? value) {
 T decodeCoreLink<T>(
   Uint8List bytes, {
   T Function(CoreLinkValueReader reader)? decode,
-  CoreObjectPath? targetPath,
+  int? targetObjectId,
   CoreEmbeddedStreamFactory? embeddedStreamFactory,
 }) {
   final reader = _CoreLinkMessagePackReader(
     bytes,
-    targetPath: targetPath,
+    targetObjectId: targetObjectId,
     embeddedStreamFactory: embeddedStreamFactory,
   );
   final value = decode == null ? reader.readValue() as T : decode(reader);
@@ -42,10 +42,7 @@ Uint8List encodeNativeCoreCallRequest(CoreCallRequest request) {
   final writer = _CoreLinkMessagePackWriter();
   writer.writeArrayHeader(4);
   writer.writeValue(request.requestId);
-  writer.writeArrayHeader(request.targetPath.segments.length);
-  for (final segment in request.targetPath.segments) {
-    writer.writeValue(segment);
-  }
+  _writeNativeCorePath(writer, request.targetObjectId);
   writer.writeValue(request.methodName);
   writer.writeValue(request.args);
   return writer.takeBytes();
@@ -56,7 +53,7 @@ Uint8List encodeNativeCorePushOpenRequest(CorePushRequest request) {
   final writer = _CoreLinkMessagePackWriter();
   writer.writeArrayHeader(4);
   writer.writeValue(request.requestId);
-  _writeNativeCorePath(writer, request.targetPath);
+  _writeNativeCorePath(writer, request.targetObjectId);
   writer.writeValue(request.methodName);
   writer.writeValue(request.args);
   return writer.takeBytes();
@@ -77,7 +74,7 @@ Uint8List encodeNativeCoreWatchSnapshotRequest(CoreWatchRequest request) {
   final writer = _CoreLinkMessagePackWriter();
   writer.writeArrayHeader(4);
   writer.writeValue(request.requestId);
-  _writeNativeCorePath(writer, request.targetPath);
+  _writeNativeCorePath(writer, request.targetObjectId);
   writer.writeValue(request.propertyName);
   writer.writeValue(request.args);
   return writer.takeBytes();
@@ -92,33 +89,30 @@ Uint8List encodeNativeCoreWatchStreamRequest(
   writer.writeArrayHeader(5);
   writer.writeValue(subscriptionId);
   writer.writeValue(request.requestId);
-  _writeNativeCorePath(writer, request.targetPath);
+  _writeNativeCorePath(writer, request.targetObjectId);
   writer.writeValue(request.propertyName);
   writer.writeValue(request.args);
   return writer.takeBytes();
 }
 
-/// Writes one Core object path as its compact segment tuple field.
+/// Writes one Core object identity as its compact native path field.
 void _writeNativeCorePath(
   _CoreLinkMessagePackWriter writer,
-  CoreObjectPath path,
+  int objectId,
 ) {
-  writer.writeArrayHeader(path.segments.length);
-  for (final segment in path.segments) {
-    writer.writeValue(segment);
-  }
+  writer.writeValue(objectId);
 }
 
 /// Decodes a compact native bridge result and returns its successful value.
 T decodeNativeCoreResult<T>(
   Uint8List bytes, {
   T Function(CoreLinkValueReader reader)? decode,
-  CoreObjectPath? targetPath,
+  int? targetObjectId,
   CoreEmbeddedStreamFactory? embeddedStreamFactory,
 }) {
   final reader = _CoreLinkMessagePackReader(
     bytes,
-    targetPath: targetPath,
+    targetObjectId: targetObjectId,
     embeddedStreamFactory: embeddedStreamFactory,
   );
   final value = _readNativeCoreResult(
@@ -256,13 +250,13 @@ CoreEvent _readNativeCoreEvent(_CoreLinkMessagePackReader reader) {
       'Native core event request id must be a string or null',
     );
   }
-  final targetPath = CoreObjectPath(_readNativeCorePath(reader));
+  final target = _readNativeCorePath(reader);
   final propertyName = reader.readString();
   final kind = reader.readString();
   final valueBytes = reader.readValueBytes();
   return CoreEvent.raw(
     requestId: requestId,
-    targetPath: targetPath,
+    targetObjectId: target,
     propertyName: propertyName,
     kind: kind,
     valueBytes: valueBytes,
@@ -270,16 +264,21 @@ CoreEvent _readNativeCoreEvent(_CoreLinkMessagePackReader reader) {
   );
 }
 
-/// Reads one compact native Core object path tuple.
-List<String> _readNativeCorePath(_CoreLinkMessagePackReader reader) {
-  final length = reader.readArrayLength();
-  return List<String>.generate(length, (_) {
-    final segment = reader.readValue();
-    if (segment is! String) {
-      throw FormatException('Native core path segment must be a string');
-    }
-    return segment;
-  }, growable: false);
+/// Reads one compact native Core object identity.
+int _readNativeCorePath(_CoreLinkMessagePackReader reader) {
+  final objectId = reader.readValue();
+  if (objectId is! int) {
+    throw FormatException('Native core object id must be an integer');
+  }
+  return objectId;
+}
+
+/// Decodes one fixed embedded-stream pool object address.
+int _readCoreObjectIdValue(Object? value) {
+  if (value is! int) {
+    throw FormatException('Embedded Core stream target path must be an integer address');
+  }
+  return value;
 }
 
 /// Reads one compact native CoreProxy error location.
@@ -585,7 +584,7 @@ class _CoreLinkMessagePackReader implements CoreLinkValueReader {
   /// Creates a reader over one complete MessagePack payload.
   _CoreLinkMessagePackReader(
     this._bytes, {
-    CoreObjectPath? targetPath,
+    int? targetObjectId,
     CoreEmbeddedStreamFactory? embeddedStreamFactory,
   }) : _embeddedStreamFactory = embeddedStreamFactory;
 
@@ -605,7 +604,7 @@ class _CoreLinkMessagePackReader implements CoreLinkValueReader {
   ) {
     final fieldCount = readMapLength();
     String? streamId;
-    String? targetPathKey;
+    int? targetObjectId;
     String? propertyName;
     Object? args;
     for (var index = 0; index < fieldCount; index += 1) {
@@ -623,8 +622,8 @@ class _CoreLinkMessagePackReader implements CoreLinkValueReader {
         final descriptorKey = readString();
         if (descriptorKey == 'streamId') {
           streamId = readString();
-        } else if (descriptorKey == 'targetPath') {
-          targetPathKey = readString();
+        } else if (descriptorKey == 'targetObjectId') {
+          targetObjectId = _readCoreObjectIdValue(readValue());
         } else if (descriptorKey == 'propertyName') {
           propertyName = readString();
         } else if (descriptorKey == 'args') {
@@ -635,18 +634,18 @@ class _CoreLinkMessagePackReader implements CoreLinkValueReader {
       }
     }
     final resolvedStreamId = streamId;
-    final resolvedTargetPathKey = targetPathKey;
+    final resolvedTargetObjectId = targetObjectId;
     final resolvedPropertyName = propertyName;
     final factory = _embeddedStreamFactory;
     if (resolvedStreamId == null ||
-        resolvedTargetPathKey == null ||
+        resolvedTargetObjectId == null ||
         resolvedPropertyName == null ||
         factory == null) {
       throw StateError('Embedded Core stream requires a stream factory');
     }
     return factory<T>(
       resolvedStreamId,
-      CoreObjectPath.parse(resolvedTargetPathKey),
+      resolvedTargetObjectId,
       resolvedPropertyName,
       args,
       decode,

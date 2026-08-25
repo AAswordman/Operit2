@@ -2142,6 +2142,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-access-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "futures-util",
+ "hmac",
+ "operit-host-api",
+ "operit-link",
+ "operit-runtime",
+ "operit-store",
+ "operit-util",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "uuid",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "operit-cli"
 version = "2.0.0-preview.5"
 dependencies = [
@@ -2156,17 +2180,18 @@ dependencies = [
  "image",
  "include_dir",
  "mdns-sd",
+ "operit-access-runtime",
  "operit-command-core",
- "operit-core-proxy",
  "operit-host-api",
  "operit-host-linux-native",
  "operit-host-macos-native",
  "operit-host-native-common",
  "operit-host-windows-native",
  "operit-link",
- "operit-link-access",
  "operit-model",
+ "operit-node-runtime",
  "operit-providers",
+ "operit-proxy-local",
  "operit-runtime",
  "operit-store",
  "operit-tools",
@@ -2204,36 +2229,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
-]
-
-[[package]]
-name = "operit-core-annotations"
-version = "0.1.0"
-
-[[package]]
-name = "operit-core-proxy"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "mdns-sd",
- "operit-command-core",
- "operit-host-api",
- "operit-link",
- "operit-link-access",
- "operit-local-models",
- "operit-model",
- "operit-plugin-sdk",
- "operit-providers",
- "operit-runtime",
- "operit-store",
- "operit-tools",
- "operit-util",
- "quote",
- "serde",
- "serde_json",
- "syn",
- "tokio",
- "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -2403,36 +2398,10 @@ name = "operit-link"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "axum",
- "futures-util",
  "rmp-serde",
  "serde",
  "serde_bytes",
  "tokio",
-]
-
-[[package]]
-name = "operit-link-access"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "futures-util",
- "hmac",
- "operit-host-api",
- "operit-link",
- "operit-runtime",
- "operit-store",
- "operit-util",
- "rand_core 0.6.4",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -2460,6 +2429,26 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "operit-node-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mdns-sd",
+ "operit-access-runtime",
+ "operit-host-api",
+ "operit-link",
+ "operit-runtime",
+ "operit-store",
+ "operit-tools",
+ "operit-util",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn",
+ "tokio",
 ]
 
 [[package]]
@@ -2502,6 +2491,7 @@ dependencies = [
  "futures-util",
  "json5",
  "operit-host-api",
+ "operit-link",
  "operit-model",
  "operit-plugin-sdk",
  "operit-store",
@@ -2520,6 +2510,96 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-proxy-bridge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-link",
+]
+
+[[package]]
+name = "operit-proxy-dart-codegen"
+version = "0.1.0"
+dependencies = [
+ "operit-rslink-codegen",
+]
+
+[[package]]
+name = "operit-proxy-local"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-access-runtime",
+ "operit-command-core",
+ "operit-host-api",
+ "operit-link",
+ "operit-local-models",
+ "operit-model",
+ "operit-node-runtime",
+ "operit-plugin-sdk",
+ "operit-providers",
+ "operit-proxy-bridge",
+ "operit-proxy-dart-codegen",
+ "operit-proxy-rust-codegen",
+ "operit-proxy-scan",
+ "operit-rslink-runtime",
+ "operit-runtime",
+ "operit-store",
+ "operit-tools",
+ "operit-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "operit-proxy-rust-codegen"
+version = "0.1.0"
+dependencies = [
+ "operit-rslink-codegen",
+]
+
+[[package]]
+name = "operit-proxy-scan"
+version = "0.1.0"
+dependencies = [
+ "operit-rslink-codegen",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "operit-route-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "operit-rslink-codegen"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "operit-rslink-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-host-api",
+ "operit-link",
+ "operit-store",
+ "operit-util",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "operit-runtime"
 version = "2.0.0-preview.5"
 dependencies = [
@@ -2534,7 +2614,6 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
- "operit-core-annotations",
  "operit-host-api",
  "operit-js-bridge",
  "operit-link",
@@ -2542,6 +2621,8 @@ dependencies = [
  "operit-model",
  "operit-plugin-sdk",
  "operit-providers",
+ "operit-route-macros",
+ "operit-rslink-runtime",
  "operit-store",
  "operit-tools",
  "operit-util",
@@ -2596,6 +2677,7 @@ dependencies = [
  "json5",
  "md-5",
  "operit-host-api",
+ "operit-link",
  "operit-model",
  "operit-plugin-sdk",
  "operit-plugin-sdk-codegen",

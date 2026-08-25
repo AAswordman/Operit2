@@ -22,10 +22,8 @@ void main() {
       userAgent: null,
       headers: <String, String>{},
     );
-    final client = GeneratedServicesRuntimeBrowserServiceCoreProxy(
-      bridge,
-      const CoreObjectPath(<String>['services', 'runtimeBrowserService']),
-    );
+    final client = GeneratedCoreProxyClients(bridge)
+        .servicesRuntimeBrowserService;
 
     await client.submitBrowserInteractions(
       commands: Stream<RuntimeBrowserCommand>.value(command),
@@ -65,7 +63,7 @@ class _RecordingBridge extends OperitRuntimeBridge {
   @override
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    CoreObjectPath targetPath,
+    int targetObjectId,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,

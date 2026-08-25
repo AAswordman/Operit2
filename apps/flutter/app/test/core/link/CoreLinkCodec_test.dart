@@ -53,7 +53,7 @@ void main() {
   test('native core call uses a fixed MessagePack tuple', () {
     const request = CoreCallRequest(
       requestId: 'request-1',
-      targetPath: CoreObjectPath(<String>['preferences', 'cardManager']),
+      targetObjectId: 15,
       methodName: 'getCards',
       args: <String, Object?>{'includeArchived': false},
     );
@@ -64,7 +64,7 @@ void main() {
     expect(encoded.first, 0x94);
     expect(decoded, <Object?>[
       'request-1',
-      <Object?>['preferences', 'cardManager'],
+      15,
       'getCards',
       <String, Object?>{'includeArchived': false},
     ]);
@@ -113,13 +113,13 @@ void main() {
   test('native push and watch requests use fixed MessagePack tuples', () {
     const request = CorePushRequest(
       requestId: 'push-1',
-      targetPath: CoreObjectPath(<String>['runtime', 'browser']),
+      targetObjectId: 41,
       methodName: 'interact',
     );
 
     expect(decodeCoreLink(encodeNativeCorePushOpenRequest(request)), <Object?>[
       'push-1',
-      <Object?>['runtime', 'browser'],
+      41,
       'interact',
       <String, Object?>{},
     ]);
@@ -130,7 +130,7 @@ void main() {
 
     const watchRequest = CoreWatchRequest(
       requestId: 'watch-1',
-      targetPath: CoreObjectPath(<String>['preferences', 'cardManager']),
+      targetObjectId: 15,
       propertyName: 'cards',
       args: null,
     );
@@ -138,7 +138,7 @@ void main() {
       decodeCoreLink(encodeNativeCoreWatchSnapshotRequest(watchRequest)),
       <Object?>[
         'watch-1',
-        <Object?>['preferences', 'cardManager'],
+        15,
         'cards',
         null,
       ],
@@ -150,7 +150,7 @@ void main() {
       <Object?>[
         'subscription-1',
         'watch-1',
-        <Object?>['preferences', 'cardManager'],
+        15,
         'cards',
         null,
       ],
@@ -184,7 +184,7 @@ void main() {
         0,
         <Object?>[
           'watch-1',
-          <Object?>['preferences', 'cardManager'],
+          15,
           'cards',
           'Snapshot',
           <Object?>['card-1'],
@@ -192,10 +192,7 @@ void main() {
       ]),
     );
     expect(snapshot.requestId, 'watch-1');
-    expect(snapshot.targetPath.segments, <String>[
-      'preferences',
-      'cardManager',
-    ]);
+    expect(snapshot.targetObjectId, 15);
     expect(snapshot.kind, 'Snapshot');
 
     final frame = decodeNativeCoreWatchFrame(
@@ -203,7 +200,7 @@ void main() {
         'subscription-1',
         <Object?>[
           null,
-          <Object?>['preferences', 'cardManager'],
+          15,
           'cards',
           'Completed',
           null,

@@ -111,7 +111,7 @@ The Operit2 release version is the full SemVer value used by the updater:
 
 ```text
 apps/cli/Cargo.toml                         package.version
-core/crates/operit-runtime/Cargo.toml       package.version
+core/crates/runtime/application/Cargo.toml       package.version
 ```
 
 These two values must be identical. They must not include build metadata. The CLI uses its Cargo package version as `cliVersion`. The app exposes `coreVersion` from `operit-runtime`.
@@ -308,7 +308,7 @@ For the first public preview:
 
 ```text
 apps/cli/Cargo.toml                    version = "2.0.0-preview.1"
-core/crates/operit-runtime/Cargo.toml  version = "2.0.0-preview.1"
+core/crates/runtime/application/Cargo.toml  version = "2.0.0-preview.1"
 apps/flutter/app/pubspec.yaml          version: 2.0.0+1
 GitHub tag                             v2.0.0-preview.1
 ```
@@ -318,7 +318,7 @@ GitHub tag                             v2.0.0-preview.1
 The updater implementation is in:
 
 ```text
-core/crates/operit-runtime/src/util/GithubReleaseUtil.rs
+core/crates/runtime/application/src/util/GithubReleaseUtil.rs
 ```
 
 The implementation must keep these rules:

@@ -1,11 +1,10 @@
-use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 
-use operit_core_proxy::GeneratedCoreProxy;
-use operit_link::{CoreEvent, CoreLinkClient, CoreLinkError, CoreRequestId, CoreValue};
+use operit_proxy_local::{GeneratedCoreProxy, LocalCoreProxy};
+use operit_link::{CoreEvent, CoreLinkClient, CoreLinkError, CoreRequestId, CoreValue, CoreWatchRequest};
 
 pub(super) struct TuiCore {
-    proxy: GeneratedCoreProxy<Box<dyn CoreLinkClient + Send>>,
+    proxy: GeneratedCoreProxy<LocalCoreProxy>,
     eventSender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     eventReceiver: tokio::sync::mpsc::UnboundedReceiver<CoreEvent>,
     messageWatchTask: Option<tokio::task::JoinHandle<()>>,
@@ -15,10 +14,10 @@ pub(super) struct TuiCore {
 }
 
 /// Creates a TUI proxy wrapper with an internal event queue.
-pub(super) fn tui_core(client: impl CoreLinkClient + Send + 'static) -> TuiCore {
+pub(super) fn tui_core(client: LocalCoreProxy) -> TuiCore {
     let (eventSender, eventReceiver) = tokio::sync::mpsc::unbounded_channel();
     TuiCore {
-        proxy: GeneratedCoreProxy::new(Box::new(client)),
+        proxy: GeneratedCoreProxy::new(client),
         eventSender,
         eventReceiver,
         messageWatchTask: None,
@@ -54,20 +53,25 @@ impl TuiCore {
             self.messageWatchGeneration
         ));
         let mut chatProxy = self.proxy.chat_runtime_holder_main();
-        let mut args = BTreeMap::new();
+        let targetObjectId = LocalCoreProxy::generatedObjectIdForSchema(
+            "chatRuntimeHolderMain",
+        )
+        .ok_or_else(|| CoreLinkError::internal("chat runtime object id is not generated"))?;
+        let mut args = std::collections::BTreeMap::new();
         args.insert(
             "chatId".to_string(),
-            operit_link::toCoreValue(Some(chatId.clone())).map_err(|error| {
-                CoreLinkError::new("INVALID_ARGS", format!("chatId: {error}"))
-            })?,
+            operit_link::toCoreValue(Some(chatId.clone()))
+                .map_err(|error| CoreLinkError::internal(error.to_string()))?,
         );
-        let request = operit_link::CoreWatchRequest::new(
-            requestId.0.clone(),
-            chatProxy.generatedTargetPath().clone(),
-            "chatMessagesFlow",
-            CoreValue::Map(args),
-        );
-        let mut stream = chatProxy.generatedClientMut().watch(request).await?;
+        let mut stream = chatProxy
+            .generatedClientMut()
+            .watch(CoreWatchRequest::new(
+                requestId.0.clone(),
+                targetObjectId,
+                "chatMessagesFlow",
+                CoreValue::Map(args),
+            ))
+            .await?;
         let sender = self.eventSender.clone();
         let eventRequestId = requestId.clone();
         self.messageWatchChatId = Some(chatId);
@@ -110,7 +114,7 @@ impl TuiCore {
 }
 
 impl Deref for TuiCore {
-    type Target = GeneratedCoreProxy<Box<dyn CoreLinkClient + Send>>;
+    type Target = GeneratedCoreProxy<LocalCoreProxy>;
 
     fn deref(&self) -> &Self::Target {
         &self.proxy

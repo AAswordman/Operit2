@@ -314,7 +314,7 @@ mod native_call_codec_tests {
     fn decodes_compact_request_tuple() {
         let bytes = operit_link::encodeLink((
             "request-1",
-            vec!["preferences", "cardManager"],
+            6u32,
             "getCards",
             operit_link::CoreValue::Bool(true),
         ))
@@ -323,10 +323,7 @@ mod native_call_codec_tests {
         let request = decode_native_call_request(&bytes).expect("compact request must decode");
 
         assert_eq!(request.requestId.0, "request-1");
-        assert_eq!(
-            request.targetPath.segments,
-            vec!["preferences", "cardManager"]
-        );
+        assert_eq!(request.targetObjectId, 6);
         assert_eq!(request.methodName, "getCards");
         assert_eq!(request.args, operit_link::CoreValue::Bool(true));
     }
@@ -334,12 +331,12 @@ mod native_call_codec_tests {
     /// Verifies every local stream request decodes from a compact tuple.
     #[test]
     fn decodes_compact_push_and_watch_tuples() {
-        let push_open = operit_link::encodeLink(("push-1", vec!["runtime", "browser"], "interact"))
+        let push_open = operit_link::encodeLink(("push-1", 7u32, "interact"))
             .expect("compact push open must encode");
         let push_request =
             decode_native_push_open_request(&push_open).expect("compact push open must decode");
         assert_eq!(push_request.requestId.0, "push-1");
-        assert_eq!(push_request.targetPath.segments, vec!["runtime", "browser"]);
+        assert_eq!(push_request.targetObjectId, 7);
         assert_eq!(push_request.methodName, "interact");
 
         let push_item = operit_link::encodeLink((
@@ -358,7 +355,7 @@ mod native_call_codec_tests {
 
         let snapshot = operit_link::encodeLink((
             "watch-1",
-            vec!["preferences", "cardManager"],
+            8u32,
             "cards",
             operit_link::CoreValue::Null,
         ))
@@ -371,7 +368,7 @@ mod native_call_codec_tests {
         let stream = operit_link::encodeLink((
             "subscription-1",
             "watch-1",
-            vec!["preferences", "cardManager"],
+            8u32,
             "cards",
             operit_link::CoreValue::Null,
         ))
@@ -438,9 +435,7 @@ mod native_call_codec_tests {
     fn encodes_compact_watch_tuples() {
         let event = CoreEvent {
             requestId: Some(operit_link::CoreRequestId::new("watch-1")),
-            targetPath: operit_link::CoreObjectPath {
-                segments: vec!["preferences".to_string(), "cardManager".to_string()],
-            },
+            targetObjectId: 8,
             propertyName: "cards".to_string(),
             kind: CoreEventKind::Snapshot,
             value: operit_link::CoreValue::String("card-1".to_string()),
@@ -450,7 +445,7 @@ mod native_call_codec_tests {
             u8,
             (
                 Option<String>,
-                Vec<String>,
+                u32,
                 String,
                 String,
                 operit_link::CoreValue,
@@ -458,7 +453,7 @@ mod native_call_codec_tests {
         ) = operit_link::decodeLink(&snapshot).expect("compact watch snapshot must decode");
         assert_eq!(status, 0);
         assert_eq!(payload.0.as_deref(), Some("watch-1"));
-        assert_eq!(payload.1, vec!["preferences", "cardManager"]);
+        assert_eq!(payload.1, 8);
         assert_eq!(payload.2, "cards");
         assert_eq!(payload.3, "Snapshot");
 
@@ -467,7 +462,7 @@ mod native_call_codec_tests {
             String,
             (
                 Option<String>,
-                Vec<String>,
+                u32,
                 String,
                 String,
                 operit_link::CoreValue,
@@ -991,3 +986,5 @@ fn string_to_ptr(value: impl Into<String>) -> *mut c_char {
         .expect("sanitized bridge string must not contain nul")
         .into_raw()
 }
+
+

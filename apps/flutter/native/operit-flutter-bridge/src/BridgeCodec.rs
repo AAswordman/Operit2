@@ -8,9 +8,9 @@ use serde::Serialize;
 pub(crate) fn decode_native_call_request(
     request_bytes: &[u8],
 ) -> Result<CoreCallRequest, CoreLinkError> {
-    let (request_id, target_segments, method_name, args): (
+    let (request_id, object_id, method_name, args): (
         String,
-        Vec<String>,
+        u32,
         String,
         operit_link::CoreValue,
     ) = operit_link::decodeLink(request_bytes).map_err(|error| {
@@ -21,9 +21,7 @@ pub(crate) fn decode_native_call_request(
     })?;
     Ok(CoreCallRequest::new(
         request_id,
-        operit_link::CoreObjectPath {
-            segments: target_segments,
-        },
+        object_id,
         method_name,
         args,
     ))
@@ -33,9 +31,9 @@ pub(crate) fn decode_native_call_request(
 pub(crate) fn decode_native_push_open_request(
     request_bytes: &[u8],
 ) -> Result<CorePushRequest, CoreLinkError> {
-    let (request_id, target_segments, method_name, args): (
+    let (request_id, object_id, method_name, args): (
         String,
-        Vec<String>,
+        u32,
         String,
         operit_link::CoreValue,
     ) = operit_link::decodeLink(request_bytes).map_err(|error| {
@@ -46,9 +44,7 @@ pub(crate) fn decode_native_push_open_request(
     })?;
     Ok(CorePushRequest::new(
         request_id,
-        operit_link::CoreObjectPath {
-            segments: target_segments,
-        },
+        object_id,
         method_name,
     )
     .withArgs(args))
@@ -74,9 +70,9 @@ pub(crate) fn decode_native_push_item(request_bytes: &[u8]) -> Result<CorePushIt
 pub(crate) fn decode_native_watch_snapshot_request(
     request_bytes: &[u8],
 ) -> Result<CoreWatchRequest, CoreLinkError> {
-    let (request_id, target_segments, property_name, args): (
+    let (request_id, object_id, property_name, args): (
         String,
-        Vec<String>,
+        u32,
         String,
         operit_link::CoreValue,
     ) = operit_link::decodeLink(request_bytes).map_err(|error| {
@@ -87,9 +83,7 @@ pub(crate) fn decode_native_watch_snapshot_request(
     })?;
     Ok(CoreWatchRequest::new(
         request_id,
-        operit_link::CoreObjectPath {
-            segments: target_segments,
-        },
+        object_id,
         property_name,
         args,
     ))
@@ -99,10 +93,10 @@ pub(crate) fn decode_native_watch_snapshot_request(
 pub(crate) fn decode_native_watch_stream_request(
     request_bytes: &[u8],
 ) -> Result<(String, CoreWatchRequest), CoreLinkError> {
-    let (subscription_id, request_id, target_segments, property_name, args): (
+    let (subscription_id, request_id, object_id, property_name, args): (
         String,
         String,
-        Vec<String>,
+        u32,
         String,
         operit_link::CoreValue,
     ) = operit_link::decodeLink(request_bytes).map_err(|error| {
@@ -115,9 +109,7 @@ pub(crate) fn decode_native_watch_stream_request(
         subscription_id,
         CoreWatchRequest::new(
             request_id,
-            operit_link::CoreObjectPath {
-                segments: target_segments,
-            },
+            object_id,
             property_name,
             args,
         ),
@@ -162,21 +154,21 @@ pub(crate) fn native_watch_event_payload(
     event: CoreEvent,
 ) -> (
     Option<String>,
-    Vec<String>,
+    u32,
     String,
     &'static str,
     operit_link::CoreValue,
 ) {
     let CoreEvent {
         requestId,
-        targetPath,
+        targetObjectId,
         propertyName,
         kind,
         value,
     } = event;
     (
         requestId.map(|request_id| request_id.0),
-        targetPath.segments,
+        targetObjectId,
         propertyName,
         native_event_kind_name(kind),
         value,

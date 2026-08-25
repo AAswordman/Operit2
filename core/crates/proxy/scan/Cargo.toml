@@ -1,0 +1,11 @@
+[package]
+name = "operit-proxy-scan"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+operit-rslink-codegen = { path = "../../rslink/codegen" }
+quote = "1"
+syn = { version = "2", features = ["full", "visit"] }

@@ -36,7 +36,7 @@ the parent runtime wires concrete behavior together.
   service wiring, plugin assets, preferences, workspace services, chat service
   lifecycles, provider support implementations, and tool support
   implementations.
-- `operit-core-proxy`: build-time proxy generation and local dispatch. It scans
+- `operit-proxy-local`: build-time proxy generation and local dispatch. It scans
   selected public surfaces from runtime/model/store/tools/providers and emits
   Rust and Dart proxy code.
 - `operit-link`: transport protocol and client/server primitives.
@@ -151,7 +151,7 @@ the concrete JS engine lives in `operit-js-bridge`.
 
 ## Proxy Boundary
 
-`operit-core-proxy` is a projection layer. It scans selected public surfaces
+`operit-proxy-local` is a projection layer. It scans selected public surfaces
 from the split crates and emits transport-facing Rust and Dart code. It does not
 own runtime behavior, host implementations, provider logic, tool logic, or
 storage.

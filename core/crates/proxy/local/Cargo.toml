@@ -1,0 +1,42 @@
+[package]
+name = "operit-proxy-local"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+operit-proxy-bridge = { path = "../bridge" }
+operit-rslink-runtime = { path = "../../rslink/runtime" }
+operit-host-api = { path = "../../foundation/host-api" }
+operit-link = { path = "../../foundation/link" }
+operit-access-runtime = { path = "../../access/runtime" }
+operit-local-models = { path = "../../provider/local-model" }
+operit-model = { path = "../../foundation/model" }
+operit-plugin-sdk = { path = "../../plugin/sdk" }
+operit-providers = { path = "../../provider/services" }
+operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"] }
+operit-store = { path = "../../persistence/store" }
+operit-tools = { path = "../../tool/services", default-features = false }
+operit-util = { path = "../../foundation/util" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "sync"] }
+
+[build-dependencies]
+operit-proxy-scan = { path = "../scan" }
+operit-proxy-dart-codegen = { path = "../dart-codegen" }
+operit-proxy-rust-codegen = { path = "../rust-codegen" }
+
+[dev-dependencies]
+operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+operit-command-core = { path = "../../command/core" }
+operit-node-runtime = { path = "../../node/runtime" }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

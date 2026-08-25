@@ -5,7 +5,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../../core/bridge/OperitRuntimeBridge.dart';
-import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 
@@ -82,6 +81,7 @@ class TtsPlaybackController extends ChangeNotifier {
   int _generation = 0;
   bool _draining = false;
   OperitRuntimeBridge? _hostSpeechBridge;
+  GeneratedCoreProxyClients? _hostSpeechClients;
   _TtsPlaybackRequest? _currentRequest;
   Future<void>? _stopInProgress;
   TtsPlaybackState _state = const TtsPlaybackState.idle();
@@ -170,7 +170,9 @@ class TtsPlaybackController extends ChangeNotifier {
       if (hostSpeechBridge == null) {
         throw StateError('active TTS playback is missing its runtime bridge');
       }
-      final status = await _callHostSpeech(hostSpeechBridge, 'pauseSpeech');
+      final status = await _readHostStatus(
+        _hostSpeechClients!.servicesTtsPlaybackService.pauseSpeech(),
+      );
       if (generation != _generation ||
           _state.phase != TtsPlaybackPhase.playing) {
         return;
@@ -202,7 +204,9 @@ class TtsPlaybackController extends ChangeNotifier {
       if (hostSpeechBridge == null) {
         throw StateError('paused TTS playback is missing its runtime bridge');
       }
-      final status = await _callHostSpeech(hostSpeechBridge, 'resumeSpeech');
+      final status = await _readHostStatus(
+        _hostSpeechClients!.servicesTtsPlaybackService.resumeSpeech(),
+      );
       if (generation != _generation ||
           _state.phase != TtsPlaybackPhase.paused) {
         return;
@@ -249,10 +253,12 @@ class TtsPlaybackController extends ChangeNotifier {
     _currentRequest?.failStart(cancelled);
     final hostSpeechBridge = _hostSpeechBridge;
     _hostSpeechBridge = null;
+    final hostSpeechClients = _hostSpeechClients;
+    _hostSpeechClients = null;
     Object? stopError;
     try {
       if (hostSpeechBridge != null) {
-        await _callHostSpeech(hostSpeechBridge, 'stopSpeech');
+        await hostSpeechClients!.servicesTtsPlaybackService.stopSpeech();
       }
     } catch (error) {
       stopError = error;
@@ -306,10 +312,11 @@ class TtsPlaybackController extends ChangeNotifier {
         if (usesHostSystemSpeech) {
           final audioPath = _hostSpeechPath(request.displayId);
           _hostSpeechBridge = request.bridge;
+          _hostSpeechClients = request.clients;
           try {
             final status = await _speakHostSystem(request);
             if (request.generation != _generation) {
-              await _stopLateHostSpeech(request.bridge);
+              await _stopLateHostSpeech(request.clients);
               continue;
             }
             request.completeStart();
@@ -332,6 +339,7 @@ class TtsPlaybackController extends ChangeNotifier {
           } finally {
             if (identical(_hostSpeechBridge, request.bridge)) {
               _hostSpeechBridge = null;
+              _hostSpeechClients = null;
             }
           }
           continue;
@@ -385,21 +393,20 @@ class TtsPlaybackController extends ChangeNotifier {
 
   /// Resolves whether a request uses live host system speech.
   Future<bool> _usesHostSystemSpeech(_TtsPlaybackRequest request) async {
-    final clients = GeneratedCoreProxyClients(request.bridge);
     final config = switch (request.source) {
       _TtsPlaybackSource.character => await _resolvedCharacterTtsConfig(
-        clients,
+        request.clients,
         request.characterCardId,
       ),
       _TtsPlaybackSource.config =>
-        await clients.preferencesTtsConfigManager.getTtsConfig(
+        await request.clients.preferencesTtsConfigManager.getTtsConfig(
           id: request.ttsConfigId,
         ),
     };
     if (config.providerType != _systemTtsProviderType) {
       return false;
     }
-    final descriptor = await clients.servicesRuntimeHostInfoService
+    final descriptor = await request.clients.servicesRuntimeHostInfoService
         .runtimeHostDescriptor();
     if (!descriptor.systemTtsPlaybackHost) {
       throw UnsupportedError(
@@ -429,29 +436,19 @@ class TtsPlaybackController extends ChangeNotifier {
   Future<List<_TtsPlaybackAudioSource>> _synthesize(
     _TtsPlaybackRequest request,
   ) async {
-    final methodName = switch (request.source) {
-      _TtsPlaybackSource.character => 'synthesizeForCharacter',
-      _TtsPlaybackSource.config => 'synthesizeWithConfig',
+    final result = switch (request.source) {
+      _TtsPlaybackSource.character => await request.clients.servicesTtsSynthesisService
+          .synthesizeForCharacter(
+            characterCardId: request.characterCardId,
+            text: request.text,
+          ),
+      _TtsPlaybackSource.config => await request.clients.servicesTtsSynthesisService
+          .synthesizeWithConfig(
+            ttsConfigId: request.ttsConfigId,
+            text: request.text,
+          ),
     };
-    final args = switch (request.source) {
-      _TtsPlaybackSource.character => <String, Object?>{
-        'characterCardId': request.characterCardId,
-        'text': request.text,
-      },
-      _TtsPlaybackSource.config => <String, Object?>{
-        'ttsConfigId': request.ttsConfigId,
-        'text': request.text,
-      },
-    };
-    final result = await request.bridge.call(
-      CoreCallRequest(
-        requestId: _requestId(),
-        targetPath: CoreObjectPath.parse('services.ttsSynthesisService'),
-        methodName: methodName,
-        args: args,
-      ),
-    );
-    final json = result as Map<String, Object?>;
+    final json = result.toJson();
     final audioPaths = _jsonStringList(json, 'audioPaths');
     final audioStoragePaths = _jsonStringList(json, 'audioStoragePaths');
     if (audioPaths.length != audioStoragePaths.length) {
@@ -468,23 +465,25 @@ class TtsPlaybackController extends ChangeNotifier {
 
   /// Starts host system speech and returns its authoritative state.
   Future<_TtsHostStatus> _speakHostSystem(_TtsPlaybackRequest request) async {
-    final methodName = switch (request.source) {
-      _TtsPlaybackSource.character => 'speakForCharacter',
-      _TtsPlaybackSource.config => 'speakWithConfig',
+    final result = switch (request.source) {
+      _TtsPlaybackSource.character => await request
+          .clients
+          .servicesTtsPlaybackService
+          .speakForCharacter(
+            characterCardId: request.characterCardId,
+            text: request.text,
+            interrupt: true,
+          ),
+      _TtsPlaybackSource.config => await request
+          .clients
+          .servicesTtsPlaybackService
+          .speakWithConfig(
+            ttsConfigId: request.ttsConfigId,
+            text: request.text,
+            interrupt: true,
+          ),
     };
-    final args = switch (request.source) {
-      _TtsPlaybackSource.character => <String, Object?>{
-        'characterCardId': request.characterCardId,
-        'text': request.text,
-        'interrupt': true,
-      },
-      _TtsPlaybackSource.config => <String, Object?>{
-        'ttsConfigId': request.ttsConfigId,
-        'text': request.text,
-        'interrupt': true,
-      },
-    };
-    return _callHostSpeech(request.bridge, methodName, args: args);
+    return _TtsHostStatus.fromJson(result.toJson());
   }
 
   /// Polls host playback until completion or request cancellation.
@@ -498,7 +497,9 @@ class TtsPlaybackController extends ChangeNotifier {
       if (request.generation != _generation) {
         return;
       }
-      status = await _callHostSpeech(request.bridge, 'speechState');
+      status = await _readHostStatus(
+        request.clients.servicesTtsPlaybackService.speechState(),
+      );
       if (request.generation == _generation && status.active) {
         final phase = status.paused
             ? TtsPlaybackPhase.paused
@@ -511,29 +512,20 @@ class TtsPlaybackController extends ChangeNotifier {
   }
 
   /// Stops speech that completed startup after its request was cancelled.
-  Future<void> _stopLateHostSpeech(OperitRuntimeBridge bridge) async {
+  Future<void> _stopLateHostSpeech(GeneratedCoreProxyClients clients) async {
     try {
-      await _callHostSpeech(bridge, 'stopSpeech');
+      await clients.servicesTtsPlaybackService.stopSpeech();
     } catch (error) {
       _publishPlaybackError(error);
     }
   }
 
-  /// Calls one host speech method and validates the returned status.
-  Future<_TtsHostStatus> _callHostSpeech(
-    OperitRuntimeBridge bridge,
-    String methodName, {
-    Map<String, Object?> args = const <String, Object?>{},
-  }) async {
-    final result = await bridge.call(
-      CoreCallRequest(
-        requestId: _requestId(),
-        targetPath: CoreObjectPath.parse('services.ttsPlaybackService'),
-        methodName: methodName,
-        args: args,
-      ),
-    );
-    return _TtsHostStatus.fromJson(result as Map<String, Object?>);
+  /// Reads one generated host playback response into the controller status.
+  Future<_TtsHostStatus> _readHostStatus(
+    Future<core_proxy.TtsHostPlaybackResult> response,
+  ) async {
+    final result = await response;
+    return _TtsHostStatus.fromJson(result.toJson());
   }
 
   /// Starts one generated audio source through the runtime TTS host.
@@ -543,27 +535,23 @@ class TtsPlaybackController extends ChangeNotifier {
   ) async {
     _hostSpeechBridge = request.bridge;
     try {
-      final result = await request.bridge.call(
-        CoreCallRequest(
-          requestId: _requestId(),
-          targetPath: CoreObjectPath.parse('services.ttsPlaybackService'),
-          methodName: 'playAudio',
-          args: <String, Object?>{'path': audioSource.path},
-        ),
-      );
-      final start = _TtsAudioStart.fromJson(result as Map<String, Object?>);
+      final result = await request.clients.servicesTtsPlaybackService
+          .playAudio(path: audioSource.path);
+      final start = _TtsAudioStart.fromJson(result.toJson());
       if (!start.started) {
         throw StateError(
           'TTS host did not start audio playback: ${start.path}',
         );
       }
       if (request.generation != _generation) {
-        await _stopLateHostSpeech(request.bridge);
+        await _stopLateHostSpeech(request.clients);
         return;
       }
       request.completeStart();
       _publish(_state.copyWith(phase: TtsPlaybackPhase.playing));
-      final status = await _callHostSpeech(request.bridge, 'speechState');
+      final status = await _readHostStatus(
+        request.clients.servicesTtsPlaybackService.speechState(),
+      );
       await _waitHostPlayback(request, status);
     } finally {
       if (identical(_hostSpeechBridge, request.bridge)) {
@@ -606,7 +594,8 @@ class _TtsPlaybackRequest {
     required this.text,
     required this.title,
     required this.generation,
-  }) : source = _TtsPlaybackSource.character,
+  }) : clients = GeneratedCoreProxyClients(bridge),
+       source = _TtsPlaybackSource.character,
        ttsConfigId = '',
        _started = Completer<void>();
 
@@ -617,11 +606,13 @@ class _TtsPlaybackRequest {
     required this.text,
     required this.title,
     required this.generation,
-  }) : source = _TtsPlaybackSource.config,
+  }) : clients = GeneratedCoreProxyClients(bridge),
+       source = _TtsPlaybackSource.config,
        characterCardId = '',
        _started = Completer<void>();
 
   final OperitRuntimeBridge bridge;
+  final GeneratedCoreProxyClients clients;
   final _TtsPlaybackSource source;
   final String characterCardId;
   final String ttsConfigId;
@@ -723,5 +714,3 @@ List<String> _jsonStringList(Map<String, Object?> json, String key) {
 /// Builds the synthetic path used for live host speech.
 String _hostSpeechPath(String characterCardId) => 'host-tts:$characterCardId';
 
-/// Creates a unique Flutter-side Core request identifier.
-String _requestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';

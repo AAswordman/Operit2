@@ -6,7 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
-operit-host-api = { path = "../../../core/crates/operit-host-api" }
+operit-host-api = { path = "../../../core/crates/foundation/host-api" }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_env = "ohos")))'.dependencies]

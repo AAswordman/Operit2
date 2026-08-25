@@ -8,6 +8,6 @@ description = "Third-party provider implementation example for operit-providers"
 [workspace]
 
 [dependencies]
-operit-providers = { path = "../../crates/operit-providers" }
+operit-providers = { path = "../../crates/provider/services" }
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt"] }

@@ -9,13 +9,13 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-operit-core-proxy = { path = "../../../../core/crates/operit-core-proxy" }
-operit-host-api = { path = "../../../../core/crates/operit-host-api" }
-operit-link = { path = "../../../../core/crates/operit-link" }
-operit-runtime = { path = "../../../../core/crates/operit-runtime", default-features = false, features = ["javascript"] }
-operit-store = { path = "../../../../core/crates/operit-store" }
-operit-tools = { path = "../../../../core/crates/operit-tools", default-features = false }
-operit-util = { path = "../../../../core/crates/operit-util" }
+operit-proxy-local = { path = "../../../../core/crates/proxy/local" }
+operit-host-api = { path = "../../../../core/crates/foundation/host-api" }
+operit-link = { path = "../../../../core/crates/foundation/link" }
+operit-runtime = { path = "../../../../core/crates/runtime/application", default-features = false, features = ["javascript"] }
+operit-store = { path = "../../../../core/crates/persistence/store" }
+operit-tools = { path = "../../../../core/crates/tool/services", default-features = false }
+operit-util = { path = "../../../../core/crates/foundation/util" }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
@@ -25,8 +25,9 @@ base64 = "0.22"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = { version = "0.7", features = ["ws"] }
 futures-util = "0.3"
+operit-node-runtime = { path = "../../../../core/crates/node/runtime" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
-operit-link-access = { path = "../../../../core/crates/operit-link-access" }
+operit-access-runtime = { path = "../../../../core/crates/access/runtime" }
 hmac = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

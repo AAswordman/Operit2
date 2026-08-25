@@ -5,14 +5,13 @@ use std::sync::{mpsc, Arc, Mutex};
 
 #[cfg(target_arch = "wasm32")]
 use js_sys::Function;
-use operit_core_proxy::CoreNodeRouter::CoreNodePushTarget;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_link::{
-    CoreEventKind, CoreLinkClient, CoreLinkError, CoreLinkSharedClient, CorePushItem,
-    CorePushRequest, CoreWatchRequest,
+    CoreEventKind, CoreLinkClient, CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient,
+    CorePushItem, CorePushRequest, CoreWatchRequest,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
@@ -22,8 +21,8 @@ use crate::{native_watch_event_vec, OperitFlutterBridge};
 /// Stores the route and sequence state selected when a client opens one push stream.
 #[derive(Clone)]
 pub(crate) enum NativePushState {
-    Routed {
-        target: CoreNodePushTarget,
+    Local {
+        session: Arc<tokio::sync::Mutex<Option<Box<dyn CoreLinkPushSession>>>>,
         nextSequence: u64,
     },
 }
@@ -101,12 +100,13 @@ impl Drop for OperitFlutterBridge {
 }
 
 impl OperitFlutterBridge {
-    /// Opens one native client-owned input stream through the runtime-selected Link route.
+    /// Opens one native client-owned input stream directly on the local Core proxy.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn pushOpen(&self, request: CorePushRequest) -> Result<String, CoreLinkError> {
         let pushId = request.requestId.0.clone();
-        let state = NativePushState::Routed {
-            target: self.runtime.block_on(self.proxyCore.openPush(request))?,
+        let session = self.localCore.openPushLocal(request)?;
+        let state = NativePushState::Local {
+            session: Arc::new(tokio::sync::Mutex::new(Some(session))),
             nextSequence: 0,
         };
         let mut pushes = self.pushStreams.lock().map_err(|error| {
@@ -121,12 +121,13 @@ impl OperitFlutterBridge {
         Ok(pushId)
     }
 
-    /// Opens one wasm client-owned input stream through the runtime-selected Link route.
+    /// Opens one wasm client-owned input stream directly on the local Core proxy.
     #[cfg(target_arch = "wasm32")]
     pub(crate) async fn pushOpen(&self, request: CorePushRequest) -> Result<String, CoreLinkError> {
         let pushId = request.requestId.0.clone();
-        let state = NativePushState::Routed {
-            target: self.proxyCore.openPush(request).await?,
+        let session = self.localCore.openPushLocal(request)?;
+        let state = NativePushState::Local {
+            session: Arc::new(tokio::sync::Mutex::new(Some(session))),
             nextSequence: 0,
         };
         let mut pushes = self.pushStreams.lock().map_err(|error| {
@@ -145,19 +146,29 @@ impl OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn pushItem(&self, item: CorePushItem) -> Result<(), CoreLinkError> {
         let state = self.takePushItemState(&item)?;
-        match state {
-            NativePushState::Routed { target, .. } => self
-                .runtime
-                .block_on(self.proxyCore.pushItem(&target, item)),
-        }
+        let NativePushState::Local { session, .. } = state;
+        self.runHostRuntimeAsyncTask("operit-flutter-push-item", move || async move {
+            let mut session = session.lock().await;
+            session
+                .as_mut()
+                .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?
+                .send(item.args)
+                .await
+        })
+        .map_err(CoreLinkError::internal)?
     }
 
     /// Dispatches one wasm push item in stream order.
     #[cfg(target_arch = "wasm32")]
     pub(crate) async fn pushItem(&self, item: CorePushItem) -> Result<(), CoreLinkError> {
         let state = self.takePushItemState(&item)?;
-        let NativePushState::Routed { target, .. } = state;
-        self.proxyCore.pushItem(&target, item).await
+        let NativePushState::Local { session, .. } = state;
+        let mut session = session.lock().await;
+        session
+            .as_mut()
+            .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?
+            .send(item.args)
+            .await
     }
 
     /// Closes one native client-owned input stream.
@@ -172,8 +183,16 @@ impl OperitFlutterBridge {
             .remove(pushId);
         let state = removed
             .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
-        let NativePushState::Routed { target, .. } = state;
-        self.runtime.block_on(self.proxyCore.closePush(target))
+        let NativePushState::Local { session, .. } = state;
+        self.runHostRuntimeAsyncTask("operit-flutter-push-close", move || async move {
+            let session = session
+                .lock()
+                .await
+                .take()
+                .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?;
+            session.close().await
+        })
+        .map_err(CoreLinkError::internal)?
     }
 
     /// Closes one wasm client-owned input stream.
@@ -188,8 +207,13 @@ impl OperitFlutterBridge {
             .remove(pushId);
         let state = removed
             .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
-        let NativePushState::Routed { target, .. } = state;
-        self.proxyCore.closePush(target).await
+        let NativePushState::Local { session, .. } = state;
+        let session = session
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?;
+        session.close().await
     }
 
     /// Validates one item sequence and returns its registered transport state.
@@ -200,7 +224,7 @@ impl OperitFlutterBridge {
         let state = pushes
             .get_mut(&item.pushId)
             .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
-        let NativePushState::Routed { nextSequence, .. } = state;
+        let NativePushState::Local { nextSequence, .. } = state;
         if item.sequence != *nextSequence {
             return Err(CoreLinkError::new(
                 "PUSH_SEQUENCE_MISMATCH",
@@ -221,10 +245,11 @@ impl OperitFlutterBridge {
         &self,
         request: CoreWatchRequest,
     ) -> Result<operit_link::CoreEvent, CoreLinkError> {
-        self.runtime.block_on(CoreLinkSharedClient::watchSnapshot(
-            self.proxyCore.as_ref(),
-            request,
-        ))
+        let localCore = self.localCore.clone();
+        self.runHostRuntimeAsyncTask("operit-flutter-watch-snapshot", move || async move {
+            CoreLinkSharedClient::watchSnapshot(localCore.as_ref(), request).await
+        })
+        .map_err(CoreLinkError::internal)?
     }
 
     /// Reads one wasm watch snapshot through the runtime-selected route.
@@ -234,7 +259,7 @@ impl OperitFlutterBridge {
         &self,
         request: CoreWatchRequest,
     ) -> Result<operit_link::CoreEvent, CoreLinkError> {
-        CoreLinkSharedClient::watchSnapshot(self.proxyCore.as_ref(), request).await
+        CoreLinkSharedClient::watchSnapshot(self.localCore.as_ref(), request).await
     }
 
     /// Registers one native watch stream and opens its routed source on the host scheduler.
@@ -275,7 +300,7 @@ impl OperitFlutterBridge {
         let channel = self.watchChannel.clone();
         let taskSubscriptionId = subscriptionId.clone();
         let taskSubscriptions = self.watchSubscriptions.clone();
-        let proxyCore = self.proxyCore.clone();
+        let localCore = self.localCore.clone();
         let scheduleResult = HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
             defaultHostRuntimeTaskSchedulerHost().as_ref(),
             "operit-flutter-watch",
@@ -283,7 +308,7 @@ impl OperitFlutterBridge {
                 Box::pin(async move {
                     let openedReceiver = tokio::select! {
                         _ = &mut cancelReceiver => None,
-                        opened = CoreLinkSharedClient::watch(proxyCore.as_ref(), request) => Some(opened),
+                        opened = CoreLinkSharedClient::watch(localCore.as_ref(), request) => Some(opened),
                     };
                     let Some(openedReceiver) = openedReceiver else {
                         return;
@@ -347,7 +372,7 @@ impl OperitFlutterBridge {
                 entry.insert(cancelSender);
                 drop(subscriptions);
                 let receiver =
-                    match CoreLinkSharedClient::watch(self.proxyCore.as_ref(), request).await {
+                    match CoreLinkSharedClient::watch(self.localCore.as_ref(), request).await {
                         Ok(receiver) => receiver,
                         Err(error) => {
                             if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {

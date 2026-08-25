@@ -19,8 +19,10 @@ use PlatformRuntimeFactory::create_local_core;
 use PlatformRuntimeFactory::default_native_storage_roots;
 
 use std::any::Any;
-use std::collections::{hash_map::Entry, BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, HashMap};
 use std::ffi::{c_char, CStr, CString};
+#[cfg(not(target_arch = "wasm32"))]
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,14 +30,20 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use operit_core_proxy::{
-    CoreNodeRouter::{CoreNodePushTarget, CoreNodeRouter},
-    LocalCoreProxy,
+use operit_proxy_local::LocalCoreProxy;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_node_runtime::CoreNodeRouter::{
+    CoreNodeLocalRuntime, CoreNodeRouter,
 };
+
 #[cfg(not(target_arch = "wasm32"))]
 mod mdnss;
 
 use operit_host_api::HostManager::HostManager;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::RuntimeStorageHost;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
@@ -43,7 +51,7 @@ use operit_link::{
     CoreWatchRequest,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use operit_link_access::{
+use operit_access_runtime::{
     link_token_hash, LinkAccessHostConfig, LinkAccessHostPortMode, LinkAccessStore,
     RemoteDeviceInfo, RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig,
 };
@@ -69,8 +77,6 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 use BridgeCodec::{
     decode_native_call_request, decode_native_push_item, decode_native_push_open_request,
@@ -187,7 +193,8 @@ pub struct OperitFlutterBridge {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) runtime: tokio::runtime::Runtime,
     localCore: Arc<LocalCoreProxy>,
-    pub(crate) proxyCore: Arc<CoreNodeRouter>,
+    #[cfg(not(target_arch = "wasm32"))]
+    chatRuntimeHolder: Arc<tokio::sync::Mutex<operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder>>,
     runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) watchChannel: NativeWatchChannel,
@@ -214,6 +221,34 @@ pub struct OperitFlutterBridge {
 const PERMISSION_REQUEST_TIMEOUT_MS: u64 = 60_000;
 
 impl OperitFlutterBridge {
+    /// Runs one async runtime operation on the host scheduler and waits for its result.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn runHostRuntimeAsyncTask<T, F>(
+        &self,
+        taskName: &'static str,
+        task: impl FnOnce() -> F + Send + 'static,
+    ) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: Future<Output = T> + 'static,
+    {
+        let (resultSender, resultReceiver) = mpsc::channel();
+        HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
+            defaultHostRuntimeTaskSchedulerHost().as_ref(),
+            taskName,
+            Box::new(move || {
+                Box::pin(async move {
+                    let result = task().await;
+                    let _ = resultSender.send(result);
+                })
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+        resultReceiver
+            .recv()
+            .map_err(|error| format!("runtime task result channel closed: {error}"))
+    }
+
     /// Creates a bridge using the platform's explicit runtime and workspace roots.
     #[cfg(not(target_env = "ohos"))]
     fn new() -> Result<Self, String> {
@@ -274,14 +309,16 @@ impl OperitFlutterBridge {
         )?;
         core.localApplicationMut().onCreate()?;
         install_permission_requester(&mut core);
+        #[cfg(not(target_arch = "wasm32"))]
+        let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
         let runtimeStorageHost = core.runtimeStorageHost();
         let localCore = Arc::new(core);
-        let proxyCore = Arc::new(CoreNodeRouter::new(localCore.clone()));
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
             localCore,
-            proxyCore,
+            #[cfg(not(target_arch = "wasm32"))]
+            chatRuntimeHolder,
             runtimeStorageHost,
             #[cfg(not(target_arch = "wasm32"))]
             watchChannel: NativeWatchChannel::new(),
@@ -307,21 +344,149 @@ impl OperitFlutterBridge {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    /// Reads the Link Access store owned by the local Core Runtime.
+    /// Calls the local Core runtime without entering the server-side node router.
+    fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        let requestId = request.requestId.clone();
+        let localCore = self.localCore.clone();
+        match self.runHostRuntimeAsyncTask("operit-flutter-call", move || async move {
+            CoreLinkSharedClient::call(localCore.as_ref(), request).await
+        }) {
+            Ok(response) => response,
+            Err(error) => CoreCallResponse::err(requestId, CoreLinkError::internal(error)),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        CoreLinkSharedClient::call(self.localCore.as_ref(), request).await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Returns the Link Access store used for server identity and settings.
     fn linkAccessStore(&self) -> LinkAccessStore {
         LinkAccessStore::new(self.runtimeStorageHost.clone())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    /// Calls the local Core runtime.
-    fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        self.runtime
-            .block_on(CoreLinkSharedClient::call(self.proxyCore.as_ref(), request))
+    /// Starts the Access server with pairing control and the Space PeerLink carrier.
+    fn startWebAccessServer(
+        &self,
+        bindAddress: String,
+        token: String,
+        shutdownToken: String,
+        webRoot: PathBuf,
+        deviceInfo: RemoteDeviceInfo,
+        enableWebAccess: bool,
+        enableDiscovery: bool,
+    ) -> Result<String, String> {
+        self.stopWebAccessServer();
+        let accessStore = self.linkAccessStore();
+        let identity = accessStore.initializeIdentity(deviceInfo)?;
+        accessStore.saveHostConfig(LinkAccessHostConfig {
+            bindAddress: bindAddress.clone(),
+            token: token.clone(),
+            webAccessEnabled: enableWebAccess,
+            discoveryEnabled: enableDiscovery,
+            portMode: LinkAccessHostPortMode::Fixed,
+            updatedAt: current_time_millis_u64() as i64,
+        })?;
+        let deviceId = identity.deviceId.clone();
+        if enableDiscovery {
+            let mut mdns_guard = self
+                .mdns
+                .lock()
+                .map_err(|error| format!("mDNS lock poisoned: {error}"))?;
+            if mdns_guard.is_none() {
+                let mut mdns = mdnss::MdnsHandle::new()?;
+                let address: SocketAddr = bindAddress
+                    .parse()
+                    .map_err(|error| format!("invalid bind address: {error}"))?;
+                let mut props = std::collections::HashMap::new();
+                props.insert("deviceId".to_string(), deviceId.clone());
+                props.insert("displayName".to_string(), identity.deviceInfo.displayName());
+                props.insert("platform".to_string(), identity.deviceInfo.platform.clone());
+                props.insert("model".to_string(), identity.deviceInfo.model.clone());
+                props.insert("tokenHash".to_string(), link_token_hash(&token));
+                props.insert("version".to_string(), "1".to_string());
+                mdns.register(address.port(), props)?;
+                *mdns_guard = Some(mdns);
+            }
+        }
+        let listener_address: SocketAddr = bindAddress
+            .parse()
+            .map_err(|error| format!("invalid bind address: {error}"))?;
+        let runtimeStorageHost = self.runtimeStorageHost.clone();
+        let webAccess = RemoteWebAccessConfig {
+            token: token.clone(),
+            shutdownToken,
+            webRoot,
+            readAsset: Arc::new(move |path| {
+                runtimeStorageHost
+                    .readBytes(&path.to_string_lossy())
+                    .map_err(|error| error.message)
+            }),
+        };
+        let localRuntime = self.localCoreRuntime();
+        let nodeRouter = CoreNodeRouter::new(localRuntime);
+        let (serverStartSender, serverStartReceiver) = mpsc::channel();
+        let task = self.runtime.spawn(async move {
+            let listener = match tokio::net::TcpListener::bind(listener_address).await {
+                Ok(listener) => listener,
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = serverStartSender.send(Err(message.clone()));
+                    return Err(message);
+                }
+            };
+            let _ = serverStartSender.send(Ok(()));
+            RemoteLinkServer::serveWithListener(
+                nodeRouter,
+                RemoteLinkServerConfig {
+                    bindAddress,
+                    token,
+                    deviceId: identity.deviceId,
+                    deviceInfo: identity.deviceInfo,
+                    webAccess: Some(webAccess),
+                    printStartupInfo: false,
+                    accessStore,
+                },
+                listener,
+                listener_address,
+            )
+            .await
+        });
+        serverStartReceiver
+            .recv()
+            .map_err(|error| format!("web access server start channel closed: {error}"))??;
+        *self
+            .webAccessTask
+            .lock()
+            .expect("web access task mutex poisoned") = Some(task);
+        Ok(deviceId)
     }
 
-    #[cfg(target_arch = "wasm32")]
-    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        CoreLinkSharedClient::call(self.proxyCore.as_ref(), request).await
+    /// Builds the server-owned local runtime capability used by Space routing.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn localCoreRuntime(&self) -> CoreNodeLocalRuntime {
+        self.localCore.coreNodeLocalRuntime()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Stops the Access server and its discovery registration.
+    fn stopWebAccessServer(&self) {
+        if let Some(task) = self
+            .webAccessTask
+            .lock()
+            .expect("web access task mutex poisoned")
+            .take()
+        {
+            task.abort();
+        }
+        if let Ok(mut mdns_guard) = self.mdns.lock() {
+            if let Some(mdns) = mdns_guard.take() {
+                let _ = mdns.unregister();
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -338,7 +503,8 @@ impl OperitFlutterBridge {
         };
         let response = self.call(CoreCallRequest::new(
             format!("runtime-event-{}", current_time_millis_u64()),
-            "application",
+            LocalCoreProxy::generatedObjectIdForSchema("application")
+                .expect("generated application object id must exist"),
             "ingestRuntimeEvent",
             operit_link::toCoreValue(serde_json::json!({
                 "event": eventValue,
@@ -351,162 +517,6 @@ impl OperitFlutterBridge {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn startWebAccessServer(
-        &self,
-        bindAddress: String,
-        token: String,
-        shutdownToken: String,
-        webRoot: PathBuf,
-        deviceInfo: RemoteDeviceInfo,
-        enableWebAccess: bool,
-        enableDiscovery: bool,
-    ) -> Result<String, String> {
-        self.stopWebAccessServer();
-        let accessStore = LinkAccessStore::new(self.runtimeStorageHost.clone());
-        let identity = accessStore.initializeIdentity(deviceInfo)?;
-        accessStore.saveHostConfig(LinkAccessHostConfig {
-            bindAddress: bindAddress.clone(),
-            token: token.clone(),
-            webAccessEnabled: enableWebAccess,
-            discoveryEnabled: enableDiscovery,
-            portMode: LinkAccessHostPortMode::Fixed,
-            updatedAt: current_time_millis_u64() as i64,
-        })?;
-        let deviceId = identity.deviceId;
-        let deviceInfo = identity.deviceInfo;
-        let responseDeviceId = deviceId.clone();
-        let runtimeStorageHost = self.runtimeStorageHost.clone();
-        let address: SocketAddr = bindAddress
-            .parse()
-            .map_err(|error| format!("invalid bind address: {error}"))?;
-        let listener = self
-            .runtime
-            .block_on(tokio::net::TcpListener::bind(address))
-            .map_err(|error| error.to_string())?;
-
-        if enableDiscovery {
-            let mut mdns_guard = self
-                .mdns
-                .lock()
-                .map_err(|error| format!("mDNS lock poisoned: {error}"))?;
-            if mdns_guard.is_none() {
-                let mut mdns = mdnss::MdnsHandle::new()?;
-                let mut props = std::collections::HashMap::new();
-                props.insert("deviceId".to_string(), deviceId.clone());
-                props.insert("displayName".to_string(), deviceInfo.displayName());
-                props.insert("platform".to_string(), deviceInfo.platform.clone());
-                props.insert("model".to_string(), deviceInfo.model.clone());
-                props.insert("tokenHash".to_string(), link_token_hash(&token));
-                props.insert("version".to_string(), "1".to_string());
-                mdns.register(address.port(), props)?;
-                *mdns_guard = Some(mdns);
-            }
-        }
-        let coreClient = self.proxyCore.as_ref().clone();
-        let task = self.runtime.spawn(async move {
-            RemoteLinkServer::serveWithListener(
-                coreClient,
-                RemoteLinkServerConfig {
-                    bindAddress,
-                    token: token.clone(),
-                    localControlToken: Some(shutdownToken.clone()),
-                    deviceId,
-                    deviceInfo,
-                    webAccess: if enableWebAccess {
-                        Some(RemoteWebAccessConfig {
-                            token,
-                            shutdownToken,
-                            webRoot,
-                            readAsset: Arc::new(move |path| {
-                                runtimeStorageHost
-                                    .readBytes(&path.to_string_lossy())
-                                    .map_err(|error| error.message)
-                            }),
-                        })
-                    } else {
-                        None
-                    },
-                    printStartupInfo: false,
-                    accessStore,
-                },
-                listener,
-                address,
-            )
-            .await
-        });
-        *self
-            .webAccessTask
-            .lock()
-            .expect("web access task mutex poisoned") = Some(task);
-        Ok(responseDeviceId)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn stopWebAccessServer(&self) {
-        if let Some(task) = self
-            .webAccessTask
-            .lock()
-            .expect("web access task mutex poisoned")
-            .take()
-        {
-            task.abort();
-        }
-        if let Ok(mut mdns_guard) = self.mdns.lock() {
-            if let Some(mdns) = mdns_guard.take() {
-                let _ = mdns.unregister();
-            }
-        }
-    }
-}
-
-/// Loads one string-keyed JSON record map from persistent storage.
-fn load_accepted_remote_sessions<T>(
-    storage: &dyn RuntimeStorageHost,
-    path: &str,
-) -> Result<BTreeMap<String, T>, String>
-where
-    T: DeserializeOwned,
-{
-    if !storage.exists(path).map_err(|error| error.to_string())? {
-        return Ok(BTreeMap::new());
-    }
-    let content = storage.readBytes(path).map_err(|error| error.to_string())?;
-    let content = String::from_utf8(content).map_err(|error| error.to_string())?;
-    serde_json::from_str(&content).map_err(|error| error.to_string())
-}
-
-/// Inserts one record into a string-keyed JSON record map.
-fn save_accepted_remote_session<T>(
-    storage: &dyn RuntimeStorageHost,
-    path: &str,
-    sessionId: String,
-    record: T,
-) -> Result<(), String>
-where
-    T: Serialize + DeserializeOwned,
-{
-    let mut sessions = load_accepted_remote_sessions(storage, path)?;
-    sessions.insert(sessionId, record);
-    let content = serde_json::to_string_pretty(&sessions).map_err(|error| error.to_string())?;
-    storage
-        .writeBytes(path, content.as_bytes())
-        .map_err(|error| error.to_string())
-}
-
-/// Saves one JSON record for a remote pairing code.
-fn save_remote_pairing_code<T>(
-    storage: &dyn RuntimeStorageHost,
-    path: &str,
-    record: T,
-) -> Result<(), String>
-where
-    T: Serialize,
-{
-    let content = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
-    storage
-        .writeBytes(path, content.as_bytes())
-        .map_err(|error| error.to_string())
 }
 
 /// Installs the asynchronous controller permission requester for every runtime.

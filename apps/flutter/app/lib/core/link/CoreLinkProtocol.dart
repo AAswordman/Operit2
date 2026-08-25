@@ -3,34 +3,16 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-class CoreObjectPath {
-  const CoreObjectPath(this.segments);
-
-  factory CoreObjectPath.parse(String path) {
-    return CoreObjectPath(
-      path
-          .split('.')
-          .map((segment) => segment.trim())
-          .where((segment) => segment.isNotEmpty)
-          .toList(growable: false),
-    );
-  }
-
-  final List<String> segments;
-
-  String get key => segments.join('.');
-}
-
 class CoreCallRequest {
   const CoreCallRequest({
     required this.requestId,
-    required this.targetPath,
+    required this.targetObjectId,
     required this.methodName,
     required this.args,
   });
 
   final String requestId;
-  final CoreObjectPath targetPath;
+  final int targetObjectId;
   final String methodName;
   final Object? args;
 }
@@ -38,13 +20,13 @@ class CoreCallRequest {
 class CoreWatchRequest {
   const CoreWatchRequest({
     required this.requestId,
-    required this.targetPath,
+    required this.targetObjectId,
     required this.propertyName,
     required this.args,
   });
 
   final String requestId;
-  final CoreObjectPath targetPath;
+  final int targetObjectId;
   final String propertyName;
   final Object? args;
 }
@@ -53,13 +35,13 @@ class CorePushRequest {
   /// Creates a client-owned input stream targeting one Core method.
   const CorePushRequest({
     required this.requestId,
-    required this.targetPath,
+    required this.targetObjectId,
     required this.methodName,
     this.args = const <String, Object?>{},
   });
 
   final String requestId;
-  final CoreObjectPath targetPath;
+  final int targetObjectId;
   final String methodName;
   final Object? args;
 }
@@ -75,7 +57,7 @@ abstract class CorePushSink {
 class CoreEvent {
   CoreEvent({
     required this.requestId,
-    required this.targetPath,
+    required this.targetObjectId,
     required this.propertyName,
     required this.kind,
     required Object? value,
@@ -85,7 +67,7 @@ class CoreEvent {
 
   CoreEvent.raw({
     required this.requestId,
-    required this.targetPath,
+    required this.targetObjectId,
     required this.propertyName,
     required this.kind,
     required Uint8List valueBytes,
@@ -95,7 +77,7 @@ class CoreEvent {
        _decodeValue = decodeValue;
 
   final String? requestId;
-  final CoreObjectPath targetPath;
+  final int targetObjectId;
   final String propertyName;
   final String kind;
   final Uint8List? _valueBytes;

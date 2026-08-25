@@ -208,17 +208,12 @@ class _DrawerContentState extends State<DrawerContent> {
     });
     try {
       final binding = await _activePromptBindingForCreate();
-      await widget.bridge.call(
-        CoreCallRequest(
-          requestId: _requestId(),
-          targetPath: CoreObjectPath.parse('chatRuntimeHolder.main'),
-          methodName: 'createGroup',
-          args: <String, Object?>{
-            'groupName': groupName,
-            'characterCardName': binding.characterCardName,
-            'characterGroupId': binding.characterGroupId,
-          },
-        ),
+      await GeneratedCoreProxyClients(widget.bridge).chatRuntimeHolderMain.createNewChat(
+        characterCardName: binding.characterCardName,
+        group: groupName,
+        inheritGroupFromCurrent: false,
+        setAsCurrentChat: true,
+        characterGroupId: binding.characterGroupId,
       );
       widget.onConversationActivated();
     } catch (error, stackTrace) {

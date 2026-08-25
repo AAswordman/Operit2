@@ -515,7 +515,7 @@ def prepare_python_command() -> None:
 
 
 def generate_dart_proxy_artifacts() -> None:
-    manifest = REPO_ROOT / "core" / "crates" / "operit-core-proxy" / "Cargo.toml"
+    manifest = REPO_ROOT / "core" / "crates" / "proxy" / "local" / "Cargo.toml"
     run(["cargo", "check", "--manifest-path", str(manifest), "--quiet"])
     for path in [
         FLUTTER_APP_DIR / "lib" / "core" / "proxy" / "generated" / "CoreProxyClients.g.dart",

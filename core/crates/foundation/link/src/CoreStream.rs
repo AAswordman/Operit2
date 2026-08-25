@@ -1,0 +1,280 @@
+use crate::{CoreEventStream, CoreLinkError, CoreValue, CoreWatchRequest};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, VecDeque};
+use std::fmt;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::Mutex;
+
+thread_local! {
+    static SYNC_CORE_STREAM_CAPTURE: RefCell<Option<Vec<CoreStreamAttachment>>> = const { RefCell::new(None) };
+}
+
+tokio::task_local! {
+    static ASYNC_CORE_STREAM_CAPTURE: Arc<Mutex<Vec<CoreStreamAttachment>>>;
+}
+
+static NEXT_CORE_STREAM_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Carries one in-process stream source from a serialized Core value into its owning proxy.
+#[derive(Clone)]
+pub struct CoreStreamAttachment {
+    /// Identifies the logical stream represented by the attachment.
+    pub streamId: String,
+    /// Holds the source without making the protocol crate depend on a concrete stream type.
+    pub source: Arc<CoreStreamSource>,
+}
+
+/// Opens one stable logical Core stream source for a concrete Link watch request.
+#[derive(Clone)]
+pub struct CoreStreamSource {
+    opener: Arc<dyn Fn(CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> + Send + Sync>,
+    nextSegments: Arc<Mutex<VecDeque<Arc<CoreStreamSource>>>>,
+}
+
+impl CoreStreamSource {
+    /// Creates a source backed by one local stream opener.
+    pub fn new(
+        opener: impl Fn(CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        Self {
+            opener: Arc::new(opener),
+            nextSegments: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
+
+    /// Opens one client-facing watch over the stable logical source.
+    pub fn open(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        let firstSegment = (self.opener)(request.clone())?;
+        let (sender, receiver) = CoreEventStream::channel();
+        let source = self.clone();
+        tokio::spawn(async move {
+            source
+                .pump(firstSegment, request, sender)
+                .await;
+        });
+        Ok(receiver)
+    }
+
+    /// Attaches one physical segment to the stable logical source.
+    pub fn attachNextSegment(&self, nextSegment: Arc<CoreStreamSource>) {
+        self.nextSegments
+            .lock()
+            .expect("core stream source mutex poisoned")
+            .push_back(nextSegment);
+    }
+
+    /// Takes the next queued physical segment from the logical source.
+    fn takeNextSegment(&self) -> Option<Arc<CoreStreamSource>> {
+        self.nextSegments
+            .lock()
+            .expect("core stream source mutex poisoned")
+            .pop_front()
+    }
+
+    /// Pumps physical segments while exposing one uninterrupted Link stream.
+    async fn pump(
+        &self,
+        mut segment: CoreEventStream,
+        request: CoreWatchRequest,
+        sender: tokio::sync::mpsc::UnboundedSender<crate::CoreEvent>,
+    ) {
+        loop {
+            while let Some(event) = segment.recv().await {
+                if event.kind != crate::CoreEventKind::Completed {
+                    if sender.send(event).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                if let Some(nextSegment) = self.takeNextSegment() {
+                    match (nextSegment.opener)(request.clone()) {
+                        Ok(nextStream) => {
+                            segment = nextStream;
+                            continue;
+                        }
+                        Err(_) => return,
+                    }
+                }
+                let _ = sender.send(event);
+                return;
+            }
+            if let Some(nextSegment) = self.takeNextSegment() {
+                match (nextSegment.opener)(request.clone()) {
+                    Ok(nextStream) => {
+                        segment = nextStream;
+                        continue;
+                    }
+                    Err(_) => return,
+                }
+            }
+            return;
+        }
+    }
+}
+
+/// Captures in-process stream attachments across one asynchronous local dispatch.
+#[allow(non_snake_case)]
+pub async fn withCoreStreamCapture<F>(future: F) -> (F::Output, Vec<CoreStreamAttachment>)
+where
+    F: Future,
+{
+    let storage = Arc::new(Mutex::new(Vec::new()));
+    let result = ASYNC_CORE_STREAM_CAPTURE
+        .scope(storage.clone(), future)
+        .await;
+    let attachments = storage
+        .lock()
+        .expect("core stream capture mutex poisoned")
+        .drain(..)
+        .collect();
+    (result, attachments)
+}
+
+/// Captures in-process stream attachments across one synchronous local dispatch.
+#[allow(non_snake_case)]
+pub fn withCoreStreamCaptureSync<R>(operation: impl FnOnce() -> R) -> (R, Vec<CoreStreamAttachment>) {
+    SYNC_CORE_STREAM_CAPTURE.with(|capture| {
+        let previous = capture.replace(Some(Vec::new()));
+        let result = operation();
+        let attachments = capture.replace(previous).unwrap_or_default();
+        (result, attachments)
+    })
+}
+
+/// Records one source only while a local dispatch capture is active.
+fn recordCoreStreamAttachment(attachment: CoreStreamAttachment) {
+    if ASYNC_CORE_STREAM_CAPTURE
+        .try_with(|capture| {
+            capture
+                .lock()
+                .expect("core stream capture mutex poisoned")
+                .push(attachment.clone());
+        })
+        .is_ok()
+    {
+        return;
+    }
+    SYNC_CORE_STREAM_CAPTURE.with(|capture| {
+        if let Some(attachments) = capture.borrow_mut().as_mut() {
+            attachments.push(attachment);
+        }
+    });
+}
+
+/// Describes one stream property that the generic Link bridge can subscribe to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CoreStreamDescriptor {
+    /// Identifies one logical stream independently from its current source.
+    pub streamId: String,
+    /// Identifies the generated object that owns the stream property.
+    pub targetObjectId: u32,
+    pub propertyName: String,
+    pub args: CoreValue,
+}
+/// Carries a wire descriptor and an opaque local source attachment.
+pub struct CoreStream<T> {
+    pub descriptor: CoreStreamDescriptor,
+    marker: PhantomData<T>,
+    source: Option<Arc<CoreStreamSource>>,
+}
+
+impl<T> Clone for CoreStream<T> {
+    /// Clones the transport descriptor and the local source attachment.
+    fn clone(&self) -> Self {
+        Self {
+            descriptor: self.descriptor.clone(),
+            marker: PhantomData,
+            source: self.source.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for CoreStream<T> {
+    /// Formats only the wire-visible stream descriptor.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CoreStream")
+            .field("descriptor", &self.descriptor)
+            .finish()
+    }
+}
+
+impl<T> Serialize for CoreStream<T> {
+    /// Serializes the descriptor and records the local source for the owning proxy.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if let Some(source) = self.source.as_ref() {
+            recordCoreStreamAttachment(CoreStreamAttachment {
+                streamId: self.descriptor.streamId.clone(),
+                source: source.clone(),
+            });
+        }
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("$coreStream", &self.descriptor)?;
+        map.end()
+    }
+}
+
+impl<'de, T> Deserialize<'de> for CoreStream<T> {
+    /// Deserializes a wire descriptor without creating a local source attachment.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(rename = "$coreStream")]
+            descriptor: CoreStreamDescriptor,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            descriptor: wire.descriptor,
+            marker: PhantomData,
+            source: None,
+        })
+    }
+}
+
+impl<T, U> PartialEq<CoreStream<U>> for CoreStream<T> {
+    /// Compares embedded stream sources without comparing their item marker types.
+    fn eq(&self, other: &CoreStream<U>) -> bool {
+        self.descriptor == other.descriptor
+    }
+}
+
+impl<T> CoreStream<T> {
+    /// Creates an anonymous stream handle backed by one stable logical source.
+    #[allow(non_snake_case)]
+    pub fn fromSource(source: Arc<CoreStreamSource>) -> Self {
+        let streamId = format!("core-stream-{}", NEXT_CORE_STREAM_ID.fetch_add(1, Ordering::Relaxed));
+        Self::fromSourceWithId(streamId, source)
+    }
+
+    /// Creates a stream handle for one route-owned stable stream identifier.
+    pub fn fromSourceWithId(streamId: String, source: Arc<CoreStreamSource>) -> Self {
+        Self {
+            descriptor: CoreStreamDescriptor {
+                streamId: streamId.clone(),
+                targetObjectId: crate::CORE_STREAM_POOL_OBJECT_ID,
+                propertyName: "openCoreStream".to_string(),
+                args: CoreValue::Map(BTreeMap::from([(
+                    "streamId".to_string(),
+                    CoreValue::String(streamId),
+                )])),
+            },
+            marker: PhantomData,
+            source: Some(source),
+        }
+    }
+
+}

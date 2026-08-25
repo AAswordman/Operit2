@@ -2505,6 +2505,39 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsRuntimePairedOffline => 'Offline';
 
   @override
+  String get settingsRuntimePairedInvalid => 'Pairing invalid';
+
+  @override
+  String get settingsRuntimePairedError => 'Status unavailable';
+
+  @override
+  String get settingsRuntimePairingRevokedTitle =>
+      'Pairing revoked by the other device';
+
+  @override
+  String get settingsRuntimePairingRevokedMessage =>
+      'The other device cancelled its pairing with this device. The local pairing record is no longer valid.';
+
+  @override
+  String get settingsRuntimePairingRevokedConfirm => 'Got it';
+
+  @override
+  String get settingsRuntimePairedRemovedFromSpace =>
+      'Removed from device space';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceTitle =>
+      'Removed from device space';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceMessage =>
+      'The remote device removed this device from the space. Leave the current space and create a standalone device space now.';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceConfirm =>
+      'Leave and create standalone space';
+
+  @override
   String get settingsRuntimeJoinSpace => 'Join device space';
 
   @override

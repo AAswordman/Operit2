@@ -260,7 +260,7 @@ impl OperitTui {
             .ok_or_else(|| "no active chat in tui".to_string())?;
         let current_messages_cache = core
             .chat_runtime_holder_main()
-            .chatMessagesFlowSnapshot(Some(active_chat_id.clone()))
+            .chatMessagesFlowSnapshot(active_chat_id.clone())
             .await
             .map_err(|error| error.to_string())?;
         let current_chat_is_loading_cache = core
@@ -1906,7 +1906,7 @@ impl OperitTui {
         self.current_messages_cache = self
             .core
             .chat_runtime_holder_main()
-            .chatMessagesFlowSnapshot(Some(chat_id))
+            .chatMessagesFlowSnapshot(chat_id)
             .await
             .map_err(|error| error.to_string())?;
         Ok(())

@@ -35,7 +35,7 @@ class RemotePairingBridge {
     required String tokenHash,
   }) async {
     final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
-    final result = await _clients.runtimeRemoteLinkService.startPairedRemote(
+    final result = await _clients.server.runtimeRemoteLinkService.startPairedRemote(
       baseUrl: baseUrl,
       tokenHash: tokenHash,
       clientDeviceInfo: clientDeviceInfo,
@@ -57,7 +57,7 @@ class RemotePairingBridge {
     generated.LinkTransportPreference transport =
         generated.LinkTransportPreference.http,
   }) async {
-    final session = await _clients.runtimeRemoteLinkService.finishPairedRemote(
+    final session = await _clients.server.runtimeRemoteLinkService.finishPairedRemote(
       pairingId: pairingId,
       pairingCode: pairingCode,
       name: name,
@@ -65,7 +65,7 @@ class RemotePairingBridge {
     if (session.transport == transport) {
       return session;
     }
-    return _clients.runtimeRemoteLinkService.setPairedRemoteTransport(
+    return _clients.server.runtimeRemoteLinkService.setPairedRemoteTransport(
       name: name,
       transport: transport,
     );

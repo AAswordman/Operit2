@@ -15,16 +15,16 @@ Bridge Layer
   apps/flutter/app/lib/core/bridge
   apps/flutter/app/lib/core/link
   apps/flutter/native/operit-flutter-bridge
-  core/crates/operit-link
-  core/crates/operit-core-proxy
+  core/crates/foundation/link
+  core/crates/proxy/local
 
 Runtime Layer
-  core/crates/operit-runtime
-  core/crates/operit-command-core
-  core/crates/operit-store
+  core/crates/runtime/application
+  core/crates/command/core
+  core/crates/persistence/store
 
 Host Layer
-  core/crates/operit-host-api
+  core/crates/foundation/host-api
   hosts/android
   hosts/linux
   hosts/web
@@ -105,7 +105,7 @@ core/
   Cargo.toml
   crates/
     operit-command-core/
-    operit-core-proxy/
+    operit-proxy-local/
     operit-host-api/
     operit-link/
     operit-runtime/
@@ -155,7 +155,7 @@ core/Cargo.toml
 ```text
 operit-host-api
 operit-command-core
-operit-core-proxy
+operit-proxy-local
 operit-link
 operit-store
 operit-runtime
@@ -187,7 +187,7 @@ zip
 路径：
 
 ```text
-core/crates/operit-runtime
+core/crates/runtime/application
 ```
 
 入口：
@@ -278,7 +278,7 @@ util/
 路径：
 
 ```text
-core/crates/operit-host-api
+core/crates/foundation/host-api
 ```
 
 核心文件：
@@ -334,7 +334,7 @@ tts.playback
 路径：
 
 ```text
-core/crates/operit-link
+core/crates/foundation/link
 ```
 
 主要文件：
@@ -349,7 +349,7 @@ src/lib.rs
 职责：
 
 ```text
-CoreObjectPath
+targetObjectId
 CoreCallRequest
 CoreCallResponse
 CoreWatchRequest
@@ -379,12 +379,12 @@ watchStream   持续事件流
 push          客户端到 Core 的持续有序输入流
 ```
 
-### 3.4 operit-core-proxy
+### 3.4 operit-proxy-local
 
 路径：
 
 ```text
-core/crates/operit-core-proxy
+core/crates/proxy/local
 ```
 
 构建脚本：
@@ -419,7 +419,7 @@ Rust runtime object/method
 路径：
 
 ```text
-core/crates/operit-command-core
+core/crates/command/core
 ```
 
 命令模块：
@@ -450,7 +450,7 @@ CLI 通过该 crate 复用 command 行为。
 路径：
 
 ```text
-core/crates/operit-store
+core/crates/persistence/store
 ```
 
 主要文件：
@@ -1248,9 +1248,9 @@ workspace/html_preview/*
 Runtime side：
 
 ```text
-core/crates/operit-runtime/src/data/repository/WorkspaceService.rs
-core/crates/operit-runtime/src/ui/features/chat/webview/workspace/
-core/crates/operit-runtime/assets/workspace_templates/
+core/crates/runtime/application/src/data/repository/WorkspaceService.rs
+core/crates/runtime/application/src/ui/features/chat/webview/workspace/
+core/crates/runtime/application/assets/workspace_templates/
 ```
 
 WorkspaceShell 输入：
@@ -1302,7 +1302,7 @@ web/
 模板资产生成：
 
 ```text
-core/crates/operit-runtime/build.rs
+core/crates/runtime/application/build.rs
   -> workspace_template_assets.rs
 ```
 
@@ -1330,60 +1330,19 @@ OperitRuntimeBridge.watchStream(CoreWatchRequest)
 OperitRuntimeBridge.hostDescriptor()
 ```
 
-便利方法：
+本地调用直接使用生成的 typed proxy；CoreCallRequest、CoreWatchRequest 和
+CorePushRequest 只在本地 bridge 与 runtime dispatch 之间传输。应用层不拼装远程
+请求，也不维护远程对象路径。
 
-```text
-callApplication(methodName, args)
-watch(targetPath, propertyName, args)
-watchChanges(targetPath, propertyName, args)
-```
+Space 节点间调用由 `CoreNodeRouter` 包装成 `RoutedCoreRequest<T>`，通过
+`PeerLink` 的 `PeerFrame` 传输。Call、Handoff、BindingApply、WatchSnapshot、
+WatchOpen/Close 和 PushOpen/Item/Close 共用这一套节点载体。Watch 使用
+`subscriptionId`，Push 使用 `pushId`；同一 id 内保持顺序。
 
-Remote runtime link client endpoints：
+PeerLink 的控制面只保留配对、session、Space adopt 和 Peer channel；本地 Flutter
+bridge 不会调用这些节点间入口。
 
-```text
-POST /link/call
-POST /link/watch/snapshot
-POST /link/watch/channel/events
-POST /link/watch/channel/open
-POST /link/watch/channel/close
-POST /link/push/open
-POST /link/push/item
-POST /link/push/close
-POST /link/session
-```
-
-Push stream 语义：
-
-```text
-push 是 watch 的方向对偶。服务以 `ReverseStream<T>` 声明输入，生成的 Dart client
-以 `Stream<T>` 暴露，生成的 Rust client 保持 typed `ReverseStream<T>`。
-CorePushSink.add/close 只存在于 bridge/link carrier，用于传输有序 item 并结束逻辑流。
-业务调用方不得直接构造 CorePushRequest、CorePushItem 或循环调用 call。
-同一个 pushId 内 sequence 单调递增并保持消费顺序。
-高频输入使用独立 WebSocket carrier，不通过反复 /link/call 传输。
-push 与 watch 使用不同物理通道，避免大帧阻塞输入。
-Link v3 加入 push，所有握手和 carrier 必须声明版本 3。
-```
-
-Watch channel 语义：
-
-```text
-watchStream 是逻辑订阅。
-多个 watchStream 必须复用到少量物理 watch channel。
-/link/watch/channel/events 打开物理事件通道，HTTP 响应是 application/msgpack-seq 长流。
-/link/watch/channel/events 的每帧是 u32 大端长度，随后是一个 MessagePack LinkWatchChannelEvent。
-/link/watch/channel/open 在 channel 上创建 subscription。
-/link/watch/channel/close 关闭 subscription。
-事件 frame 携带 subscriptionId 和 CoreEvent，客户端按 subscriptionId 分发。
-同一个 subscriptionId 内必须保持 CoreEvent 顺序。
-不同 subscriptionId 之间不定义全局顺序。
-CoreEvent.kind == Completed 表示该 subscription 自然结束。
-轮询不是 watchStream 协议语义，不得作为 watch stream 传输接口。
-Android / desktop native bridge 的 watch channel event 应由 native 主动推送到 Dart。
-Dart UI isolate 不应通过固定周期 poll 驱动 watchStream。
-```
-
-Remote signed headers：
+Access signed headers：
 
 ```text
 content-type: application/msgpack
@@ -1452,7 +1411,7 @@ BROWSER_AUTOMATION_REQUEST_TIMEOUT_MS = 180000
 路径：
 
 ```text
-core/crates/operit-runtime/src/api/chat/EnhancedAIService.rs
+core/crates/runtime/application/src/api/chat/EnhancedAIService.rs
 ```
 
 核心依赖：
@@ -1578,8 +1537,8 @@ ChatRuntimeHolder.sendUserMessage
 工具注册入口：
 
 ```text
-core/crates/operit-runtime/src/core/tools/ToolRegistration.rs
-core/crates/operit-runtime/src/core/tools/defaultTool/ToolGetter.rs
+core/crates/runtime/application/src/core/tools/ToolRegistration.rs
+core/crates/runtime/application/src/core/tools/defaultTool/ToolGetter.rs
 ```
 
 ToolGetter：
@@ -1707,10 +1666,10 @@ plugins/tools
 runtime 模块：
 
 ```text
-core/crates/operit-runtime/src/plugins
-core/crates/operit-runtime/src/core/tools/packTool
-core/crates/operit-runtime/src/plugins/toolpkg
-core/crates/operit-runtime/src/core/tools/javascript
+core/crates/runtime/application/src/plugins
+core/crates/runtime/application/src/core/tools/packTool
+core/crates/runtime/application/src/plugins/toolpkg
+core/crates/runtime/application/src/core/tools/javascript
 ```
 
 ToolPkg 解析：
@@ -1774,7 +1733,7 @@ plugins/types/android.d.ts
 
 ```text
 plugins/buildin/*
-  -> core/crates/operit-runtime/build.rs
+  -> core/crates/runtime/application/build.rs
   -> builtin_plugin_assets.rs
   -> BuiltinPluginAssets
   -> PackageManager
@@ -1845,7 +1804,7 @@ operit2
 依赖：
 
 ```text
-operit-core-proxy
+operit-proxy-local
 operit-command-core
 operit-link
 operit-runtime
@@ -1913,7 +1872,7 @@ CLI app accepted session storage: client/access/link_server_sessions.json
 数据模型目录：
 
 ```text
-core/crates/operit-runtime/src/data/model
+core/crates/runtime/application/src/data/model
 ```
 
 主要模型：
@@ -2163,7 +2122,7 @@ Kotlin:
   D:/Code/prog/assistance/app/src/main/java/com/ai/assistance/operit/api/chat/EnhancedAIService.kt
 
 Rust:
-  core/crates/operit-runtime/src/api/chat/EnhancedAIService.rs
+  core/crates/runtime/application/src/api/chat/EnhancedAIService.rs
 ```
 
 复刻规则：
@@ -2201,19 +2160,19 @@ App 主导航
   apps/flutter/app/lib/ui/features/chat/viewmodel/ChatViewModel.dart
 
 聊天 runtime
-  core/crates/operit-runtime/src/api/chat/ChatRuntimeHolder.rs
-  core/crates/operit-runtime/src/api/chat/EnhancedAIService.rs
+  core/crates/runtime/application/src/api/chat/ChatRuntimeHolder.rs
+  core/crates/runtime/application/src/api/chat/EnhancedAIService.rs
 
 工具注册
-  core/crates/operit-runtime/src/core/tools/ToolRegistration.rs
-  core/crates/operit-runtime/src/core/tools/defaultTool/ToolGetter.rs
+  core/crates/runtime/application/src/core/tools/ToolRegistration.rs
+  core/crates/runtime/application/src/core/tools/defaultTool/ToolGetter.rs
 
 工具执行
-  core/crates/operit-runtime/src/api/chat/enhance/ToolExecutionManager.rs
-  core/crates/operit-runtime/src/core/tools/AIToolHandler.rs
+  core/crates/runtime/application/src/api/chat/enhance/ToolExecutionManager.rs
+  core/crates/runtime/application/src/core/tools/AIToolHandler.rs
 
 Host 能力
-  core/crates/operit-host-api/src/lib.rs
+  core/crates/foundation/host-api/src/lib.rs
   hosts/{platform}/src/tools/*
 
 Flutter bridge
@@ -2222,13 +2181,13 @@ Flutter bridge
 
 插件包
   plugins/buildin/*
-  core/crates/operit-runtime/src/core/tools/packTool/*
-  core/crates/operit-runtime/src/plugins/toolpkg/*
+  core/crates/runtime/application/src/core/tools/packTool/*
+  core/crates/runtime/application/src/plugins/toolpkg/*
 
 工作区
   apps/flutter/app/lib/ui/features/chat/components/workspace/*
-  core/crates/operit-runtime/src/data/repository/WorkspaceService.rs
-  core/crates/operit-runtime/assets/workspace_templates/*
+  core/crates/runtime/application/src/data/repository/WorkspaceService.rs
+  core/crates/runtime/application/assets/workspace_templates/*
 
 发布
   docs/release-versioning.md

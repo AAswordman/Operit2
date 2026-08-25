@@ -1,22 +1,12 @@
 // ignore_for_file: file_names
 
-import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 
 Future<String> runMcpCoreCommand({
   required GeneratedCoreProxyClients clients,
   required List<String> args,
 }) async {
-  final value = await clients.bridge.call(
-    CoreCallRequest(
-      requestId: 'flutter-mcp-${DateTime.now().microsecondsSinceEpoch}',
-      targetPath: CoreObjectPath.parse('application'),
-      methodName: 'runCoreCommand',
-      args: <String, Object?>{
-        'args': <String>['mcp', ...args],
-      },
-    ),
-  );
+  final value = await clients.application.runCoreCommand(args: <String>['mcp', ...args]);
   if (value is! Map<Object?, Object?>) {
     throw StateError('Invalid core command output');
   }
