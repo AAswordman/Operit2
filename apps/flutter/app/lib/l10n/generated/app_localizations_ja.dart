@@ -2447,6 +2447,35 @@ class AppLocalizationsJa extends AppLocalizations {
   String get settingsRuntimePairedOffline => 'オフライン';
 
   @override
+  String get settingsRuntimePairedInvalid => 'ペアリングが無効です';
+
+  @override
+  String get settingsRuntimePairedError => '状態を取得できません';
+
+  @override
+  String get settingsRuntimePairingRevokedTitle => '相手のデバイスがペアリングを解除しました';
+
+  @override
+  String get settingsRuntimePairingRevokedMessage =>
+      '相手のデバイスがこのデバイスとのペアリングを解除しました。このデバイスに保存されているペアリング情報は無効です。';
+
+  @override
+  String get settingsRuntimePairingRevokedConfirm => '確認しました';
+
+  @override
+  String get settingsRuntimePairedRemovedFromSpace => 'デバイススペースから削除されました';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceTitle => 'デバイススペースから削除されました';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceMessage =>
+      '相手のデバイスによって、このデバイスがデバイススペースから削除されました。現在のデバイススペースを退出し、このデバイス専用のスペースを作成します。';
+
+  @override
+  String get settingsRuntimeRemovedFromSpaceConfirm => '退出して専用スペースを作成';
+
+  @override
   String get settingsRuntimeJoinSpace => 'デバイススペースに参加する';
 
   @override
