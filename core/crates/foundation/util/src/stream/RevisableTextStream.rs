@@ -261,7 +261,6 @@ impl DelegatingRevisableSharedTextStream {
             .expect("shared text stream initial content mutex poisoned")
             .clone()
     }
-
 }
 
 impl Stream for DelegatingRevisableSharedTextStream {
@@ -471,5 +470,4 @@ mod tests {
 
         assert_eq!(clone.initial_render_content(), "persisted prefix");
     }
-
 }

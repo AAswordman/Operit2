@@ -16,9 +16,15 @@ operit-tools = { path = "../../tool/services", default-features = false }
 operit-util = { path = "../../foundation/util" }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "sync", "rt-multi-thread", "time"] }
 mdns-sd = "0.12"
 
 [build-dependencies]
 quote = "1"
 syn = { version = "2", features = ["full"] }
+
+[dev-dependencies]
+operit-access-runtime = { path = "../../access/runtime", features = ["test-support"] }
+operit-model = { path = "../../foundation/model" }
+operit-rslink-runtime = { path = "../../rslink/runtime" }
+rusqlite.workspace = true

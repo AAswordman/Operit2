@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use operit_host_api::HostEnvironmentDescriptor;
+use operit_link::CoreHandoffRequest;
 use operit_model::FunctionType::FunctionType;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
@@ -12,7 +13,6 @@ use operit_providers::chat::enhance::FileBindingService::{
 };
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_providers::runtime_support::ProviderRuntimeContext;
-use operit_link::{CoreHandoffRequest, CoreHandoffSegment};
 use operit_tools::runtime_support::{
     CachedMcpToolInfo, CoreNodeToolRuntime, ResolvedCharacterCardToolAccess,
     RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo, RuntimeCharacterMemoryBinding,
@@ -121,14 +121,15 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     fn handoffCoreAtBoundary<'a>(
         &'a self,
         request: CoreHandoffRequest,
-    ) -> ToolRuntimeSupportFuture<'a, Result<CoreHandoffSegment, String>> {
+    ) -> ToolRuntimeSupportFuture<'a, Result<(), String>> {
         let runtime = self
             .coreNodeToolRuntime
             .read()
             .map(|value| value.clone())
             .map_err(|error| format!("CoreNode tool runtime lock poisoned: {error}"));
         Box::pin(async move {
-            let runtime = runtime?.ok_or_else(|| "CoreNode routing is not initialized".to_string())?;
+            let runtime =
+                runtime?.ok_or_else(|| "CoreNode routing is not initialized".to_string())?;
             runtime.handoffCoreAtBoundary(request).await
         })
     }

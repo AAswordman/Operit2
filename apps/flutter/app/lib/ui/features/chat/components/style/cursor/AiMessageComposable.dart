@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../common/CharacterAvatar.dart';
+import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
@@ -18,12 +19,14 @@ class AiMessageComposable extends StatefulWidget {
     required this.isStreaming,
     required this.useBubbleStyle,
     this.avatarImagePath,
+    this.splitMarkdownContent,
   });
 
   final ChatUiMessage message;
   final bool isStreaming;
   final bool useBubbleStyle;
   final String? avatarImagePath;
+  final MarkdownContentSplitter? splitMarkdownContent;
 
   @override
   State<AiMessageComposable> createState() => _AiMessageComposableState();
@@ -138,6 +141,7 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
             nodeGrouper: nodeGrouper,
             streamState: _rendererState,
             showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,
+            splitMarkdownContent: widget.splitMarkdownContent,
           ),
         ),
       ),

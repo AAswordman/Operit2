@@ -1,20 +1,24 @@
 #[cfg(not(target_arch = "wasm32"))]
 use crate::RuntimeRemoteLinkDiscovery::{discoverRemoteDevices, RuntimeRemoteDiscoveryEndpoint};
-use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_access_runtime::{
-    AcceptedRemoteSessionRecord,
+    remoteSessionAuthReason, AcceptedRemoteSessionRecord,
     CoreNodePeerLink::{
         activePeerNodeIds, disconnectPeerLink, isPeerLinkActive, kickPeerLink,
+        subscribePeerLinkChanges,
     },
-    remoteSessionAuthReason, LinkAccessStore, PairedRemoteSession, PairedRemoteSessionRecord,
-    PendingOutboundPairingRecord,
-    LinkTransportPreference, RemoteDeviceInfo, RemoteLinkClient,
+    LinkAccessStore, LinkTransportPreference, PairedRemoteSession, PairedRemoteSessionRecord,
+    PendingOutboundPairingRecord, RemoteDeviceInfo, RemoteLinkClient,
 };
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
-use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
-use operit_store::PreferencesDataStore::{combine2, CoroutineScope, SharingStarted, StateFlow};
+use operit_store::CoreSpaceStore::{
+    CoreSpace, CoreSpaceDevicePresence, CoreSpaceDeviceProfile, CoreSpaceStore,
+};
+use operit_store::PreferencesDataStore::{
+    combine2, combine3, mutableStateFlow, CoroutineScope, SharingStarted, StateFlow,
+};
+use operit_store::SyncOperationStore::{subscribeSyncMutations, SyncMutationSubscription};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -132,10 +136,26 @@ pub struct RuntimeRemoteLinkService {
 impl RuntimeRemoteLinkService {
     /// Creates the service over the active local Core and its runtime-owned Link records.
     pub fn new(localRuntime: CoreNodeLocalRuntime) -> Self {
-        let localRuntime = Arc::new(localRuntime);
+        let nodeRouter = CoreNodeRouter::new(localRuntime.clone());
+        Self::newWithRouter(localRuntime, nodeRouter)
+    }
+
+    /// Creates the service using the router created by the owning application tree.
+    #[allow(non_snake_case)]
+    pub fn newWithRouter(localRuntime: CoreNodeLocalRuntime, nodeRouter: CoreNodeRouter) -> Self {
         let linkAccessStore = LinkAccessStore::new(localRuntime.runtimeStorageHost());
+        Self::newWithAccessStore(localRuntime, nodeRouter, linkAccessStore)
+    }
+
+    /// Creates the service using application-owned Node and Access handles.
+    #[allow(non_snake_case)]
+    pub fn newWithAccessStore(
+        localRuntime: CoreNodeLocalRuntime,
+        nodeRouter: CoreNodeRouter,
+        linkAccessStore: LinkAccessStore,
+    ) -> Self {
+        let localRuntime = Arc::new(localRuntime);
         let spaceStore = CoreSpaceStore::new(localRuntime.runtimeStorageHost());
-        let nodeRouter = CoreNodeRouter::new((*localRuntime).clone());
         Self {
             localRuntime,
             nodeRouter,
@@ -155,6 +175,7 @@ impl RuntimeRemoteLinkService {
     pub fn deviceSpaceTopology(&self) -> Result<RuntimeDeviceSpaceTopology, String> {
         let space = self.spaceStore.initialize()?;
         let profiles = self.spaceStore.deviceProfiles()?;
+        let presences = self.spaceStore.devicePresences()?;
         let currentDeviceId = self.nodeRouter.localNodeId();
         let activePeers = activePeerNodeIds(&currentDeviceId)?;
         let devices = space
@@ -168,7 +189,8 @@ impl RuntimeRemoteLinkService {
                     || self
                         .spaceStore
                         .reachableNextHopThroughPeers(deviceId.clone(), activePeers.clone())?
-                        .is_some();
+                        .is_some()
+                    || devicePresenceActive(&presences, &deviceId);
                 Ok(runtimeDeviceSpaceDevice(profile, online))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -194,17 +216,20 @@ impl RuntimeRemoteLinkService {
                     )
                 })?;
                 let directlyOnline = if connection.firstDeviceId == currentDeviceId {
-                    Some(activePeers.contains(&connection.secondDeviceId))
+                    Some(
+                        activePeers.contains(&connection.secondDeviceId)
+                            || devicePresenceActive(&presences, &connection.secondDeviceId),
+                    )
                 } else if connection.secondDeviceId == currentDeviceId {
-                    Some(activePeers.contains(&connection.firstDeviceId))
+                    Some(
+                        activePeers.contains(&connection.firstDeviceId)
+                            || devicePresenceActive(&presences, &connection.firstDeviceId),
+                    )
                 } else {
                     None
                 };
-                let (status, reason) = runtimeDeviceSpaceConnectionState(
-                    first,
-                    second,
-                    directlyOnline,
-                );
+                let (status, reason) =
+                    runtimeDeviceSpaceConnectionState(first, second, directlyOnline);
                 Ok(RuntimeDeviceSpaceConnection {
                     firstDeviceId: connection.firstDeviceId,
                     secondDeviceId: connection.secondDeviceId,
@@ -272,6 +297,7 @@ impl RuntimeRemoteLinkService {
         let info = session.sessionInfo().await?;
         ensureRemoteIdentity(&record, &info.coreDeviceId)?;
         let peerSpace = info.deviceSpace;
+        self.spaceStore.importDeviceProfiles(info.deviceProfiles)?;
         if !peerSpace
             .members
             .iter()
@@ -280,7 +306,8 @@ impl RuntimeRemoteLinkService {
             return Err("paired device is not present in its advertised device space".to_string());
         }
         let merged = self.spaceStore.merge(peerSpace)?;
-        let accepted = session.adoptDeviceSpace(merged).await?;
+        let deviceProfiles = self.spaceStore.deviceProfilesForCurrentSpace()?;
+        let accepted = session.adoptDeviceSpace(merged, deviceProfiles).await?;
         self.spaceStore.adopt(accepted)?;
         self.persistenceSyncService()
             .synchronizePeer(name, 512, true)
@@ -321,13 +348,109 @@ impl RuntimeRemoteLinkService {
         ))
     }
 
-    /// Returns whether one paired device currently has an active direct connection.
+    /// Observes paired device statuses from paired records, Peer Links, and presence records.
+    #[allow(non_snake_case)]
+    pub fn pairedDeviceStatusesFlow(
+        &self,
+    ) -> Result<StateFlow<BTreeMap<String, RuntimePairedDeviceStatus>>, String> {
+        let pairedDevicesFlow = self.pairedDevicesFlow()?;
+        let activePeerNodeIdsFlow = self.activePeerNodeIdsFlow()?;
+        let devicePresencesFlow = self.devicePresencesFlow()?;
+        Ok(combine3(
+            &pairedDevicesFlow,
+            &activePeerNodeIdsFlow,
+            &devicePresencesFlow,
+            pairedDeviceStatusesFromState,
+        ))
+    }
+
+    /// Observes synchronized device presence records through persistence mutations.
+    #[allow(non_snake_case)]
+    fn devicePresencesFlow(
+        &self,
+    ) -> Result<StateFlow<BTreeMap<String, CoreSpaceDevicePresence>>, String> {
+        let state = mutableStateFlow(self.spaceStore.devicePresences()?);
+        let stateForSubscription = state.clone();
+        let spaceStore = self.spaceStore.clone();
+        let subscription = subscribeSyncMutations(move || match spaceStore.devicePresences() {
+            Ok(presences) => stateForSubscription.set_value(presences),
+            Err(error) => {
+                operit_util::AppLogger::AppLogger::e(
+                    "RuntimeRemoteLinkService",
+                    &format!("device presence state refresh failed: {error}"),
+                );
+            }
+        });
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "runtime-remote-link-presence-flow",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let _subscription: SyncMutationSubscription = subscription;
+                        std::future::pending::<()>().await;
+                    })
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(state.asStateFlow())
+    }
+
+    /// Observes the active direct Peer Links adjacent to this runtime.
+    #[allow(non_snake_case)]
+    fn activePeerNodeIdsFlow(&self) -> Result<StateFlow<BTreeSet<String>>, String> {
+        let localNodeId = self.nodeRouter.localNodeId();
+        let state = mutableStateFlow(activePeerNodeIds(&localNodeId)?);
+        let stateForTask = state.clone();
+        let mut peerLinkChanges = subscribePeerLinkChanges();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "runtime-remote-link-active-peer-flow",
+                Box::new(move || {
+                    Box::pin(async move {
+                        loop {
+                            match peerLinkChanges.recv().await {
+                                Ok(()) => match activePeerNodeIds(&localNodeId) {
+                                    Ok(peerNodeIds) => stateForTask.set_value(peerNodeIds),
+                                    Err(error) => {
+                                        operit_util::AppLogger::AppLogger::e(
+                                            "RuntimeRemoteLinkService",
+                                            &format!(
+                                                "active Peer Link state refresh failed: {error}"
+                                            ),
+                                        );
+                                    }
+                                },
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                    match activePeerNodeIds(&localNodeId) {
+                                        Ok(peerNodeIds) => stateForTask.set_value(peerNodeIds),
+                                        Err(error) => {
+                                            operit_util::AppLogger::AppLogger::e(
+                                                "RuntimeRemoteLinkService",
+                                                &format!(
+                                                    "active Peer Link state refresh failed: {error}"
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            }
+                        }
+                    })
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(state.asStateFlow())
+    }
+
+    /// Returns whether one paired device currently has an active or announced connection.
     #[allow(non_snake_case)]
     pub fn pairedDeviceOnline(&self, deviceId: String) -> Result<bool, String> {
         if !self.pairedDevicesSnapshot()?.contains_key(&deviceId) {
             return Err(format!("paired device does not exist: {deviceId}"));
         }
-        isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)
+        Ok(isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)?
+            || devicePresenceActive(&self.spaceStore.devicePresences()?, &deviceId))
     }
 
     /// Resolves the persisted pairing and reports revocation or Space removal explicitly.
@@ -341,11 +464,15 @@ impl RuntimeRemoteLinkService {
             return Ok(RuntimePairedDeviceStatus::Invalid);
         };
         let Some(sessionName) = device.outboundSessionName else {
-            return Ok(if isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)? {
-                RuntimePairedDeviceStatus::Online
-            } else {
-                RuntimePairedDeviceStatus::Offline
-            });
+            return Ok(
+                if isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)?
+                    || devicePresenceActive(&self.spaceStore.devicePresences()?, &deviceId)
+                {
+                    RuntimePairedDeviceStatus::Online
+                } else {
+                    RuntimePairedDeviceStatus::Offline
+                },
+            );
         };
         let (record, session) = self.pairedSession(&sessionName)?;
         let info = match session.sessionInfo().await {
@@ -366,7 +493,15 @@ impl RuntimeRemoteLinkService {
         {
             return Ok(RuntimePairedDeviceStatus::RemovedFromSpace);
         }
-        Ok(RuntimePairedDeviceStatus::Online)
+        Ok(
+            if isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)?
+                || devicePresenceActive(&self.spaceStore.devicePresences()?, &deviceId)
+            {
+                RuntimePairedDeviceStatus::Online
+            } else {
+                RuntimePairedDeviceStatus::Offline
+            },
+        )
     }
 
     /// Disconnects one directly adjacent device while preserving pairing records.
@@ -375,7 +510,9 @@ impl RuntimeRemoteLinkService {
         let localDeviceId = self.nodeRouter.localNodeId();
         let space = self.spaceStore.initialize()?;
         if !space.members.iter().any(|member| member == &deviceId) {
-            return Err(format!("device is not a member of the current device space: {deviceId}"));
+            return Err(format!(
+                "device is not a member of the current device space: {deviceId}"
+            ));
         }
         if deviceId == localDeviceId {
             return Err("current device cannot disconnect itself".to_string());
@@ -387,9 +524,7 @@ impl RuntimeRemoteLinkService {
         while changed {
             changed = false;
             for connection in &connections {
-                if connection.firstDeviceId == deviceId
-                    || connection.secondDeviceId == deviceId
-                {
+                if connection.firstDeviceId == deviceId || connection.secondDeviceId == deviceId {
                     continue;
                 }
                 let firstReachable = reachable.contains(&connection.firstDeviceId);
@@ -767,9 +902,8 @@ fn runtimeDeviceSpaceConnectionState(
         reasons.push("Core version is unavailable".to_string());
         RuntimeDeviceSpaceConnectionStatus::Unknown
     } else if directlyOnline.is_none() {
-        reasons.push(
-            "Direct Peer Link status is not observable from the current device".to_string(),
-        );
+        reasons
+            .push("Direct Peer Link status is not observable from the current device".to_string());
         RuntimeDeviceSpaceConnectionStatus::Unknown
     } else {
         RuntimeDeviceSpaceConnectionStatus::Online
@@ -780,6 +914,37 @@ fn runtimeDeviceSpaceConnectionState(
         reasons.join("; ")
     };
     (status, reason)
+}
+
+/// Reports whether one synchronized presence record currently announces a device as active.
+#[allow(non_snake_case)]
+fn devicePresenceActive(
+    presences: &BTreeMap<String, CoreSpaceDevicePresence>,
+    deviceId: &str,
+) -> bool {
+    matches!(presences.get(deviceId), Some(presence) if presence.active)
+}
+
+/// Maps paired devices to online states using Peer Links and presence records.
+#[allow(non_snake_case)]
+fn pairedDeviceStatusesFromState(
+    pairedDevices: BTreeMap<String, RuntimePairedDevice>,
+    activePeerNodeIds: BTreeSet<String>,
+    presences: BTreeMap<String, CoreSpaceDevicePresence>,
+) -> BTreeMap<String, RuntimePairedDeviceStatus> {
+    pairedDevices
+        .into_keys()
+        .map(|deviceId| {
+            let status = if activePeerNodeIds.contains(&deviceId)
+                || devicePresenceActive(&presences, &deviceId)
+            {
+                RuntimePairedDeviceStatus::Online
+            } else {
+                RuntimePairedDeviceStatus::Offline
+            };
+            (deviceId, status)
+        })
+        .collect()
 }
 
 /// Merges inbound and outbound pairing records into one device-indexed projection.

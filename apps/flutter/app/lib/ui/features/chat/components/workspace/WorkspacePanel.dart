@@ -56,6 +56,8 @@ class WorkspacePanel extends StatefulWidget {
 }
 
 class _WorkspacePanelState extends State<WorkspacePanel> {
+  static final GeneratedCoreProxyClients _coreClients =
+      GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
   final BrowserSessions _browserSessions = BrowserSessions();
   final WorkspaceBrowserViewStore _browserViewStore =
       WorkspaceBrowserViewStore.instance;
@@ -314,6 +316,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onCreateDefaultWorkspace: widget.onCreateDefaultWorkspace,
       onBindWorkspace: widget.onBindWorkspace,
       onChooseExistingWorkspace: _openWorkspaceBindingPickerTab,
+      splitMarkdownContent: (content) => _coreClients
+          .chatRuntimeHolderMain
+          .splitMarkdownContent(content: content),
     );
   }
 

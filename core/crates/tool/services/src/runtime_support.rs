@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use operit_host_api::HostEnvironmentDescriptor;
-use operit_link::{CoreHandoffRequest, CoreHandoffSegment};
+use operit_link::CoreHandoffRequest;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::ToolPrompt::SystemToolPromptCategory;
 use operit_plugin_sdk::javascript::JsExecutionProvider;
@@ -184,7 +184,7 @@ pub trait CoreNodeToolRuntime: Send + Sync {
     fn handoffCoreAtBoundary<'a>(
         &'a self,
         request: CoreHandoffRequest,
-    ) -> ToolRuntimeSupportFuture<'a, Result<CoreHandoffSegment, String>>;
+    ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
 }
 
 /// Provides runtime-owned services that the tools crate must not own.
@@ -202,7 +202,7 @@ pub trait ToolRuntimeSupport: Send + Sync {
     fn handoffCoreAtBoundary<'a>(
         &'a self,
         request: CoreHandoffRequest,
-    ) -> ToolRuntimeSupportFuture<'a, Result<CoreHandoffSegment, String>>;
+    ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
 
     /// Resolves role-card tool access for the active invocation context.
     #[allow(non_snake_case)]

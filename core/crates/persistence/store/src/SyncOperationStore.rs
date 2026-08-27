@@ -498,7 +498,8 @@ impl SyncOperationStore {
         let domainSet = domains.iter().cloned().collect::<BTreeSet<_>>();
         let exportFloors = {
             let mut state = lockSyncState(&self.sharedState.exportFloors, "export floors")?;
-            self.loadCachedJson(&mut state, &self.exportFloorsPath())?.clone()
+            self.loadCachedJson(&mut state, &self.exportFloorsPath())?
+                .clone()
         };
         let mut out = Vec::new();
         for deviceId in self.devices()? {
@@ -570,7 +571,9 @@ impl SyncOperationStore {
         sequence: i64,
     ) -> Result<(), SyncOperationStoreError> {
         let mut state = lockSyncState(&self.sharedState.exportFloors, "export floors")?;
-        let floors = self.loadCachedJson(&mut state, &self.exportFloorsPath())?.clone();
+        let floors = self
+            .loadCachedJson(&mut state, &self.exportFloorsPath())?
+            .clone();
         if floors.get(originDeviceId).copied().unwrap_or(0) >= sequence {
             return Ok(());
         }

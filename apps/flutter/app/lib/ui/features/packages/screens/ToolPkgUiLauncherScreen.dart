@@ -476,6 +476,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             renderResult: _renderResult,
             onAction: _dispatchAction,
             webViewHostContext: webViewHostContext,
+            splitMarkdownContent: (content) => widget
+                .clients
+                .chatRuntimeHolderMain
+                .splitMarkdownContent(content: content),
           )
         : const _NoUiView();
     if (!widget.showLauncherChrome) {
@@ -510,6 +514,7 @@ class _ComposeHost extends StatefulWidget {
     required this.renderResult,
     required this.onAction,
     required this.webViewHostContext,
+    required this.splitMarkdownContent,
   });
 
   final bool loading;
@@ -517,6 +522,7 @@ class _ComposeHost extends StatefulWidget {
   final _ComposeDslRenderResult? renderResult;
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
   final ComposeDslWebViewHostContext webViewHostContext;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   State<_ComposeHost> createState() => _ComposeHostState();
@@ -564,6 +570,7 @@ class _ComposeHostState extends State<_ComposeHost> {
       node: tree,
       onAction: widget.onAction,
       webViewHostContext: widget.webViewHostContext,
+      splitMarkdownContent: widget.splitMarkdownContent,
     );
   }
 
@@ -604,6 +611,7 @@ class _ComposeDslRenderer extends StatelessWidget {
     required this.node,
     required this.onAction,
     required this.webViewHostContext,
+    required this.splitMarkdownContent,
     this.nodePath = 'root',
     this.modifierScope = _ComposeDslModifierScope.normal,
   });
@@ -611,6 +619,7 @@ class _ComposeDslRenderer extends StatelessWidget {
   final _ComposeDslNode node;
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
   final ComposeDslWebViewHostContext webViewHostContext;
+  final MarkdownContentSplitter splitMarkdownContent;
   final String nodePath;
   final _ComposeDslModifierScope modifierScope;
 
@@ -704,6 +713,7 @@ class _ComposeDslRenderer extends StatelessWidget {
           backgroundColor:
               _color(context, node.props['backgroundColor']) ??
               Colors.transparent,
+          splitMarkdownContent: splitMarkdownContent,
         );
       case 'Text':
       case 'BasicText':
@@ -1229,6 +1239,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       node: child,
       onAction: onAction,
       webViewHostContext: webViewHostContext,
+      splitMarkdownContent: splitMarkdownContent,
       nodePath: childPath,
     );
   }
@@ -2169,6 +2180,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       node: nodes.single,
       onAction: onAction,
       webViewHostContext: webViewHostContext,
+      splitMarkdownContent: splitMarkdownContent,
       nodePath: '$nodePath:$name/0',
     );
   }
@@ -2205,6 +2217,7 @@ class _ComposeDslRenderer extends StatelessWidget {
         node: slot.first,
         onAction: onAction,
         webViewHostContext: webViewHostContext,
+        splitMarkdownContent: splitMarkdownContent,
         nodePath: '$nodePath:$name/0',
       );
     }
@@ -2257,6 +2270,7 @@ class _ComposeDslRenderer extends StatelessWidget {
             node: entry.value,
             onAction: onAction,
             webViewHostContext: webViewHostContext,
+            splitMarkdownContent: splitMarkdownContent,
             nodePath: '$pathPrefix/${entry.key}',
             modifierScope: modifierScope,
           ),
@@ -2387,6 +2401,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       node: slot.first,
       onAction: onAction,
       webViewHostContext: webViewHostContext,
+      splitMarkdownContent: splitMarkdownContent,
       nodePath: '$nodePath:$name/0',
     );
   }

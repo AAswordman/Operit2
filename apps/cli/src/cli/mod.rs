@@ -101,7 +101,7 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
     }
 
     let localArgs = scope_cli_storage_command_args(args)?;
-    let mut core = local_cli_core()?;
+    let mut core = local_cli_core().await?;
 
     let result = match localArgs[0].as_str() {
         "model" => run_core_command_and_print(&mut core, &localArgs).await,

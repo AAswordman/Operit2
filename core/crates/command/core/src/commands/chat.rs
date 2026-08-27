@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use crate::output::CoreCommandOutput;
@@ -622,43 +623,84 @@ async fn dispatch_chat_message_with_application(
     Ok(beforeLastAiTimestamp)
 }
 
+/// Waits until the local CLI command observes the committed AI message.
 fn wait_for_committed_ai_message(
     application: &mut OperitApplication,
     chatId: &str,
     timestamp: i64,
     timeout: Duration,
 ) -> Result<ChatMessage, String> {
+    enum WaitSignal {
+        Ready(ChatMessage),
+        Error(String),
+    }
+
     let startedAt = Instant::now();
-    loop {
-        let result = with_main_chat_core(application, |core| {
-            if let Some(message) = core
-                .chatMessagesFlow(chatId.to_string())
-                .value()
-                .into_iter()
-                .find(|message| {
-                    message.sender == "ai"
-                        && message.timestamp == timestamp
-                        && message.completedAt > 0
-                })
-            {
-                return Ok(Some(message));
-            }
-            let stateByChatId = core.inputProcessingStateByChatIdFlow().value();
-            if let Some(InputProcessingState::Error { message }) = stateByChatId.get(chatId) {
-                return Err(message.clone());
-            }
-            Ok(None)
-        })??;
-        if let Some(message) = result {
+    let (messageFlow, stateFlow) = with_main_chat_core(application, |core| {
+        (
+            core.localChatMessagesFlow(chatId.to_string()),
+            core.inputProcessingStateByChatIdFlow(),
+        )
+    })?;
+
+    if let Some(message) = messageFlow.value().into_iter().find(|message| {
+        message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
+    }) {
+        return Ok(message);
+    }
+    if let Some(InputProcessingState::Error { message }) = stateFlow.value().get(chatId) {
+        return Err(message.clone());
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    let messageSender = sender.clone();
+    let messageSubscriptionId = messageFlow.subscribe(move |messages| {
+        if let Some(message) = messages.into_iter().find(|message| {
+            message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
+        }) {
+            let _ = messageSender.send(WaitSignal::Ready(message));
+        }
+    });
+    let stateSender = sender.clone();
+    let chatIdForState = chatId.to_string();
+    let stateSubscriptionId = stateFlow.subscribe(move |stateByChatId| {
+        if let Some(InputProcessingState::Error { message }) = stateByChatId.get(&chatIdForState) {
+            let _ = stateSender.send(WaitSignal::Error(message.clone()));
+        }
+    });
+    drop(sender);
+
+    let result = (|| {
+        if let Some(message) = messageFlow.value().into_iter().find(|message| {
+            message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
+        }) {
             return Ok(message);
         }
-        if startedAt.elapsed() >= timeout {
+        if let Some(InputProcessingState::Error { message }) = stateFlow.value().get(chatId) {
+            return Err(message.clone());
+        }
+        let elapsed = startedAt.elapsed();
+        let remaining = if elapsed >= timeout {
             return Err(format!(
                 "timed out waiting for committed ai message: chat={chatId} timestamp={timestamp}"
             ));
+        } else {
+            timeout - elapsed
+        };
+        match receiver.recv_timeout(remaining) {
+            Ok(WaitSignal::Ready(message)) => Ok(message),
+            Ok(WaitSignal::Error(message)) => Err(message),
+            Err(RecvTimeoutError::Timeout) => Err(format!(
+                "timed out waiting for committed ai message: chat={chatId} timestamp={timestamp}"
+            )),
+            Err(RecvTimeoutError::Disconnected) => {
+                Err("chat message wait channel disconnected".to_string())
+            }
         }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    })();
+    messageFlow.unsubscribe(messageSubscriptionId);
+    stateFlow.unsubscribe(stateSubscriptionId);
+    result
 }
 
 fn print_chat_send_result(result: &ChatSendResult, output: &mut CoreCommandOutput) {

@@ -263,7 +263,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     }
   }
 
-  /// Removes this device and already-online paired devices from scan results.
+  /// Removes this device and still-valid paired devices from scan results.
   Future<List<generated.RuntimeRemoteDiscoveredSpace>>
   _visibleDiscoveredDeviceSpaces(
     List<generated.RuntimeRemoteDiscoveredSpace> spaces,
@@ -281,14 +281,15 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
           visibleDevices.add(device);
           continue;
         }
-        try {
-          final status = await widget.clients.server.runtimeRemoteLinkService
-              .pairedDeviceStatus(deviceId: device.deviceId);
-          if (status != generated.RuntimePairedDeviceStatus.online) {
-            visibleDevices.add(device);
-          }
-        } catch (_) {
-          // Keep the device visible so one stale pairing cannot abort discovery.
+        final status = await widget.clients.server.runtimeRemoteLinkService
+            .pairedDeviceStatus(deviceId: device.deviceId);
+        final showPairedDevice = switch (status) {
+          generated.RuntimePairedDeviceStatus.online => false,
+          generated.RuntimePairedDeviceStatus.offline => false,
+          generated.RuntimePairedDeviceStatus.invalid => true,
+          generated.RuntimePairedDeviceStatus.removedFromSpace => true,
+        };
+        if (showPairedDevice) {
           visibleDevices.add(device);
         }
       }

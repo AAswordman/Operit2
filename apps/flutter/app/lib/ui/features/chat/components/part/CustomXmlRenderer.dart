@@ -32,6 +32,7 @@ class CustomXmlRenderer extends StatelessWidget {
     this.showThinkingProcess = true,
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
+    required this.splitMarkdownContent,
   });
 
   final String xmlContent;
@@ -42,6 +43,7 @@ class CustomXmlRenderer extends StatelessWidget {
   final bool showThinkingProcess;
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   /// Builds the rendered XML message content.
   @override
@@ -69,6 +71,7 @@ class CustomXmlRenderer extends StatelessWidget {
       xmlContent: xmlContent,
       isStreaming: isStreaming,
       textColor: textColor,
+      splitMarkdownContent: splitMarkdownContent,
       defaultBuilder: (context) => _buildDefaultXml(context, parsed),
     );
   }
@@ -94,6 +97,7 @@ class CustomXmlRenderer extends StatelessWidget {
           isStreaming: xmlStream != null && !_isXmlFullyClosed(xmlContent),
           xmlStream: xmlStream,
           markdownEventStream: xmlMarkdownEventStream,
+          splitMarkdownContent: splitMarkdownContent,
           initiallyExpanded: initialThinkingExpanded,
           fullHeight: allowExpandedThinkingFullHeight,
         );
@@ -143,6 +147,7 @@ class CustomXmlRenderer extends StatelessWidget {
           textColor: textColor,
           backgroundColor: Theme.of(context).colorScheme.surface,
           selectionRoot: false,
+          splitMarkdownContent: splitMarkdownContent,
         );
       case 'details':
       case 'detail':
@@ -150,6 +155,7 @@ class CustomXmlRenderer extends StatelessWidget {
           xmlContent: xmlContent,
           textColor: textColor,
           isStreaming: isStreaming,
+          splitMarkdownContent: splitMarkdownContent,
         );
       case 'font':
         return FontTagRenderer(xmlContent: xmlContent, textColor: textColor);
@@ -160,6 +166,7 @@ class CustomXmlRenderer extends StatelessWidget {
           textColor: textColor,
           backgroundColor: Theme.of(context).colorScheme.surface,
           selectionRoot: false,
+          splitMarkdownContent: splitMarkdownContent,
         );
     }
     return SelectableText(
@@ -178,6 +185,7 @@ class _ToolPkgXmlRenderBridge extends StatefulWidget {
     required this.isStreaming,
     required this.textColor,
     required this.defaultBuilder,
+    required this.splitMarkdownContent,
   });
 
   final String tagName;
@@ -185,6 +193,7 @@ class _ToolPkgXmlRenderBridge extends StatefulWidget {
   final bool isStreaming;
   final Color textColor;
   final WidgetBuilder defaultBuilder;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   State<_ToolPkgXmlRenderBridge> createState() =>
@@ -240,6 +249,7 @@ class _ToolPkgXmlRenderBridgeState extends State<_ToolPkgXmlRenderBridge> {
               textColor: widget.textColor,
               backgroundColor: Theme.of(context).colorScheme.surface,
               selectionRoot: false,
+              splitMarkdownContent: widget.splitMarkdownContent,
             );
           }
         }
@@ -474,6 +484,7 @@ class _ThinkPanel extends StatefulWidget {
     required this.markdownEventStream,
     required this.initiallyExpanded,
     required this.fullHeight,
+    required this.splitMarkdownContent,
   });
 
   final String text;
@@ -483,6 +494,7 @@ class _ThinkPanel extends StatefulWidget {
   final Stream<Object>? markdownEventStream;
   final bool initiallyExpanded;
   final bool fullHeight;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   State<_ThinkPanel> createState() => _ThinkPanelState();
@@ -723,6 +735,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                                               ? widget.markdownEventStream
                                               : null,
                                           textColor: widget.textColor,
+                                          splitMarkdownContent: widget.splitMarkdownContent,
                                         )
                                       : NotificationListener<
                                           ScrollNotification
@@ -738,6 +751,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                                                   ? widget.markdownEventStream
                                                   : null,
                                               textColor: widget.textColor,
+                                              splitMarkdownContent: widget.splitMarkdownContent,
                                             ),
                                           ),
                                         ),
@@ -762,11 +776,13 @@ class _ThinkMarkdownBody extends StatelessWidget {
     required this.contentText,
     required this.contentStream,
     required this.textColor,
+    required this.splitMarkdownContent,
   });
 
   final String contentText;
   final Stream<Object>? contentStream;
   final Color textColor;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -785,6 +801,7 @@ class _ThinkMarkdownBody extends StatelessWidget {
               textColor: textColor.withValues(alpha: 0.6),
               backgroundColor: Colors.transparent,
               selectionRoot: false,
+              splitMarkdownContent: splitMarkdownContent,
             )
           : StreamMarkdownRenderer(
               content: '',
@@ -793,6 +810,7 @@ class _ThinkMarkdownBody extends StatelessWidget {
               textColor: textColor.withValues(alpha: 0.6),
               backgroundColor: Colors.transparent,
               selectionRoot: false,
+              splitMarkdownContent: splitMarkdownContent,
             ),
     );
   }

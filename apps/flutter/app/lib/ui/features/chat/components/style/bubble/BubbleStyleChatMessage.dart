@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'BubbleAiMessageComposable.dart';
 import 'BubbleSurface.dart';
@@ -35,6 +36,7 @@ class BubbleStyleChatMessage extends StatelessWidget {
     this.isHidden = false,
     this.enableDialogs = true,
     this.onRoleAvatarLongPress,
+    this.splitMarkdownContent,
   });
 
   final ChatUiMessage message;
@@ -62,6 +64,7 @@ class BubbleStyleChatMessage extends StatelessWidget {
   final bool isHidden;
   final bool enableDialogs;
   final void Function(String roleName)? onRoleAvatarLongPress;
+  final MarkdownContentSplitter? splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +101,7 @@ class BubbleStyleChatMessage extends StatelessWidget {
           isHidden: isHidden,
           enableDialogs: enableDialogs,
           onAvatarLongPressMention: onRoleAvatarLongPress,
+          splitMarkdownContent: splitMarkdownContent,
         );
       case 'summary':
         return _SummaryMessageComposable(

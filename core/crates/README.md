@@ -16,6 +16,7 @@ Each first-level directory groups related crates. Each second-level directory is
 - `access`: identity, pairing, authentication, peer transport, server, and web access control.
 - `rslink`: pure Rust-to-link-to-Rust protocol runtime and shared code generation foundations.
 - `proxy`: core-app proxy scan, language emitters, bridge contracts, and local proxy runtime.
+- `application`: composition roots that assemble runtime, proxy, node, and access into one Core tree.
 - `command`: command orchestration over the core application facade.
 
 ## Naming

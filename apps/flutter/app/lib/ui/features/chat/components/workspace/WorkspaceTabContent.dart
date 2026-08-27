@@ -3,6 +3,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
+import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
@@ -41,6 +42,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onCreateDefaultWorkspace,
     required this.onBindWorkspace,
     required this.onChooseExistingWorkspace,
+    required this.splitMarkdownContent,
   });
 
   final WorkspaceTab tab;
@@ -74,6 +76,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
   final Future<void> Function(String workspace) onBindWorkspace;
   final VoidCallback onChooseExistingWorkspace;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -168,6 +171,7 @@ class WorkspaceTabContent extends StatelessWidget {
           onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
           onOpenWorkspaceFile: onOpenWorkspaceFile,
           onOpenBrowser: onOpenBrowser,
+          splitMarkdownContent: splitMarkdownContent,
         );
     }
   }

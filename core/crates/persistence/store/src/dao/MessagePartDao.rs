@@ -1,7 +1,5 @@
 use crate::sqliteParams;
-use crate::SqliteStore::{
-    toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError,
-};
+use crate::SqliteStore::{toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError};
 
 use operit_model::MessagePart::MessagePartKind;
 use operit_model::MessagePartEntity::MessagePartEntity;

@@ -2825,7 +2825,12 @@ impl RuntimePackageManager {
             return "Market artifact SHA-256 mismatch".to_string();
         }
         let fileName = fileName.trim();
-        if fileName.is_empty() || Path::new(fileName).file_name().and_then(|name| name.to_str()) != Some(fileName) {
+        if fileName.is_empty()
+            || Path::new(fileName)
+                .file_name()
+                .and_then(|name| name.to_str())
+                != Some(fileName)
+        {
             return "Market artifact file name is invalid".to_string();
         }
         if let Err(error) = self.storePaths.ensure_packages_dir() {

@@ -26,10 +26,7 @@ use crate::chat::llmprovider::AIService::{
 };
 use crate::runtime_support::{ProviderRuntimeContext, ProviderRuntimeSupport};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
-use operit_link::{
-    CoreEventKind, CoreExecutionSegment, CoreHandoffCompletion, CoreHandoffRequest, CoreValue,
-    CoreHandoffSegment,
-};
+use operit_link::{CoreExecutionSegment, CoreHandoffRequest, CoreValue};
 use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
@@ -53,13 +50,13 @@ use operit_tools::ToolExecutionManager::{
     ToolExposureMode as RuntimeToolExposureMode,
 };
 use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream};
+use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
-use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
+use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 use operit_util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
 const TAG: &str = "EnhancedAIService";
@@ -1082,55 +1079,6 @@ impl EnhancedAIService {
         self.sendMessage(options).await
     }
 
-    /// Collects one route-owned continuation segment into the active response collector.
-    async fn collectHandoffSegment(
-        &self,
-        segment: &mut CoreHandoffSegment,
-        collector: &SharedAiResponseStream,
-        context: &mut MessageExecutionContext,
-    ) -> Result<(), AiServiceError> {
-        while let Some(event) = segment.stream.recv().await {
-            if event.kind == CoreEventKind::Completed {
-                let completion: CoreHandoffCompletion = operit_link::fromCoreValue(event.value)
-                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-                self.mergeCoreExecutionSegments(&completion.segments);
-                return Ok(());
-            }
-            let markdownEvent: MarkdownStreamEvent = operit_link::fromCoreValue(event.value)
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            match markdownEvent.eventType.as_str() {
-                "chunk" => {
-                    if let Some(content) = markdownEvent.value {
-                        context.streamBuffer.push_str(&content);
-                        context.roundManager.appendContent(&content);
-                        collector.emit_chunk(content);
-                    }
-                }
-                "savepoint" => {
-                    if let Some(id) = markdownEvent.id {
-                        collector.emit_revision(TextStreamEvent {
-                            event_type: TextStreamEventType::Savepoint,
-                            id,
-                        });
-                    }
-                }
-                "rollback" => {
-                    if let Some(id) = markdownEvent.id {
-                        collector.emit_revision(TextStreamEvent {
-                            event_type: TextStreamEventType::Rollback,
-                            id,
-                        });
-                    }
-                }
-                "reset" => {}
-                _ => {}
-            }
-        }
-        Err(AiServiceError::RequestFailed(
-            "Core handoff stream closed before completion".to_string(),
-        ))
-    }
-
     #[allow(non_snake_case)]
     pub fn createSendMessageRuntime(
         &mut self,
@@ -2006,6 +1954,71 @@ impl EnhancedAIService {
                 toolResultMessageLen
             ),
         );
+        if let Some(handoffIntent) = handoffIntent {
+            let runtimeSnapshot = callbacks
+                .as_ref()
+                .and_then(|callback| {
+                    callback.runtimeChatSnapshot(
+                        context.assistantMessageTimestamp,
+                        Some(context.streamBuffer.clone()),
+                    )
+                })
+                .ok_or_else(|| {
+                    AiServiceError::RequestFailed(
+                        "Core handoff requires an in-memory chat runtime snapshot".to_string(),
+                    )
+                })?;
+            let continuation = CoreHandoffContinuation {
+                assistantMessageTimestamp: context.assistantMessageTimestamp.ok_or_else(|| {
+                    AiServiceError::RequestFailed(
+                        "Core handoff requires an assistant message timestamp".to_string(),
+                    )
+                })?,
+                executionGeneration: context.executionGeneration,
+                segmentIndex: context.segmentIndex + 1,
+                chatId: chatId.clone(),
+                chatHistory: currentChatHistory.clone(),
+                workspacePath: context.workspacePath.clone(),
+                functionType: functionType.clone(),
+                promptFunctionType: promptFunctionType.clone(),
+                enableThinking,
+                enableMemoryAutoUpdate,
+                maxTokens,
+                tokenUsageThreshold,
+                isSubTask,
+                characterName: characterName.clone(),
+                avatarUri: avatarUri.clone(),
+                roleCardId: roleCardId.clone(),
+                enableGroupOrchestrationHint,
+                groupParticipantNamesText: context.groupParticipantNamesText.clone(),
+                proxySenderName: context.proxySenderName.clone(),
+                notifyReplyOverride,
+                chatProviderIdOverride: chatProviderIdOverride.clone(),
+                chatModelIdOverride: chatModelIdOverride.clone(),
+                stream,
+                disableWarning,
+            };
+            let continuationValue = operit_link::toCoreValue(&continuation)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            let bindingKey = chatId.clone().ok_or_else(|| {
+                AiServiceError::RequestFailed(
+                    "Core handoff requires a persisted chat binding key".to_string(),
+                )
+            })?;
+            self.provider_runtime_context
+                .shared_support()
+                .handoffCoreAtBoundary(CoreHandoffRequest {
+                    bindingKey,
+                    targetNodeId: handoffIntent.targetNodeId,
+                    continuation: continuationValue,
+                    runtimeSnapshot,
+                })
+                .await
+                .map_err(AiServiceError::RequestFailed)?;
+            self.shared_state().handoffOwnershipTransferred = true;
+            self.invalidateExecutionContext(context, "core.handoff.target_started".to_string());
+            return Ok(());
+        }
         self.startAssistantResponseRound(context);
         AppLogger::d(
             TAG,
@@ -2093,74 +2106,6 @@ impl EnhancedAIService {
                 stream
             ),
         );
-        if let Some(handoffIntent) = handoffIntent {
-            let runtimeSnapshot = callbacks
-                .as_ref()
-                .and_then(|callback| {
-                    callback.runtimeChatSnapshot(
-                        context.assistantMessageTimestamp,
-                        Some(context.streamBuffer.clone()),
-                    )
-                })
-                .ok_or_else(|| {
-                    AiServiceError::RequestFailed(
-                        "Core handoff requires an in-memory chat runtime snapshot".to_string(),
-                    )
-                })?;
-            let continuation = CoreHandoffContinuation {
-                assistantMessageTimestamp: context.assistantMessageTimestamp.ok_or_else(|| {
-                    AiServiceError::RequestFailed(
-                        "Core handoff requires an assistant message timestamp".to_string(),
-                    )
-                })?,
-                executionGeneration: context.executionGeneration,
-                segmentIndex: context.segmentIndex + 1,
-                chatId: chatId.clone(),
-                chatHistory: currentChatHistory.clone(),
-                workspacePath: context.workspacePath.clone(),
-                functionType: functionType.clone(),
-                promptFunctionType: promptFunctionType.clone(),
-                enableThinking,
-                enableMemoryAutoUpdate,
-                maxTokens,
-                tokenUsageThreshold,
-                isSubTask,
-                characterName: characterName.clone(),
-                avatarUri: avatarUri.clone(),
-                roleCardId: roleCardId.clone(),
-                enableGroupOrchestrationHint,
-                groupParticipantNamesText: context.groupParticipantNamesText.clone(),
-                proxySenderName: context.proxySenderName.clone(),
-                notifyReplyOverride,
-                chatProviderIdOverride: chatProviderIdOverride.clone(),
-                chatModelIdOverride: chatModelIdOverride.clone(),
-                stream,
-                disableWarning,
-            };
-            let continuationValue = operit_link::toCoreValue(&continuation)
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let bindingKey = chatId.clone().ok_or_else(|| {
-                AiServiceError::RequestFailed(
-                    "Core handoff requires a persisted chat binding key".to_string(),
-                )
-            })?;
-            let mut segment = self
-                .provider_runtime_context
-                .shared_support()
-                .handoffCoreAtBoundary(CoreHandoffRequest {
-                    bindingKey,
-                    targetNodeId: handoffIntent.targetNodeId,
-                    continuation: continuationValue,
-                    runtimeSnapshot,
-                })
-                .await
-                .map_err(AiServiceError::RequestFailed)?;
-            self.shared_state().handoffOwnershipTransferred = true;
-            self.collectHandoffSegment(&mut segment, collector, context)
-                .await?;
-            self.invalidateExecutionContext(context, "core.handoff.target_started".to_string());
-            return Ok(());
-        }
         let mut response = {
             let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> =
                 onNonFatalError.map(|callbackFn| {

@@ -1,12 +1,12 @@
-use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
-use operit_host_api::TimeUtils::currentTimeMillis;
-use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushRequest, CoreValue};
 use operit_access_runtime::{
     coreNodeTransportClient,
     CoreNodePeerLink::{isPeerLinkActive, openOutboundPeerLink},
     LinkAccessStore, PairedRemoteSession, PairedRemoteSessionRecord,
 };
-use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::TimeUtils::currentTimeMillis;
+use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushRequest, CoreValue};
+use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDevicePresence, CoreSpaceStore};
 use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncReference, RuntimeFileSyncStore};
 use operit_store::SyncOperationStore::{
     subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation,
@@ -19,6 +19,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::RuntimeRemoteLinkDiscovery::{
+    subscribeRemoteDeviceAnnouncements, RuntimeRemoteDiscoveryEndpoint,
+};
 
 const SYNC_DOMAINS: [&str; 5] = [
     "preferences",
@@ -40,6 +44,8 @@ struct SpacePersistenceSyncState {
     linkAccessStore: LinkAccessStore,
     spaceStore: CoreSpaceStore,
     synchronizationScheduled: AtomicBool,
+    #[cfg(not(target_arch = "wasm32"))]
+    discoveryAnnouncementsStarted: AtomicBool,
     mutationSubscription: Mutex<Option<SyncMutationSubscription>>,
 }
 
@@ -72,6 +78,8 @@ impl SpacePersistenceSyncService {
                 linkAccessStore,
                 spaceStore,
                 synchronizationScheduled: AtomicBool::new(false),
+                #[cfg(not(target_arch = "wasm32"))]
+                discoveryAnnouncementsStarted: AtomicBool::new(false),
                 mutationSubscription: Mutex::new(None),
             }),
         }
@@ -111,18 +119,63 @@ impl SpacePersistenceSyncService {
             .map_err(|error| format!("Space sync subscription lock poisoned: {error}"))? =
             Some(subscription);
 
+        #[cfg(not(target_arch = "wasm32"))]
+        self.startDiscoveryAnnouncementWatcher()?;
+
         if let Err(error) = self.scheduleSynchronization() {
             self.state
                 .mutationSubscription
                 .lock()
-                .map_err(|lockError| {
-                    format!("Space sync subscription lock poisoned: {lockError}")
-                })?
+                .map_err(|lockError| format!("Space sync subscription lock poisoned: {lockError}"))?
                 .take();
             persistenceServices()
                 .lock()
                 .map_err(|lockError| format!("Space sync registry lock poisoned: {lockError}"))?
                 .remove(&localNodeId);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Starts the event-driven mDNS announcement bridge for paired Link devices.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    fn startDiscoveryAnnouncementWatcher(&self) -> Result<(), String> {
+        if self
+            .state
+            .discoveryAnnouncementsStarted
+            .swap(true, Ordering::AcqRel)
+        {
+            return Ok(());
+        }
+        let service = self.clone();
+        let subscribeResult = subscribeRemoteDeviceAnnouncements(move |endpoint| {
+            let service = service.clone();
+            let scheduleResult = defaultHostRuntimeTaskSchedulerHost()
+                .scheduleHostRuntimeAsyncTask(
+                    "core-node-space-link-announcement",
+                    Box::new(move || {
+                        Box::pin(async move {
+                            if let Err(error) = service.observeDiscoveredEndpoint(endpoint).await {
+                                operit_util::AppLogger::AppLogger::w(
+                                    "SpacePersistenceSyncService",
+                                    &format!("Link announcement handling failed: {error}"),
+                                );
+                            }
+                        })
+                    }),
+                );
+            if let Err(error) = scheduleResult {
+                operit_util::AppLogger::AppLogger::e(
+                    "SpacePersistenceSyncService",
+                    &format!("Link announcement task scheduling failed: {error}"),
+                );
+            }
+        });
+        if let Err(error) = subscribeResult {
+            self.state
+                .discoveryAnnouncementsStarted
+                .store(false, Ordering::Release);
             return Err(error);
         }
         Ok(())
@@ -152,6 +205,57 @@ impl SpacePersistenceSyncService {
         }
         if !errors.is_empty() {
             return Err(errors.join(" | "));
+        }
+        Ok(())
+    }
+
+    /// Handles one mDNS Link announcement from a device already known to this runtime.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    async fn observeDiscoveredEndpoint(
+        &self,
+        endpoint: RuntimeRemoteDiscoveryEndpoint,
+    ) -> Result<(), String> {
+        let localNodeId = self.state.nodeRouter.localNodeId();
+        if endpoint.deviceId == localNodeId {
+            return Ok(());
+        }
+        let outboundSessions = self.state.linkAccessStore.outboundSessions()?;
+        let inboundSessions = self.state.linkAccessStore.inboundSessions()?;
+        let paired = outboundSessions
+            .values()
+            .any(|record| record.coreDeviceId == endpoint.deviceId)
+            || inboundSessions
+                .values()
+                .any(|record| record.deviceId == endpoint.deviceId);
+        if !paired {
+            return Ok(());
+        }
+        self.state
+            .spaceStore
+            .writeObservedDevicePresence(CoreSpaceDevicePresence {
+                nodeId: endpoint.deviceId.clone(),
+                active: true,
+                baseUrl: endpoint.baseUrl.clone(),
+                tokenHash: endpoint.tokenHash.clone(),
+                version: endpoint.version.clone(),
+                updatedAt: currentTimeMillis(),
+            })?;
+        for (name, record) in outboundSessions
+            .into_iter()
+            .filter(|(_, record)| record.coreDeviceId == endpoint.deviceId)
+        {
+            let updated = record.withBaseUrl(endpoint.baseUrl.clone());
+            let session = PairedRemoteSession::fromRecord(updated.clone())?;
+            let info = session.sessionInfo().await?;
+            ensureRemoteIdentity(&updated, &info.coreDeviceId)?;
+            if updated.baseUrl != record.baseUrl {
+                self.state
+                    .linkAccessStore
+                    .saveOutboundSession(name.clone(), updated.clone())?;
+            }
+            self.ensurePeerLink(&localNodeId, &updated).await?;
+            self.synchronizePeer(name, 512, false).await?;
         }
         Ok(())
     }
@@ -186,10 +290,7 @@ impl SpacePersistenceSyncService {
             ));
         }
 
-        if !self
-            .exchangeDeviceSpaceProjection(&record)
-            .await?
-        {
+        if !self.exchangeDeviceSpaceProjection(&record).await? {
             return Ok(());
         }
 
@@ -242,7 +343,8 @@ impl SpacePersistenceSyncService {
                 if operations.is_empty() {
                     break;
                 }
-                self.synchronizeRequiredBlobs(&record.coreDeviceId, &operations).await?;
+                self.synchronizeRequiredBlobs(&record.coreDeviceId, &operations)
+                    .await?;
                 let _: Value = self
                     .callLocal(
                         "syncApplyOperations",
@@ -263,7 +365,8 @@ impl SpacePersistenceSyncService {
             if operations.is_empty() {
                 break;
             }
-            self.synchronizeRequiredBlobs(&record.coreDeviceId, &operations).await?;
+            self.synchronizeRequiredBlobs(&record.coreDeviceId, &operations)
+                .await?;
             let _: Value = callRemote(
                 &self.state.nodeRouter,
                 &record.coreDeviceId,
@@ -355,7 +458,8 @@ impl SpacePersistenceSyncService {
         }
         for reference in references.into_values() {
             let localHasBlob = self.localHasBlob(&reference).await?;
-            let remoteHasBlob = remoteHasBlob(&self.state.nodeRouter, targetNodeId, &reference).await?;
+            let remoteHasBlob =
+                remoteHasBlob(&self.state.nodeRouter, targetNodeId, &reference).await?;
             match (localHasBlob, remoteHasBlob) {
                 (true, true) => {}
                 (true, false) => self.pushLocalBlobToRemote(targetNodeId, &reference).await?,
@@ -476,7 +580,7 @@ impl SpacePersistenceSyncService {
             "core-node-space-persistence-sync",
             Box::new(move || {
                 Box::pin(async move {
-                    defaultHostRuntimeTaskSchedulerHost()
+                    let _ = defaultHostRuntimeTaskSchedulerHost()
                         .waitForHostRuntimeDelay(SPACE_SYNC_PREPARATION_DELAY_MS)
                         .await;
                     let synchronizedRevision = syncMutationRevision();

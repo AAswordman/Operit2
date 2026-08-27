@@ -158,5 +158,4 @@ impl ChatRuntimeHolder {
         self.activeConversationCount = activeConversationCount;
         self.currentSessionToolCount = currentSessionToolCount;
     }
-
 }

@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use operit_proxy_local::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
+use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 
 pub(crate) mod common;
@@ -18,20 +18,20 @@ pub use javascript_runtime::WebHostJavaScriptRuntimeHost;
 pub use runtime_event::WebHostRuntimeEventHost;
 pub use runtime_event_scheduler::WebHostRuntimeEventSchedulerHost;
 pub use runtime_task_scheduler::WebHostRuntimeTaskSchedulerHost;
-pub use tools::audio::WebAudioPlaybackHost;
 pub use tools::archive::WebArchiveStagingHost;
+pub use tools::audio::WebAudioPlaybackHost;
 pub use tools::bluetooth::WebBluetoothHost;
 pub use tools::browser::WebWebVisitHost;
 pub use tools::browser_session::WebBrowserSessionHost;
 pub use tools::fs::WebFileSystemHost;
 pub use tools::http::WebHttpHost;
-pub use tools::websocket::WebWebSocketHost;
 pub use tools::local_inference::WebLocalInferenceHost;
 pub use tools::runtime::WebManagedRuntimeHost;
 pub use tools::storage::WebRuntimeStorageHost;
 pub use tools::system::WebSystemOperationHost;
 pub use tools::terminal::WebTerminalHost;
 pub use tools::tts::WebTtsPlaybackHost;
+pub use tools::websocket::WebWebSocketHost;
 
 /// Creates the Web runtime with the Web host capability bundle.
 pub fn createLocalCore(
@@ -70,8 +70,7 @@ pub fn createLocalCore(
         .withHostRuntimeEventSchedulerHost(Arc::new(WebHostRuntimeEventSchedulerHost::new()));
     context =
         context.withHostRuntimeTaskSchedulerHost(Arc::new(WebHostRuntimeTaskSchedulerHost::new()));
-    context =
-        context.withHostJavaScriptRuntimeHost(Arc::new(WebHostJavaScriptRuntimeHost::new()));
+    context = context.withHostJavaScriptRuntimeHost(Arc::new(WebHostJavaScriptRuntimeHost::new()));
     context = context.withHostRuntimeEventHost(Arc::new(WebHostRuntimeEventHost::new()));
     Ok(LocalCoreProxy::new(OperitApplication::newWithContext(
         context,

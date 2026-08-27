@@ -1,4 +1,6 @@
 use crate::{CoreEventStream, CoreLinkError, CoreValue, CoreWatchRequest};
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
@@ -12,6 +14,7 @@ use std::sync::Mutex;
 
 thread_local! {
     static SYNC_CORE_STREAM_CAPTURE: RefCell<Option<Vec<CoreStreamAttachment>>> = const { RefCell::new(None) };
+    static SYNC_CORE_STREAM_SOURCE_RESOLVER: RefCell<Option<Arc<dyn Fn(&CoreStreamDescriptor) -> Option<Arc<CoreStreamSource>> + Send + Sync>>> = const { RefCell::new(None) };
 }
 
 tokio::task_local! {
@@ -55,11 +58,16 @@ impl CoreStreamSource {
         let firstSegment = (self.opener)(request.clone())?;
         let (sender, receiver) = CoreEventStream::channel();
         let source = self.clone();
-        tokio::spawn(async move {
-            source
-                .pump(firstSegment, request, sender)
-                .await;
-        });
+        HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
+            defaultHostRuntimeTaskSchedulerHost().as_ref(),
+            "core-stream-source-pump",
+            Box::new(move || {
+                Box::pin(async move {
+                    source.pump(firstSegment, request, sender).await;
+                })
+            }),
+        )
+        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
         Ok(receiver)
     }
 
@@ -140,7 +148,9 @@ where
 
 /// Captures in-process stream attachments across one synchronous local dispatch.
 #[allow(non_snake_case)]
-pub fn withCoreStreamCaptureSync<R>(operation: impl FnOnce() -> R) -> (R, Vec<CoreStreamAttachment>) {
+pub fn withCoreStreamCaptureSync<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, Vec<CoreStreamAttachment>) {
     SYNC_CORE_STREAM_CAPTURE.with(|capture| {
         let previous = capture.replace(Some(Vec::new()));
         let result = operation();
@@ -149,24 +159,44 @@ pub fn withCoreStreamCaptureSync<R>(operation: impl FnOnce() -> R) -> (R, Vec<Co
     })
 }
 
-/// Records one source only while a local dispatch capture is active.
+/// Resolves embedded stream descriptors while decoding one synchronous Core value.
+#[allow(non_snake_case)]
+pub fn withCoreStreamSourceResolverSync<R>(
+    resolver: Arc<dyn Fn(&CoreStreamDescriptor) -> Option<Arc<CoreStreamSource>> + Send + Sync>,
+    operation: impl FnOnce() -> R,
+) -> R {
+    SYNC_CORE_STREAM_SOURCE_RESOLVER.with(|storage| {
+        let previous = storage.replace(Some(resolver));
+        let result = operation();
+        storage.replace(previous);
+        result
+    })
+}
+
+/// Records one source into every active local dispatch capture.
 fn recordCoreStreamAttachment(attachment: CoreStreamAttachment) {
-    if ASYNC_CORE_STREAM_CAPTURE
-        .try_with(|capture| {
-            capture
-                .lock()
-                .expect("core stream capture mutex poisoned")
-                .push(attachment.clone());
-        })
-        .is_ok()
-    {
-        return;
-    }
+    let _ = ASYNC_CORE_STREAM_CAPTURE.try_with(|capture| {
+        capture
+            .lock()
+            .expect("core stream capture mutex poisoned")
+            .push(attachment.clone());
+    });
     SYNC_CORE_STREAM_CAPTURE.with(|capture| {
         if let Some(attachments) = capture.borrow_mut().as_mut() {
             attachments.push(attachment);
         }
     });
+}
+
+/// Resolves a source for one decoded stream descriptor when a resolver is active.
+#[allow(non_snake_case)]
+fn resolveCoreStreamSource(descriptor: &CoreStreamDescriptor) -> Option<Arc<CoreStreamSource>> {
+    SYNC_CORE_STREAM_SOURCE_RESOLVER.with(|storage| {
+        storage
+            .borrow()
+            .as_ref()
+            .and_then(|resolver| resolver(descriptor))
+    })
 }
 
 /// Describes one stream property that the generic Link bridge can subscribe to.
@@ -237,10 +267,11 @@ impl<'de, T> Deserialize<'de> for CoreStream<T> {
             descriptor: CoreStreamDescriptor,
         }
         let wire = Wire::deserialize(deserializer)?;
+        let source = resolveCoreStreamSource(&wire.descriptor);
         Ok(Self {
             descriptor: wire.descriptor,
             marker: PhantomData,
-            source: None,
+            source,
         })
     }
 }
@@ -256,7 +287,10 @@ impl<T> CoreStream<T> {
     /// Creates an anonymous stream handle backed by one stable logical source.
     #[allow(non_snake_case)]
     pub fn fromSource(source: Arc<CoreStreamSource>) -> Self {
-        let streamId = format!("core-stream-{}", NEXT_CORE_STREAM_ID.fetch_add(1, Ordering::Relaxed));
+        let streamId = format!(
+            "core-stream-{}",
+            NEXT_CORE_STREAM_ID.fetch_add(1, Ordering::Relaxed)
+        );
         Self::fromSourceWithId(streamId, source)
     }
 
@@ -276,5 +310,30 @@ impl<T> CoreStream<T> {
             source: Some(source),
         }
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies a Flow-local sync capture still receives streams inside an async call capture.
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_capture_records_stream_inside_async_capture() {
+        let source = Arc::new(CoreStreamSource::new(|_request| {
+            let (_sender, receiver) = CoreEventStream::channel();
+            Ok(receiver)
+        }));
+        let stream =
+            CoreStream::<String>::fromSourceWithId("nested-capture-stream".to_string(), source);
+
+        let (sync_attachment_count, async_attachments) = withCoreStreamCapture(async {
+            let (_value, sync_attachments) =
+                withCoreStreamCaptureSync(|| crate::toCoreValue(stream).unwrap());
+            sync_attachments.len()
+        })
+        .await;
+
+        assert_eq!(sync_attachment_count, 1);
+        assert_eq!(async_attachments.len(), 1);
+    }
 }

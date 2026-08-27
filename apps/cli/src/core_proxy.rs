@@ -1,15 +1,14 @@
-use std::ops::{Deref, DerefMut};
-use operit_proxy_local::{
-    GeneratedCoreProxy, LocalCoreProxy,
-};
+use operit_core_application::CoreApplication;
 use operit_host_api::HostManager::HostManager;
-use operit_node_runtime::CoreNodeRouter::CoreNodeRouter;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
+use operit_proxy_local::{GeneratedCoreProxy, LocalCoreProxy};
+use std::ops::{Deref, DerefMut};
 
-use crate::create_local_core;
+use crate::create_cli_core_application;
 use async_trait::async_trait;
-use operit_link::{CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreCallRequest, CoreCallResponse, CoreWatchRequest};
+use operit_link::{
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkClient, CoreLinkError,
+    CoreLinkPushSession, CoreLinkSharedClient, CoreWatchRequest,
+};
 
 /// Owns a shared local Core proxy while satisfying the generated mutable client surface.
 pub(crate) struct SharedLocalCore(pub(crate) std::sync::Arc<LocalCoreProxy>);
@@ -21,7 +20,10 @@ impl CoreLinkClient for SharedLocalCore {
     }
 
     #[allow(non_snake_case)]
-    async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+    async fn watchSnapshot(
+        &mut self,
+        request: CoreWatchRequest,
+    ) -> Result<CoreEvent, CoreLinkError> {
         CoreLinkSharedClient::watchSnapshot(self.0.as_ref(), request).await
     }
 
@@ -30,7 +32,10 @@ impl CoreLinkClient for SharedLocalCore {
     }
 
     #[allow(non_snake_case)]
-    async fn openPush(&mut self, request: operit_link::CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+    async fn openPush(
+        &mut self,
+        request: operit_link::CorePushRequest,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
         self.0.openPushLocal(request)
     }
 }
@@ -38,44 +43,19 @@ impl CoreLinkClient for SharedLocalCore {
 pub(crate) struct CliCore {
     proxy: GeneratedCoreProxy<SharedLocalCore>,
     localHostManager: Option<HostManager>,
-    _coreNodeRouter: CoreNodeRouter,
+    _coreApplication: CoreApplication,
 }
 
 /// Creates the local CLI Core and sends generated requests directly to its runtime proxy.
-pub(crate) fn local_cli_core() -> Result<CliCore, String> {
-    let mut core = initialized_cli_runtime()?;
-    let localHostManager = core.0.hostManager().clone();
+pub(crate) async fn local_cli_core() -> Result<CliCore, String> {
+    let coreApplication = create_cli_core_application("client").await?;
+    let localClient = coreApplication.localClient();
+    let localHostManager = localClient.hostManager().clone();
     Ok(CliCore {
-        proxy: GeneratedCoreProxy::new(SharedLocalCore(core.0)),
+        proxy: GeneratedCoreProxy::new(SharedLocalCore(localClient)),
         localHostManager: Some(localHostManager),
-        _coreNodeRouter: core.1,
+        _coreApplication: coreApplication,
     })
-}
-
-/// Creates and initializes one CLI-owned local runtime before proxy construction.
-fn initialized_cli_runtime() -> Result<(std::sync::Arc<LocalCoreProxy>, CoreNodeRouter), String> {
-    let mut core = create_local_core();
-    core.localApplicationMut().onCreate()?;
-    {
-        let application = core.localApplicationMut();
-        let enhanced_ai_service = EnhancedAIService::new(
-            application.toolHandler.clone(),
-            application.providerRuntimeContext.clone(),
-        );
-        let mut holder = application
-            .chatRuntimeHolder
-            .try_lock()
-            .map_err(|_| "Chat runtime holder is busy".to_string())?;
-        holder.getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(enhanced_ai_service);
-    }
-    let core = std::sync::Arc::new(core);
-    let localRuntime = crate::cli::link::local_core_runtime(core.clone());
-    operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService::new(
-        localRuntime.clone(),
-    )
-    .startSpaceSync()?;
-    let _router = CoreNodeRouter::new(localRuntime);
-    Ok((core, _router))
 }
 
 impl CliCore {

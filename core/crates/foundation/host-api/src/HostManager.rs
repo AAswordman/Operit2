@@ -4,9 +4,10 @@ use crate::{
     ArchiveStagingHost, AudioPlaybackHost, BluetoothHost, BrowserAutomationHost,
     BrowserSessionHost, ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor,
     HostJavaScriptRuntimeHost, HostRuntimeEventHost, HostRuntimeEventSchedulerHost,
-    HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost, WebSocketHost,
+    HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost,
     ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
-    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebVisitHost,
+    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebSocketHost,
+    WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();

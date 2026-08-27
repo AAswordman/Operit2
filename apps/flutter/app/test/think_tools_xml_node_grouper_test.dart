@@ -154,6 +154,8 @@ void main() {
                 toolCollapseMode: ToolCollapseMode.full,
               ),
               showThinkingProcess: true,
+              splitMarkdownContent: (_) async =>
+                  const <MarkdownStreamEvent>[],
             ),
           ),
         ),
@@ -205,6 +207,8 @@ void main() {
                 toolCollapseMode: ToolCollapseMode.full,
               ),
               showThinkingProcess: true,
+              splitMarkdownContent: (_) async =>
+                  const <MarkdownStreamEvent>[],
             ),
           ),
         ),
@@ -260,6 +264,8 @@ void main() {
                 toolCollapseMode: ToolCollapseMode.all,
               ),
               showThinkingProcess: true,
+              splitMarkdownContent: (_) async =>
+                  const <MarkdownStreamEvent>[],
             ),
           ),
         ),

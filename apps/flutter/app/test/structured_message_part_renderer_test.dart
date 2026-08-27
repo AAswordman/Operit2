@@ -32,6 +32,7 @@ void main() {
             textColor: Colors.black,
             backgroundColor: Colors.white,
             showThinkingProcess: true,
+            splitMarkdownContent: _splitMarkdownContent,
           ),
         ),
       ),
@@ -125,7 +126,47 @@ Widget _messagePartApp(List<MessagePart> parts) {
         textColor: Colors.black,
         backgroundColor: Colors.white,
         showThinkingProcess: true,
+        splitMarkdownContent: _splitMarkdownContent,
       ),
     ),
   );
+}
+
+/// Produces a complete plain Markdown event sequence for renderer tests.
+Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
+  return <MarkdownStreamEvent>[
+    MarkdownStreamEvent(
+      chatId: 'test',
+      eventType: 'markdownBlockStart',
+      value: null,
+      id: null,
+      blockId: 1,
+      inlineId: null,
+      parentBlockId: null,
+      nodeType: null,
+      headerLevel: null,
+    ),
+    MarkdownStreamEvent(
+      chatId: 'test',
+      eventType: 'markdownBlockChunk',
+      value: content,
+      id: null,
+      blockId: 1,
+      inlineId: null,
+      parentBlockId: null,
+      nodeType: null,
+      headerLevel: null,
+    ),
+    const MarkdownStreamEvent(
+      chatId: 'test',
+      eventType: 'completed',
+      value: null,
+      id: null,
+      blockId: null,
+      inlineId: null,
+      parentBlockId: null,
+      nodeType: null,
+      headerLevel: null,
+    ),
+  ];
 }

@@ -49,18 +49,47 @@ use operit_util::GithubReleaseUtil::{FullUpdateStatus, FullUpdateTarget, GithubR
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex as StdMutex};
 
-use crate::{create_local_core, initialize_shell_chat, parse_shell_args};
+use crate::{create_cli_core_application_configured, initialize_shell_chat, parse_shell_args};
 
 /// Runs the local TUI directly against the local Core after completing setup.
 pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let shell_args = parse_shell_args(args)?;
-    let mut local_core = create_local_core();
-    local_core.localApplicationMut().onCreate()?;
-    let language = TuiLanguage::from_context(&local_core.localApplicationMut().hostManager)?;
-    let initial_chat_id = initialize_shell_chat(local_core.localApplicationMut(), &shell_args)?;
     let approval_bridge = TuiApprovalBridge::new();
-    install_local_permission_requester(&mut local_core, approval_bridge.clone());
+    let initial_chat_id_cell = Arc::new(StdMutex::new(None::<String>));
+    let language_cell = Arc::new(StdMutex::new(None::<TuiLanguage>));
+    let shell_args_for_core = shell_args.clone();
+    let approval_bridge_for_core = approval_bridge.clone();
+    let initial_chat_id_for_core = initial_chat_id_cell.clone();
+    let language_for_core = language_cell.clone();
+    let core_application = create_cli_core_application_configured("client", move |local_core| {
+        let language = {
+            let application = local_core.localApplicationMut();
+            TuiLanguage::from_context(&application.hostManager)?
+        };
+        let initial_chat_id =
+            initialize_shell_chat(local_core.localApplicationMut(), &shell_args_for_core)?;
+        install_local_permission_requester(local_core, approval_bridge_for_core);
+        *language_for_core
+            .lock()
+            .expect("TUI language cell lock must not be poisoned") = Some(language);
+        *initial_chat_id_for_core
+            .lock()
+            .expect("TUI initial chat cell lock must not be poisoned") = Some(initial_chat_id);
+        Ok(())
+    })
+    .await?;
+    let language = language_cell
+        .lock()
+        .expect("TUI language cell lock must not be poisoned")
+        .take()
+        .expect("TUI language must be initialized by CoreApplication startup");
+    let initial_chat_id = initial_chat_id_cell
+        .lock()
+        .expect("TUI initial chat cell lock must not be poisoned")
+        .take()
+        .expect("TUI initial chat must be initialized by CoreApplication startup");
     let startup_install_prompt = build_startup_install_prompt()?;
     let startup_update_prompt =
         build_startup_update_prompt(shell_args.updateCurrentVersion.as_deref()).await?;
@@ -75,7 +104,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         None
     };
     let mut tui = OperitTui::new(
-        tui_core(local_core),
+        tui_core(core_application.localClient()),
         shell_args,
         initial_chat_id,
         approval_bridge,
@@ -85,7 +114,10 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         startup_workspace_prompt_path,
     )
     .await?;
-    tui.run().await
+    let result = tui.run().await;
+    drop(tui);
+    core_application.shutdown().await;
+    result
 }
 
 fn build_startup_install_prompt() -> Result<Option<StartupInstallPrompt>, String> {
@@ -159,4 +191,3 @@ fn install_local_permission_requester(
             }
         });
 }
-

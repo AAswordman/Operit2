@@ -1,9 +1,8 @@
 use operit_host_api::{
     HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
     HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpStreamChunkCallback,
-    HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
-    WebSocketClosedCallback, WebSocketHost, WebSocketMessageCallback, WebSocketOpenedCallback,
-    WebSocketRequestData,
+    HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback, WebSocketClosedCallback,
+    WebSocketHost, WebSocketMessageCallback, WebSocketOpenedCallback, WebSocketRequestData,
 };
 use operit_host_native_common::NativeHttpHost;
 

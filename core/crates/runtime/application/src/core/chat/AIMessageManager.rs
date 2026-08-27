@@ -56,6 +56,7 @@ pub struct SendMessageRequest<'a> {
     pub chatId: Option<String>,
     pub messageContent: String,
     pub chatHistory: Vec<ChatMessage>,
+    pub promptHistoryOverride: Option<Vec<PromptTurn>>,
     pub workspacePath: Option<String>,
     pub promptFunctionType: PromptFunctionType,
     pub enableThinking: bool,
@@ -238,12 +239,15 @@ impl AIMessageManager {
             ],
         );
 
-        let memory = Self::getMemoryFromMessages(
-            request.chatHistory.clone(),
-            request.splitHistoryByRole,
-            request.currentRoleName.clone(),
-            request.groupOrchestrationMode,
-        );
+        let memory = match request.promptHistoryOverride.clone() {
+            Some(promptHistory) => promptHistory,
+            None => Self::getMemoryFromMessages(
+                request.chatHistory.clone(),
+                request.splitHistoryByRole,
+                request.currentRoleName.clone(),
+                request.groupOrchestrationMode,
+            ),
+        };
 
         let apiPreferences = ApiPreferences::getInstance();
         let maxImageHistoryUserTurns = apiPreferences

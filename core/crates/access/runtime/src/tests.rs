@@ -94,6 +94,174 @@ fn link_access_store_constructs_without_global_route() {
     let _store = LinkAccessStore::new(Arc::new(MemoryStorageHost::default()));
 }
 
+/// Verifies Space adoption carries device profiles for every joined member.
+#[test]
+fn space_adopt_envelope_carries_joined_device_profiles() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    CoreNodeIdentityStore::new(storage.clone())
+        .writeNodeId("node-a".to_string())
+        .expect("local CoreNode identity must be written");
+    let spaceStore = CoreSpaceStore::new(storage.clone());
+    spaceStore
+        .writeLocalDeviceProfile(
+            "Local".to_string(),
+            "test".to_string(),
+            "local".to_string(),
+            "test-core".to_string(),
+        )
+        .expect("local device profile must be written");
+    let joinedSpace = spaceStore
+        .merge(CoreSpace {
+            spaceId: "space-peer".to_string(),
+            spaceName: "Peer Space".to_string(),
+            spaceRevision: 2,
+            members: vec!["node-b".to_string()],
+        })
+        .expect("joined Space must merge");
+    let peerProfile = CoreSpaceDeviceProfile {
+        nodeId: "node-b".to_string(),
+        displayName: "Peer".to_string(),
+        userName: "Peer User".to_string(),
+        platform: "test".to_string(),
+        model: "peer".to_string(),
+        coreVersion: Some("test-core".to_string()),
+        updatedAt: 1,
+    };
+    let envelope = RemoteSpaceAdoptEnvelope {
+        space: joinedSpace,
+        deviceProfiles: vec![peerProfile.clone()],
+    };
+    let decoded: RemoteSpaceAdoptEnvelope =
+        operit_link::decodeLink(&operit_link::encodeLink(&envelope).unwrap()).unwrap();
+    spaceStore
+        .importDeviceProfiles(decoded.deviceProfiles)
+        .expect("joined device profiles must import");
+    let profiles = spaceStore
+        .deviceProfilesForCurrentSpace()
+        .expect("current Space profiles must be complete");
+
+    assert!(profiles.iter().any(|profile| profile.nodeId == "node-a"));
+    assert!(profiles.iter().any(|profile| profile == &peerProfile));
+}
+
+/// Verifies inbound pair completion writes the paired endpoint profile.
+#[test]
+fn inbound_session_persists_paired_device_profile() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    CoreNodeIdentityStore::new(storage.clone())
+        .writeNodeId("node-a".to_string())
+        .expect("local CoreNode identity must be written");
+    let spaceStore = CoreSpaceStore::new(storage.clone());
+    spaceStore
+        .writeLocalDeviceProfile(
+            "Local".to_string(),
+            "test".to_string(),
+            "local".to_string(),
+            "test-core".to_string(),
+        )
+        .expect("local device profile must be written");
+    let accessStore = LinkAccessStore::new(storage.clone());
+    accessStore
+        .saveInboundSession("inbound-1".to_string(), acceptedSession("node-b"))
+        .expect("inbound session must persist");
+    spaceStore
+        .merge(CoreSpace {
+            spaceId: "space-peer".to_string(),
+            spaceName: "Peer Space".to_string(),
+            spaceRevision: 2,
+            members: vec!["node-b".to_string()],
+        })
+        .expect("joined Space must merge");
+
+    let profiles = spaceStore
+        .deviceProfilesForCurrentSpace()
+        .expect("current Space profiles must be complete");
+
+    assert!(profiles.iter().any(|profile| profile.nodeId == "node-a"));
+    assert!(profiles.iter().any(|profile| profile.nodeId == "node-b"));
+}
+
+/// Verifies outbound pair completion writes the paired endpoint profile.
+#[test]
+fn outbound_session_persists_paired_device_profile() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    CoreNodeIdentityStore::new(storage.clone())
+        .writeNodeId("node-a".to_string())
+        .expect("local CoreNode identity must be written");
+    let spaceStore = CoreSpaceStore::new(storage.clone());
+    spaceStore
+        .writeLocalDeviceProfile(
+            "Local".to_string(),
+            "test".to_string(),
+            "local".to_string(),
+            "test-core".to_string(),
+        )
+        .expect("local device profile must be written");
+    let accessStore = LinkAccessStore::new(storage.clone());
+    accessStore
+        .saveOutboundSession("outbound".to_string(), outboundSession("node-a", "node-b"))
+        .expect("outbound session must persist");
+    spaceStore
+        .merge(CoreSpace {
+            spaceId: "space-peer".to_string(),
+            spaceName: "Peer Space".to_string(),
+            spaceRevision: 2,
+            members: vec!["node-b".to_string()],
+        })
+        .expect("joined Space must merge");
+
+    let profiles = spaceStore
+        .deviceProfilesForCurrentSpace()
+        .expect("current Space profiles must be complete");
+
+    assert!(profiles.iter().any(|profile| profile.nodeId == "node-a"));
+    assert!(profiles.iter().any(|profile| profile.nodeId == "node-b"));
+}
+
+/// Verifies stored pairings can republish their device profiles.
+#[test]
+fn stored_pairings_republish_device_profiles() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    CoreNodeIdentityStore::new(storage.clone())
+        .writeNodeId("node-a".to_string())
+        .expect("local CoreNode identity must be written");
+    let spaceStore = CoreSpaceStore::new(storage.clone());
+    spaceStore
+        .writeLocalDeviceProfile(
+            "Local".to_string(),
+            "test".to_string(),
+            "local".to_string(),
+            "test-core".to_string(),
+        )
+        .expect("local device profile must be written");
+    let accessStore = LinkAccessStore::new(storage.clone());
+    accessStore
+        .writeMapRecord(
+            RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH,
+            "inbound-1",
+            &acceptedSession("node-b"),
+        )
+        .expect("existing inbound session fixture must be written");
+    accessStore
+        .syncPairedDeviceProfiles()
+        .expect("stored pairing profiles must publish");
+    spaceStore
+        .merge(CoreSpace {
+            spaceId: "space-peer".to_string(),
+            spaceName: "Peer Space".to_string(),
+            spaceRevision: 2,
+            members: vec!["node-b".to_string()],
+        })
+        .expect("joined Space must merge");
+
+    let profiles = spaceStore
+        .deviceProfilesForCurrentSpace()
+        .expect("current Space profiles must be complete");
+
+    assert!(profiles.iter().any(|profile| profile.nodeId == "node-a"));
+    assert!(profiles.iter().any(|profile| profile.nodeId == "node-b"));
+}
+
 /// Creates one accepted inbound session record for topology lifecycle tests.
 #[allow(non_snake_case)]
 fn acceptedSession(peerNodeId: &str) -> AcceptedRemoteSessionRecord {

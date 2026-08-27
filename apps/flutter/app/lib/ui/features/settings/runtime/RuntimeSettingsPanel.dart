@@ -37,6 +37,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   int _pairedRemoteProbeGeneration = 0;
   StreamSubscription<Map<String, generated.RuntimePairedDevice>>?
   _pairedDevicesSubscription;
+  StreamSubscription<Map<String, generated.RuntimePairedDeviceStatus>>?
+  _pairedDeviceStatusesSubscription;
 
   static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
@@ -47,6 +49,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     super.initState();
     unawaited(_refreshCurrentDeviceSpace());
     _watchPairedDevices();
+    _watchPairedDeviceStatuses();
   }
 
   @override
@@ -54,6 +57,10 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     final pairedDevicesSubscription = _pairedDevicesSubscription;
     if (pairedDevicesSubscription != null) {
       unawaited(pairedDevicesSubscription.cancel());
+    }
+    final pairedDeviceStatusesSubscription = _pairedDeviceStatusesSubscription;
+    if (pairedDeviceStatusesSubscription != null) {
+      unawaited(pairedDeviceStatusesSubscription.cancel());
     }
     super.dispose();
   }
@@ -74,6 +81,47 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
             });
           },
         );
+  }
+
+  /// Subscribes to direct Peer Link status changes for paired devices.
+  void _watchPairedDeviceStatuses() {
+    _pairedDeviceStatusesSubscription = _clients.server.runtimeRemoteLinkService
+        .pairedDeviceStatusesFlow()
+        .listen(
+          _applyPairedDeviceStatuses,
+          onError: (Object error, StackTrace stackTrace) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _connectionMessage = error.toString();
+              _connectionFailed = true;
+            });
+          },
+        );
+  }
+
+  /// Applies peer-driven online states without changing pairing validity prompts.
+  void _applyPairedDeviceStatuses(
+    Map<String, generated.RuntimePairedDeviceStatus> statuses,
+  ) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      final nextStates = Map<String, _PairedRemoteProbeState>.from(
+        _pairedRemoteStates,
+      )..removeWhere((deviceId, _) => !statuses.containsKey(deviceId));
+      for (final entry in statuses.entries) {
+        final currentState = nextStates[entry.key];
+        if (currentState == _PairedRemoteProbeState.invalid ||
+            currentState == _PairedRemoteProbeState.removedFromSpace) {
+          continue;
+        }
+        nextStates[entry.key] = _pairedRemoteStateFromStatus(entry.value);
+      }
+      _pairedRemoteStates = nextStates;
+    });
   }
 
   /// Reads the synchronized device space projection from the current device.
@@ -153,7 +201,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       _pairedDevices = devices;
       _pairedRemoteStates = <String, _PairedRemoteProbeState>{
         for (final deviceId in devices.keys)
-          deviceId: _PairedRemoteProbeState.checking,
+          deviceId:
+              _pairedRemoteStates[deviceId] ?? _PairedRemoteProbeState.checking,
       };
     });
     final results = await Future.wait(
@@ -166,9 +215,20 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       return;
     }
     setState(() {
-      _pairedRemoteStates = Map<String, _PairedRemoteProbeState>.fromEntries(
-        results,
+      final nextStates = Map<String, _PairedRemoteProbeState>.from(
+        _pairedRemoteStates,
       );
+      for (final entry in results) {
+        final currentState = nextStates[entry.key];
+        if (entry.value == _PairedRemoteProbeState.error &&
+            currentState != null &&
+            currentState != _PairedRemoteProbeState.checking &&
+            currentState != _PairedRemoteProbeState.error) {
+          continue;
+        }
+        nextStates[entry.key] = entry.value;
+      }
+      _pairedRemoteStates = nextStates;
     });
     final removedDeviceIds = results
         .where(
@@ -215,16 +275,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     try {
       final status = await _clients.server.runtimeRemoteLinkService
           .pairedDeviceStatus(deviceId: deviceId);
-      return switch (status) {
-        generated.RuntimePairedDeviceStatus.online =>
-          _PairedRemoteProbeState.online,
-        generated.RuntimePairedDeviceStatus.offline =>
-          _PairedRemoteProbeState.offline,
-        generated.RuntimePairedDeviceStatus.invalid =>
-          _PairedRemoteProbeState.invalid,
-        generated.RuntimePairedDeviceStatus.removedFromSpace =>
-          _PairedRemoteProbeState.removedFromSpace,
-      };
+      return _pairedRemoteStateFromStatus(status);
     } catch (_) {
       return _PairedRemoteProbeState.error;
     }
@@ -569,6 +620,22 @@ enum _PairedRemoteProbeState {
   removedFromSpace,
 }
 
+/// Converts the generated paired-device status into the UI probe state.
+_PairedRemoteProbeState _pairedRemoteStateFromStatus(
+  generated.RuntimePairedDeviceStatus status,
+) {
+  return switch (status) {
+    generated.RuntimePairedDeviceStatus.online =>
+      _PairedRemoteProbeState.online,
+    generated.RuntimePairedDeviceStatus.offline =>
+      _PairedRemoteProbeState.offline,
+    generated.RuntimePairedDeviceStatus.invalid =>
+      _PairedRemoteProbeState.invalid,
+    generated.RuntimePairedDeviceStatus.removedFromSpace =>
+      _PairedRemoteProbeState.removedFromSpace,
+  };
+}
+
 class _SectionCard extends StatelessWidget {
   const _SectionCard({required this.title, required this.children});
 
@@ -892,6 +959,7 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
                           details.localPosition,
                           centerByDeviceId,
                           _topology.connections,
+                          nodeSize,
                         );
                         if (connection != null) {
                           unawaited(_showConnectionDetails(connection));
@@ -901,6 +969,7 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
                         painter: _DeviceSpaceTopologyPainter(
                           centers: centerByDeviceId,
                           connections: _topology.connections,
+                          nodeSize: nodeSize,
                           onlineColor: colorScheme.outline,
                           offlineColor: colorScheme.error,
                           mismatchColor: colorScheme.tertiary,
@@ -955,7 +1024,7 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
       builder: (context) {
         final colorScheme = Theme.of(context).colorScheme;
         return AlertDialog(
-          title: Text('${first.deviceName} ↔ ${second.deviceName}'),
+          title: Text('${first.deviceName} → ${second.deviceName}'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1110,14 +1179,19 @@ generated.RuntimeDeviceSpaceConnection? _connectionAtPoint(
   Offset point,
   Map<String, Offset> centers,
   List<generated.RuntimeDeviceSpaceConnection> connections,
+  Size nodeSize,
 ) {
   const hitDistance = 16.0;
   generated.RuntimeDeviceSpaceConnection? nearest;
   var nearestDistance = double.infinity;
   for (final connection in connections) {
-    final first = centers[connection.firstDeviceId]!;
-    final second = centers[connection.secondDeviceId]!;
-    final distance = _distanceToSegment(point, first, second);
+    final segment = _connectionSegment(
+      connection,
+      centers,
+      connections,
+      nodeSize,
+    );
+    final distance = _distanceToSegment(point, segment.start, segment.end);
     if (distance <= hitDistance && distance < nearestDistance) {
       nearest = connection;
       nearestDistance = distance;
@@ -1139,6 +1213,110 @@ double _distanceToSegment(Offset point, Offset first, Offset second) {
   final clamped = projection.clamp(0.0, 1.0);
   final nearest = first + delta * clamped;
   return (point - nearest).distance;
+}
+
+/// Holds one drawable topology connection segment.
+class _TopologyConnectionSegment {
+  /// Creates one segment clipped to topology node bounds.
+  const _TopologyConnectionSegment({required this.start, required this.end});
+
+  final Offset start;
+  final Offset end;
+}
+
+/// Calculates a drawable directed segment between two device node bounds.
+_TopologyConnectionSegment _connectionSegment(
+  generated.RuntimeDeviceSpaceConnection connection,
+  Map<String, Offset> centers,
+  List<generated.RuntimeDeviceSpaceConnection> connections,
+  Size nodeSize,
+) {
+  final sourceCenter = centers[connection.firstDeviceId]!;
+  final targetCenter = centers[connection.secondDeviceId]!;
+  final direction = targetCenter - sourceCenter;
+  final distance = direction.distance;
+  if (distance == 0) {
+    throw StateError('device-space topology contains a zero-length connection');
+  }
+  final unit = direction / distance;
+  final sideOffset =
+      Offset(-unit.dy, unit.dx) *
+      _parallelConnectionOffset(connection, connections);
+  final shiftedSourceCenter = sourceCenter + sideOffset;
+  final shiftedTargetCenter = targetCenter + sideOffset;
+  final sourceRect = _topologyNodeRect(sourceCenter, nodeSize);
+  final targetRect = _topologyNodeRect(targetCenter, nodeSize);
+  const nodeGap = 6.0;
+  final start =
+      _pointOnRectBoundary(
+        sourceRect,
+        shiftedSourceCenter,
+        shiftedTargetCenter,
+      ) +
+      unit * nodeGap;
+  final end =
+      _pointOnRectBoundary(
+        targetRect,
+        shiftedTargetCenter,
+        shiftedSourceCenter,
+      ) -
+      unit * nodeGap;
+  return _TopologyConnectionSegment(start: start, end: end);
+}
+
+/// Returns the rectangle occupied by one topology node.
+Rect _topologyNodeRect(Offset center, Size nodeSize) {
+  return Rect.fromCenter(
+    center: center,
+    width: nodeSize.width,
+    height: nodeSize.height,
+  );
+}
+
+/// Calculates the point where a ray exits a node rectangle.
+Offset _pointOnRectBoundary(Rect rect, Offset inside, Offset outside) {
+  final delta = outside - inside;
+  final candidates = <double>[];
+  if (delta.dx > 0) {
+    candidates.add((rect.right - inside.dx) / delta.dx);
+  }
+  if (delta.dx < 0) {
+    candidates.add((rect.left - inside.dx) / delta.dx);
+  }
+  if (delta.dy > 0) {
+    candidates.add((rect.bottom - inside.dy) / delta.dy);
+  }
+  if (delta.dy < 0) {
+    candidates.add((rect.top - inside.dy) / delta.dy);
+  }
+  final positiveCandidates = candidates
+      .where((candidate) => candidate > 0)
+      .toList(growable: false);
+  if (positiveCandidates.isEmpty) {
+    throw StateError('device-space topology edge cannot reach node boundary');
+  }
+  final scale = positiveCandidates.reduce(math.min);
+  return inside + delta * scale;
+}
+
+/// Returns a side offset for opposite directed connections between two devices.
+double _parallelConnectionOffset(
+  generated.RuntimeDeviceSpaceConnection connection,
+  List<generated.RuntimeDeviceSpaceConnection> connections,
+) {
+  final hasOpposite = connections.any(
+    (other) =>
+        other.firstDeviceId == connection.secondDeviceId &&
+        other.secondDeviceId == connection.firstDeviceId,
+  );
+  if (!hasOpposite) {
+    return 0;
+  }
+  final currentKey =
+      '${connection.firstDeviceId}\u0000${connection.secondDeviceId}';
+  final oppositeKey =
+      '${connection.secondDeviceId}\u0000${connection.firstDeviceId}';
+  return currentKey.compareTo(oppositeKey) < 0 ? -8.0 : 8.0;
 }
 
 class _DeviceSpaceTopologyNode extends StatelessWidget {
@@ -1249,6 +1427,7 @@ class _DeviceSpaceTopologyPainter extends CustomPainter {
   const _DeviceSpaceTopologyPainter({
     required this.centers,
     required this.connections,
+    required this.nodeSize,
     required this.onlineColor,
     required this.offlineColor,
     required this.mismatchColor,
@@ -1257,17 +1436,22 @@ class _DeviceSpaceTopologyPainter extends CustomPainter {
 
   final Map<String, Offset> centers;
   final List<generated.RuntimeDeviceSpaceConnection> connections;
+  final Size nodeSize;
   final Color onlineColor;
   final Color offlineColor;
   final Color mismatchColor;
   final Color unknownColor;
 
-  /// Draws every direct-device edge and marks unhealthy links with an X.
+  /// Draws every directed direct-device edge and marks unhealthy links with an X.
   @override
   void paint(Canvas canvas, Size size) {
     for (final connection in connections) {
-      final first = centers[connection.firstDeviceId]!;
-      final second = centers[connection.secondDeviceId]!;
+      final segment = _connectionSegment(
+        connection,
+        centers,
+        connections,
+        nodeSize,
+      );
       final color = _connectionStatusColor(
         connection.status,
         _TopologyPainterColors(
@@ -1287,17 +1471,70 @@ class _DeviceSpaceTopologyPainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
       if (connection.status ==
           generated.RuntimeDeviceSpaceConnectionStatus.online) {
-        canvas.drawLine(first, second, paint);
+        _drawArrowLine(canvas, segment.start, segment.end, paint);
       } else {
-        _drawDashedLine(canvas, first, second, paint);
+        _drawDashedLine(canvas, segment.start, segment.end, paint);
+        _drawArrowHead(canvas, segment.start, segment.end, paint.color);
       }
       if (connection.status ==
               generated.RuntimeDeviceSpaceConnectionStatus.offline ||
           connection.status ==
               generated.RuntimeDeviceSpaceConnectionStatus.versionMismatch) {
-        _drawConnectionCross(canvas, Offset.lerp(first, second, 0.5)!, color);
+        _drawConnectionCross(
+          canvas,
+          Offset.lerp(segment.start, segment.end, 0.5)!,
+          color,
+        );
       }
     }
+  }
+
+  /// Draws a solid directed segment with an arrow head at the target side.
+  static void _drawArrowLine(
+    Canvas canvas,
+    Offset first,
+    Offset second,
+    Paint paint,
+  ) {
+    canvas.drawLine(first, second, paint);
+    _drawArrowHead(canvas, first, second, paint.color);
+  }
+
+  /// Draws the arrow head for one directed topology connection.
+  static void _drawArrowHead(
+    Canvas canvas,
+    Offset first,
+    Offset second,
+    Color color,
+  ) {
+    final direction = second - first;
+    final length = direction.distance;
+    if (length == 0) {
+      throw StateError(
+        'device-space topology contains a zero-length connection',
+      );
+    }
+    final unit = direction / length;
+    final normal = Offset(-unit.dy, unit.dx);
+    const arrowLength = 12.0;
+    const arrowWidth = 6.0;
+    final path = Path()
+      ..moveTo(second.dx, second.dy)
+      ..lineTo(
+        second.dx - unit.dx * arrowLength + normal.dx * arrowWidth,
+        second.dy - unit.dy * arrowLength + normal.dy * arrowWidth,
+      )
+      ..lineTo(
+        second.dx - unit.dx * arrowLength - normal.dx * arrowWidth,
+        second.dy - unit.dy * arrowLength - normal.dy * arrowWidth,
+      )
+      ..close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.fill,
+    );
   }
 
   /// Draws a dashed segment without relying on platform-specific painting APIs.
@@ -1349,6 +1586,7 @@ class _DeviceSpaceTopologyPainter extends CustomPainter {
   bool shouldRepaint(covariant _DeviceSpaceTopologyPainter oldDelegate) {
     return oldDelegate.centers != centers ||
         oldDelegate.connections != connections ||
+        oldDelegate.nodeSize != nodeSize ||
         oldDelegate.onlineColor != onlineColor ||
         oldDelegate.offlineColor != offlineColor ||
         oldDelegate.mismatchColor != mismatchColor ||

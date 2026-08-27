@@ -11,13 +11,13 @@ use operit_host_api::{
     HttpDownloadFileRequest, HttpDownloadFileResult, HttpDownloadProgress,
     HttpDownloadProgressCallback, HttpDownloadProgressState, HttpDownloadRequest,
     HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpStreamChunkCallback,
-    HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
-    WebSocketClosedCallback, WebSocketHost, WebSocketMessageCallback,
-    WebSocketOpenedCallback, WebSocketRequestData,
+    HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback, WebSocketClosedCallback,
+    WebSocketHost, WebSocketMessageCallback, WebSocketOpenedCallback, WebSocketRequestData,
 };
 use reqwest::blocking::{multipart, Client as BlockingClient};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_RANGE, RANGE};
 use reqwest::{Client as AsyncClient, Method, Proxy, StatusCode};
+use tungstenite::client::IntoClientRequest;
 
 #[derive(Clone, Debug, Default)]
 pub struct NativeHttpHost {
@@ -132,14 +132,20 @@ fn executeNativeWebSocket(
     onMessage: WebSocketMessageCallback,
 ) -> HostResult<()> {
     let readTimeoutSeconds = request.connectTimeoutSeconds;
-    let mut builder = tungstenite::http::Request::builder().uri(request.url);
-    for (name, value) in request.headers {
-        builder = builder.header(name, value);
-    }
-    let request = builder
-        .body(())
+    let mut websocketRequest = request
+        .url
+        .into_client_request()
         .map_err(|error| HostError::new(error.to_string()))?;
-    let (mut socket, _) = tungstenite::connect(request)
+    for (name, value) in request.headers {
+        let headerName = tungstenite::http::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let headerValue = tungstenite::http::header::HeaderValue::from_str(&value)
+            .map_err(|error| HostError::new(error.to_string()))?;
+        websocketRequest
+            .headers_mut()
+            .insert(headerName, headerValue);
+    }
+    let (mut socket, _) = tungstenite::connect(websocketRequest)
         .map_err(|error| HostError::new(format!("WebSocket connect failed: {error}")))?;
     setWebSocketReadTimeout(&mut socket, readTimeoutSeconds);
     onOpened();
@@ -162,9 +168,13 @@ fn executeNativeWebSocket(
             Ok(tungstenite::Message::Ping(_)) | Ok(tungstenite::Message::Pong(_)) => {}
             Ok(tungstenite::Message::Frame(_)) => {}
             Err(tungstenite::Error::Io(error))
-                if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(tungstenite::Error::ConnectionClosed)
-            | Err(tungstenite::Error::AlreadyClosed) => return Ok(()),
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
+                return Ok(())
+            }
             Err(error) => return Err(HostError::new(error.to_string())),
         }
     }
@@ -172,16 +182,11 @@ fn executeNativeWebSocket(
 
 /// Applies a short polling timeout so sends and closes are observed promptly.
 fn setWebSocketReadTimeout(
-    socket: &mut tungstenite::WebSocket<
-        tungstenite::stream::MaybeTlsStream<std::net::TcpStream>,
-    >,
+    socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     connectTimeoutSeconds: u64,
 ) {
-    let timeout = Duration::from_millis(
-        connectTimeoutSeconds
-            .saturating_mul(1000)
-            .clamp(100, 1000),
-    );
+    let timeout =
+        Duration::from_millis(connectTimeoutSeconds.saturating_mul(1000).clamp(100, 1000));
     if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
         let _ = stream.set_read_timeout(Some(timeout));
     } else if let tungstenite::stream::MaybeTlsStream::Rustls(stream) = socket.get_mut() {
@@ -1057,6 +1062,59 @@ mod tests {
     use std::sync::mpsc;
     use std::sync::Barrier;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    /// Verifies the native WebSocket carrier keeps polling until a delayed server message arrives.
+    #[test]
+    fn websocketReceivesMessageAfterReadTimeoutTick() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            std::thread::sleep(Duration::from_millis(1300));
+            socket
+                .send(tungstenite::Message::Binary(b"late-message".to_vec()))
+                .unwrap();
+            let _ = socket.close(None);
+        });
+
+        let host = NativeHttpHost::new();
+        let (openedSender, openedReceiver) = mpsc::channel();
+        let (messageSender, messageReceiver) = mpsc::channel();
+        let (closedSender, closedReceiver) = mpsc::channel();
+        host.openWebSocket(
+            "websocket-timeout-test".to_string(),
+            WebSocketRequestData {
+                url: format!("ws://{address}"),
+                headers: Vec::new(),
+                connectTimeoutSeconds: 1,
+                ignoreSsl: false,
+            },
+            Arc::new(move || {
+                openedSender.send(()).unwrap();
+            }),
+            Arc::new(move |message| {
+                messageSender.send(message).unwrap();
+            }),
+            Arc::new(move |result| {
+                closedSender.send(result).unwrap();
+            }),
+        )
+        .unwrap();
+
+        openedReceiver.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(
+            messageReceiver
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap(),
+            b"late-message".to_vec()
+        );
+        assert!(closedReceiver
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .is_ok());
+        server.join().unwrap();
+    }
 
     /// Verifies two files enter the server concurrently and publish aggregate progress.
     #[test]

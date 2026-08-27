@@ -49,9 +49,8 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostManager::{defaultHttpHost, defaultWebSocketHost};
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::{
-    HttpRequestData, RuntimeStorageHost, TimeUtils::currentTimeMillis, WebSocketHost,
-    WebSocketMessageCallback, WebSocketOpenedCallback, WebSocketClosedCallback,
-    WebSocketRequestData,
+    HttpRequestData, RuntimeStorageHost, TimeUtils::currentTimeMillis, WebSocketClosedCallback,
+    WebSocketHost, WebSocketMessageCallback, WebSocketOpenedCallback, WebSocketRequestData,
 };
 use operit_link::CoreLinkClient;
 use operit_link::{
@@ -60,11 +59,10 @@ use operit_link::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use operit_runtime::services::RuntimeHostInteractionService::{
-    publishOwnerWebAccessPairing,
-    RuntimeHostInteractionWebAccessPairingPayload,
+    publishOwnerWebAccessPairing, RuntimeHostInteractionWebAccessPairingPayload,
 };
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
-use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
+use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
 use operit_store::PreferencesDataStore::{
     emptyPreferences, stringPreferencesKey, CoreNodeStateStore, Flow, Preferences,
     PreferencesDataStoreError,
@@ -85,8 +83,8 @@ use CoreNodePeerLink::{
     encodePeerFrame, receivePeerFrame, registerPeerLink, PeerConnection, PeerFrameBatch,
     PeerFrameSender,
 };
-use CoreNodePeerLink::{PeerChannelOpenEnvelope, PeerFrame};
 use CoreNodePeerLink::{CoreNodeLinkClient, CoreNodeTransportClient};
+use CoreNodePeerLink::{PeerChannelOpenEnvelope, PeerFrame};
 
 #[cfg(test)]
 mod tests;
@@ -276,6 +274,32 @@ impl LinkAccessStore {
             identity.deviceInfo.model.clone(),
             operit_runtime::CORE_VERSION.to_string(),
         )?;
+        self.syncPairedDeviceProfiles()?;
+        Ok(identity)
+    }
+
+    /// Updates and returns the runtime's Link device information for its stable identity.
+    #[allow(non_snake_case)]
+    pub fn updateIdentityDeviceInfo(
+        &self,
+        deviceInfo: RemoteDeviceInfo,
+    ) -> Result<LinkAccessIdentity, String> {
+        let coreNodeIdentity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
+        let identity = LinkAccessIdentity {
+            deviceId: coreNodeIdentity.nodeId,
+            deviceInfo,
+        };
+        writeSingleRecord(
+            &self.dataStore(RUNTIME_LINK_ACCESS_IDENTITY_PATH),
+            &identity,
+        )?;
+        CoreSpaceStore::new(self.storage.clone()).writeLocalDeviceProfile(
+            identity.deviceInfo.displayName(),
+            identity.deviceInfo.platform.clone(),
+            identity.deviceInfo.model.clone(),
+            operit_runtime::CORE_VERSION.to_string(),
+        )?;
+        self.syncPairedDeviceProfiles()?;
         Ok(identity)
     }
 
@@ -297,6 +321,7 @@ impl LinkAccessStore {
         record: AcceptedRemoteSessionRecord,
     ) -> Result<(), String> {
         self.validateInboundSessionRecord(&sessionId, &record)?;
+        self.writePairedDeviceProfile(&record.deviceId, &record.deviceInfo)?;
         self.writeMapRecord(
             RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH,
             &sessionId,
@@ -331,7 +356,20 @@ impl LinkAccessStore {
         record: PairedRemoteSessionRecord,
     ) -> Result<(), String> {
         self.validateOutboundSessionRecord(&name, &record)?;
+        self.writePairedDeviceProfile(&record.coreDeviceId, &record.remoteDeviceInfo)?;
         self.writeMapRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, &name, &record)
+    }
+
+    /// Writes synchronized device profiles for every stored pairing endpoint.
+    #[allow(non_snake_case)]
+    pub fn syncPairedDeviceProfiles(&self) -> Result<(), String> {
+        for record in self.inboundSessions()?.into_values() {
+            self.writePairedDeviceProfile(&record.deviceId, &record.deviceInfo)?;
+        }
+        for record in self.outboundSessions()?.into_values() {
+            self.writePairedDeviceProfile(&record.coreDeviceId, &record.remoteDeviceInfo)?;
+        }
+        Ok(())
     }
 
     /// Removes one named outbound session owned by this runtime.
@@ -430,6 +468,46 @@ impl LinkAccessStore {
     /// Creates one local datastore for a Link Access preferences path.
     fn dataStore(&self, path: &str) -> CoreNodeStateStore {
         CoreNodeStateStore::newWithStorage(self.storage.clone(), path)
+    }
+
+    /// Writes the Space device profile carried by one paired endpoint record.
+    #[allow(non_snake_case)]
+    fn writePairedDeviceProfile(
+        &self,
+        deviceId: &str,
+        deviceInfo: &RemoteDeviceInfo,
+    ) -> Result<(), String> {
+        let spaceStore = CoreSpaceStore::new(self.storage.clone());
+        let displayName = deviceInfo.displayName();
+        let profiles = spaceStore.deviceProfiles()?;
+        let profile = match profiles.get(deviceId) {
+            Some(profile)
+                if profile.displayName == displayName
+                    && profile.platform == deviceInfo.platform
+                    && profile.model == deviceInfo.model =>
+            {
+                return Ok(());
+            }
+            Some(profile) => CoreSpaceDeviceProfile {
+                nodeId: deviceId.to_string(),
+                displayName,
+                userName: profile.userName.clone(),
+                platform: deviceInfo.platform.clone(),
+                model: deviceInfo.model.clone(),
+                coreVersion: profile.coreVersion.clone(),
+                updatedAt: unix_millis(),
+            },
+            None => CoreSpaceDeviceProfile {
+                nodeId: deviceId.to_string(),
+                displayName,
+                userName: String::new(),
+                platform: deviceInfo.platform.clone(),
+                model: deviceInfo.model.clone(),
+                coreVersion: None,
+                updatedAt: unix_millis(),
+            },
+        };
+        spaceStore.importDeviceProfiles(vec![profile])
     }
 
     /// Reads one Link Access preferences snapshot.
@@ -1261,6 +1339,7 @@ pub struct RemoteSessionInfoEnvelope {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteSpaceAdoptEnvelope {
     pub space: CoreSpace,
+    pub deviceProfiles: Vec<CoreSpaceDeviceProfile>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1273,6 +1352,7 @@ pub struct RemoteSessionInfoResponse {
     pub clientDeviceInfo: RemoteDeviceInfo,
     pub transports: Vec<String>,
     pub deviceSpace: CoreSpace,
+    pub deviceProfiles: Vec<CoreSpaceDeviceProfile>,
     pub nonce: String,
 }
 
@@ -1617,12 +1697,8 @@ fn remoteHttpRequestWithReadTimeout(
         })
         .map_err(|error| error.to_string())?;
     if !(200..300).contains(&response.statusCode) {
-        let description = remoteHttpErrorDescription(
-            method,
-            response.statusCode,
-            &url,
-            &response.body,
-        );
+        let description =
+            remoteHttpErrorDescription(method, response.statusCode, &url, &response.body);
         return Err(description);
     }
     Ok(response.body)
@@ -1862,9 +1938,16 @@ impl PairedRemoteSession {
     }
 
     /// Adopts one joined Space projection through the authenticated pairing control plane.
-    pub async fn adoptDeviceSpace(&self, space: CoreSpace) -> Result<CoreSpace, String> {
-        let body = operit_link::encodeLink(&RemoteSpaceAdoptEnvelope { space })
-            .map_err(|error| error.to_string())?;
+    pub async fn adoptDeviceSpace(
+        &self,
+        space: CoreSpace,
+        deviceProfiles: Vec<CoreSpaceDeviceProfile>,
+    ) -> Result<CoreSpace, String> {
+        let body = operit_link::encodeLink(&RemoteSpaceAdoptEnvelope {
+            space,
+            deviceProfiles,
+        })
+        .map_err(|error| error.to_string())?;
         operit_link::decodeLink(&self.signedRemotePost("space/adopt", body)?)
             .map_err(|error| error.to_string())
     }
@@ -2125,7 +2208,12 @@ async fn session_info(
             );
         }
     };
-    let space = match CoreSpaceStore::new(state.accessStore.storage.clone()).initialize() {
+    let spaceStore = CoreSpaceStore::new(state.accessStore.storage.clone());
+    let space = match spaceStore.initialize() {
+        Ok(value) => value,
+        Err(error) => return internal_server_error(error),
+    };
+    let deviceProfiles = match spaceStore.deviceProfilesForCurrentSpace() {
         Ok(value) => value,
         Err(error) => return internal_server_error(error),
     };
@@ -2147,6 +2235,7 @@ async fn session_info(
             clientDeviceInfo: session.deviceInfo.clone(),
             transports: vec!["http".to_string(), "ws".to_string()],
             deviceSpace: space,
+            deviceProfiles,
             nonce: envelope.nonce,
         },
     )
@@ -2204,6 +2293,10 @@ impl FuturesStream for ServerPeerFrameStream {
 impl Drop for ServerPeerFrameStream {
     /// Removes the active Peer Link when its HTTP response stream closes.
     fn drop(&mut self) {
+        operit_util::AppLogger::AppLogger::w(
+            "PeerCarrierTrace",
+            "server_response_stream_drop reason=Peer Link response stream closed",
+        );
         self.connection
             .close("Peer Link response stream closed".to_string());
     }
@@ -2298,7 +2391,10 @@ async fn peer_channel_frame(
     if batch.frames.is_empty() {
         return encode_link_response(
             StatusCode::BAD_REQUEST,
-            CoreLinkError::new("PEER_FRAME_BATCH_EMPTY", "Peer frame batch must not be empty"),
+            CoreLinkError::new(
+                "PEER_FRAME_BATCH_EMPTY",
+                "Peer frame batch must not be empty",
+            ),
         );
     }
     for frame in batch.frames {
@@ -2404,7 +2500,10 @@ fn static_web_access_control(state: &StaticWebAccessState) -> &StaticWebAccessCo
 
 /// Returns the authenticated device and Space metadata used during pairing.
 #[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_hello(State(state): State<StaticWebAccessState>, headers: HeaderMap) -> Response {
+async fn static_web_access_hello(
+    State(state): State<StaticWebAccessState>,
+    headers: HeaderMap,
+) -> Response {
     let control = static_web_access_control(&state);
     if header_string(&headers, "x-operit-link-token-hash").as_deref()
         != Some(link_token_hash(&control.token).as_str())
@@ -2476,7 +2575,10 @@ async fn static_web_access_pair_start(
         pairingCode: pairingCode.clone(),
         createdAt: unix_millis(),
     };
-    if let Err(error) = control.accessStore.savePendingPairing(pairingRecord.clone()) {
+    if let Err(error) = control
+        .accessStore
+        .savePendingPairing(pairingRecord.clone())
+    {
         return internal_server_error(error);
     }
     control.pairings.lock().await.insert(
@@ -2518,7 +2620,13 @@ async fn static_web_access_pair_finish(
     Json(request): Json<PairFinishRequest>,
 ) -> Response {
     let control = static_web_access_control(&state);
-    let Some(pairing) = control.pairings.lock().await.get(&request.pairingId).cloned() else {
+    let Some(pairing) = control
+        .pairings
+        .lock()
+        .await
+        .get(&request.pairingId)
+        .cloned()
+    else {
         return bad_request("pairing not found");
     };
     if pairing.pairingCode != request.pairingCode.trim() {
@@ -2545,7 +2653,10 @@ async fn static_web_access_pair_finish(
         pairingServiceVersion: pairing.pairingServiceVersion,
         sessionSecret: BASE64.encode(sessionSecret.as_slice()),
     };
-    if let Err(error) = control.accessStore.saveInboundSession(sessionId.clone(), record) {
+    if let Err(error) = control
+        .accessStore
+        .saveInboundSession(sessionId.clone(), record)
+    {
         return internal_server_error(error);
     }
     if let Err(error) = control.accessStore.removePendingPairing(&request.pairingId) {
@@ -2595,7 +2706,12 @@ async fn static_web_access_session_info(
             )
         }
     };
-    let space = match CoreSpaceStore::new(control.accessStore.storage.clone()).initialize() {
+    let spaceStore = CoreSpaceStore::new(control.accessStore.storage.clone());
+    let space = match spaceStore.initialize() {
+        Ok(value) => value,
+        Err(error) => return internal_server_error(error),
+    };
+    let deviceProfiles = match spaceStore.deviceProfilesForCurrentSpace() {
         Ok(value) => value,
         Err(error) => return internal_server_error(error),
     };
@@ -2617,6 +2733,7 @@ async fn static_web_access_session_info(
             clientDeviceInfo: session.deviceInfo.clone(),
             transports: vec!["http".to_string(), "ws".to_string()],
             deviceSpace: space,
+            deviceProfiles,
             nonce: envelope.nonce,
         },
     )
@@ -2642,7 +2759,11 @@ async fn static_web_access_space_adopt(
             )
         }
     };
-    match CoreSpaceStore::new(control.accessStore.storage.clone()).adopt(envelope.space) {
+    let spaceStore = CoreSpaceStore::new(control.accessStore.storage.clone());
+    if let Err(error) = spaceStore.importDeviceProfiles(envelope.deviceProfiles) {
+        return encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error));
+    }
+    match spaceStore.adopt(envelope.space) {
         Ok(space) => encode_link_response(StatusCode::OK, space),
         Err(error) => encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error)),
     }
@@ -2667,7 +2788,11 @@ async fn space_adopt(
             )
         }
     };
-    match CoreSpaceStore::new(state.accessStore.storage.clone()).adopt(envelope.space) {
+    let spaceStore = CoreSpaceStore::new(state.accessStore.storage.clone());
+    if let Err(error) = spaceStore.importDeviceProfiles(envelope.deviceProfiles) {
+        return encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error));
+    }
+    match spaceStore.adopt(envelope.space) {
         Ok(space) => encode_link_response(StatusCode::OK, space),
         Err(error) => encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error)),
     }
@@ -2683,7 +2808,10 @@ async fn verify_static_web_access_session(
     if header_string(headers, "x-operit-link-version").as_deref() != Some("3") {
         return Err(encode_link_response(
             StatusCode::BAD_REQUEST,
-            CoreLinkError::new("LINK_VERSION_MISMATCH", "Link protocol version 3 is required"),
+            CoreLinkError::new(
+                "LINK_VERSION_MISMATCH",
+                "Link protocol version 3 is required",
+            ),
         ));
     }
     let Some(sessionId) = header_string(headers, "x-operit-session") else {
@@ -2704,19 +2832,17 @@ async fn verify_static_web_access_session(
             CoreLinkError::new("UNAUTHORIZED", "missing signature"),
         ));
     };
-    let records = state
-        .accessStore
-        .inboundSessions()
-        .map_err(|error| encode_link_response(StatusCode::UNAUTHORIZED, CoreLinkError::internal(error)))?;
+    let records = state.accessStore.inboundSessions().map_err(|error| {
+        encode_link_response(StatusCode::UNAUTHORIZED, CoreLinkError::internal(error))
+    })?;
     let Some(record) = records.get(&sessionId) else {
         return Err(encode_link_response(
             StatusCode::UNAUTHORIZED,
             remote_session_auth_error("invalid session", "invalid_session"),
         ));
     };
-    let session = accepted_session_from_record(record).map_err(|error| {
-        encode_link_response(StatusCode::UNAUTHORIZED, error)
-    })?;
+    let session = accepted_session_from_record(record)
+        .map_err(|error| encode_link_response(StatusCode::UNAUTHORIZED, error))?;
     if session.deviceId != deviceId {
         return Err(encode_link_response(
             StatusCode::UNAUTHORIZED,
@@ -2729,7 +2855,10 @@ async fn verify_static_web_access_session(
             remote_session_auth_error("signature mismatch", "signature_mismatch"),
         ));
     }
-    Ok(VerifiedRemoteSession { sessionId, deviceId })
+    Ok(VerifiedRemoteSession {
+        sessionId,
+        deviceId,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2755,19 +2884,18 @@ async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
                         continue;
                     }
                 };
-                let payload = match operit_link::decodeLink::<RemoteWsPayload>(
-                    &envelope.payloadBytes,
-                ) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        let response = operit_link::encodeLink(RemoteWsResponse::Error(
-                            CoreLinkError::new("BAD_REQUEST", error.to_string()),
-                        ))
-                        .expect("RemoteWsResponse must serialize");
-                        let _ = socket.send(Message::Binary(response)).await;
-                        continue;
-                    }
-                };
+                let payload =
+                    match operit_link::decodeLink::<RemoteWsPayload>(&envelope.payloadBytes) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let response = operit_link::encodeLink(RemoteWsResponse::Error(
+                                CoreLinkError::new("BAD_REQUEST", error.to_string()),
+                            ))
+                            .expect("RemoteWsResponse must serialize");
+                            let _ = socket.send(Message::Binary(response)).await;
+                            continue;
+                        }
+                    };
                 match payload {
                     #[cfg(not(target_arch = "wasm32"))]
                     RemoteWsPayload::PeerChannelOpen(request) => {
@@ -2779,10 +2907,12 @@ async fn handle_ws(mut socket: WebSocket, state: RemoteLinkState) {
                         let _ = socket.send(Message::Binary(response)).await;
                     }
                     _ => {
-                        let response = operit_link::encodeLink(RemoteWsResponse::Error(
-                            CoreLinkError::new("WS_STREAM_MODE_REMOVED", "Legacy remote Link streams are removed"),
-                        ))
-                        .expect("RemoteWsResponse must serialize");
+                        let response =
+                            operit_link::encodeLink(RemoteWsResponse::Error(CoreLinkError::new(
+                                "WS_STREAM_MODE_REMOVED",
+                                "Legacy remote Link streams are removed",
+                            )))
+                            .expect("RemoteWsResponse must serialize");
                         let _ = socket.send(Message::Binary(response)).await;
                     }
                 }
@@ -2871,7 +3001,11 @@ async fn handle_ws_peer(
             return;
         }
         Err(error) => {
-            let _ = send_ws_response(socket, RemoteWsResponse::Error(CoreLinkError::internal(error))).await;
+            let _ = send_ws_response(
+                socket,
+                RemoteWsResponse::Error(CoreLinkError::internal(error)),
+            )
+            .await;
             return;
         }
     }
@@ -2887,10 +3021,20 @@ async fn handle_ws_peer(
         Some(spaceStore),
     );
     if let Err(error) = registerPeerLink(connection.clone()) {
-        let _ = send_ws_response(socket, RemoteWsResponse::Error(CoreLinkError::new("PEER_LINK_ALREADY_ACTIVE", error))).await;
+        let _ = send_ws_response(
+            socket,
+            RemoteWsResponse::Error(CoreLinkError::new("PEER_LINK_ALREADY_ACTIVE", error)),
+        )
+        .await;
         return;
     }
-    if send_ws_response(socket, RemoteWsResponse::PeerOpened(request.channelId.clone())).await.is_err() {
+    if send_ws_response(
+        socket,
+        RemoteWsResponse::PeerOpened(request.channelId.clone()),
+    )
+    .await
+    .is_err()
+    {
         connection.close("Peer WebSocket closed before opening".to_string());
         return;
     }
@@ -2973,16 +3117,17 @@ impl PeerFrameSender for WsPeerFrameSender {
 
     /// Closes the server-to-client WebSocket frame queue.
     fn close(&self) {
-        let _ = self.sender.lock().expect("Peer WebSocket sender lock poisoned").take();
+        let _ = self
+            .sender
+            .lock()
+            .expect("Peer WebSocket sender lock poisoned")
+            .take();
     }
 }
 
 /// Decodes one signed websocket envelope and encodes its response.
 #[cfg(not(target_arch = "wasm32"))]
-async fn handle_ws_binary(
-    state: &RemoteLinkState,
-    bytes: &[u8],
-) -> Vec<u8> {
+async fn handle_ws_binary(state: &RemoteLinkState, bytes: &[u8]) -> Vec<u8> {
     let response = match operit_link::decodeLink::<RemoteWsEnvelope>(bytes) {
         Ok(envelope) => handle_ws_envelope(state, envelope).await,
         Err(error) => RemoteWsResponse::Error(CoreLinkError::new("BAD_REQUEST", error.to_string())),
@@ -3022,7 +3167,12 @@ async fn handle_ws_envelope(
     };
     match payload {
         RemoteWsPayload::SessionInfo(request) => {
-            let space = match CoreSpaceStore::new(state.accessStore.storage.clone()).initialize() {
+            let spaceStore = CoreSpaceStore::new(state.accessStore.storage.clone());
+            let space = match spaceStore.initialize() {
+                Ok(value) => value,
+                Err(error) => return RemoteWsResponse::Error(CoreLinkError::internal(error)),
+            };
+            let deviceProfiles = match spaceStore.deviceProfilesForCurrentSpace() {
                 Ok(value) => value,
                 Err(error) => return RemoteWsResponse::Error(CoreLinkError::internal(error)),
             };
@@ -3042,6 +3192,7 @@ async fn handle_ws_envelope(
                 clientDeviceInfo: session.deviceInfo.clone(),
                 transports: vec!["http".to_string(), "ws".to_string()],
                 deviceSpace: space,
+                deviceProfiles,
                 nonce: request.nonce,
             })
         }

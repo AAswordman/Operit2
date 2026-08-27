@@ -18,8 +18,8 @@ pub use managed_runtime::IosManagedRuntimeHost;
 pub use operit_host_apple_native::{
     AppleAudioPlaybackHost as IosAudioPlaybackHost, AppleBluetoothHost as IosBluetoothHost,
     AppleFileSystemHost as IosFileSystemHost,
-    AppleHostRuntimeEventSchedulerHost as IosHostRuntimeEventSchedulerHost,
     AppleHostJavaScriptRuntimeHost as IosHostJavaScriptRuntimeHost,
+    AppleHostRuntimeEventSchedulerHost as IosHostRuntimeEventSchedulerHost,
     AppleHostRuntimeTaskSchedulerHost as IosHostRuntimeTaskSchedulerHost,
     AppleHttpHost as IosHttpHost, AppleLocalInferenceCommand as IosLocalInferenceCommand,
     AppleLocalInferenceHost as IosLocalInferenceHost, AppleMusicCommand as IosMusicCommand,
@@ -66,7 +66,7 @@ pub fn createRuntimeHostManager(
     hostManager = hostManager.withRuntimeStorageWriteHost(runtimeStorageWriteHost);
     hostManager = hostManager
         .withHostRuntimeEventSchedulerHost(Arc::new(IosHostRuntimeEventSchedulerHost::new()));
-    hostManager = hostManager
-        .withHostJavaScriptRuntimeHost(Arc::new(IosHostJavaScriptRuntimeHost::new()));
+    hostManager =
+        hostManager.withHostJavaScriptRuntimeHost(Arc::new(IosHostJavaScriptRuntimeHost::new()));
     hostManager.withHostRuntimeTaskSchedulerHost(Arc::new(IosHostRuntimeTaskSchedulerHost::new()))
 }

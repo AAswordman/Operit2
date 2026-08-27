@@ -6,8 +6,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../interactions/MessagePressShield.dart';
 import 'EnhancedCodeBlock.dart';
@@ -21,6 +19,9 @@ import 'StreamMarkdownRendererState.dart';
 import '../../features/chat/components/part/CustomXmlRenderer.dart';
 
 part 'CanvasMarkdownNodeRenderer.dart';
+
+typedef MarkdownContentSplitter =
+    Future<List<core_proxy.MarkdownStreamEvent>> Function(String content);
 
 class StreamMarkdownRenderer extends StatefulWidget {
   const StreamMarkdownRenderer({
@@ -39,6 +40,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
     this.allowExpandedThinkingFullHeight = false,
     this.selectionRoot = true,
     this.onContentReady,
+    required this.splitMarkdownContent,
   });
 
   final String content;
@@ -55,6 +57,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
   final bool allowExpandedThinkingFullHeight;
   final bool selectionRoot;
   final VoidCallback? onContentReady;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   State<StreamMarkdownRenderer> createState() => _StreamMarkdownRendererState();
@@ -164,9 +167,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   }
 
   Future<void> _loadStaticContent(String content, int generation) async {
-    final events = await const GeneratedCoreProxyClients(
-      ProxyCoreRuntimeBridge(),
-    ).chatRuntimeHolderMain.splitMarkdownContent(content: content);
+    final events = await widget.splitMarkdownContent(content);
     if (!mounted || generation != _startGeneration) {
       return;
     }
@@ -396,6 +397,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       showThinkingProcess: widget.showThinkingProcess,
       initialThinkingExpanded: widget.initialThinkingExpanded,
       allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
+      splitMarkdownContent: widget.splitMarkdownContent,
     );
     if (widget.isStreaming || !widget.selectionRoot) {
       return content;
@@ -555,6 +557,7 @@ class _MarkdownNodeColumn extends StatefulWidget {
     required this.showThinkingProcess,
     required this.initialThinkingExpanded,
     required this.allowExpandedThinkingFullHeight,
+    required this.splitMarkdownContent,
     this.nodeAnimationStates,
     this.onLinkClick,
   });
@@ -569,6 +572,7 @@ class _MarkdownNodeColumn extends StatefulWidget {
   final bool showThinkingProcess;
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
+  final MarkdownContentSplitter splitMarkdownContent;
   final Map<String, bool>? nodeAnimationStates;
   final void Function(String url)? onLinkClick;
 
@@ -638,6 +642,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         showThinkingProcess: widget.showThinkingProcess,
         initialThinkingExpanded: widget.initialThinkingExpanded,
         allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
+        splitMarkdownContent: widget.splitMarkdownContent,
       );
     }
 
@@ -660,6 +665,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         backgroundColor: widget.backgroundColor,
         isLastNode: index == lastRenderableIndex,
         onLinkClick: widget.onLinkClick,
+        splitMarkdownContent: widget.splitMarkdownContent,
       );
     }
 

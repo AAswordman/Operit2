@@ -481,11 +481,7 @@ fn remote_chat_operation_invalidates_chat_history_flow() {
         .recordChatMetadata("remote-flow-chat")
         .unwrap();
     let operations = sourceSyncStore
-        .operationsSince(
-            &SyncClock::default(),
-            &[CHAT_SYNC_DOMAIN.to_string()],
-            10,
-        )
+        .operationsSince(&SyncClock::default(), &[CHAT_SYNC_DOMAIN.to_string()], 10)
         .unwrap();
     assert_eq!(operations.len(), 1);
 

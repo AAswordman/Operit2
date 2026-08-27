@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'AiMessageComposable.dart';
 import 'UserMessageComposable.dart';
@@ -12,11 +13,13 @@ class CursorStyleChatMessage extends StatelessWidget {
     required this.message,
     required this.isStreaming,
     this.currentCharacterCardAvatarUri,
+    this.splitMarkdownContent,
   });
 
   final ChatUiMessage message;
   final bool isStreaming;
   final String? currentCharacterCardAvatarUri;
+  final MarkdownContentSplitter? splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +32,7 @@ class CursorStyleChatMessage extends StatelessWidget {
           isStreaming: isStreaming,
           useBubbleStyle: false,
           avatarImagePath: currentCharacterCardAvatarUri,
+          splitMarkdownContent: splitMarkdownContent,
         );
       case 'summary':
         return _SummaryMessageComposable(message: message);

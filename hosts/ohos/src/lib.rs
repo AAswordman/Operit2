@@ -22,8 +22,8 @@ pub use filesystem::{OhosFileOpener, OhosFileSharer, OhosFileSystemHost};
 pub use http::OhosHttpHost;
 pub use local_inference::OhosLocalInferenceHost;
 pub use managed_runtime::OhosManagedRuntimeHost;
-pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as OhosHostRuntimeEventSchedulerHost;
 pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as OhosHostJavaScriptRuntimeHost;
+pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as OhosHostRuntimeEventSchedulerHost;
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as OhosHostRuntimeTaskSchedulerHost;
 pub use storage::OhosRuntimeStorageHost;
 pub use system_operation::{
@@ -84,8 +84,7 @@ pub fn createRuntimeHostManager(
     context = context.withLocalInferenceHost(Arc::new(OhosLocalInferenceHost::new()));
     context = context
         .withHostRuntimeEventSchedulerHost(Arc::new(OhosHostRuntimeEventSchedulerHost::new()));
-    context =
-        context.withHostJavaScriptRuntimeHost(Arc::new(OhosHostJavaScriptRuntimeHost::new()));
+    context = context.withHostJavaScriptRuntimeHost(Arc::new(OhosHostJavaScriptRuntimeHost::new()));
     context =
         context.withHostRuntimeTaskSchedulerHost(Arc::new(OhosHostRuntimeTaskSchedulerHost::new()));
     context

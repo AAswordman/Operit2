@@ -33,6 +33,7 @@ void main() {
               backgroundColor: Colors.white,
               contentStream: streamController.stream,
               state: rendererState,
+              splitMarkdownContent: _splitMarkdownContent,
             ),
           ),
         ),
@@ -91,6 +92,50 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.byType(StreamingCursor), findsOneWidget);
+  });
+
+  testWidgets('keeps live output when Flow rebuilds the stream wrapper', (
+    tester,
+  ) async {
+    final streamController = StreamController<MarkdownStreamEvent>();
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(true);
+    addTearDown(() async {
+      await streamController.close();
+      scrollController.dispose();
+      autoScrollToBottom.dispose();
+    });
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(
+          parts: const <MessagePart>[],
+          stream: streamController.stream,
+        ),
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+    streamController
+      ..add(_markdownBlockStart())
+      ..add(_markdownBlockChunk('before flow rebuild'))
+      ..add(_markdownCompleted());
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.textContaining('before flow rebuild'), findsWidgets);
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(
+          parts: const <MessagePart>[],
+          stream: streamController.stream.map((event) => event),
+        ),
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('before flow rebuild'), findsWidgets);
   });
 
   testWidgets('does not treat a tool-only AI message as empty', (tester) async {
@@ -261,6 +306,72 @@ void main() {
     expect(find.byType(CompactToolDisplay), findsOneWidget);
   });
 
+  testWidgets('hands off a completed live stream to final Markdown parts', (
+    tester,
+  ) async {
+    final streamController = StreamController<MarkdownStreamEvent>();
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(true);
+    addTearDown(() async {
+      await streamController.close();
+      scrollController.dispose();
+      autoScrollToBottom.dispose();
+    });
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(
+          parts: const <MessagePart>[],
+          stream: streamController.stream,
+        ),
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+    streamController
+      ..add(_markdownBlockStart())
+      ..add(_markdownBlockChunk('live answer'))
+      ..add(_markdownCompleted());
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.byKey(const ValueKey<String>('live-markdown')), findsOneWidget);
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(
+          parts: const <MessagePart>[
+            MessagePart(
+              partId: 'part-0',
+              sequence: 0,
+              kind: MessagePartKind.markdown,
+              content: 'final persisted answer',
+              toolCallId: null,
+              toolName: null,
+              attributes: <String, String>{},
+            ),
+          ],
+          completedAt: 1,
+        ),
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+
+    expect(find.textContaining('live answer'), findsWidgets);
+    expect(
+      find.byKey(
+        const ValueKey<String>('structured-parts'),
+        skipOffstage: false,
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('live-markdown')), findsNothing);
+    expect(find.textContaining('final persisted answer'), findsOneWidget);
+  });
+
   testWidgets('hides the scroll navigator after the scroll view detaches', (
     tester,
   ) async {
@@ -371,9 +482,19 @@ Widget _chatArea({
         onToggleMultiSelectMode: (_) {},
         onToggleMessageSelection: (_) {},
         onRefreshRequested: () async {},
+        splitMarkdownContent: _splitMarkdownContent,
       ),
     ),
   );
+}
+
+/// Produces the same event boundary used by Core for one static Markdown block.
+Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
+  return <MarkdownStreamEvent>[
+    _markdownBlockStart(),
+    _markdownBlockChunk(content),
+    _markdownCompleted(),
+  ];
 }
 
 /// Creates the active AI message used to verify transcript cursor ownership.

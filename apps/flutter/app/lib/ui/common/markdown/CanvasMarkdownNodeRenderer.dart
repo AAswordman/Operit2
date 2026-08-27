@@ -10,6 +10,7 @@ class CanvasMarkdownNodeRenderer extends StatelessWidget {
     required this.textColor,
     required this.backgroundColor,
     required this.isLastNode,
+    required this.splitMarkdownContent,
     this.onLinkClick,
   });
 
@@ -18,6 +19,7 @@ class CanvasMarkdownNodeRenderer extends StatelessWidget {
   final Color textColor;
   final Color backgroundColor;
   final bool isLastNode;
+  final MarkdownContentSplitter splitMarkdownContent;
   final void Function(String url)? onLinkClick;
 
   /// Builds one stable Markdown node without repainting preceding nodes.
@@ -34,6 +36,7 @@ class CanvasMarkdownNodeRenderer extends StatelessWidget {
       children: node.children,
       headerLevel: node.headerLevel,
       onLinkClick: onLinkClick,
+      splitMarkdownContent: splitMarkdownContent,
     );
   }
 }
@@ -69,6 +72,7 @@ class _MarkdownText extends StatefulWidget {
     required this.nodeType,
     required this.children,
     required this.headerLevel,
+    required this.splitMarkdownContent,
     this.onLinkClick,
   });
 
@@ -81,6 +85,7 @@ class _MarkdownText extends StatefulWidget {
   final MarkdownNodeType nodeType;
   final List<MarkdownNodeStable> children;
   final int? headerLevel;
+  final MarkdownContentSplitter splitMarkdownContent;
   final void Function(String url)? onLinkClick;
 
   @override
@@ -224,6 +229,7 @@ class _MarkdownTextState extends State<_MarkdownText>
             textColor: widget.textColor,
             backgroundColor: widget.backgroundColor,
             isStreaming: widget.isStreaming,
+            splitMarkdownContent: widget.splitMarkdownContent,
           ),
         );
       case MarkdownNodeType.horizontalRule:
@@ -393,6 +399,7 @@ class _MarkdownTextState extends State<_MarkdownText>
             textColor: widget.textColor,
             backgroundColor: widget.backgroundColor,
             isStreaming: widget.isStreaming,
+            splitMarkdownContent: widget.splitMarkdownContent,
           ),
         );
       } else if (isCompleteImageMarkdown(trimmed.trim())) {

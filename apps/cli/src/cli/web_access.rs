@@ -1,9 +1,9 @@
 use super::*;
-use crate::create_cli_link_access_store;
+use crate::create_cli_core_application;
 
 use operit_access_runtime::{
-    link_token_hash, LinkAccessStore, RemoteDeviceInfo, StaticWebAccessControlConfig,
-    StaticWebAccessServer, StaticWebAccessServerConfig,
+    link_token_hash, StaticWebAccessControlConfig, StaticWebAccessServer,
+    StaticWebAccessServerConfig,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -156,9 +156,9 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
 
     let web_root = resolve_web_root(web_root)?;
     let shutdown_token = generate_token();
-    let device_info = RemoteDeviceInfo::nativeCli("server")?;
-    let access_store = create_cli_link_access_store();
-    let identity = access_store.initializeIdentity(device_info)?;
+    let core_application = create_cli_core_application("server").await?;
+    let access_store = core_application.accessStore();
+    let identity = core_application.accessIdentity().clone();
     let device_info = identity.deviceInfo.clone();
     let device_id = identity.deviceId.clone();
     let web_asset_reader: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync> =
@@ -223,6 +223,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     )
     .await;
     remove_link_host_state()?;
+    core_application.shutdown().await;
     result
 }
 

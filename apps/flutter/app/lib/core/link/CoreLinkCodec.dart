@@ -20,6 +20,7 @@ Uint8List encodeCoreLink(Object? value) {
   writer.writeValue(value);
   return writer.takeBytes();
 }
+
 /// Decodes one complete MessagePack Link value.
 T decodeCoreLink<T>(
   Uint8List bytes, {
@@ -35,6 +36,268 @@ T decodeCoreLink<T>(
   final value = decode == null ? reader.readValue() as T : decode(reader);
   reader.expectDone();
   return value;
+}
+
+/// Reconstructs complete typed watch payloads from ordered Core events.
+class CoreLinkEventValueDecoder {
+  Object? _previousValue;
+  var _hasPreviousValue = false;
+
+  /// Decodes one watch event after applying protocol-level incremental payloads.
+  T decode<T>(CoreEvent event, {required T Function(Uint8List bytes) decode}) {
+    return decode(completeValueBytes(event));
+  }
+
+  /// Returns complete MessagePack bytes for one ordered Core watch event.
+  Uint8List completeValueBytes(CoreEvent event) {
+    final currentValue = _readEventValue(event);
+    final completeValue = switch (event.kind) {
+      'Snapshot' || 'Changed' => _replacePreviousValue(currentValue),
+      'Delta' => _applyDeltaEvent(currentValue),
+      _ => throw FormatException(
+        'Unsupported Core watch event kind: ${event.kind}',
+      ),
+    };
+    return encodeCoreLink(completeValue);
+  }
+
+  /// Reads one event payload as an untyped Link value.
+  Object? _readEventValue(CoreEvent event) {
+    final valueBytes = event.valueBytes;
+    if (valueBytes == null) {
+      throw StateError('Core watch event has no payload bytes');
+    }
+    return decodeCoreLink<Object?>(valueBytes);
+  }
+
+  /// Stores a complete event payload as the new incremental base value.
+  Object? _replacePreviousValue(Object? value) {
+    _previousValue = _copyCoreLinkValue(value);
+    _hasPreviousValue = true;
+    return _previousValue;
+  }
+
+  /// Applies one protocol delta to the last complete event payload.
+  Object? _applyDeltaEvent(Object? delta) {
+    if (!_hasPreviousValue) {
+      throw StateError('Core watch delta arrived before a full value');
+    }
+    _previousValue = _applyCoreLinkDelta(_previousValue, delta);
+    return _previousValue;
+  }
+}
+
+const _coreDeltaMarker = r'$coreDelta';
+
+/// Creates a mutable copy of a decoded Link value tree.
+Object? _copyCoreLinkValue(Object? value) {
+  if (value is Uint8List) {
+    return Uint8List.fromList(value);
+  }
+  if (value is List) {
+    return value.map(_copyCoreLinkValue).toList(growable: true);
+  }
+  if (value is Map) {
+    final result = <String, Object?>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      if (key is! String) {
+        throw FormatException(
+          'Link map key must be a string: ${key.runtimeType}',
+        );
+      }
+      result[key] = _copyCoreLinkValue(entry.value);
+    }
+    return result;
+  }
+  return value;
+}
+
+/// Applies one encoded Core value delta to a complete base value.
+Object? _applyCoreLinkDelta(Object? base, Object? delta) {
+  final deltaFields = _coreLinkMap(delta, 'incremental delta');
+  final operations = deltaFields[_coreDeltaMarker];
+  if (operations is! List) {
+    throw const FormatException('Core incremental delta marker is missing');
+  }
+  var result = _copyCoreLinkValue(base);
+  for (final operation in operations) {
+    result = _applyCoreDeltaOperation(result, operation);
+  }
+  return result;
+}
+
+/// Applies one set or remove operation to a mutable Link value tree.
+Object? _applyCoreDeltaOperation(Object? target, Object? operation) {
+  final fields = _coreLinkMap(operation, 'incremental operation');
+  final operationName = fields['op'];
+  final path = fields['path'];
+  if (operationName is! String) {
+    throw const FormatException('Core incremental operation name is missing');
+  }
+  if (path is! List) {
+    throw const FormatException('Core incremental operation path is missing');
+  }
+  switch (operationName) {
+    case 'set':
+      if (!fields.containsKey('value')) {
+        throw const FormatException(
+          'Core incremental set operation value is missing',
+        );
+      }
+      return _setCoreLinkValueAtPath(
+        target,
+        path,
+        _copyCoreLinkValue(fields['value']),
+      );
+    case 'remove':
+      _removeCoreLinkValueAtPath(target, path);
+      return target;
+    default:
+      throw FormatException(
+        'Unsupported Core incremental operation: $operationName',
+      );
+  }
+}
+
+/// Replaces or appends one value at a typed map/list path.
+Object? _setCoreLinkValueAtPath(
+  Object? target,
+  List<Object?> path,
+  Object? value,
+) {
+  if (path.isEmpty) {
+    return value;
+  }
+  final segment = path.first;
+  if (target is Map<String, Object?>) {
+    if (segment is! String) {
+      throw const FormatException(
+        'Core incremental map path segment must be a string',
+      );
+    }
+    if (path.length == 1) {
+      target[segment] = value;
+      return target;
+    }
+    final child = target[segment];
+    if (child == null && !target.containsKey(segment)) {
+      throw FormatException(
+        'Core incremental map path does not exist: $segment',
+      );
+    }
+    target[segment] = _setCoreLinkValueAtPath(child, path.sublist(1), value);
+    return target;
+  }
+  if (target is List<Object?>) {
+    if (segment is! int) {
+      throw const FormatException(
+        'Core incremental list path segment must be an integer',
+      );
+    }
+    if (path.length == 1) {
+      if (segment == target.length) {
+        target.add(value);
+        return target;
+      }
+      if (segment >= 0 && segment < target.length) {
+        target[segment] = value;
+        return target;
+      }
+      throw FormatException(
+        'Core incremental list append index is invalid: $segment',
+      );
+    }
+    if (segment < 0 || segment >= target.length) {
+      throw FormatException(
+        'Core incremental list path does not exist: $segment',
+      );
+    }
+    target[segment] = _setCoreLinkValueAtPath(
+      target[segment],
+      path.sublist(1),
+      value,
+    );
+    return target;
+  }
+  throw const FormatException('Core incremental path traverses a scalar value');
+}
+
+/// Removes one value at a typed map/list path.
+void _removeCoreLinkValueAtPath(Object? target, List<Object?> path) {
+  if (path.isEmpty) {
+    throw const FormatException('Core incremental root remove is invalid');
+  }
+  final segment = path.first;
+  if (target is Map<String, Object?>) {
+    if (segment is! String) {
+      throw const FormatException(
+        'Core incremental map path segment must be a string',
+      );
+    }
+    if (path.length == 1) {
+      if (!target.containsKey(segment)) {
+        throw FormatException(
+          'Core incremental map removal path does not exist: $segment',
+        );
+      }
+      target.remove(segment);
+      return;
+    }
+    final child = target[segment];
+    if (child == null && !target.containsKey(segment)) {
+      throw FormatException(
+        'Core incremental map path does not exist: $segment',
+      );
+    }
+    _removeCoreLinkValueAtPath(child, path.sublist(1));
+    return;
+  }
+  if (target is List<Object?>) {
+    if (segment is! int) {
+      throw const FormatException(
+        'Core incremental list path segment must be an integer',
+      );
+    }
+    if (path.length == 1) {
+      if (segment >= 0 && segment < target.length) {
+        target.removeAt(segment);
+        return;
+      }
+      throw FormatException(
+        'Core incremental list removal index is invalid: $segment',
+      );
+    }
+    if (segment < 0 || segment >= target.length) {
+      throw FormatException(
+        'Core incremental list path does not exist: $segment',
+      );
+    }
+    _removeCoreLinkValueAtPath(target[segment], path.sublist(1));
+    return;
+  }
+  throw const FormatException('Core incremental path traverses a scalar value');
+}
+
+/// Reads a decoded Link value as a string-keyed map.
+Map<String, Object?> _coreLinkMap(Object? value, String label) {
+  if (value is Map<String, Object?>) {
+    return value;
+  }
+  if (value is Map) {
+    final result = <String, Object?>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      if (key is! String) {
+        throw FormatException(
+          'Core $label map key must be a string: ${key.runtimeType}',
+        );
+      }
+      result[key] = entry.value;
+    }
+    return result;
+  }
+  throw FormatException('Core $label must be a map');
 }
 
 /// Encodes a CoreProxy call using the compact native bridge tuple format.
@@ -96,10 +359,7 @@ Uint8List encodeNativeCoreWatchStreamRequest(
 }
 
 /// Writes one Core object identity as its compact native path field.
-void _writeNativeCorePath(
-  _CoreLinkMessagePackWriter writer,
-  int objectId,
-) {
+void _writeNativeCorePath(_CoreLinkMessagePackWriter writer, int objectId) {
   writer.writeValue(objectId);
 }
 
@@ -276,7 +536,9 @@ int _readNativeCorePath(_CoreLinkMessagePackReader reader) {
 /// Decodes one fixed embedded-stream pool object address.
 int _readCoreObjectIdValue(Object? value) {
   if (value is! int) {
-    throw FormatException('Embedded Core stream target path must be an integer address');
+    throw FormatException(
+      'Embedded Core stream target path must be an integer address',
+    );
   }
   return value;
 }

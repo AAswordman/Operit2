@@ -8,17 +8,13 @@ use serde::Serialize;
 pub(crate) fn decode_native_call_request(
     request_bytes: &[u8],
 ) -> Result<CoreCallRequest, CoreLinkError> {
-    let (request_id, object_id, method_name, args): (
-        String,
-        u32,
-        String,
-        operit_link::CoreValue,
-    ) = operit_link::decodeLink(request_bytes).map_err(|error| {
-        CoreLinkError::new(
-            "flutter-bridge-invalid-request",
-            format!("invalid compact core request: {error}"),
-        )
-    })?;
+    let (request_id, object_id, method_name, args): (String, u32, String, operit_link::CoreValue) =
+        operit_link::decodeLink(request_bytes).map_err(|error| {
+            CoreLinkError::new(
+                "flutter-bridge-invalid-request",
+                format!("invalid compact core request: {error}"),
+            )
+        })?;
     Ok(CoreCallRequest::new(
         request_id,
         object_id,
@@ -31,23 +27,14 @@ pub(crate) fn decode_native_call_request(
 pub(crate) fn decode_native_push_open_request(
     request_bytes: &[u8],
 ) -> Result<CorePushRequest, CoreLinkError> {
-    let (request_id, object_id, method_name, args): (
-        String,
-        u32,
-        String,
-        operit_link::CoreValue,
-    ) = operit_link::decodeLink(request_bytes).map_err(|error| {
-        CoreLinkError::new(
-            "flutter-bridge-invalid-request",
-            format!("invalid compact push-open request: {error}"),
-        )
-    })?;
-    Ok(CorePushRequest::new(
-        request_id,
-        object_id,
-        method_name,
-    )
-    .withArgs(args))
+    let (request_id, object_id, method_name, args): (String, u32, String, operit_link::CoreValue) =
+        operit_link::decodeLink(request_bytes).map_err(|error| {
+            CoreLinkError::new(
+                "flutter-bridge-invalid-request",
+                format!("invalid compact push-open request: {error}"),
+            )
+        })?;
+    Ok(CorePushRequest::new(request_id, object_id, method_name).withArgs(args))
 }
 
 /// Decodes one compact CoreProxy push item.
@@ -107,12 +94,7 @@ pub(crate) fn decode_native_watch_stream_request(
     })?;
     Ok((
         subscription_id,
-        CoreWatchRequest::new(
-            request_id,
-            object_id,
-            property_name,
-            args,
-        ),
+        CoreWatchRequest::new(request_id, object_id, property_name, args),
     ))
 }
 

@@ -1,7 +1,8 @@
 use super::build_rust_codegen_utils::*;
 use super::build_rust_dispatch_codegen::{
     render_core_proxy_dispatch, render_object_call_dispatch, render_object_path_matchers,
-    render_object_sync_call_dispatch, render_object_watch_dispatch,
+    render_object_sync_call_dispatch, render_object_watch_async_dispatch,
+    render_object_watch_dispatch, render_object_watch_snapshot_async_dispatch,
     render_object_watch_snapshot_dispatch, render_object_watch_transition_dispatch,
 };
 use super::build_rust_proxy_codegen::render_generated_proxy;
@@ -17,21 +18,29 @@ pub(crate) fn render_generated(
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("fn generated_core_proxy_schema() -> operit_link::CoreValue {\n");
-    output.push_str("    operit_rslink_runtime::to_core_value(serde_json::from_str::<serde_json::Value>(r#\"");
+    output.push_str(
+        "    operit_rslink_runtime::to_core_value(serde_json::from_str::<serde_json::Value>(r#\"",
+    );
     output.push_str(&schema_json);
     output.push_str("\"#).expect(\"generated core proxy schema must be valid JSON\")).expect(\"generated core proxy schema must convert to CoreValue\")\n");
     output.push_str("}\n\n");
     output.push_str("/// Returns the generated numeric object ID for one concrete runtime type.\n");
     output.push_str("pub fn generated_object_id_for_type(typeName: &str) -> Option<u32> {\n    match typeName {\n");
     for object in objects {
-        output.push_str(&format!("        {:?} => Some({}),\n", object.full_type, object.object_id));
+        output.push_str(&format!(
+            "        {:?} => Some({}),\n",
+            object.full_type, object.object_id
+        ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
     output.push_str("/// Returns the generated numeric object id for one schema key.\n");
     output.push_str("pub fn generated_object_id_for_schema(schema: &str) -> Option<u32> {\n");
     output.push_str("    match schema {\n");
     for object in objects {
-        output.push_str(&format!("        {:?} => Some({}),\n", object.schema_key, object.object_id));
+        output.push_str(&format!(
+            "        {:?} => Some({}),\n",
+            object.schema_key, object.object_id
+        ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
     output.push_str(&render_object_path_matchers(objects));
@@ -54,7 +63,11 @@ pub(crate) fn render_generated(
         }
         output.push_str(&render_object_watch_snapshot_dispatch(object));
         output.push('\n');
+        output.push_str(&render_object_watch_snapshot_async_dispatch(object));
+        output.push('\n');
         output.push_str(&render_object_watch_dispatch(object));
+        output.push('\n');
+        output.push_str(&render_object_watch_async_dispatch(object));
         output.push('\n');
         output.push_str(&render_object_watch_transition_dispatch(object));
         output.push('\n');
@@ -86,9 +99,7 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
     if patterns.is_empty() {
         output.push_str("    false\n");
     } else {
-        output.push_str(
-            "    matches!((request.targetObjectId, request.methodName.as_str()), ",
-        );
+        output.push_str("    matches!((request.targetObjectId, request.methodName.as_str()), ");
         output.push_str(&patterns);
         output.push_str(")\n");
     }
@@ -97,8 +108,7 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
         "/// Opens one schema-declared reverse stream without exposing Link details to services.\n",
     );
     output.push_str("fn generated_open_reverse_stream(proxy: &LocalCoreProxy, request: operit_link::CorePushRequest) -> Result<operit_rslink_runtime::CoreReverseStreamSession, operit_link::CoreLinkError> {\n");
-    output
-        .push_str("    match (request.targetObjectId, request.methodName.as_str()) {\n");
+    output.push_str("    match (request.targetObjectId, request.methodName.as_str()) {\n");
     for object in objects {
         for method in &object.methods {
             let Some(reverse) = method.reverse_stream_protocol() else {

@@ -89,6 +89,12 @@ impl Drop for OperitFlutterBridge {
     fn drop(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
+            self.stopWebAccessServer();
+            if let Ok(coreApplication) = self.coreApplication.get_mut() {
+                if let Some(coreApplication) = coreApplication.take() {
+                    coreApplication.shutdownNow();
+                }
+            }
             self.watchChannel.close();
             if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
                 for (_, cancelSender) in subscriptions.drain() {
@@ -185,11 +191,10 @@ impl OperitFlutterBridge {
             .ok_or_else(|| CoreLinkError::new("PUSH_NOT_FOUND", "Link push stream not found"))?;
         let NativePushState::Local { session, .. } = state;
         self.runHostRuntimeAsyncTask("operit-flutter-push-close", move || async move {
-            let session = session
-                .lock()
-                .await
-                .take()
-                .ok_or_else(|| CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed"))?;
+            let session =
+                session.lock().await.take().ok_or_else(|| {
+                    CoreLinkError::new("PUSH_CLOSED", "Link push stream is closed")
+                })?;
             session.close().await
         })
         .map_err(CoreLinkError::internal)?

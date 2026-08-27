@@ -1953,6 +1953,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-core-application"
+version = "0.1.0"
+dependencies = [
+ "operit-access-runtime",
+ "operit-host-api",
+ "operit-link",
+ "operit-node-runtime",
+ "operit-proxy-local",
+ "operit-runtime",
+]
+
+[[package]]
 name = "operit-flutter-bridge"
 version = "0.1.0"
 dependencies = [
@@ -1966,6 +1978,7 @@ dependencies = [
  "js-sys",
  "mdns-sd",
  "operit-access-runtime",
+ "operit-core-application",
  "operit-host-android-native",
  "operit-host-api",
  "operit-host-ios-native",
@@ -2234,6 +2247,7 @@ name = "operit-link"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "operit-host-api",
  "rmp-serde",
  "serde",
  "serde_bytes",

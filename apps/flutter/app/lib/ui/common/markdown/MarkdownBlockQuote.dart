@@ -11,12 +11,14 @@ class MarkdownBlockQuote extends StatelessWidget {
     required this.textColor,
     required this.backgroundColor,
     required this.isStreaming,
+    required this.splitMarkdownContent,
   });
 
   final String content;
   final Color textColor;
   final Color backgroundColor;
   final bool isStreaming;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +45,7 @@ class MarkdownBlockQuote extends StatelessWidget {
         textColor: textColor,
         backgroundColor: backgroundColor,
         selectionRoot: false,
+        splitMarkdownContent: splitMarkdownContent,
       ),
     );
   }

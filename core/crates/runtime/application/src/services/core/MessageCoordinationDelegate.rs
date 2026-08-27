@@ -343,7 +343,7 @@ impl MessageCoordinationDelegate {
         if self.messageProcessingDelegate.isChatLoading(chatId.clone()) {
             return Err("Chat is busy".to_string());
         }
-        let currentHistory = self.chatHistoryDelegate.chatHistory.clone();
+        let currentHistory = self.chatHistoryDelegate.currentChatMessagesSnapshot();
         let targetMessage = currentHistory
             .get(index)
             .cloned()
@@ -563,6 +563,7 @@ impl MessageCoordinationDelegate {
                 chatId: chatId.clone(),
                 messageText,
                 chatHistory: runtimeChatHistory,
+                promptHistoryOverride: None,
                 workspacePath,
                 promptFunctionType,
                 roleCardId,
@@ -584,6 +585,7 @@ impl MessageCoordinationDelegate {
                 isAutoContinuation,
                 assistantMessageTimestamp,
                 executionGeneration,
+                executionSegmentIndex: None,
                 turnOptions: turnOptions.clone(),
             })
             .await;

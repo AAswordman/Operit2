@@ -35,12 +35,11 @@ impl SystemOperationHost for WebSystemOperationHost {
     }
 
     fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
-        let activation = serde_json::to_string(&request.activation)
-            .map_err(|error| {
-                js_error(JsValue::from_str(&format!(
-                    "notification activation serialization failed: {error}"
-                )))
-            })?;
+        let activation = serde_json::to_string(&request.activation).map_err(|error| {
+            js_error(JsValue::from_str(&format!(
+                "notification activation serialization failed: {error}"
+            )))
+        })?;
         call_system(
             "sendNotification",
             &[

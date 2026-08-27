@@ -4,8 +4,8 @@ use std::sync::Arc;
 use operit_host_api::RuntimeStorageHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_util::RuntimeStorageLayout::{
-    RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH, RUNTIME_SPACE_MEMBERS_DIR_PATH,
-    RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
+    RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH, RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH,
+    RUNTIME_SPACE_MEMBERS_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -38,11 +38,22 @@ pub struct CoreSpaceDeviceProfile {
     pub updatedAt: i64,
 }
 
-/// Describes one undirected direct-device connection inside a device space.
+/// Describes one directed direct-device connection inside a device space.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CoreSpaceDeviceConnection {
     pub firstDeviceId: String,
     pub secondDeviceId: String,
+}
+
+/// Describes one synchronized device availability announcement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreSpaceDevicePresence {
+    pub nodeId: String,
+    pub active: bool,
+    pub baseUrl: String,
+    pub tokenHash: String,
+    pub version: String,
+    pub updatedAt: i64,
 }
 
 /// Stores one independently synchronized Space member record.
@@ -285,12 +296,7 @@ impl CoreSpaceStore {
             return Err("A device Space must retain the current device".to_string());
         }
         let nextRevision = nextSpaceRevision(localSpace.spaceRevision, localSpace.spaceRevision)?;
-        self.writeSpaceProjection(
-            newSpaceId(),
-            localSpace.spaceName,
-            nextRevision,
-            members,
-        )
+        self.writeSpaceProjection(newSpaceId(), localSpace.spaceName, nextRevision, members)
     }
 
     /// Returns whether the supplied CoreNode is a member of the current Space.
@@ -402,6 +408,91 @@ impl CoreSpaceStore {
         Ok(profiles)
     }
 
+    /// Reads the synchronized device presentations for every current Space member.
+    #[allow(non_snake_case)]
+    pub fn deviceProfilesForCurrentSpace(&self) -> Result<Vec<CoreSpaceDeviceProfile>, String> {
+        let space = self.space()?;
+        let profiles = self.deviceProfiles()?;
+        let mut spaceProfiles = Vec::new();
+        for deviceId in space.members {
+            let profile = profiles.get(&deviceId).ok_or_else(|| {
+                format!("Device profile is missing in the current device space: {deviceId}")
+            })?;
+            spaceProfiles.push(profile.clone());
+        }
+        Ok(spaceProfiles)
+    }
+
+    /// Imports synchronized device presentations carried by the Space control protocol.
+    #[allow(non_snake_case)]
+    pub fn importDeviceProfiles(
+        &self,
+        profiles: Vec<CoreSpaceDeviceProfile>,
+    ) -> Result<(), String> {
+        for profile in profiles {
+            self.writeDeviceProfile(&profile)?;
+        }
+        Ok(())
+    }
+
+    /// Publishes the current device availability as synchronized device-space metadata.
+    #[allow(non_snake_case)]
+    pub fn writeLocalDevicePresence(
+        &self,
+        active: bool,
+        baseUrl: String,
+        tokenHash: String,
+        version: String,
+    ) -> Result<CoreSpaceDevicePresence, String> {
+        let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
+        let presence = CoreSpaceDevicePresence {
+            nodeId: identity.nodeId,
+            active,
+            baseUrl,
+            tokenHash,
+            version,
+            updatedAt: currentTimeMillis(),
+        };
+        self.writeDevicePresence(&presence)?;
+        Ok(presence)
+    }
+
+    /// Imports one observed device availability announcement into synchronized metadata.
+    #[allow(non_snake_case)]
+    pub fn writeObservedDevicePresence(
+        &self,
+        presence: CoreSpaceDevicePresence,
+    ) -> Result<(), String> {
+        self.writeDevicePresence(&presence)
+    }
+
+    /// Reads every synchronized device availability announcement visible to this CoreNode.
+    #[allow(non_snake_case)]
+    pub fn devicePresences(&self) -> Result<BTreeMap<String, CoreSpaceDevicePresence>, String> {
+        let entries = self
+            .storage
+            .list(RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH)
+            .map_err(|error| error.to_string())?;
+        let mut presences = BTreeMap::new();
+        for entry in entries {
+            if entry.isDirectory {
+                continue;
+            }
+            let preferences =
+                PreferencesDataStore::newWithStorage(self.storage.clone(), entry.path.clone())
+                    .data()
+                    .map_err(|error| error.to_string())?;
+            let encoded = preferences
+                .get(&stringPreferencesKey(CORE_SPACE_RECORD_KEY))
+                .ok_or_else(|| format!("Device space presence record is empty: {}", entry.path))?;
+            let presence: CoreSpaceDevicePresence =
+                serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+            validateDevicePresence(&presence)?;
+            presences.insert(presence.nodeId.clone(), presence);
+        }
+        Ok(presences)
+    }
+
     /// Replaces the local CoreNode topology announcement from the active Peer Link registry.
     #[allow(non_snake_case)]
     pub fn setDirectPeers(&self, peerNodeIds: Vec<String>) -> Result<(), String> {
@@ -420,7 +511,7 @@ impl CoreSpaceStore {
         })
     }
 
-    /// Returns every unique direct-device connection inside the current device space.
+    /// Returns every directed direct-device connection inside the current device space.
     #[allow(non_snake_case)]
     pub fn deviceConnections(&self) -> Result<Vec<CoreSpaceDeviceConnection>, String> {
         let members = self.space()?.members.into_iter().collect::<BTreeSet<_>>();
@@ -433,14 +524,9 @@ impl CoreSpaceStore {
                 if !members.contains(&peerDeviceId) {
                     continue;
                 }
-                let (firstDeviceId, secondDeviceId) = if record.nodeId < peerDeviceId {
-                    (record.nodeId.clone(), peerDeviceId)
-                } else {
-                    (peerDeviceId, record.nodeId.clone())
-                };
                 connections.insert(CoreSpaceDeviceConnection {
-                    firstDeviceId,
-                    secondDeviceId,
+                    firstDeviceId: record.nodeId.clone(),
+                    secondDeviceId: peerDeviceId,
                 });
             }
         }
@@ -651,6 +737,26 @@ impl CoreSpaceStore {
         .map_err(|error| error.to_string())
     }
 
+    /// Writes one synchronized device availability announcement owned by its device identity.
+    #[allow(non_snake_case)]
+    fn writeDevicePresence(&self, presence: &CoreSpaceDevicePresence) -> Result<(), String> {
+        validateDevicePresence(presence)?;
+        let mut preferences = emptyPreferences();
+        preferences.set(
+            &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
+            serde_json::to_string(presence).map_err(|error| error.to_string())?,
+        );
+        PreferencesDataStore::newWithStorage(
+            self.storage.clone(),
+            format!(
+                "{RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH}/{}.preferences.json",
+                presence.nodeId
+            ),
+        )
+        .replace(preferences)
+        .map_err(|error| error.to_string())
+    }
+
     /// Writes one synchronized device presentation owned by its device identity.
     #[allow(non_snake_case)]
     fn writeDeviceProfile(&self, profile: &CoreSpaceDeviceProfile) -> Result<(), String> {
@@ -747,6 +853,43 @@ fn validateDeviceProfile(profile: &CoreSpaceDeviceProfile) -> Result<(), String>
     }
     if profile.updatedAt <= 0 {
         return Err("Device space profile has an invalid update timestamp".to_string());
+    }
+    Ok(())
+}
+
+/// Validates one synchronized device availability announcement.
+#[allow(non_snake_case)]
+fn validateDevicePresence(presence: &CoreSpaceDevicePresence) -> Result<(), String> {
+    validateNodeId(&presence.nodeId)?;
+    if presence.active {
+        validateDevicePresenceField("base URL", &presence.baseUrl)?;
+        validateDevicePresenceField("token hash", &presence.tokenHash)?;
+        validateDevicePresenceField("version", &presence.version)?;
+    }
+    if presence.updatedAt <= 0 {
+        return Err("Device space presence has an invalid update timestamp".to_string());
+    }
+    Ok(())
+}
+
+/// Validates one active device availability field.
+#[allow(non_snake_case)]
+fn validateDevicePresenceField(fieldName: &str, value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!(
+            "Device space presence {fieldName} must not be empty"
+        ));
+    }
+    if trimmed.chars().count() > 512 {
+        return Err(format!(
+            "Device space presence {fieldName} must not exceed 512 characters"
+        ));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(format!(
+            "Device space presence {fieldName} must not contain control characters"
+        ));
     }
     Ok(())
 }

@@ -815,7 +815,9 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     }
     let (rust_return_type, mut protocol) = scan_return_protocol(&function.sig.output, resolver);
     if rust_return_type.contains("operit_node_runtime::")
-        || args.iter().any(|argument| argument.ty.contains("operit_node_runtime::"))
+        || args
+            .iter()
+            .any(|argument| argument.ty.contains("operit_node_runtime::"))
     {
         cfg_attrs.push("#[cfg(not(target_arch = \"wasm32\"))]".to_string());
     }
@@ -838,9 +840,6 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     } else if reverse_arguments.len() > 1 {
         method_error =
             Some("a reverse-stream method accepts exactly one ReverseStream argument".to_string());
-    }
-    if is_async && matches!(protocol, MethodProtocol::Watch(_)) {
-        protocol = MethodProtocol::Unsupported("async watch method is not supported".to_string());
     }
     if let Some(reason) = method_error {
         protocol = MethodProtocol::Unsupported(reason);

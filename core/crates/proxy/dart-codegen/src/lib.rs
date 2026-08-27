@@ -208,10 +208,9 @@ fn render_dart_clients(
             ));
         }
     }
-    for namespace in namespace_prefixes
-        .iter()
-        .filter(|path| !path.contains('.') && !objects.iter().any(|object| object.schema_key == **path))
-    {
+    for namespace in namespace_prefixes.iter().filter(|path| {
+        !path.contains('.') && !objects.iter().any(|object| object.schema_key == **path)
+    }) {
         let getter_name = dart_identifier(namespace);
         let class_name = dart_namespace_class_name(namespace);
         output.push_str(&format!(
@@ -221,11 +220,19 @@ fn render_dart_clients(
     output.push_str("}\n\n");
 
     for namespace in &namespace_prefixes {
-        output.push_str(&render_dart_namespace_class(namespace, &namespace_prefixes, objects));
+        output.push_str(&render_dart_namespace_class(
+            namespace,
+            &namespace_prefixes,
+            objects,
+        ));
     }
 
     for object in objects {
-        output.push_str(&render_dart_client_class(objects, object, serializable_types));
+        output.push_str(&render_dart_client_class(
+            objects,
+            object,
+            serializable_types,
+        ));
     }
     output
 }
@@ -288,7 +295,10 @@ fn render_dart_namespace_class(
             ));
             continue;
         }
-        if let Some(object) = objects.iter().find(|object| object.schema_key == child_path) {
+        if let Some(object) = objects
+            .iter()
+            .find(|object| object.schema_key == child_path)
+        {
             if matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }) {
                 continue;
             }
@@ -474,7 +484,9 @@ fn render_dart_call_method(
     output.push_str("        requestId: _coreProxyRequestId(),\n");
     output.push_str("        targetObjectId: objectId,\n");
     output.push_str(&format!("        methodName: '{}',\n", method.name));
-    output.push_str(&format!("        args: _coreProxyArgs({args}, objectArgs),\n"));
+    output.push_str(&format!(
+        "        args: _coreProxyArgs({args}, objectArgs),\n"
+    ));
     output.push_str("      ),\n");
     output.push_str("    );\n");
     if return_type == "void" {
@@ -521,7 +533,12 @@ fn render_dart_factory_method(
         .args
         .iter()
         .enumerate()
-        .map(|(index, arg)| format!("'__core_factory_arg_{index}': {}", dart_identifier(&arg.name)))
+        .map(|(index, arg)| {
+            format!(
+                "'__core_factory_arg_{index}': {}",
+                dart_identifier(&arg.name)
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let factory_method_name = dart_identifier(&method.name);
@@ -557,6 +574,7 @@ fn render_dart_watch_method(
     output.push_str(&format!(
         "  Stream<{value_type}> {method_name}({params}) {{\n"
     ));
+    output.push_str("    final eventValueDecoder = CoreLinkEventValueDecoder();\n");
     output.push_str("    return bridge\n");
     output.push_str(&format!(
         "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), targetObjectId: objectId, propertyName: '{}', args: _coreProxyArgs({args}, objectArgs)))\n",
@@ -564,12 +582,9 @@ fn render_dart_watch_method(
     ));
     output.push_str("        .where((event) => event.kind != 'Completed')\n");
     output.push_str("        .map((event) {\n");
-    output.push_str("          final valueBytes = event.valueBytes;\n");
-    output.push_str("          if (valueBytes == null) {\n");
-    output.push_str("            throw StateError('Core watch event has no payload bytes');\n");
-    output.push_str("          }\n");
     output.push_str(&format!(
-            "          return decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, targetObjectId: event.targetObjectId, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
+            "          return eventValueDecoder.decode<{}>(event, decode: (valueBytes) => decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, targetObjectId: event.targetObjectId, embeddedStreamFactory: bridge.openEmbeddedCoreStream));\n",
+        value_type,
         value_type,
         dart_message_pack_decode_expr("reader", &value_type, serializable_types)
     ));
@@ -997,9 +1012,8 @@ fn render_dart_tagged_enum_message_pack_decoder(
     content_name: Option<&str>,
     serializable_types: &HashMap<String, SerializableType>,
 ) -> String {
-    let mut output = format!(
-        "\n  factory {enum_name}.fromMessagePack(CoreLinkValueReader reader) {{\n"
-    );
+    let mut output =
+        format!("\n  factory {enum_name}.fromMessagePack(CoreLinkValueReader reader) {{\n");
     if externally_tagged {
         output.push_str("    if (reader.isNextString()) {\n");
         output.push_str("      final tag = reader.readString();\n");
@@ -1137,7 +1151,10 @@ fn dart_tagged_enum_variant_payload(
             if variant.fields.len() == 1 {
                 let field = &variant.fields[0];
                 if let Some(SerializableType {
-                    kind: SerializableTypeKind::Struct { fields: nested_fields },
+                    kind:
+                        SerializableTypeKind::Struct {
+                            fields: nested_fields,
+                        },
                     ..
                 }) = serializable_types.get(&field.ty)
                 {
@@ -1189,7 +1206,11 @@ fn dart_tagged_enum_variant_payload(
         let mut output = format!("(() {{ final itemCount = {reader}.readArrayLength(); if (itemCount != {}) {{ throw FormatException('Invalid {enum_name}.{variant_name} item count'); }} return {enum_name}.{variant_name}(", variant.fields.len());
         for field in &variant.fields {
             let field_type = dart_type(&field.ty, serializable_types);
-            output.push_str(&format!("{}: {}, ", dart_identifier(&field.name), dart_message_pack_decode_expr(reader, &field_type, serializable_types)));
+            output.push_str(&format!(
+                "{}: {}, ",
+                dart_identifier(&field.name),
+                dart_message_pack_decode_expr(reader, &field_type, serializable_types)
+            ));
         }
         output.push_str("); })()");
         return output;
@@ -1198,10 +1219,14 @@ fn dart_tagged_enum_variant_payload(
     for field in &variant.fields {
         let field_name = dart_identifier(&field.name);
         let field_type = dart_type(&field.ty, serializable_types);
-        output.push_str(&format!("late {field_type} {field_name}; var has_{field_name} = false; "));
+        output.push_str(&format!(
+            "late {field_type} {field_name}; var has_{field_name} = false; "
+        ));
     }
     if let Some(field_count) = known_field_count {
-        output.push_str(&format!("for (var index = 0; index < {field_count}; index += 1) {{"));
+        output.push_str(&format!(
+            "for (var index = 0; index < {field_count}; index += 1) {{"
+        ));
     } else {
         output.push_str(&format!("final fieldCount = {reader}.readMapLength(); for (var index = 0; index < fieldCount; index += 1) {{"));
     }
@@ -1209,7 +1234,11 @@ fn dart_tagged_enum_variant_payload(
     for field in &variant.fields {
         let field_name = dart_identifier(&field.name);
         let field_type = dart_type(&field.ty, serializable_types);
-        output.push_str(&format!("case '{}': {field_name} = {}; has_{field_name} = true; break;", dart_string_literal(&field.json_name), dart_message_pack_decode_expr(reader, &field_type, serializable_types)));
+        output.push_str(&format!(
+            "case '{}': {field_name} = {}; has_{field_name} = true; break;",
+            dart_string_literal(&field.json_name),
+            dart_message_pack_decode_expr(reader, &field_type, serializable_types)
+        ));
     }
     output.push_str(&format!("default: {reader}.skipValue(); }} }}"));
     for field in &variant.fields {
@@ -1983,7 +2012,3 @@ fn render_dart_doc_comments(method: &SourceMethod, indent: &str) -> String {
         })
         .collect()
 }
-
-
-
-

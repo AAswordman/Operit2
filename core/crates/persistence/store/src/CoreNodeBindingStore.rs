@@ -177,8 +177,14 @@ impl CoreNodeBindingStore {
 
     /// Reads the current CoreNode selection for one opaque Binding key.
     pub fn binding(&self, key: &str) -> Result<CoreNodeBindingRecord, String> {
-        self.bindingRecord(key)?
+        self.bindingOptional(key)?
             .ok_or_else(|| format!("Binding does not exist: {key}"))
+    }
+
+    /// Reads the current CoreNode selection when one opaque Binding key has a record.
+    #[allow(non_snake_case)]
+    pub fn bindingOptional(&self, key: &str) -> Result<Option<CoreNodeBindingRecord>, String> {
+        self.bindingRecord(key)
     }
 
     /// Reports whether one opaque Binding key has a persisted current record.
@@ -414,7 +420,11 @@ impl CoreNodeBindingStore {
 
     /// Applies one Binding operation with the selected conflict policy.
     #[allow(non_snake_case)]
-    fn applyOperation(&self, operation: &SyncOperation, ignoreConflict: bool) -> Result<(), String> {
+    fn applyOperation(
+        &self,
+        operation: &SyncOperation,
+        ignoreConflict: bool,
+    ) -> Result<(), String> {
         let _lock = coreNodeBindingMutationLock()
             .lock()
             .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
@@ -607,7 +617,12 @@ fn notifyBindingOperationChanged(
                 .map_err(|error| format!("Binding payload is invalid: {error}"))?,
         ),
         "delete" => CoreNodeBindingChange::Delete(operation.entityId.clone()),
-        _ => return Err(format!("Unsupported Binding operation: {}", operation.operation)),
+        _ => {
+            return Err(format!(
+                "Unsupported Binding operation: {}",
+                operation.operation
+            ))
+        }
     };
     notifyCoreNodeBindingChanged(sharedState, change);
     Ok(())

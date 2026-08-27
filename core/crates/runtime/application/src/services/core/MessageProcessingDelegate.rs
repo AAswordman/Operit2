@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use std::sync::{Arc, Mutex};
 
-
 use crate::core::chat::AIMessageManager::{
     logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
     SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
@@ -13,6 +12,7 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
+use crate::services::ChatServiceCore::CoreHandoffRuntimeSnapshot;
 use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
@@ -34,6 +34,7 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::{AssistantMarkupStreamState, MessagePartCodec};
 use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_model::PromptTurn::PromptTurn;
 use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
@@ -46,12 +47,9 @@ use operit_util::stream::RevisableTextStream::{
 };
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
-
-/// Minimum interval between persisted streaming snapshots.
-pub const STREAM_PERSIST_INTERVAL_MS: i64 = 1000;
+use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 
 /// Maximum text length used when preparing automatic speech previews.
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
@@ -61,22 +59,8 @@ pub fn coreResponseStreamSource(
     stream: SharedAiResponseStream,
     streamKey: String,
 ) -> Arc<CoreStreamSource> {
-    coreResponseStreamSourceWithCompletion(stream, streamKey, None)
-}
-
-/// Creates a response source that can add structured metadata to its terminal event.
-pub fn coreResponseStreamSourceWithCompletion(
-    stream: SharedAiResponseStream,
-    streamKey: String,
-    completionMapper: Option<Arc<dyn Fn(CoreValue) -> CoreValue + Send + Sync>>,
-) -> Arc<CoreStreamSource> {
     Arc::new(CoreStreamSource::new(move |request| {
-        openCoreResponseStream(
-            stream.clone(),
-            streamKey.clone(),
-            completionMapper.clone(),
-            request,
-        )
+        openCoreResponseStream(stream.clone(), streamKey.clone(), request)
     }))
 }
 
@@ -84,19 +68,30 @@ pub fn coreResponseStreamSourceWithCompletion(
 fn openCoreResponseStream(
     stream: SharedAiResponseStream,
     streamKey: String,
-    completionMapper: Option<Arc<dyn Fn(CoreValue) -> CoreValue + Send + Sync>>,
     request: CoreWatchRequest,
 ) -> Result<CoreEventStream, CoreLinkError> {
     let (sender, receiver) = CoreEventStream::channel();
     let initialContent = stream.initial_render_content();
     let mut orderedStream = stream;
+    AppLogger::i(
+        "CoreStreamTrace",
+        &format!(
+            "response.open requestId={} target={} property={} streamKey={} initialChars={}",
+            request.requestId.0,
+            request.targetObjectId,
+            request.propertyName,
+            streamKey,
+            initialContent.chars().count()
+        ),
+    );
     defaultHostRuntimeTaskSchedulerHost()
         .scheduleHostRuntimeAsyncTask(
             "core-runtime-text-markdown",
             Box::new(move || {
                 Box::pin(async move {
                     let mut markdownStream = MarkdownRenderEventStream::new(streamKey.clone());
-                    for event in markdownStream.beginSnapshot(&initialContent) {
+                    let snapshotEvents = markdownStream.beginSnapshot(&initialContent);
+                    for event in snapshotEvents {
                         sendCoreTextEvent(
                             &sender,
                             &request.requestId,
@@ -111,7 +106,8 @@ fn openCoreResponseStream(
                     let mut itemCollector = |item: ResponseStreamItem| match item {
                         ResponseStreamItem::Chunk(chunk) => {
                             let _ = textRevisions.append(&chunk);
-                            for event in markdownStream.pushChunk(&chunk) {
+                            let events = markdownStream.pushChunk(&chunk);
+                            for event in events {
                                 sendCoreTextEvent(
                                     &sender,
                                     &request.requestId,
@@ -127,6 +123,13 @@ fn openCoreResponseStream(
                             let markdownEvent = match event.event_type {
                                 operit_util::stream::RevisableTextStream::TextStreamEventType::Savepoint => {
                                     textRevisions.savepoint(&event.id);
+                                    AppLogger::i(
+                                        "CoreStreamTrace",
+                                        &format!(
+                                            "response.revision.savepoint streamKey={} id={}",
+                                            streamKey, event.id
+                                        ),
+                                    );
                                     MarkdownStreamEvent::savepoint(streamKey.clone(), event.id)
                                 }
                                 operit_util::stream::RevisableTextStream::TextStreamEventType::Rollback => {
@@ -134,6 +137,13 @@ fn openCoreResponseStream(
                                         "markdown rollback must reference an active savepoint",
                                     );
                                     markdownStream.restoreContent(content);
+                                    AppLogger::i(
+                                        "CoreStreamTrace",
+                                        &format!(
+                                            "response.revision.rollback streamKey={} id={}",
+                                            streamKey, event.id
+                                        ),
+                                    );
                                     MarkdownStreamEvent::rollback(streamKey.clone(), event.id)
                                 }
                             };
@@ -151,10 +161,10 @@ fn openCoreResponseStream(
                     orderedStream.collect_ordered(&mut itemCollector).await;
                     let completionValue = operit_link::toCoreValue(markdownStream.completed())
                         .expect("MarkdownStreamEvent must serialize");
-                    let completionValue = completionMapper
-                        .as_ref()
-                        .map(|mapper| mapper(completionValue.clone()))
-                        .unwrap_or(completionValue);
+                    AppLogger::i(
+                        "CoreStreamTrace",
+                        &format!("response.completed streamKey={}", streamKey),
+                    );
                     sendCoreTextEvent(
                         &sender,
                         &request.requestId,
@@ -179,13 +189,24 @@ fn sendCoreTextEvent(
     kind: CoreEventKind,
     value: CoreValue,
 ) {
-    let _ = sender.send(CoreEvent {
-        requestId: Some(requestId.clone()),
-        targetObjectId,
-        propertyName: propertyName.to_string(),
-        kind,
-        value,
-    });
+    if sender
+        .send(CoreEvent {
+            requestId: Some(requestId.clone()),
+            targetObjectId,
+            propertyName: propertyName.to_string(),
+            kind,
+            value,
+        })
+        .is_err()
+    {
+        AppLogger::e(
+            "CoreStreamTrace",
+            &format!(
+                "response.event.receiver_closed requestId={} target={} property={}",
+                requestId.0, targetObjectId, propertyName
+            ),
+        );
+    }
 }
 
 /// Builds the localized host notice for a timed-out ToolPkg pre-send hook.
@@ -280,6 +301,7 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub chatId: String,
     pub messageText: String,
     pub chatHistory: Vec<ChatMessage>,
+    pub promptHistoryOverride: Option<Vec<PromptTurn>>,
     pub workspacePath: Option<String>,
     pub promptFunctionType: PromptFunctionType,
     pub roleCardId: String,
@@ -301,6 +323,7 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub isAutoContinuation: bool,
     pub assistantMessageTimestamp: Option<i64>,
     pub executionGeneration: Option<i64>,
+    pub executionSegmentIndex: Option<i64>,
     pub turnOptions: ChatTurnOptions,
 }
 
@@ -356,6 +379,8 @@ pub struct MessageProcessingDelegate {
 /// Bridges enhanced AI callbacks back into processing delegate state flows.
 struct MessageProcessingCallbacks {
     nonFatalErrorEventFlow: MutableStateFlow<Option<String>>,
+    chatId: String,
+    chatHistoryDelegate: ChatHistoryDelegate,
 }
 
 impl SendMessageCallbacks for MessageProcessingCallbacks {
@@ -364,6 +389,76 @@ impl SendMessageCallbacks for MessageProcessingCallbacks {
     fn onNonFatalError(&self, error: String) {
         self.nonFatalErrorEventFlow.set_value(Some(error));
     }
+
+    /// Captures the opened chat flow state at the exact Core handoff boundary.
+    #[allow(non_snake_case)]
+    fn runtimeChatSnapshot(
+        &self,
+        assistantMessageTimestamp: Option<i64>,
+        assistantContent: Option<String>,
+    ) -> Option<CoreValue> {
+        let messages = self
+            .chatHistoryDelegate
+            .openedRuntimeChatHistorySnapshot(&self.chatId)
+            .ok()?
+            .into_iter()
+            .map(|mut message| {
+                if Some(message.timestamp) == assistantMessageTimestamp {
+                    message = assistantMessageWithHandoffProtocolSnapshot(
+                        message,
+                        assistantContent.as_deref(),
+                    )
+                    .ok()?;
+                } else {
+                    message.contentStream = None;
+                }
+                Some(message)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if let Some(timestamp) = assistantMessageTimestamp {
+            if let Some(message) = messages
+                .iter()
+                .find(|message| message.timestamp == timestamp)
+            {
+                AppLogger::i(
+                    "CoreHandoffTrace",
+                    &format!(
+                        "runtime.snapshot chatId={} timestamp={} messages={} assistantContentChars={} parts={} displayChars={} protocolChars={}",
+                        self.chatId,
+                        timestamp,
+                        messages.len(),
+                        assistantContent
+                            .as_ref()
+                            .map(|content| content.chars().count())
+                            .unwrap_or(0),
+                        message.parts.len(),
+                        message.displayText().chars().count(),
+                        message.assistantProtocolMarkup().chars().count()
+                    ),
+                );
+            }
+        }
+        operit_link::toCoreValue(CoreHandoffRuntimeSnapshot {
+            chatId: self.chatId.clone(),
+            messages,
+        })
+        .ok()
+    }
+}
+
+/// Builds the assistant message snapshot that crosses a Core handoff boundary.
+#[allow(non_snake_case)]
+fn assistantMessageWithHandoffProtocolSnapshot(
+    mut message: ChatMessage,
+    assistantSegmentContent: Option<&str>,
+) -> Result<ChatMessage, String> {
+    let mut content = message.assistantProtocolMarkup();
+    if let Some(segmentContent) = assistantSegmentContent {
+        content.push_str(segmentContent);
+    }
+    message.parts = MessagePartCodec::parseAssistantMarkup(&content)?;
+    message.contentStream = None;
+    Ok(message)
 }
 
 impl MessageProcessingDelegate {
@@ -868,36 +963,6 @@ impl MessageProcessingDelegate {
         aiMessage
     }
 
-    /// Claims the next streaming persistence interval before allocating a snapshot.
-    #[allow(non_snake_case)]
-    fn claimStreamingPersistenceSnapshot(
-        turnOptions: &ChatTurnOptions,
-        lastStreamingPersistAt: &Arc<Mutex<i64>>,
-    ) -> bool {
-        if !turnOptions.persistTurn {
-            return false;
-        }
-        let now = messageTimingNow().startedAtMs as i64;
-        let mut lastPersistAt = lastStreamingPersistAt
-            .lock()
-            .expect("streaming persist timestamp mutex poisoned");
-        if now - *lastPersistAt < STREAM_PERSIST_INTERVAL_MS {
-            return false;
-        }
-        *lastPersistAt = now;
-        true
-    }
-
-    /// Persists one already-claimed streaming response snapshot for a chat.
-    #[allow(non_snake_case)]
-    fn persistStreamingSnapshot(
-        chatHistoryDelegate: &mut ChatHistoryDelegate,
-        chatId: &str,
-        aiMessage: &ChatMessage,
-    ) {
-        chatHistoryDelegate.persistStreamingMessage(aiMessage.clone(), chatId.to_string());
-    }
-
     /// Reads the latest cancellation snapshot for a chat's active turn.
     #[allow(non_snake_case)]
     pub fn readCurrentTurnCancellationSnapshot(
@@ -1306,6 +1371,7 @@ impl MessageProcessingDelegate {
             chatId: Some(chatId.clone()),
             messageContent: requestMessageContent,
             chatHistory: request.chatHistory,
+            promptHistoryOverride: request.promptHistoryOverride.clone(),
             workspacePath: request.workspacePath.clone(),
             promptFunctionType: request.promptFunctionType.clone(),
             enableThinking: request.enableThinking,
@@ -1326,11 +1392,13 @@ impl MessageProcessingDelegate {
             disableWarning: request.turnOptions.disableWarning,
             callbacks: Some(Arc::new(MessageProcessingCallbacks {
                 nonFatalErrorEventFlow: self.nonFatalErrorEventFlow.clone(),
+                chatId: chatId.clone(),
+                chatHistoryDelegate: request.chatHistoryDelegate.clone_for_core(),
             })),
             onToolInvocation: None,
             assistantMessageTimestamp: Some(assistantMessageTimestamp),
             executionGeneration: request.executionGeneration.unwrap_or(0),
-            segmentIndex: 0,
+            segmentIndex: request.executionSegmentIndex.unwrap_or(0),
         })
         .await
         {
@@ -1440,7 +1508,6 @@ impl MessageProcessingDelegate {
             });
         let workerWorkspaceToolHookSession = Arc::new(Mutex::new(workspaceToolHookSession.clone()));
         let workerWorkspaceToolHookHandler = Arc::new(Mutex::new(workspaceToolHookHandler.clone()));
-        let workerStreamingSnapshotPersistAt = Arc::new(Mutex::new(0i64));
         if userMessageAdded {
             userMessage.sentAt = workerRequestSentAt;
             request
@@ -1462,13 +1529,8 @@ impl MessageProcessingDelegate {
         }
         let workerFirstResponseElapsed = Arc::new(Mutex::new(None::<i64>));
         let chunkChatId = workerChatId.clone();
-        let chunkTurnOptions = workerTurnOptions.clone();
         let chunkFirstResponseElapsed = workerFirstResponseElapsed.clone();
-        let chunkAiMessage = workerAiMessage.clone();
-        let chunkChatHistoryDelegate = workerChatHistoryDelegate.clone();
         let chunkRevisionTracker = workerRevisionTracker.clone();
-        let chunkPartStream = workerPartStream.clone();
-        let chunkStreamingSnapshotPersistAt = workerStreamingSnapshotPersistAt.clone();
         let completionChatId = workerChatId.clone();
         let completionTurnOptions = workerTurnOptions.clone();
         let completionAiMessage = workerAiMessage.clone();
@@ -1529,47 +1591,10 @@ impl MessageProcessingDelegate {
                                     );
                                 }
                                 drop(firstResponseElapsed);
-                                let contentSnapshot = {
-                                    let mut tracker = chunkRevisionTracker
-                                        .lock()
-                                        .expect("revision tracker mutex poisoned");
-                                    let _ = tracker.append(&chunk);
-                                    let shouldPersist = MessageProcessingDelegate::claimStreamingPersistenceSnapshot(
-                                        &chunkTurnOptions,
-                                        &chunkStreamingSnapshotPersistAt,
-                                    );
-                                    if shouldPersist {
-                                        Some(tracker.current_content().to_owned())
-                                    } else {
-                                        None
-                                    }
-                                };
-                                if let Some(content) = contentSnapshot {
-                                    let workerAiMessage = {
-                                        let parts = {
-                                            let mut partStream = chunkPartStream
-                                                .lock()
-                                                .expect("assistant message-part stream mutex poisoned");
-                                            partStream.resetToSnapshot(&content).expect(
-                                                "streaming assistant snapshot must parse into message parts",
-                                            );
-                                            partStream.parts().to_vec()
-                                        };
-                                        let mut workerAiMessage = chunkAiMessage
-                                            .lock()
-                                            .expect("worker AI message mutex poisoned");
-                                        workerAiMessage.parts = parts;
-                                        workerAiMessage.clone()
-                                    };
-                                    let mut workerChatHistoryDelegate = chunkChatHistoryDelegate
-                                        .lock()
-                                        .expect("worker chat history mutex poisoned");
-                                    MessageProcessingDelegate::persistStreamingSnapshot(
-                                        &mut workerChatHistoryDelegate,
-                                        &chunkChatId,
-                                        &workerAiMessage,
-                                    );
-                                }
+                                chunkRevisionTracker
+                                    .lock()
+                                    .expect("revision tracker mutex poisoned")
+                                    .append(&chunk);
                             })
                             .await;
                         AppLogger::i(
@@ -1835,6 +1860,7 @@ impl MessageProcessingDelegate {
                 chatId: request.chatId,
                 messageText: request.requestMessageContent,
                 chatHistory: request.requestHistory,
+                promptHistoryOverride: None,
                 workspacePath: request.workspacePath,
                 promptFunctionType: request.promptFunctionType,
                 roleCardId: request.roleCardId,
@@ -1856,6 +1882,7 @@ impl MessageProcessingDelegate {
                 isAutoContinuation: false,
                 assistantMessageTimestamp: None,
                 executionGeneration: None,
+                executionSegmentIndex: None,
                 turnOptions: ChatTurnOptions {
                     persistTurn: false,
                     ..ChatTurnOptions::default()
@@ -1947,6 +1974,83 @@ impl Default for MessageProcessingDelegate {
             FunctionalConfigManager::new(rootDir.clone()),
             ModelConfigManager::new(rootDir),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_model::MessagePart::MessagePartKind;
+
+    /// Verifies that a handoff snapshot keeps prior protocol parts and the active segment.
+    #[test]
+    fn handoff_snapshot_appends_active_segment_to_existing_assistant_protocol() {
+        let timestamp = 42_100;
+        let prefix = concat!(
+            "<think>first segment</think>",
+            "第一个设备准备切换。",
+            "<tool_AAAA name=\"switch_core\">",
+            "<param name=\"node_id\">android-node</param>",
+            "</tool_AAAA>",
+            "<tool_result name=\"switch_core\" status=\"success\">",
+            "<content>android-node</content>",
+            "</tool_result>"
+        );
+        let activeSegment = concat!(
+            "<think>second segment</think>",
+            "第二个设备继续切换。",
+            "<tool_BBBB name=\"switch_core\">",
+            "<param name=\"node_id\">windows-node</param>",
+            "</tool_BBBB>",
+            "<tool_result name=\"switch_core\" status=\"success\">",
+            "<content>windows-node</content>",
+            "</tool_result>",
+            "切换完成。"
+        );
+        let message = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(),
+            prefix.to_string(),
+            timestamp,
+        );
+
+        let snapshot = assistantMessageWithHandoffProtocolSnapshot(message, Some(activeSegment))
+            .expect("handoff assistant protocol snapshot must parse");
+
+        let toolCallCount = snapshot
+            .parts
+            .iter()
+            .filter(|part| part.kind == MessagePartKind::ToolCall)
+            .count();
+        let toolResultCount = snapshot
+            .parts
+            .iter()
+            .filter(|part| part.kind == MessagePartKind::ToolResult)
+            .count();
+        let toolNames = snapshot
+            .parts
+            .iter()
+            .filter(|part| part.kind == MessagePartKind::ToolCall)
+            .map(|part| part.toolName.as_deref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(snapshot.timestamp, timestamp);
+        assert_eq!(toolCallCount, 2);
+        assert_eq!(toolResultCount, 2);
+        assert_eq!(toolNames, vec![Some("switch_core"), Some("switch_core")]);
+        assert_eq!(
+            snapshot
+                .parts
+                .iter()
+                .filter(|part| part.kind == MessagePartKind::Markdown)
+                .map(|part| part.content.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "",
+                "第一个设备准备切换。",
+                "第二个设备继续切换。",
+                "切换完成。"
+            ]
+        );
     }
 }
 

@@ -50,8 +50,7 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
             ));
             output.push_str(&format!(
                 "        {}::new(&mut self.client, {}, std::collections::BTreeMap::new())\n",
-                proxy_type,
-                object.object_id
+                proxy_type, object.object_id
             ));
         }
         output.push_str("    }\n\n");
@@ -63,7 +62,9 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         output.push_str(&format!("pub struct {}<'a, C> {{\n", proxy_type));
         output.push_str("    client: &'a mut C,\n");
         output.push_str("    target_object_id: u32,\n");
-        output.push_str("    object_args: std::collections::BTreeMap<String, operit_link::CoreValue>,\n");
+        output.push_str(
+            "    object_args: std::collections::BTreeMap<String, operit_link::CoreValue>,\n",
+        );
         output.push_str("}\n\n");
         output.push_str(&format!(
             "impl<'a, C: operit_link::CoreLinkClient> {}<'a, C> {{\n",
@@ -102,7 +103,8 @@ pub(crate) fn render_generated_proxy(objects: &[SourceObject]) -> String {
         if object.has_proxy_snapshot_watch_methods() {
             output.push_str("    async fn watchGenerated<T: serde::de::DeserializeOwned>(&mut self, propertyName: &str, args: operit_link::CoreValue) -> Result<T, operit_link::CoreLinkError> {\n");
             output.push_str("        let event = self.client.watchSnapshot(operit_link::CoreWatchRequest::new(operit_rslink_runtime::generated_proxy_request_id(), self.target_object_id, propertyName, self.generatedArgs(args))).await?;\n");
-            output.push_str("        operit_rslink_runtime::from_core_response_value(event.value)\n");
+            output
+                .push_str("        operit_rslink_runtime::from_core_response_value(event.value)\n");
             output.push_str("    }\n\n");
         }
         for method in object
@@ -248,7 +250,6 @@ fn render_proxy_factory_method(objects: &[SourceObject], method: &SourceMethod) 
     output
 }
 
-
 fn render_proxy_call_method(method: &SourceMethod) -> String {
     let params = render_proxy_params(method);
     let args_json = render_proxy_args_json(method);
@@ -275,8 +276,7 @@ fn render_proxy_watch_method(object: &SourceObject, method: &SourceMethod) -> St
         return String::new();
     };
     match &watch.stream {
-        WatchStreamProtocol::JsonStream
-        | WatchStreamProtocol::StringStream => {
+        WatchStreamProtocol::JsonStream | WatchStreamProtocol::StringStream => {
             let params = render_proxy_params(method);
             let args_json = render_proxy_args_json(method);
             let method_code = format!(
@@ -380,7 +380,10 @@ fn render_proxy_arg_core_value_expr(arg: &SourceArg) -> String {
     } else if arg.ty == "&std::path::Path" {
         format!("operit_rslink_runtime::to_named_core_arg_value({:?}, {}.to_string_lossy().to_string())?", arg.name, arg.name)
     } else {
-        format!("operit_rslink_runtime::to_named_core_arg_value({:?}, {})?", arg.name, arg.name)
+        format!(
+            "operit_rslink_runtime::to_named_core_arg_value({:?}, {})?",
+            arg.name, arg.name
+        )
     }
 }
 
@@ -422,6 +425,3 @@ fn doc_comment_suffix(line: &str) -> String {
         format!(" {line}")
     }
 }
-
-
-

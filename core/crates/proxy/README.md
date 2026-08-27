@@ -15,3 +15,5 @@ This domain is separate from node route generation. Proxy generation is root-reg
 ## Boundary
 
 Proxy crates use the shared link value protocol for local calls. They should not become owners of router, space runtime, access server, or peer-link lifecycle.
+
+Generated local proxy dispatch must not query route runtime state or decide whether a call/watch crosses nodes. Rust-internal route wrappers own that decision.

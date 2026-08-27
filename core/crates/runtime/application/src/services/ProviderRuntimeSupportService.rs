@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use operit_link::CoreHandoffRequest;
 use operit_model::FunctionType::FunctionType;
 use operit_model::MemorySearchConfig::MemorySearchConfig;
 use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
@@ -13,10 +14,8 @@ use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
 use operit_providers::runtime_support::{
     ProviderCharacterPromptContext, ProviderFunctionModelBinding, ProviderMessageTiming,
     ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
-    ProviderRuntimeSupportFuture,
-    ProviderToolPkgAiProviderRegistration,
+    ProviderRuntimeSupportFuture, ProviderToolPkgAiProviderRegistration,
 };
-use operit_link::{CoreHandoffRequest, CoreHandoffSegment};
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 
@@ -48,7 +47,7 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     fn handoffCoreAtBoundary<'a>(
         &'a self,
         request: CoreHandoffRequest,
-    ) -> ProviderRuntimeSupportFuture<'a, Result<CoreHandoffSegment, String>> {
+    ) -> ProviderRuntimeSupportFuture<'a, Result<(), String>> {
         let runtimeSupport = self.tool_handler.runtimeSupport();
         Box::pin(async move { runtimeSupport.handoffCoreAtBoundary(request).await })
     }

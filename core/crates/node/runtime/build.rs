@@ -53,9 +53,15 @@ fn scan_source_tree(
                 let Some(binding) = route_binding(&function.attrs) else {
                     continue;
                 };
-                let targetType = generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
+                let targetType =
+                    generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
                 let routeKind = route_kind(&function.sig.output);
-                declarations.insert((function.sig.ident.to_string(), binding, targetType, routeKind));
+                declarations.insert((
+                    function.sig.ident.to_string(),
+                    binding,
+                    targetType,
+                    routeKind,
+                ));
             }
         }
     }
@@ -102,7 +108,9 @@ fn route_binding(attributes: &[syn::Attribute]) -> Option<String> {
         return None;
     };
     let arguments = meta_list
-        .parse_args_with(syn::punctuated::Punctuated::<MetaNameValue, syn::Token![,]>::parse_terminated)
+        .parse_args_with(
+            syn::punctuated::Punctuated::<MetaNameValue, syn::Token![,]>::parse_terminated,
+        )
         .ok()?;
     arguments.into_iter().find_map(|argument| {
         let argument_name = argument.path.segments.last()?.ident.to_string();
@@ -112,7 +120,11 @@ fn route_binding(attributes: &[syn::Attribute]) -> Option<String> {
         let Expr::Path(expression) = argument.value else {
             return None;
         };
-        expression.path.segments.last().map(|segment| segment.ident.to_string())
+        expression
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
     })
 }
 
@@ -127,8 +139,12 @@ fn route_kind(output: &ReturnType) -> String {
 
 /// Returns whether a route return type is a StateFlow.
 fn return_type_is_state_flow(output: &ReturnType) -> bool {
-    let ReturnType::Type(_, ty) = output else { return false; };
-    let Type::Path(path) = ty.as_ref() else { return false; };
+    let ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    let Type::Path(path) = ty.as_ref() else {
+        return false;
+    };
     path.path
         .segments
         .last()
@@ -156,40 +172,55 @@ fn render_route_catalog(declarations: &BTreeSet<(String, String, String, String)
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
-    output.push_str("/// Resolves one annotation-generated Space route from a standard Link call request.\n");
+    output.push_str(
+        "/// Resolves one annotation-generated Space route from a standard Link call request.\n",
+    );
     output.push_str("pub fn generated_space_call_route(request: &operit_link::CoreCallRequest) -> Option<GeneratedSpaceRoute> { if request.targetObjectId == operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(request.targetObjectId, &request.methodName) } }\n\n");
-    output.push_str("/// Resolves one annotation-generated Space route from a standard Link watch request.\n");
+    output.push_str(
+        "/// Resolves one annotation-generated Space route from a standard Link watch request.\n",
+    );
     output.push_str("pub fn generated_space_watch_route(request: &operit_link::CoreWatchRequest) -> Option<GeneratedSpaceRoute> { if request.targetObjectId == operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID { generated_space_route_for_method(&request.propertyName) } else { generated_space_route_for_id(request.targetObjectId, &request.propertyName) } }\n\n");
-    output.push_str("/// Resolves one annotation-generated Space route from a standard Link push request.\n");
+    output.push_str(
+        "/// Resolves one annotation-generated Space route from a standard Link push request.\n",
+    );
     output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { if request.targetObjectId == operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(request.targetObjectId, &request.methodName) } }\n\n");
-    output.push_str("/// Dispatches one generated Space call on the runtime's main ChatServiceCore.\n");
+    output.push_str(
+        "/// Dispatches one generated Space call on the runtime's main ChatServiceCore.\n",
+    );
     output.push_str("pub async fn generated_space_call_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.methodName.as_str() {\n");
     for (method, _binding, _targetType, routeKind) in declarations {
         if routeKind == "call" {
-            output.push_str(&format!("        {method:?} => core.__operit_core_route_call_{method}(request).await,\n"));
+            output.push_str(&format!(
+                "        {method:?} => core.__operit_core_route_call_{method}(request).await,\n"
+            ));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.registryKey())),\n    }\n}\n\n");
-    output.push_str("/// Reads one generated Space watch snapshot on the runtime's main ChatServiceCore.\n");
-    output.push_str("pub fn generated_space_watch_snapshot_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
+    output.push_str(
+        "/// Reads one generated Space watch snapshot on the runtime's main ChatServiceCore.\n",
+    );
+    output.push_str("pub async fn generated_space_watch_snapshot_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
     for (method, _binding, _targetType, routeKind) in declarations {
         if routeKind == "watch" {
-            output.push_str(&format!("        {method:?} => core.__operit_core_route_watch_snapshot_{method}(request),\n"));
+            output.push_str(&format!("        {method:?} => core.__operit_core_route_watch_snapshot_{method}(request).await,\n"));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
     output.push_str("/// Opens one generated Space watch on the runtime's main ChatServiceCore.\n");
-    output.push_str("pub fn generated_space_watch_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
+    output.push_str("pub async fn generated_space_watch_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
     for (method, _binding, _targetType, routeKind) in declarations {
         if routeKind == "watch" {
-            output.push_str(&format!("        {method:?} => core.__operit_core_route_watch_{method}(request),\n"));
+            output.push_str(&format!(
+                "        {method:?} => core.__operit_core_route_watch_{method}(request, attachmentAdopter).await,\n"
+            ));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
-    output.push_str("/// Resolves one request using route declarations from runtime annotations.\n");
+    output
+        .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
     output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");
     output.push_str("    let bindingArgument = match methodName {\n");
     for (method, binding, _, _) in declarations {
@@ -202,11 +233,17 @@ fn render_route_catalog(declarations: &BTreeSet<(String, String, String, String)
     output.push_str("    let key = match value {\n        operit_link::CoreValue::String(key) => key,\n        operit_link::CoreValue::Null => return Ok(GeneratedCoreRoute::Local),\n        _ => return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_INVALID\", \"Binding key must be a string\")),\n    };\n");
     output.push_str("    if key.trim().is_empty() { return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_REQUIRED\", \"Binding requires a non-empty key\")); }\n");
     output.push_str("    Ok(GeneratedCoreRoute::Binding { scope: 0, key: key.clone() })\n}\n\n");
-    output.push_str("/// Resolves one call request using route declarations from runtime annotations.\n");
+    output.push_str(
+        "/// Resolves one call request using route declarations from runtime annotations.\n",
+    );
     output.push_str("pub fn generated_core_call_route(request: &operit_link::CoreCallRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.methodName, &request.args) }\n\n");
-    output.push_str("/// Resolves one watch request using route declarations from runtime annotations.\n");
+    output.push_str(
+        "/// Resolves one watch request using route declarations from runtime annotations.\n",
+    );
     output.push_str("pub fn generated_core_watch_route(request: &operit_link::CoreWatchRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.propertyName, &request.args) }\n\n");
-    output.push_str("/// Resolves one push request using route declarations from runtime annotations.\n");
+    output.push_str(
+        "/// Resolves one push request using route declarations from runtime annotations.\n",
+    );
     output.push_str("pub fn generated_core_push_route(request: &operit_link::CorePushRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.methodName, &request.args) }\n");
     output
 }

@@ -10,8 +10,8 @@ use operit_host_api::{
 use wasm_bindgen::JsValue;
 
 use crate::common::{
-    bytes_to_js, call_terminal, js_i64, js_usize, read_bool_property,
-    read_i32_property, read_string_property,
+    bytes_to_js, call_terminal, js_i64, js_usize, read_bool_property, read_i32_property,
+    read_string_property,
 };
 
 const PLATFORM: &str = "web-linux-vm";
@@ -207,15 +207,14 @@ impl TerminalHost for WebTerminalHost {
         if let Some(session) = existing {
             return Ok(session);
         }
-        let sessionId =
-            self.startPtySession(
-                &normalizedSessionName,
-                TERMINAL,
-                SHELL_TERMINAL_TYPE,
-                "/",
-                24,
-                80,
-            )?;
+        let sessionId = self.startPtySession(
+            &normalizedSessionName,
+            TERMINAL,
+            SHELL_TERMINAL_TYPE,
+            "/",
+            24,
+            80,
+        )?;
         Ok(TerminalSessionInfo {
             sessionId,
             sessionName: normalizedSessionName,

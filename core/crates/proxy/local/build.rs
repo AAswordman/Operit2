@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use operit_proxy_scan::{scan_core_proxy, CoreProxyScanConfig};
 use operit_proxy_dart_codegen::write_dart_proxy_artifacts;
 use operit_proxy_rust_codegen::write_rust_proxy_artifacts;
+use operit_proxy_scan::{scan_core_proxy, CoreProxyScanConfig};
 
 /// Runs the reusable core-app proxy code generator for this crate.
 fn main() {

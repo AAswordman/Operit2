@@ -28,6 +28,7 @@ futures-util = "0.3"
 operit-node-runtime = { path = "../../../../core/crates/node/runtime" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 operit-access-runtime = { path = "../../../../core/crates/access/runtime" }
+operit-core-application = { path = "../../../../core/crates/application/core" }
 hmac = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

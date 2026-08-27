@@ -1,0 +1,14 @@
+[package]
+name = "operit-core-application"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+operit-access-runtime = { path = "../../access/runtime" }
+operit-host-api = { path = "../../foundation/host-api" }
+operit-link = { path = "../../foundation/link" }
+operit-node-runtime = { path = "../../node/runtime" }
+operit-proxy-local = { path = "../../proxy/local" }
+operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"] }

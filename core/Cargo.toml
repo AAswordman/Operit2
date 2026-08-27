@@ -22,6 +22,7 @@ members = [
     "crates/proxy/dart-codegen",
     "crates/proxy/bridge",
     "crates/proxy/local",
+    "crates/application/core",
     "crates/command/core"
 ]
 resolver = "2"

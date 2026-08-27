@@ -353,13 +353,9 @@ mod native_call_codec_tests {
             operit_link::CoreValue::String("click".to_string())
         );
 
-        let snapshot = operit_link::encodeLink((
-            "watch-1",
-            8u32,
-            "cards",
-            operit_link::CoreValue::Null,
-        ))
-        .expect("compact watch snapshot must encode");
+        let snapshot =
+            operit_link::encodeLink(("watch-1", 8u32, "cards", operit_link::CoreValue::Null))
+                .expect("compact watch snapshot must encode");
         let snapshot_request = decode_native_watch_snapshot_request(&snapshot)
             .expect("compact watch snapshot must decode");
         assert_eq!(snapshot_request.requestId.0, "watch-1");
@@ -443,13 +439,7 @@ mod native_call_codec_tests {
         let snapshot = native_result_vec(Ok(native_watch_event_payload(event.clone())));
         let (status, payload): (
             u8,
-            (
-                Option<String>,
-                u32,
-                String,
-                String,
-                operit_link::CoreValue,
-            ),
+            (Option<String>, u32, String, String, operit_link::CoreValue),
         ) = operit_link::decodeLink(&snapshot).expect("compact watch snapshot must decode");
         assert_eq!(status, 0);
         assert_eq!(payload.0.as_deref(), Some("watch-1"));
@@ -460,13 +450,7 @@ mod native_call_codec_tests {
         let frame = native_watch_event_vec("subscription-1", event);
         let (subscription_id, frame_payload): (
             String,
-            (
-                Option<String>,
-                u32,
-                String,
-                String,
-                operit_link::CoreValue,
-            ),
+            (Option<String>, u32, String, String, operit_link::CoreValue),
         ) = operit_link::decodeLink(&frame).expect("compact watch frame must decode");
         assert_eq!(subscription_id, "subscription-1");
         assert_eq!(frame_payload.0.as_deref(), Some("watch-1"));
@@ -986,5 +970,3 @@ fn string_to_ptr(value: impl Into<String>) -> *mut c_char {
         .expect("sanitized bridge string must not contain nul")
         .into_raw()
 }
-
-

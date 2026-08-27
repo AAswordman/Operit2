@@ -3,7 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use operit_proxy_local::LocalCoreProxy;
+use operit_access_runtime::RemoteDeviceInfo;
+use operit_core_application::{CoreApplication, CoreApplicationConfig};
 use operit_host_api::HostManager::HostManager;
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
@@ -45,7 +46,7 @@ use operit_host_windows_native::{
     WindowsSystemOperationHost as NativeSystemOperationHost,
     WindowsTerminalHost as NativeTerminalHost, WindowsWebVisitHost as NativeWebVisitHost,
 };
-use operit_access_runtime::LinkAccessStore;
+use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -53,8 +54,8 @@ use uuid::Uuid;
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 compile_error!("operit2 CLI host is implemented for Windows, Linux, and macOS.");
 
-/// Creates the CLI application with the configured runtime and workspace roots.
-pub(crate) fn create_cli_application() -> OperitApplication {
+/// Creates the CLI host manager with the configured runtime and workspace roots.
+pub(crate) fn create_cli_host_manager() -> HostManager {
     let storageConfig = CliStorageConfig::read();
     let (runtimeRoot, workspaceRoot) = storageConfig.activeRoots();
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
@@ -100,29 +101,43 @@ pub(crate) fn create_cli_application() -> OperitApplication {
         context.withHostJavaScriptRuntimeHost(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
     context = context.withBrowserAutomationHost(Arc::new(NativeBrowserAutomationHost::new()));
     let commandContext = context.clone();
-    OperitApplication::newWithContext(context.withCoreCommandExecutor(Arc::new(
-        move |args: Vec<String>| {
-            let output =
-                operit_command_core::run_core_command_with_context(commandContext.clone(), &args)?;
-            persist_cli_storage_config(&output.stdout)?;
-            Ok(output.stdout)
-        },
-    )))
+    context.withCoreCommandExecutor(Arc::new(move |args: Vec<String>| {
+        let output =
+            operit_command_core::run_core_command_with_context(commandContext.clone(), &args)?;
+        persist_cli_storage_config(&output.stdout)?;
+        Ok(output.stdout)
+    }))
 }
 
-/// Creates the local core proxy used by CLI commands and services.
-pub(crate) fn create_local_core() -> LocalCoreProxy {
-    LocalCoreProxy::new(create_cli_application())
+/// Creates the CLI application with the configured runtime and workspace roots.
+pub(crate) fn create_cli_application() -> OperitApplication {
+    OperitApplication::newWithContext(create_cli_host_manager())
 }
 
-/// Creates the runtime-owned Link Access repository for CLI commands.
-pub(crate) fn create_cli_link_access_store() -> LinkAccessStore {
-    let storageConfig = CliStorageConfig::read();
-    let (runtimeRoot, workspaceRoot) = storageConfig.activeRoots();
-    LinkAccessStore::new(Arc::new(NativeRuntimeStorageHost::new(
-        runtimeRoot,
-        workspaceRoot,
-    )))
+/// Starts the unified Core application tree for CLI commands.
+pub(crate) async fn create_cli_core_application(
+    deviceName: &str,
+) -> Result<CoreApplication, String> {
+    CoreApplication::start(CoreApplicationConfig::new(
+        create_cli_host_manager(),
+        RemoteDeviceInfo::nativeCli(deviceName)?,
+    ))
+    .await
+}
+
+/// Starts the CLI Core tree after configuring its local client.
+pub(crate) async fn create_cli_core_application_configured(
+    deviceName: &str,
+    configurator: impl FnOnce(&mut LocalCoreProxy) -> Result<(), String> + Send + 'static,
+) -> Result<CoreApplication, String> {
+    CoreApplication::start(
+        CoreApplicationConfig::new(
+            create_cli_host_manager(),
+            RemoteDeviceInfo::nativeCli(deviceName)?,
+        )
+        .withLocalClientConfigurator(configurator),
+    )
+    .await
 }
 
 /// Describes one isolated CLI identity stored outside the active runtime root.

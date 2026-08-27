@@ -1397,9 +1397,7 @@ fn normalizeAndroidTerminalType(terminalType: &str) -> HostResult<String> {
 fn requireAndroidTerminal(terminal: &str, terminalType: &str) -> HostResult<String> {
     let normalizedTerminalType = normalizeAndroidTerminalType(terminalType)?;
     match (terminal.trim(), normalizedTerminalType.as_str()) {
-        (PROOT_TERMINAL, "bash") | (ANDROID_SYSTEM_TERMINAL, "shell") => {
-            Ok(normalizedTerminalType)
-        }
+        (PROOT_TERMINAL, "bash") | (ANDROID_SYSTEM_TERMINAL, "shell") => Ok(normalizedTerminalType),
         (implementation, terminalType) => Err(HostError::new(format!(
             "Unsupported Android terminal implementation and type: {implementation}/{terminalType}"
         ))),

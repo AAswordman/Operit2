@@ -12,19 +12,47 @@ tokio::task_local! {
 /// Provides the Rust-internal route gate used by annotation-generated wrappers.
 pub trait CoreRouteRuntime: Send + Sync {
     /// Determines whether one annotated invocation targets another CoreNode.
-    fn shouldRoute(&self, methodName: &str, args: &crate::CoreValue) -> Result<bool, CoreLinkError>;
+    fn shouldRoute(&self, methodName: &str, args: &crate::CoreValue)
+        -> Result<bool, CoreLinkError>;
+
+    /// Determines whether one annotated watch should be owned by the route runtime.
+    #[allow(non_snake_case)]
+    fn shouldRouteWatch(
+        &self,
+        methodName: &str,
+        args: &crate::CoreValue,
+    ) -> Result<bool, CoreLinkError> {
+        self.shouldRoute(methodName, args)
+    }
+
+    /// Determines whether one annotated watch should begin from the already borrowed local Core source.
+    #[allow(non_snake_case)]
+    fn shouldUseLocalWatchSource(
+        &self,
+        _methodName: &str,
+        _args: &crate::CoreValue,
+    ) -> Result<bool, CoreLinkError> {
+        Ok(false)
+    }
 
     /// Routes one annotated asynchronous call through the active CoreNode graph.
-    fn call(
-        &self,
-        request: CoreCallRequest,
-    ) -> Pin<Box<dyn Future<Output = CoreCallResponse>>>;
+    fn call(&self, request: CoreCallRequest) -> Pin<Box<dyn Future<Output = CoreCallResponse>>>;
 
     /// Routes one annotated StateFlow watch through the active CoreNode graph.
     fn watch(
         &self,
         request: CoreWatchRequest,
     ) -> Pin<Box<dyn Future<Output = Result<CoreEventStream, CoreLinkError>>>>;
+
+    /// Routes one annotated StateFlow watch while carrying a local source opened by the wrapper.
+    #[allow(non_snake_case)]
+    fn watchWithLocalSource(
+        &self,
+        request: CoreWatchRequest,
+        _localStream: CoreEventStream,
+    ) -> Pin<Box<dyn Future<Output = Result<CoreEventStream, CoreLinkError>>>> {
+        self.watch(request)
+    }
 }
 
 static CORE_ROUTE_RUNTIME: OnceLock<RwLock<Option<Arc<dyn CoreRouteRuntime>>>> = OnceLock::new();

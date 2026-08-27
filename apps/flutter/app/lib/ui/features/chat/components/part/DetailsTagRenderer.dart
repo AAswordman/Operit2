@@ -11,11 +11,13 @@ class DetailsTagRenderer extends StatefulWidget {
     required this.xmlContent,
     required this.textColor,
     required this.isStreaming,
+    required this.splitMarkdownContent,
   });
 
   final String xmlContent;
   final Color textColor;
   final bool isStreaming;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   State<DetailsTagRenderer> createState() => _DetailsTagRendererState();
@@ -64,6 +66,7 @@ class _DetailsTagRendererState extends State<DetailsTagRenderer> {
                       textColor: widget.textColor.withValues(alpha: 0.85),
                       backgroundColor: Theme.of(context).colorScheme.surface,
                       selectionRoot: false,
+                      splitMarkdownContent: widget.splitMarkdownContent,
                     ),
                   )
                 : const SizedBox.shrink(

@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use operit_link::{
     decodeLink, encodeLink, fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse,
-    CoreEvent, CoreEventKind, CorePushItem, CorePushRequest, CoreRequestId,
-    CoreValue,
+    CoreEvent, CoreEventKind, CorePushItem, CorePushRequest, CoreRequestId, CoreValue,
 };
 use serde::{Deserialize, Serialize};
 
@@ -152,4 +151,3 @@ fn integer_vectors_remain_message_pack_arrays() {
 
     assert_eq!(bytes, vec![0x92, 1, 2]);
 }
-

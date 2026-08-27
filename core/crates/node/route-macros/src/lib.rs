@@ -91,35 +91,64 @@ fn expand_core_route(
     let watch_snapshot_helper_name =
         format_ident!("__operit_core_route_watch_snapshot_{}", original_name);
     let watch_helper_name = format_ident!("__operit_core_route_watch_{}", original_name);
-    let route_arg_entries = argument_names.iter().map(|name| {
-        quote! {
-            operit_rslink_runtime::core_arg_entry(stringify!(#name), &#name)
-                .expect("annotated route argument must be serializable")
-        }
-    }).collect::<Vec<_>>();
+    let route_arg_entries = argument_names
+        .iter()
+        .map(|name| {
+            quote! {
+                operit_rslink_runtime::core_arg_entry(stringify!(#name), &#name)
+                    .expect("annotated route argument must be serializable")
+            }
+        })
+        .collect::<Vec<_>>();
     let route_args_value = quote! {
         operit_rslink_runtime::core_route_args(vec![#(#route_arg_entries),*])
     };
     let route_call_decode = route_call_decode(&function.sig.output);
     let route_wrapper_body = if return_type_is_state_flow(&function.sig.output) {
         let remote_flow = quote! {
-            let __core_route_flow = operit_rslink_runtime::core_route_state_flow(
-                __core_route_runtime.as_ref(),
+            match operit_rslink_runtime::core_route_state_flow(
+                __core_route_runtime.clone(),
                 stringify!(#original_name),
                 __core_route_args_value,
             )
                 .await
-                .expect("annotated route watch failed");
-            return __core_route_flow;
+            {
+                Ok(__core_route_flow) => return __core_route_flow,
+                Err(__core_route_error) => panic!(
+                    "annotated route watch failed: {:?}",
+                    __core_route_error
+                ),
+            }
+        };
+        let local_source_flow = quote! {
+            match operit_rslink_runtime::core_route_state_flow_with_local_source(
+                __core_route_runtime.clone(),
+                stringify!(#original_name),
+                __core_route_args_value,
+                #call_expression,
+            )
+                .await
+            {
+                Ok(__core_route_flow) => return __core_route_flow,
+                Err(__core_route_error) => panic!(
+                    "annotated route watch with local source failed: {:?}",
+                    __core_route_error
+                ),
+            }
         };
         if function.sig.asyncness.is_some() {
             quote! {
                 if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {
                     let __core_route_args_value = #route_args_value;
                     if __core_route_runtime
-                        .shouldRoute(stringify!(#original_name), &__core_route_args_value)
+                        .shouldRouteWatch(stringify!(#original_name), &__core_route_args_value)
                         .expect("annotated route resolution failed") {
                         #remote_flow
+                    }
+                    if __core_route_runtime
+                        .shouldUseLocalWatchSource(stringify!(#original_name), &__core_route_args_value)
+                        .expect("annotated route local source resolution failed") {
+                        #local_source_flow
                     }
                 }
                 #call_expression
@@ -205,28 +234,34 @@ fn render_route_helpers(
             },
         })
         .collect::<Vec<_>>();
-    let decode_statements = argument_specs.iter().map(|(name, ty)| {
-        let wire_type = owned_decode_type(ty);
-        let call_expression = if matches!(ty.as_ref(), Type::Reference(_)) {
-            quote! { &#name }
-        } else {
-            quote! { #name }
-        };
-        quote! {
-            let #name: #wire_type = operit_rslink_runtime::decode_core_arg(
-                &mut __core_args,
-                stringify!(#name),
-            )?;
-            let _ = &#call_expression;
-        }
-    }).collect::<Vec<_>>();
-    let call_arguments = argument_specs.iter().map(|(name, ty)| {
-        if matches!(ty.as_ref(), Type::Reference(_)) {
-            quote! { &#name }
-        } else {
-            quote! { #name }
-        }
-    }).collect::<Vec<_>>();
+    let decode_statements = argument_specs
+        .iter()
+        .map(|(name, ty)| {
+            let wire_type = owned_decode_type(ty);
+            let call_expression = if matches!(ty.as_ref(), Type::Reference(_)) {
+                quote! { &#name }
+            } else {
+                quote! { #name }
+            };
+            quote! {
+                let #name: #wire_type = operit_rslink_runtime::decode_core_arg(
+                    &mut __core_args,
+                    stringify!(#name),
+                )?;
+                let _ = &#call_expression;
+            }
+        })
+        .collect::<Vec<_>>();
+    let call_arguments = argument_specs
+        .iter()
+        .map(|(name, ty)| {
+            if matches!(ty.as_ref(), Type::Reference(_)) {
+                quote! { &#name }
+            } else {
+                quote! { #name }
+            }
+        })
+        .collect::<Vec<_>>();
     let call_expression = if function.sig.asyncness.is_some() {
         quote! { self.#local_name(#(#call_arguments),*).await }
     } else {
@@ -267,7 +302,7 @@ fn render_route_helpers(
     };
     let watch_snapshot_helper = quote! {
         #[doc(hidden)]
-        pub fn #watch_snapshot_helper_name(
+        pub async fn #watch_snapshot_helper_name(
             &mut self,
             request: &operit_link::CoreWatchRequest,
         ) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {
@@ -278,14 +313,21 @@ fn render_route_helpers(
     };
     let watch_helper = quote! {
         #[doc(hidden)]
-        pub fn #watch_helper_name(
+        pub async fn #watch_helper_name(
             &mut self,
             request: operit_link::CoreWatchRequest,
+            attachmentAdopter: std::sync::Arc<
+                dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync,
+            >,
         ) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {
             let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;
             #(#decode_statements)*
             let state_flow = #watch_expression;
-            operit_rslink_runtime::core_route_state_flow_event_stream(state_flow, request)
+            operit_rslink_runtime::core_state_flow_event_stream(
+                state_flow,
+                request,
+                attachmentAdopter,
+            )
         }
     };
     quote! { #call_helper #watch_snapshot_helper #watch_helper }
@@ -330,10 +372,16 @@ fn render_return_encoding(output: &ReturnType) -> proc_macro2::TokenStream {
 
 /// Returns the two generic arguments of a Result type.
 fn result_arguments(ty: &Type) -> Option<(&Type, &Type)> {
-    let Type::Path(path) = ty else { return None; };
+    let Type::Path(path) = ty else {
+        return None;
+    };
     let segment = path.path.segments.last()?;
-    if segment.ident != "Result" { return None; }
-    let PathArguments::AngleBracketed(arguments) = &segment.arguments else { return None; };
+    if segment.ident != "Result" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
     let mut types = arguments.args.iter().filter_map(|argument| match argument {
         GenericArgument::Type(ty) => Some(ty),
         _ => None,
@@ -348,15 +396,27 @@ fn is_unit_type(ty: &Type) -> bool {
 
 /// Returns whether a type is the standard String type.
 fn is_string_type(ty: &Type) -> bool {
-    let Type::Path(path) = ty else { return false; };
-    path.path.segments.last().is_some_and(|segment| segment.ident == "String")
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "String")
 }
 
 /// Returns whether a method returns a StateFlow.
 fn return_type_is_state_flow(output: &ReturnType) -> bool {
-    let ReturnType::Type(_, ty) = output else { return false; };
-    let Type::Path(path) = ty.as_ref() else { return false; };
-    path.path.segments.last().is_some_and(|segment| segment.ident == "StateFlow")
+    let ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+    let Type::Path(path) = ty.as_ref() else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "StateFlow")
 }
 
 /// Decodes one routed call response into the annotated method's declared return type.

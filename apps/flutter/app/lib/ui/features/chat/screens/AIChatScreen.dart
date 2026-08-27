@@ -1161,7 +1161,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       );
     });
     _scheduleScrollToBottom();
-    _sendMessageAfterNextFrame(text);
+    _sendMessageAfterNextFrame(text, _currentChatId!);
   }
 
   /// Schedules one automatic alignment with the latest message for this frame.
@@ -1197,13 +1197,18 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     });
   }
 
-  void _sendMessageAfterNextFrame(String text) {
+  /// Sends the submitted text after layout has accepted the optimistic UI state.
+  void _sendMessageAfterNextFrame(String text, String chatId) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
       _viewModel
-          .sendUserMessage(text, replyToMessage: _replyToMessage)
+          .sendUserMessage(
+            text,
+            replyToMessage: _replyToMessage,
+            chatIdOverride: chatId,
+          )
           .then((_) async {
             _replyToMessage = null;
             await _refreshAttachments();

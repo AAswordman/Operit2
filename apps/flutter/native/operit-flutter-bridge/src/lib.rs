@@ -30,18 +30,21 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use operit_proxy_local::LocalCoreProxy;
 #[cfg(not(target_arch = "wasm32"))]
-use operit_node_runtime::CoreNodeRouter::{
-    CoreNodeLocalRuntime, CoreNodeRouter,
-};
+use operit_core_application::CoreApplication;
+use operit_proxy_local::LocalCoreProxy;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod mdnss;
 
-use operit_host_api::HostManager::HostManager;
+#[cfg(not(target_arch = "wasm32"))]
+use operit_access_runtime::{
+    link_token_hash, LinkAccessHostConfig, RemoteDeviceInfo, RemoteLinkServer,
+    RemoteLinkServerConfig, RemoteWebAccessConfig,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::HostManager::HostManager;
 #[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::RuntimeStorageHost;
@@ -50,12 +53,6 @@ use operit_link::{
     CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest,
     CoreWatchRequest,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use operit_access_runtime::{
-    link_token_hash, LinkAccessHostConfig, LinkAccessHostPortMode, LinkAccessStore,
-    RemoteDeviceInfo, RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig,
-};
-use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerBrowserAutomation,
@@ -74,6 +71,8 @@ use operit_runtime::services::RuntimeHostInteractionService::{
     RuntimeHostInteractionTtsPlaybackPayload, RuntimeHostInteractionTtsSynthesisPayload,
     RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use operit_store::CoreSpaceStore::CoreSpaceStore;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
@@ -194,7 +193,8 @@ pub struct OperitFlutterBridge {
     pub(crate) runtime: tokio::runtime::Runtime,
     localCore: Arc<LocalCoreProxy>,
     #[cfg(not(target_arch = "wasm32"))]
-    chatRuntimeHolder: Arc<tokio::sync::Mutex<operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder>>,
+    chatRuntimeHolder:
+        Arc<tokio::sync::Mutex<operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder>>,
     runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) watchChannel: NativeWatchChannel,
@@ -205,6 +205,8 @@ pub struct OperitFlutterBridge {
     pub(crate) pushStreams: Mutex<HashMap<String, NativePushState>>,
     #[cfg(not(target_arch = "wasm32"))]
     webAccessTask: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    coreApplication: Mutex<Option<CoreApplication>>,
     #[cfg(not(target_arch = "wasm32"))]
     mdns: Mutex<Option<mdnss::MdnsHandle>>,
     #[cfg(any(
@@ -313,6 +315,11 @@ impl OperitFlutterBridge {
         let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
         let runtimeStorageHost = core.runtimeStorageHost();
         let localCore = Arc::new(core);
+        #[cfg(not(target_arch = "wasm32"))]
+        let coreApplication = CoreApplication::startWithSharedLocalClient(
+            localCore.clone(),
+            RemoteDeviceInfo::native(),
+        )?;
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
@@ -329,6 +336,8 @@ impl OperitFlutterBridge {
             pushStreams: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             webAccessTask: Mutex::new(None),
+            #[cfg(not(target_arch = "wasm32"))]
+            coreApplication: Mutex::new(Some(coreApplication)),
             #[cfg(not(target_arch = "wasm32"))]
             mdns: Mutex::new(None),
             #[cfg(any(
@@ -362,12 +371,6 @@ impl OperitFlutterBridge {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    /// Returns the Link Access store used for server identity and settings.
-    fn linkAccessStore(&self) -> LinkAccessStore {
-        LinkAccessStore::new(self.runtimeStorageHost.clone())
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     /// Starts the Access server with pairing control and the Space PeerLink carrier.
     fn startWebAccessServer(
         &self,
@@ -380,14 +383,29 @@ impl OperitFlutterBridge {
         enableDiscovery: bool,
     ) -> Result<String, String> {
         self.stopWebAccessServer();
-        let accessStore = self.linkAccessStore();
-        let identity = accessStore.initializeIdentity(deviceInfo)?;
+        let (accessStore, identity, nodeRouter, spaceStore) = {
+            let mut coreApplicationGuard = self
+                .coreApplication
+                .lock()
+                .map_err(|error| format!("CoreApplication lock poisoned: {error}"))?;
+            let coreApplication = coreApplicationGuard
+                .as_mut()
+                .expect("Flutter bridge CoreApplication must be initialized");
+            let identity = coreApplication.updateAccessIdentity(deviceInfo)?;
+            (
+                coreApplication.accessStore(),
+                identity,
+                coreApplication.nodeRouter(),
+                CoreSpaceStore::new(coreApplication.nodeRuntime().runtimeStorageHost()),
+            )
+        };
+        let savedHostConfig = accessStore.initializeHostConfig()?;
         accessStore.saveHostConfig(LinkAccessHostConfig {
             bindAddress: bindAddress.clone(),
             token: token.clone(),
             webAccessEnabled: enableWebAccess,
             discoveryEnabled: enableDiscovery,
-            portMode: LinkAccessHostPortMode::Fixed,
+            portMode: savedHostConfig.portMode,
             updatedAt: current_time_millis_u64() as i64,
         })?;
         let deviceId = identity.deviceId.clone();
@@ -415,6 +433,8 @@ impl OperitFlutterBridge {
         let listener_address: SocketAddr = bindAddress
             .parse()
             .map_err(|error| format!("invalid bind address: {error}"))?;
+        let presenceBaseUrl = webAccessPresenceBaseUrl(listener_address);
+        let presenceTokenHash = link_token_hash(&token);
         let runtimeStorageHost = self.runtimeStorageHost.clone();
         let webAccess = RemoteWebAccessConfig {
             token: token.clone(),
@@ -426,8 +446,6 @@ impl OperitFlutterBridge {
                     .map_err(|error| error.message)
             }),
         };
-        let localRuntime = self.localCoreRuntime();
-        let nodeRouter = CoreNodeRouter::new(localRuntime);
         let (serverStartSender, serverStartReceiver) = mpsc::channel();
         let task = self.runtime.spawn(async move {
             let listener = match tokio::net::TcpListener::bind(listener_address).await {
@@ -455,9 +473,18 @@ impl OperitFlutterBridge {
             )
             .await
         });
-        serverStartReceiver
+        let startResult = serverStartReceiver
             .recv()
-            .map_err(|error| format!("web access server start channel closed: {error}"))??;
+            .map_err(|error| format!("web access server start channel closed: {error}"))?;
+        if let Err(error) = startResult {
+            return Err(error);
+        }
+        spaceStore.writeLocalDevicePresence(
+            true,
+            presenceBaseUrl,
+            presenceTokenHash,
+            "1".to_string(),
+        )?;
         *self
             .webAccessTask
             .lock()
@@ -465,15 +492,15 @@ impl OperitFlutterBridge {
         Ok(deviceId)
     }
 
-    /// Builds the server-owned local runtime capability used by Space routing.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn localCoreRuntime(&self) -> CoreNodeLocalRuntime {
-        self.localCore.coreNodeLocalRuntime()
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     /// Stops the Access server and its discovery registration.
     fn stopWebAccessServer(&self) {
+        if let Err(error) = self.publishStoppedWebAccessPresence() {
+            operit_util::AppLogger::AppLogger::w(
+                "OperitFlutterBridge",
+                &format!("Web Access presence stop publish failed: {error}"),
+            );
+        }
         if let Some(task) = self
             .webAccessTask
             .lock()
@@ -487,6 +514,21 @@ impl OperitFlutterBridge {
                 let _ = mdns.unregister();
             }
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Publishes that this runtime no longer exposes its Link endpoint.
+    fn publishStoppedWebAccessPresence(&self) -> Result<(), String> {
+        let coreApplicationGuard = self
+            .coreApplication
+            .lock()
+            .map_err(|error| format!("CoreApplication lock poisoned: {error}"))?;
+        let coreApplication = coreApplicationGuard
+            .as_ref()
+            .expect("Flutter bridge CoreApplication must be initialized");
+        CoreSpaceStore::new(coreApplication.nodeRuntime().runtimeStorageHost())
+            .writeLocalDevicePresence(false, String::new(), String::new(), String::new())?;
+        Ok(())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -516,7 +558,6 @@ impl OperitFlutterBridge {
             Err(error) => serde_json::json!({"ok": false, "error": error.message}).to_string(),
         }
     }
-
 }
 
 /// Installs the asynchronous controller permission requester for every runtime.
@@ -570,6 +611,15 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
 
 fn current_time_millis_u64() -> u64 {
     operit_host_api::TimeUtils::currentTimeMillisU128().min(u64::MAX as u128) as u64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// Builds the Link endpoint text announced through synchronized device presence.
+fn webAccessPresenceBaseUrl(address: SocketAddr) -> String {
+    match address {
+        SocketAddr::V4(address) => format!("http://{}:{}", address.ip(), address.port()),
+        SocketAddr::V6(address) => format!("http://[{}]:{}", address.ip(), address.port()),
+    }
 }
 
 fn last_create_error() -> &'static Mutex<String> {

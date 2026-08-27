@@ -12,9 +12,9 @@ use syn::{
 mod build_platform_api_guard;
 mod build_scanner;
 
-pub use operit_rslink_codegen::*;
 use build_platform_api_guard::*;
 use build_scanner::*;
+pub use operit_rslink_codegen::*;
 use operit_rslink_codegen::*;
 
 /// Describes the explicit roots used by root-registered core-app proxy generation.
@@ -177,7 +177,14 @@ pub fn scan_core_proxy(config: CoreProxyScanConfig) -> CoreProxyScanOutput {
 
     let mut objects = object_specs
         .iter()
-        .map(|spec| scan_object(spec, &serializable_types, &deserializable_types, &type_registry))
+        .map(|spec| {
+            scan_object(
+                spec,
+                &serializable_types,
+                &deserializable_types,
+                &type_registry,
+            )
+        })
         .collect::<Vec<_>>();
     let factory_specs = discover_factory_object_specs(
         &objects,
@@ -192,7 +199,12 @@ pub fn scan_core_proxy(config: CoreProxyScanConfig) -> CoreProxyScanOutput {
         println!("cargo:rerun-if-changed={}", spec.source_path.display());
     }
     objects.extend(factory_specs.iter().map(|spec| {
-        scan_object(spec, &serializable_types, &deserializable_types, &type_registry)
+        scan_object(
+            spec,
+            &serializable_types,
+            &deserializable_types,
+            &type_registry,
+        )
     }));
     objects.sort_by(|left, right| left.schema_key.cmp(&right.schema_key));
     for (object_id, object) in objects.iter_mut().enumerate() {

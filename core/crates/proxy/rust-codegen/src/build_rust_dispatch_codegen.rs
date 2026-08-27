@@ -13,7 +13,8 @@ pub(crate) fn render_object_call_dispatch(
         object.dispatch_name, object.full_type
     ));
     output.push_str("    let registryKey = request.registryKey();\n");
-    output.push_str("    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n");
+    output
+        .push_str("    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n");
     output.push_str("    match request.methodName.as_str() {\n");
     for method in object
         .methods
@@ -43,7 +44,8 @@ pub(crate) fn render_object_sync_call_dispatch(
         object.dispatch_name, object.full_type
     ));
     output.push_str("    let registryKey = request.registryKey();\n");
-    output.push_str("    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n");
+    output
+        .push_str("    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n");
     output.push_str("    match request.methodName.as_str() {\n");
     for method in object
         .methods
@@ -70,7 +72,36 @@ pub(crate) fn render_object_watch_snapshot_dispatch(object: &SourceObject) -> St
         object.dispatch_name, object.full_type
     ));
     output.push_str("    let registryKey = request.registryKey();\n");
-    output.push_str("    let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;\n");
+    output.push_str(
+        "    let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;\n",
+    );
+    output.push_str("    match request.propertyName.as_str() {\n");
+    for method in object.methods.iter().filter(|method| {
+        !method.is_async
+            && method
+                .watch_protocol()
+                .and_then(|watch| watch.snapshot_type.as_ref())
+                .is_some()
+    }) {
+        output.push_str(&render_watch_snapshot_arm(method, false));
+    }
+    output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&registryKey)),\n");
+    output.push_str("    }\n}\n");
+    output
+}
+
+pub(crate) fn render_object_watch_snapshot_async_dispatch(object: &SourceObject) -> String {
+    let mut output = String::new();
+    output.push_str(&render_object_item_cfg_attrs(object));
+    output.push_str("#[allow(unused_mut, unused_variables)]\n");
+    output.push_str(&format!(
+        "async fn generated_dispatch_{}_watch_snapshot_async(object: &mut {}, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n",
+        object.dispatch_name, object.full_type
+    ));
+    output.push_str("    let registryKey = request.registryKey();\n");
+    output.push_str(
+        "    let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;\n",
+    );
     output.push_str("    match request.propertyName.as_str() {\n");
     for method in object.methods.iter().filter(|method| {
         method
@@ -78,7 +109,7 @@ pub(crate) fn render_object_watch_snapshot_dispatch(object: &SourceObject) -> St
             .and_then(|watch| watch.snapshot_type.as_ref())
             .is_some()
     }) {
-        output.push_str(&render_watch_snapshot_arm(method));
+        output.push_str(&render_watch_snapshot_arm(method, true));
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&registryKey)),\n");
     output.push_str("    }\n}\n");
@@ -94,14 +125,41 @@ pub(crate) fn render_object_watch_dispatch(object: &SourceObject) -> String {
         object.dispatch_name, object.full_type
     ));
     output.push_str("    let registryKey = request.registryKey();\n");
-    output.push_str("    let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;\n");
+    output.push_str(
+        "    let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;\n",
+    );
+    output.push_str("    match request.propertyName.as_str() {\n");
+    for method in object
+        .methods
+        .iter()
+        .filter(|method| !method.is_async && method.watch_protocol().is_some())
+    {
+        output.push_str(&render_watch_stream_arm(method, false));
+    }
+    output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&registryKey)),\n");
+    output.push_str("    }\n}\n");
+    output
+}
+
+pub(crate) fn render_object_watch_async_dispatch(object: &SourceObject) -> String {
+    let mut output = String::new();
+    output.push_str(&render_object_item_cfg_attrs(object));
+    output.push_str("#[allow(unused_mut, unused_variables)]\n");
+    output.push_str(&format!(
+        "async fn generated_dispatch_{}_watch_async(object: &mut {}, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n",
+        object.dispatch_name, object.full_type
+    ));
+    output.push_str("    let registryKey = request.registryKey();\n");
+    output.push_str(
+        "    let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;\n",
+    );
     output.push_str("    match request.propertyName.as_str() {\n");
     for method in object
         .methods
         .iter()
         .filter(|method| method.watch_protocol().is_some())
     {
-        output.push_str(&render_watch_stream_arm(method));
+        output.push_str(&render_watch_stream_arm(method, true));
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&registryKey)),\n");
     output.push_str("    }\n}\n");
@@ -149,13 +207,19 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         .expect("application object must be generated")
         .object_id;
     output.push_str(&format!("    if request.targetObjectId == {application_id} && request.methodName == \"runCoreCommand\" {{\n"));
-    output.push_str("        let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n");
+    output.push_str(
+        "        let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n",
+    );
     output.push_str(
         "        let args: Vec<String> = operit_rslink_runtime::decode_core_arg(&mut __core_args, \"args\")?;\n",
     );
     output.push_str("        let application = proxy.application.clone();\n");
-    output.push_str("        let (commandSender, commandReceiver) = tokio::sync::oneshot::channel();\n");
-    output.push_str("        operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(\n");
+    output.push_str(
+        "        let (commandSender, commandReceiver) = tokio::sync::oneshot::channel();\n",
+    );
+    output.push_str(
+        "        operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(\n",
+    );
     output.push_str("            operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(),\n");
     output.push_str("            \"core-proxy-command\",\n");
     output.push_str("            Box::new(move || Box::pin(async move {\n");
@@ -165,7 +229,9 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     output.push_str("                let _ = commandSender.send(output);\n");
     output.push_str("            })),\n");
     output.push_str("        )\n");
-    output.push_str("        .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n");
+    output.push_str(
+        "        .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n",
+    );
     output.push_str("        let output = commandReceiver.await.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))??;\n");
     output.push_str("        return operit_rslink_runtime::to_core_value(output);\n");
     output.push_str("    }\n");
@@ -235,7 +301,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             continue;
         };
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            let value = generated_dispatch_{}_watch_snapshot(object, &request)?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            let value = generated_dispatch_{}_watch_snapshot_async(object, &request).await?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
             object.dispatch_name,
             object.dispatch_name
         ));
@@ -245,7 +311,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         .find(|object| object.access == ObjectAccess::Application)
     {
         output.push_str(&format!(
-            "    if request.targetObjectId == {} {{\n        let propertyName = request.propertyName.clone();\n        let mut application = proxy.application.lock().await;\n        let value = generated_dispatch_{}_watch_snapshot(&mut application, &request)?;\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n    }}\n",
+            "    if request.targetObjectId == {} {{\n        let propertyName = request.propertyName.clone();\n        let mut application = proxy.application.lock().await;\n        let value = generated_dispatch_{}_watch_snapshot_async(&mut application, &request).await?;\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n    }}\n",
             application.object_id, application.dispatch_name
         ));
     }
@@ -254,12 +320,13 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_watch_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
+    output.push_str("    if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {\n        return proxy.openCoreStreamWatch(request);\n    }\n");
     for object in objects {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
         };
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            return generated_dispatch_{}_watch(object, request, proxy.streamAttachmentAdopter());\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            return generated_dispatch_{}_watch_async(object, request, proxy.streamAttachmentAdopter()).await;\n        }}\n    }}\n",
             object.dispatch_name,
             object.dispatch_name
         ));
@@ -269,7 +336,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         .find(|object| object.access == ObjectAccess::Application)
     {
         output.push_str(&format!(
-            "    if request.targetObjectId == {} {{\n        let mut application = proxy.application.lock().await;\n        return generated_dispatch_{}_watch(&mut application, request, proxy.streamAttachmentAdopter());\n    }}\n",
+            "    if request.targetObjectId == {} {{\n        let mut application = proxy.application.lock().await;\n        return generated_dispatch_{}_watch_async(&mut application, request, proxy.streamAttachmentAdopter()).await;\n    }}\n",
             application.object_id, application.dispatch_name
         ));
     }
@@ -337,6 +404,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("fn generated_dispatch_core_proxy_watch(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n    let attachmentAdopter = proxy.streamAttachmentAdopter();\n");
+    output.push_str("    if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {\n        return proxy.openCoreStreamWatch(request);\n    }\n");
     for object in objects {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
@@ -864,27 +932,28 @@ fn error_details_converter(
     error_details_fn_name(&definition.full_type)
 }
 
-fn render_watch_snapshot_arm(method: &SourceMethod) -> String {
+fn render_watch_snapshot_arm(method: &SourceMethod, async_dispatch: bool) -> String {
     let Some(watch) = method.watch_protocol() else {
         return String::new();
     };
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
+    let method_await = watch_await_suffix(method, async_dispatch);
     let value_expr = match watch.stream {
         WatchStreamProtocol::JsonFlow { fallible: true } => format!(
-            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
-            method.name, call_args
+            "object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args, method_await
         ),
         WatchStreamProtocol::JsonFlow { fallible: false } => format!(
-            "object.{}({}).first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
-            method.name, call_args
+            "object.{}({}){}.first().map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args, method_await
         ),
         WatchStreamProtocol::JsonState { fallible: true } => format!(
-            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.value()",
-            method.name, call_args
+            "object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?.value()",
+            method.name, call_args, method_await
         ),
         WatchStreamProtocol::JsonState { fallible: false } => {
-            format!("object.{}({}).value()", method.name, call_args)
+            format!("object.{}({}){}.value()", method.name, call_args, method_await)
         }
         WatchStreamProtocol::JsonStream => return String::new(),
         WatchStreamProtocol::StringStream => return String::new(),
@@ -901,32 +970,37 @@ fn render_watch_snapshot_arm(method: &SourceMethod) -> String {
     .prepend_with(render_cfg_attrs(method))
 }
 
-fn render_watch_stream_arm(method: &SourceMethod) -> String {
+fn render_watch_stream_arm(method: &SourceMethod, async_dispatch: bool) -> String {
     let Some(watch) = method.watch_protocol() else {
         return String::new();
     };
     match watch.stream {
         WatchStreamProtocol::JsonFlow { fallible } => {
-            render_json_flow_watch_stream_arm(method, fallible)
+            render_json_flow_watch_stream_arm(method, fallible, async_dispatch)
         }
         WatchStreamProtocol::JsonState { fallible } => {
-            render_json_state_watch_stream_arm(method, fallible)
+            render_json_state_watch_stream_arm(method, fallible, async_dispatch)
         }
-        WatchStreamProtocol::JsonStream => render_json_watch_stream_arm(method),
-        WatchStreamProtocol::StringStream => render_string_watch_stream_arm(method),
+        WatchStreamProtocol::JsonStream => render_json_watch_stream_arm(method, async_dispatch),
+        WatchStreamProtocol::StringStream => render_string_watch_stream_arm(method, async_dispatch),
     }
 }
 
-fn render_json_flow_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String {
+fn render_json_flow_watch_stream_arm(
+    method: &SourceMethod,
+    fallible: bool,
+    async_dispatch: bool,
+) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
+    let method_await = watch_await_suffix(method, async_dispatch);
     let flow_expr = if fallible {
         format!(
-            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
-            method.name, call_args
+            "object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args, method_await
         )
     } else {
-        format!("object.{}({})", method.name, call_args)
+        format!("object.{}({}){}", method.name, call_args, method_await)
     };
     format!(
         "        {:?} => {{\n{}            let flow = {};\n            operit_rslink_runtime::core_flow_event_stream(flow, request, attachmentAdopter.clone())\n        }}\n",
@@ -935,16 +1009,21 @@ fn render_json_flow_watch_stream_arm(method: &SourceMethod, fallible: bool) -> S
     .prepend_with(render_cfg_attrs(method))
 }
 
-fn render_json_state_watch_stream_arm(method: &SourceMethod, fallible: bool) -> String {
+fn render_json_state_watch_stream_arm(
+    method: &SourceMethod,
+    fallible: bool,
+    async_dispatch: bool,
+) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
+    let method_await = watch_await_suffix(method, async_dispatch);
     let state_expr = if fallible {
         format!(
-            "object.{}({}).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
-            method.name, call_args
+            "object.{}({}){}.map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?",
+            method.name, call_args, method_await
         )
     } else {
-        format!("object.{}({})", method.name, call_args)
+        format!("object.{}({}){}", method.name, call_args, method_await)
     };
     format!(
         "        {:?} => {{\n{}            let stateFlow = {};\n            operit_rslink_runtime::core_state_flow_event_stream(stateFlow, request, attachmentAdopter.clone())\n        }}\n",
@@ -953,24 +1032,35 @@ fn render_json_state_watch_stream_arm(method: &SourceMethod, fallible: bool) -> 
     .prepend_with(render_cfg_attrs(method))
 }
 
-fn render_string_watch_stream_arm(method: &SourceMethod) -> String {
+fn render_string_watch_stream_arm(method: &SourceMethod, async_dispatch: bool) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
+    let method_await = watch_await_suffix(method, async_dispatch);
     format!(
-        "        {:?} => {{\n{}            let stream = object.{}({});\n            Ok(operit_rslink_runtime::core_string_event_stream(stream, request))\n        }}\n",
-        method.name, args, method.name, call_args
+        "        {:?} => {{\n{}            let stream = object.{}({}){};\n            Ok(operit_rslink_runtime::core_string_event_stream(stream, request))\n        }}\n",
+        method.name, args, method.name, call_args, method_await
     )
     .prepend_with(render_cfg_attrs(method))
 }
 
-fn render_json_watch_stream_arm(method: &SourceMethod) -> String {
+fn render_json_watch_stream_arm(method: &SourceMethod, async_dispatch: bool) -> String {
     let args = render_arg_decoders(method);
     let call_args = render_arg_call_list(method);
+    let method_await = watch_await_suffix(method, async_dispatch);
     format!(
-        "        {:?} => {{\n{}            let stream = object.{}({});\n            Ok(operit_rslink_runtime::core_json_event_stream(stream, request))\n        }}\n",
-        method.name, args, method.name, call_args
+        "        {:?} => {{\n{}            let stream = object.{}({}){};\n            Ok(operit_rslink_runtime::core_json_event_stream(stream, request))\n        }}\n",
+        method.name, args, method.name, call_args, method_await
     )
     .prepend_with(render_cfg_attrs(method))
+}
+
+/// Returns the await suffix required by one generated async watch dispatcher.
+fn watch_await_suffix(method: &SourceMethod, async_dispatch: bool) -> &'static str {
+    if async_dispatch && method.is_async {
+        ".await"
+    } else {
+        ""
+    }
 }
 
 fn render_cfg_attrs(method: &SourceMethod) -> String {

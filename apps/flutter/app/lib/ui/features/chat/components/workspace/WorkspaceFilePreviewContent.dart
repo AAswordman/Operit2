@@ -3,6 +3,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import 'file_preview/WorkspaceDocumentPreviewWidgets.dart';
@@ -21,6 +22,7 @@ class WorkspaceFilePreviewContent extends StatelessWidget {
     required this.onReadWorkspaceFileBytes,
     required this.onOpenWorkspaceFile,
     required this.onOpenBrowser,
+    required this.splitMarkdownContent,
   });
 
   final WorkspaceTab tab;
@@ -32,6 +34,7 @@ class WorkspaceFilePreviewContent extends StatelessWidget {
     String? workspaceHtmlPath,
   })
   onOpenBrowser;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -39,9 +42,17 @@ class WorkspaceFilePreviewContent extends StatelessWidget {
     final kind = tab.previewKind ?? WorkspaceFilePreviewKind.binary;
     switch (kind) {
       case WorkspaceFilePreviewKind.text:
-        return WorkspaceTextPreview(tab: tab, onOpenBrowser: onOpenBrowser);
+        return WorkspaceTextPreview(
+          tab: tab,
+          onOpenBrowser: onOpenBrowser,
+          splitMarkdownContent: splitMarkdownContent,
+        );
       case WorkspaceFilePreviewKind.markdown:
-        return WorkspaceMarkdownPreview(tab: tab, onOpenBrowser: onOpenBrowser);
+        return WorkspaceMarkdownPreview(
+          tab: tab,
+          onOpenBrowser: onOpenBrowser,
+          splitMarkdownContent: splitMarkdownContent,
+        );
       case WorkspaceFilePreviewKind.html:
         return _WorkspaceHtmlPreview(
           tab: tab,

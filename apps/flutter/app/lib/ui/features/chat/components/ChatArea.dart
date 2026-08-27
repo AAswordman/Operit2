@@ -570,12 +570,14 @@ class _ChatAreaState extends State<ChatArea> {
             bubbleAiContentPaddingRight:
                 themePreferenceSnapshot.bubbleAiContentPaddingRight,
             currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+            splitMarkdownContent: widget.splitMarkdownContent,
           )
         : CursorStyleChatMessage(
             key: ValueKey<String>(message.stableKey),
             message: message,
             isStreaming: isStreaming,
             currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+            splitMarkdownContent: widget.splitMarkdownContent,
           );
     final messageContent = _SelectableMessageFrame(
       selected: selected,

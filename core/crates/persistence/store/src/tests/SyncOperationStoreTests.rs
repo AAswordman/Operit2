@@ -514,9 +514,7 @@ fn pre_join_operations_are_excluded_from_space_exports() {
         )
         .unwrap();
 
-    let operations = store
-        .operationsSince(&SyncClock::empty(), &[], 10)
-        .unwrap();
+    let operations = store.operationsSince(&SyncClock::empty(), &[], 10).unwrap();
     assert_eq!(operations.len(), 1);
     assert_eq!(operations[0].entityId, "after");
 }

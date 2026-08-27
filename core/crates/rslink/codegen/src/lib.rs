@@ -5,7 +5,7 @@ use std::path::Path;
 use quote::ToTokens;
 use syn::punctuated::Punctuated;
 use syn::{
-    Fields, Item, ItemEnum, ImplItem, ItemImpl, ItemStruct, Meta, Token, Type, UseTree, Visibility,
+    Fields, ImplItem, Item, ItemEnum, ItemImpl, ItemStruct, Meta, Token, Type, UseTree, Visibility,
 };
 
 mod build_model;

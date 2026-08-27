@@ -13,3 +13,6 @@ operit-store = { path = "../../persistence/store" }
 operit-util = { path = "../../foundation/util" }
 serde.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

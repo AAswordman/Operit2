@@ -12,6 +12,7 @@ class WorkspaceTextPreview extends StatelessWidget {
     super.key,
     required this.tab,
     required this.onOpenBrowser,
+    required this.splitMarkdownContent,
   });
 
   final WorkspaceTab tab;
@@ -21,6 +22,7 @@ class WorkspaceTextPreview extends StatelessWidget {
     String? workspaceHtmlPath,
   })
   onOpenBrowser;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +48,7 @@ class WorkspaceMarkdownPreview extends StatelessWidget {
     super.key,
     required this.tab,
     required this.onOpenBrowser,
+    required this.splitMarkdownContent,
   });
 
   final WorkspaceTab tab;
@@ -55,6 +58,7 @@ class WorkspaceMarkdownPreview extends StatelessWidget {
     String? workspaceHtmlPath,
   })
   onOpenBrowser;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -74,6 +78,7 @@ class WorkspaceMarkdownPreview extends StatelessWidget {
               textColor: theme.colorScheme.onSurface,
               backgroundColor: Colors.transparent,
               onLinkClick: (url) => onOpenBrowser(url: url),
+              splitMarkdownContent: splitMarkdownContent,
             ),
           ),
         ),

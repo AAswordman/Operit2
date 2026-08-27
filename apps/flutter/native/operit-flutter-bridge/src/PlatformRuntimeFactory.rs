@@ -1,5 +1,7 @@
 use super::*;
 
+use operit_runtime::core::application::OperitApplication::OperitApplication;
+
 #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 #[derive(Clone)]
 struct FlutterSystemOperationBridge {

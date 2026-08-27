@@ -4,24 +4,28 @@ use std::time::Duration;
 
 static SHARED_CONCURRENCY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-use operit_proxy_local::LocalCoreProxy;
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{
     BrowserSessionCommand, BrowserSessionCommandResult, BrowserSessionHost, BrowserSessionInfo,
-    BrowserSessionSnapshot, HostResult, HostRuntimeTaskSchedulerHost, HostSecretStore, RuntimeSqliteConnection,
-    RuntimeSqliteHost, RuntimeStorageEntry, RuntimeStorageHost,
+    BrowserSessionSnapshot, HostResult, HostRuntimeTaskSchedulerHost, HostSecretStore,
+    RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeStorageEntry, RuntimeStorageHost,
 };
 use operit_host_native_common::{
     NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost, NativeRuntimeStorageHost,
     PosixFileSystemHost,
 };
 use operit_link::{
-    fromCoreValue, toCoreValue, CoreCallRequest, CoreLinkSharedClient, CoreWatchRequest,
+    fromCoreValue, toCoreValue, CoreCallRequest, CoreEvent, CoreEventKind, CoreEventStream,
+    CoreLinkSharedClient, CoreStream, CoreStreamSource, CoreValue, CoreWatchRequest,
+    CORE_STREAM_POOL_OBJECT_ID,
 };
+use operit_model::ChatMessage::ChatMessage;
+use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerBrowserSession, RuntimeHostInteractionBrowserSessionPayload,
 };
+use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
 use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
 use serde_json::{json, Value};
@@ -217,6 +221,48 @@ fn register_test_runtime_roots() -> Arc<TestRuntimeStorageHost> {
     Arc::new(TestRuntimeStorageHost::new(runtime_root, workspace_root))
 }
 
+/// Creates a CoreStream source that emits one Markdown chunk.
+fn proxy_test_markdown_stream_source(chat_id: String, text: String) -> Arc<CoreStreamSource> {
+    Arc::new(CoreStreamSource::new(move |request| {
+        let (sender, receiver) = CoreEventStream::channel();
+        let event = MarkdownStreamEvent {
+            chatId: chat_id.clone(),
+            eventType: "chunk".to_string(),
+            value: Some(text.clone()),
+            id: None,
+            blockId: None,
+            inlineId: None,
+            parentBlockId: None,
+            nodeType: None,
+            headerLevel: None,
+        };
+        let value = toCoreValue(event).expect("Markdown stream event must encode");
+        let _ = sender.send(CoreEvent {
+            requestId: Some(request.requestId.clone()),
+            targetObjectId: request.targetObjectId,
+            propertyName: request.propertyName.clone(),
+            kind: CoreEventKind::Changed,
+            value,
+        });
+        let _ = sender.send(CoreEvent {
+            requestId: Some(request.requestId),
+            targetObjectId: request.targetObjectId,
+            propertyName: request.propertyName,
+            kind: CoreEventKind::Completed,
+            value: CoreValue::Null,
+        });
+        Ok(receiver)
+    }))
+}
+
+/// Receives one event from a Core stream within a short test deadline.
+async fn receive_proxy_test_event(stream: &mut CoreEventStream) -> CoreEvent {
+    tokio::time::timeout(Duration::from_millis(500), stream.recv())
+        .await
+        .expect("proxy test event must arrive")
+        .expect("proxy test stream must stay open")
+}
+
 /// Verifies unrelated generated watches never wait for a resolved holder lock.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preferences_watch_bypasses_unrelated_resolved_holder() {
@@ -237,6 +283,9 @@ async fn preferences_watch_bypasses_unrelated_resolved_holder() {
             let holder = application.chatRuntimeHolder.clone();
             let proxy = LocalCoreProxy::new(application);
             let _holderGuard = holder.lock().await;
+            let character_group_manager_id =
+                LocalCoreProxy::generatedObjectIdForSchema("preferences.characterGroupCardManager")
+                    .expect("character group manager object id must be generated");
 
             let event = tokio::time::timeout(
                 Duration::from_millis(500),
@@ -244,7 +293,7 @@ async fn preferences_watch_bypasses_unrelated_resolved_holder() {
                     &proxy,
                     CoreWatchRequest::new(
                         "preferences-watch",
-                        "preferences.characterGroupCardManager",
+                        character_group_manager_id,
                         "allCharacterGroupCardsFlow",
                         toCoreValue(json!({})).unwrap(),
                     ),
@@ -279,11 +328,18 @@ async fn shared_core_accepts_nested_owner_response() {
             let proxy = Arc::new(LocalCoreProxy::new(OperitApplication::newWithContext(
                 host_manager,
             )));
+            let runtime_host_interaction_service_id = LocalCoreProxy::generatedObjectIdForSchema(
+                "services.runtimeHostInteractionService",
+            )
+            .expect("runtime host interaction service object id must be generated");
+            let runtime_browser_service_id =
+                LocalCoreProxy::generatedObjectIdForSchema("services.runtimeBrowserService")
+                    .expect("runtime browser service object id must be generated");
             let mut owner_events = CoreLinkSharedClient::watch(
                 proxy.as_ref(),
                 CoreWatchRequest::new(
                     "owner-events",
-                    "services.runtimeHostInteractionService",
+                    runtime_host_interaction_service_id,
                     "ownerHostInteractionEvents",
                     toCoreValue(json!({"kinds": ["browser_session"]})).unwrap(),
                 ),
@@ -305,7 +361,7 @@ async fn shared_core_accepts_nested_owner_response() {
                                     list_proxy.as_ref(),
                                     CoreCallRequest::new(
                                         "list-browser-sessions",
-                                        "services.runtimeBrowserService",
+                                        runtime_browser_service_id,
                                         "listBrowserSessions",
                                         toCoreValue(json!({})).unwrap(),
                                     ),
@@ -339,7 +395,7 @@ async fn shared_core_accepts_nested_owner_response() {
                 proxy.as_ref(),
                 CoreCallRequest::new(
                     "respond-owner",
-                    "services.runtimeHostInteractionService",
+                    runtime_host_interaction_service_id,
                     "respondOwnerHostInteraction",
                     toCoreValue(json!({
                         "requestId": owner_request_id,
@@ -384,6 +440,307 @@ async fn shared_core_accepts_nested_owner_response() {
         .await;
 }
 
+/// Verifies Flutter-style LocalCoreProxy watches open the local chat Flow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn generated_proxy_chat_messages_flow_opens_local_flow() {
+    let _testGuard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let storage_host = register_test_runtime_roots();
+            let mut host_manager =
+                HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+            host_manager.runtimeStorageHost = Some(storage_host.clone());
+            host_manager.runtimeSqliteHost = Some(storage_host);
+            host_manager.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+            host_manager.hostJavaScriptRuntimeHost =
+                Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+            host_manager.hostRuntimeTaskSchedulerHost =
+                Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+            let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
+            let chat_object_id =
+                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                    .expect("chatRuntimeHolderMain object id must be generated");
+            let mut messages_stream = CoreLinkSharedClient::watch(
+                &proxy,
+                CoreWatchRequest::new(
+                    "proxy-chat-messages-flow-local",
+                    chat_object_id,
+                    "chatMessagesFlow",
+                    toCoreValue(json!({ "chatId": "proxy-chat-local" })).unwrap(),
+                ),
+            )
+            .await
+            .expect("proxy chatMessagesFlow watch must open locally");
+            let messages_event = receive_proxy_test_event(&mut messages_stream).await;
+            let messages: Vec<ChatMessage> =
+                fromCoreValue(messages_event.value).expect("proxy chat messages must decode");
+            assert!(messages.is_empty());
+        })
+        .await;
+}
+
+/// Verifies a live local chat Flow can expose a newly inserted embedded message stream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_chat_messages_flow_update_opens_embedded_stream() {
+    let _testGuard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let storage_host = register_test_runtime_roots();
+            let mut host_manager =
+                HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+            host_manager.runtimeStorageHost = Some(storage_host.clone());
+            host_manager.runtimeSqliteHost = Some(storage_host);
+            host_manager.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+            host_manager.hostJavaScriptRuntimeHost =
+                Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+            host_manager.hostRuntimeTaskSchedulerHost =
+                Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+            let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
+            let chat_object_id =
+                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                    .expect("chatRuntimeHolderMain object id must be generated");
+            let chat_id = {
+                let holder = proxy.chatRuntimeHolder();
+                let mut holder = holder.lock().await;
+                let core = holder
+                    .coreForObjectId(chat_object_id)
+                    .expect("chat runtime holder main core must exist");
+                core.createNewChat(None, None, false, true, None);
+                core.chatHistoryDelegate
+                    .currentChatIdFlow()
+                    .value()
+                    .expect("test chat must become current")
+            };
+            let mut messages_stream = CoreLinkSharedClient::watch(
+                &proxy,
+                CoreWatchRequest::new(
+                    "proxy-local-live-chat-messages-flow",
+                    chat_object_id,
+                    "chatMessagesFlow",
+                    toCoreValue(json!({ "chatId": chat_id.clone() })).unwrap(),
+                ),
+            )
+            .await
+            .expect("local proxy chatMessagesFlow watch must open");
+            let initial_event = receive_proxy_test_event(&mut messages_stream).await;
+            let initial_messages: Vec<ChatMessage> = fromCoreValue(initial_event.value)
+                .expect("initial local chat messages must decode");
+            assert!(initial_messages.is_empty());
+
+            let stream_id = "proxy-local-live-chat-message-stream";
+            let source = proxy_test_markdown_stream_source(
+                chat_id.clone(),
+                "hello from local live Flow".to_string(),
+            );
+            let mut message = ChatMessage::new("ai".to_string());
+            message.contentStream =
+                Some(CoreStream::fromSourceWithId(stream_id.to_string(), source));
+            {
+                let holder = proxy.chatRuntimeHolder();
+                let mut holder = holder.lock().await;
+                let core = holder
+                    .coreForObjectId(chat_object_id)
+                    .expect("chat runtime holder main core must exist");
+                core.chatHistoryDelegate
+                    .addMessageToChat(message, Some(chat_id.clone()));
+            }
+
+            let updated_event = receive_proxy_test_event(&mut messages_stream).await;
+            let updated_messages: Vec<ChatMessage> = fromCoreValue(updated_event.value)
+                .expect("updated local chat messages must decode");
+            let stream = updated_messages
+                .iter()
+                .find_map(|message| message.contentStream.clone())
+                .expect("updated local message must carry a content stream");
+            let mut content_stream = CoreLinkSharedClient::watch(
+                &proxy,
+                CoreWatchRequest::new(
+                    "proxy-local-live-chat-content-stream",
+                    CORE_STREAM_POOL_OBJECT_ID,
+                    "openCoreStream",
+                    stream.descriptor.args.clone(),
+                ),
+            )
+            .await
+            .expect("updated local embedded content stream must open");
+            let chunk = receive_proxy_test_event(&mut content_stream).await;
+            let event: MarkdownStreamEvent =
+                fromCoreValue(chunk.value).expect("local Markdown event must decode");
+            assert_eq!(event.eventType, "chunk");
+            assert_eq!(event.value, Some("hello from local live Flow".to_string()));
+
+            let mut completed_message = updated_messages
+                .first()
+                .expect("first local message must exist")
+                .clone();
+            completed_message.contentStream = None;
+            {
+                let holder = proxy.chatRuntimeHolder();
+                let mut holder = holder.lock().await;
+                let core = holder
+                    .coreForObjectId(chat_object_id)
+                    .expect("chat runtime holder main core must exist");
+                core.chatHistoryDelegate
+                    .addMessageToChat(completed_message, Some(chat_id.clone()));
+            }
+            let completed_event = receive_proxy_test_event(&mut messages_stream).await;
+            let completed_messages: Vec<ChatMessage> = fromCoreValue(completed_event.value)
+                .expect("completed local chat messages must decode");
+            assert!(completed_messages
+                .iter()
+                .all(|message| message.contentStream.is_none()));
+
+            let second_stream_id = "proxy-local-live-chat-message-stream-second";
+            let second_source = proxy_test_markdown_stream_source(
+                chat_id.clone(),
+                "hello from second local live Flow".to_string(),
+            );
+            let mut second_message = ChatMessage::new("ai".to_string());
+            second_message.contentStream = Some(CoreStream::fromSourceWithId(
+                second_stream_id.to_string(),
+                second_source,
+            ));
+            {
+                let holder = proxy.chatRuntimeHolder();
+                let mut holder = holder.lock().await;
+                let core = holder
+                    .coreForObjectId(chat_object_id)
+                    .expect("chat runtime holder main core must exist");
+                core.chatHistoryDelegate
+                    .addMessageToChat(second_message, Some(chat_id.clone()));
+            }
+            let second_event = receive_proxy_test_event(&mut messages_stream).await;
+            let second_messages: Vec<ChatMessage> =
+                fromCoreValue(second_event.value).expect("second local chat messages must decode");
+            let second_stream = second_messages
+                .iter()
+                .find_map(|message| message.contentStream.clone())
+                .expect("second local message must carry a content stream");
+            let mut second_content_stream = CoreLinkSharedClient::watch(
+                &proxy,
+                CoreWatchRequest::new(
+                    "proxy-local-live-chat-content-stream-second",
+                    CORE_STREAM_POOL_OBJECT_ID,
+                    "openCoreStream",
+                    second_stream.descriptor.args.clone(),
+                ),
+            )
+            .await
+            .expect("second local embedded content stream must open");
+            let second_chunk = receive_proxy_test_event(&mut second_content_stream).await;
+            let second_event: MarkdownStreamEvent =
+                fromCoreValue(second_chunk.value).expect("second Markdown event must decode");
+            assert_eq!(second_event.eventType, "chunk");
+            assert_eq!(
+                second_event.value,
+                Some("hello from second local live Flow".to_string())
+            );
+        })
+        .await;
+}
+
+/// Verifies live chat Flow stream sources stay attached during an outer async call capture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_chat_messages_flow_update_inside_async_capture_opens_embedded_stream_immediately() {
+    let _testGuard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let storage_host = register_test_runtime_roots();
+            let mut host_manager =
+                HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+            host_manager.runtimeStorageHost = Some(storage_host.clone());
+            host_manager.runtimeSqliteHost = Some(storage_host);
+            host_manager.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+            host_manager.hostJavaScriptRuntimeHost =
+                Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+            host_manager.hostRuntimeTaskSchedulerHost =
+                Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+            let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
+            let chat_object_id =
+                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                    .expect("chatRuntimeHolderMain object id must be generated");
+            let chat_id = {
+                let holder = proxy.chatRuntimeHolder();
+                let mut holder = holder.lock().await;
+                let core = holder
+                    .coreForObjectId(chat_object_id)
+                    .expect("chat runtime holder main core must exist");
+                core.createNewChat(None, None, false, true, None);
+                core.chatHistoryDelegate
+                    .currentChatIdFlow()
+                    .value()
+                    .expect("test chat must become current")
+            };
+            let mut messages_stream = CoreLinkSharedClient::watch(
+                &proxy,
+                CoreWatchRequest::new(
+                    "proxy-local-live-chat-messages-flow-nested-capture",
+                    chat_object_id,
+                    "chatMessagesFlow",
+                    toCoreValue(json!({ "chatId": chat_id.clone() })).unwrap(),
+                ),
+            )
+            .await
+            .expect("local proxy chatMessagesFlow watch must open");
+            let initial_event = receive_proxy_test_event(&mut messages_stream).await;
+            let initial_messages: Vec<ChatMessage> = fromCoreValue(initial_event.value)
+                .expect("initial local chat messages must decode");
+            assert!(initial_messages.is_empty());
+
+            let stream_id = "proxy-local-live-chat-message-stream-nested-capture";
+            let source = proxy_test_markdown_stream_source(
+                chat_id.clone(),
+                "hello while outer capture is active".to_string(),
+            );
+            let mut message = ChatMessage::new("ai".to_string());
+            message.contentStream =
+                Some(CoreStream::fromSourceWithId(stream_id.to_string(), source));
+
+            let ((), outer_attachments) = operit_link::withCoreStreamCapture(async {
+                {
+                    let holder = proxy.chatRuntimeHolder();
+                    let mut holder = holder.lock().await;
+                    let core = holder
+                        .coreForObjectId(chat_object_id)
+                        .expect("chat runtime holder main core must exist");
+                    core.chatHistoryDelegate
+                        .addMessageToChat(message, Some(chat_id.clone()));
+                }
+
+                let updated_event = receive_proxy_test_event(&mut messages_stream).await;
+                let updated_messages: Vec<ChatMessage> = fromCoreValue(updated_event.value)
+                    .expect("updated local chat messages must decode");
+                let stream = updated_messages
+                    .iter()
+                    .find_map(|message| message.contentStream.clone())
+                    .expect("updated local message must carry a content stream");
+                let mut content_stream = CoreLinkSharedClient::watch(
+                    &proxy,
+                    CoreWatchRequest::new(
+                        "proxy-local-live-chat-content-stream-nested-capture",
+                        CORE_STREAM_POOL_OBJECT_ID,
+                        "openCoreStream",
+                        stream.descriptor.args.clone(),
+                    ),
+                )
+                .await
+                .expect("embedded content stream must open before outer capture is adopted");
+                let chunk = receive_proxy_test_event(&mut content_stream).await;
+                let event: MarkdownStreamEvent =
+                    fromCoreValue(chunk.value).expect("Markdown event must decode");
+                assert_eq!(event.eventType, "chunk");
+                assert_eq!(
+                    event.value,
+                    Some("hello while outer capture is active".to_string())
+                );
+            })
+            .await;
+
+            assert_eq!(outer_attachments.len(), 1);
+        })
+        .await;
+}
+
 /// Verifies concurrent Application child calls wait for the shared application lock.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shared_core_serializes_application_child_access() {
@@ -403,6 +760,9 @@ async fn shared_core_serializes_application_child_access() {
             let proxy = Arc::new(LocalCoreProxy::new(OperitApplication::newWithContext(
                 host_manager,
             )));
+            let package_manager_id =
+                LocalCoreProxy::generatedObjectIdForSchema("application.packageManager")
+                    .expect("package manager object id must be generated");
             let barrier = Arc::new(tokio::sync::Barrier::new(16));
             let mut calls = Vec::with_capacity(16);
 
@@ -423,7 +783,7 @@ async fn shared_core_serializes_application_child_access() {
                         call_proxy.as_ref(),
                         CoreCallRequest::new(
                             format!("application-child-{index}"),
-                            "application.packageManager",
+                            package_manager_id,
                             method_name,
                             toCoreValue(args).unwrap(),
                         ),

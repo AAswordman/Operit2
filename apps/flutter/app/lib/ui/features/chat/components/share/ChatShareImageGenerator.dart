@@ -10,6 +10,7 @@ import 'package:flutter/rendering.dart';
 import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../common/OperitLogoMark.dart';
+import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../viewmodel/ChatViewModel.dart';
 import '../style/cursor/CursorStyleChatMessage.dart';
 
@@ -38,7 +39,12 @@ class ChatShareImageGenerator {
               opacity: 0.01,
               child: RepaintBoundary(
                 key: boundaryKey,
-                child: ChatShareImageSurface(messages: messages),
+                child: ChatShareImageSurface(
+                  messages: messages,
+                  splitMarkdownContent: (content) => _clients
+                      .chatRuntimeHolderMain
+                      .splitMarkdownContent(content: content),
+                ),
               ),
             ),
           ),
@@ -80,9 +86,14 @@ class ChatShareImage {
 }
 
 class ChatShareImageSurface extends StatelessWidget {
-  const ChatShareImageSurface({super.key, required this.messages});
+  const ChatShareImageSurface({
+    super.key,
+    required this.messages,
+    required this.splitMarkdownContent,
+  });
 
   final List<ChatUiMessage> messages;
+  final MarkdownContentSplitter splitMarkdownContent;
 
   @override
   Widget build(BuildContext context) {
@@ -123,6 +134,7 @@ class ChatShareImageSurface extends StatelessWidget {
                     CursorStyleChatMessage(
                       message: messages[index],
                       isStreaming: false,
+                      splitMarkdownContent: splitMarkdownContent,
                     ),
                     if (index != messages.length - 1) const SizedBox(height: 8),
                   ],

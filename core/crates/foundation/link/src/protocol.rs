@@ -459,10 +459,7 @@ pub struct CoreEventStream {
 
 impl CoreEventStream {
     /// Creates a stream together with its sender for an in-process Link source.
-    pub fn channel() -> (
-        mpsc::UnboundedSender<CoreEvent>,
-        Self,
-    ) {
+    pub fn channel() -> (mpsc::UnboundedSender<CoreEvent>, Self) {
         let (sender, receiver) = mpsc::unbounded_channel();
         (sender, Self::new(receiver))
     }
@@ -519,6 +516,12 @@ impl CoreRequestId {
 
 /// Fixed protocol address of the process-local embedded stream pool.
 pub const CORE_STREAM_POOL_OBJECT_ID: u32 = u32::MAX;
+/// Carries the routed method or property that produced an embedded stream.
+pub const CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT: &str = "$coreRouteStreamSourceMethod";
+/// Carries the routed request mode that produced an embedded stream.
+pub const CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT: &str = "$coreRouteStreamSourceMode";
+/// Carries the routed request arguments that produced an embedded stream.
+pub const CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT: &str = "$coreRouteStreamSourceArgs";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoreMethodMode {
@@ -630,7 +633,7 @@ impl CoreCallResponse {
 
 pub const CORE_INCREMENTAL_VALUES_ARGUMENT: &str = "$coreIncremental";
 /// Identifies a request emitted by an annotation wrapper rather than a Dart proxy.
-pub const CORE_INTERNAL_ROUTE_OBJECT_ID: u32 = u32::MAX;
+pub const CORE_INTERNAL_ROUTE_OBJECT_ID: u32 = u32::MAX - 1;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreWatchRequest {
@@ -663,24 +666,9 @@ pub struct CoreExecutionSegment {
     pub cachedInputTokens: i64,
 }
 
-/// Carries the terminal Markdown event and execution metadata across a handoff stream.
+/// Acknowledges that the target Core accepted a handoff boundary.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[allow(non_snake_case)]
-pub struct CoreHandoffCompletion {
-    pub markdown: CoreValue,
-    pub segments: Vec<CoreExecutionSegment>,
-}
-
-/// Identifies the stream opened by a target Core after a handoff boundary.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreHandoffResponse {
-    pub stream: CoreStreamDescriptor,
-}
-
-/// Owns one physical continuation segment opened by the route server.
-pub struct CoreHandoffSegment {
-    pub stream: CoreEventStream,
-}
+pub struct CoreHandoffResponse {}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CorePushRequest {

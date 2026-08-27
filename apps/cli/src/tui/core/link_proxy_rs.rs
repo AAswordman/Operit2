@@ -1,10 +1,14 @@
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
+use crate::core_proxy::SharedLocalCore;
+use operit_link::{
+    CoreEvent, CoreLinkClient, CoreLinkError, CoreRequestId, CoreValue, CoreWatchRequest,
+};
 use operit_proxy_local::{GeneratedCoreProxy, LocalCoreProxy};
-use operit_link::{CoreEvent, CoreLinkClient, CoreLinkError, CoreRequestId, CoreValue, CoreWatchRequest};
 
 pub(super) struct TuiCore {
-    proxy: GeneratedCoreProxy<LocalCoreProxy>,
+    proxy: GeneratedCoreProxy<SharedLocalCore>,
     eventSender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     eventReceiver: tokio::sync::mpsc::UnboundedReceiver<CoreEvent>,
     messageWatchTask: Option<tokio::task::JoinHandle<()>>,
@@ -14,10 +18,10 @@ pub(super) struct TuiCore {
 }
 
 /// Creates a TUI proxy wrapper with an internal event queue.
-pub(super) fn tui_core(client: LocalCoreProxy) -> TuiCore {
+pub(super) fn tui_core(client: Arc<LocalCoreProxy>) -> TuiCore {
     let (eventSender, eventReceiver) = tokio::sync::mpsc::unbounded_channel();
     TuiCore {
-        proxy: GeneratedCoreProxy::new(client),
+        proxy: GeneratedCoreProxy::new(SharedLocalCore(client)),
         eventSender,
         eventReceiver,
         messageWatchTask: None,
@@ -53,10 +57,8 @@ impl TuiCore {
             self.messageWatchGeneration
         ));
         let mut chatProxy = self.proxy.chat_runtime_holder_main();
-        let targetObjectId = LocalCoreProxy::generatedObjectIdForSchema(
-            "chatRuntimeHolderMain",
-        )
-        .ok_or_else(|| CoreLinkError::internal("chat runtime object id is not generated"))?;
+        let targetObjectId = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+            .ok_or_else(|| CoreLinkError::internal("chat runtime object id is not generated"))?;
         let mut args = std::collections::BTreeMap::new();
         args.insert(
             "chatId".to_string(),
@@ -114,7 +116,7 @@ impl TuiCore {
 }
 
 impl Deref for TuiCore {
-    type Target = GeneratedCoreProxy<LocalCoreProxy>;
+    type Target = GeneratedCoreProxy<SharedLocalCore>;
 
     fn deref(&self) -> &Self::Target {
         &self.proxy

@@ -493,7 +493,11 @@ impl PeerLinkClient {
         &self,
         request: RoutedCoreRequest<CoreHandoffRequest>,
     ) -> Result<CoreHandoffResponse, CoreLinkError> {
-        match self.connection.request(PeerRequest::Handoff(request)).await? {
+        match self
+            .connection
+            .request(PeerRequest::Handoff(request))
+            .await?
+        {
             PeerResponse::Handoff(result) => result,
             _ => Err(CoreLinkError::new(
                 "PEER_PROTOCOL_ERROR",
@@ -547,6 +551,9 @@ impl PeerLinkClient {
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEventStream, CoreLinkError> {
         let subscriptionId = format!("peer-watch-{}", Uuid::new_v4().simple());
+        let requestId = request.payload.requestId.0.clone();
+        let targetObjectId = request.payload.targetObjectId;
+        let propertyName = request.payload.propertyName.clone();
         let (sender, receiver) = mpsc::unbounded_channel();
         self.connection
             .outgoingWatches
@@ -578,8 +585,32 @@ impl PeerLinkClient {
                 return Err(error);
             }
         }
+        operit_util::AppLogger::AppLogger::i(
+            "PeerWatchTrace",
+            &format!(
+                "outgoing_watch_opened local={} peer={} subscription={} requestId={} target={} property={}",
+                self.connection.localNodeId,
+                self.connection.peerNodeId,
+                subscriptionId,
+                requestId,
+                targetObjectId,
+                propertyName
+            ),
+        );
         let connection = self.connection.clone();
         Ok(CoreEventStream::new(receiver).withOnClose(move || {
+            operit_util::AppLogger::AppLogger::i(
+                "PeerWatchTrace",
+                &format!(
+                    "outgoing_watch_drop local={} peer={} subscription={} requestId={} target={} property={}",
+                    connection.localNodeId,
+                    connection.peerNodeId,
+                    subscriptionId,
+                    requestId,
+                    targetObjectId,
+                    propertyName
+                ),
+            );
             let _ = connection.removeOutgoingWatch(&subscriptionId);
             let connection = connection.clone();
             let _ = defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
@@ -870,13 +901,37 @@ impl PeerConnection {
                         loop {
                             let event = tokio::select! {
                                 biased;
-                                _ = &mut cancelReceiver => break,
+                                _ = &mut cancelReceiver => {
+                                    operit_util::AppLogger::AppLogger::i(
+                                        "PeerWatchTrace",
+                                        &format!(
+                                            "incoming_watch_cancelled local={} peer={} subscription={} requestId={} property={}",
+                                            connection.localNodeId,
+                                            connection.peerNodeId,
+                                            taskSubscriptionId,
+                                            watchRequestId,
+                                            watchProperty
+                                        ),
+                                    );
+                                    break
+                                },
                                 event = stream.recv() => event,
                             };
                             let Some(event) = event else {
                                 let error = CoreLinkError::new(
                                     "PEER_WATCH_SOURCE_CLOSED",
                                     "Routed watch source closed before a completion event",
+                                );
+                                operit_util::AppLogger::AppLogger::w(
+                                    "PeerWatchTrace",
+                                    &format!(
+                                        "incoming_watch_source_closed local={} peer={} subscription={} requestId={} property={}",
+                                        connection.localNodeId,
+                                        connection.peerNodeId,
+                                        taskSubscriptionId,
+                                        watchRequestId,
+                                        watchProperty
+                                    ),
                                 );
                                 let closeResult = connection
                                     .sender
@@ -925,7 +980,7 @@ impl PeerConnection {
                                 operit_util::AppLogger::AppLogger::e(
                                     "PeerWatchTrace",
                                     &format!(
-                                        "incoming_watch_event_send_failed local={} peer={} subscription={} requestId={} property={} error={}",
+                                        "peer_watch_send_failed local={} peer={} subscription={} requestId={} property={} error={}",
                                         connection.localNodeId,
                                         connection.peerNodeId,
                                         taskSubscriptionId,
@@ -957,6 +1012,13 @@ impl PeerConnection {
         &self,
         request: PeerWatchCloseRequest,
     ) -> Result<(), CoreLinkError> {
+        operit_util::AppLogger::AppLogger::i(
+            "PeerWatchTrace",
+            &format!(
+                "incoming_watch_close_request local={} peer={} subscription={}",
+                self.localNodeId, self.peerNodeId, request.subscriptionId
+            ),
+        );
         let sender = self
             .incomingWatches
             .lock()
@@ -1108,6 +1170,13 @@ impl PeerConnection {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
         }
+        operit_util::AppLogger::AppLogger::w(
+            "PeerWatchTrace",
+            &format!(
+                "peer_connection_close local={} peer={} channel={} reason={}",
+                self.localNodeId, self.peerNodeId, self.channelId, reason
+            ),
+        );
         self.sender.close();
         let pending = std::mem::take(
             &mut *self
@@ -1492,7 +1561,9 @@ pub async fn openOutboundPeerLink(
     topologyStore: CoreSpaceStore,
 ) -> Result<PeerLinkClient, String> {
     match session.transport {
-        LinkTransportPreference::Http => openOutboundPeerLinkHttp(session, core, topologyStore).await,
+        LinkTransportPreference::Http => {
+            openOutboundPeerLinkHttp(session, core, topologyStore).await
+        }
         LinkTransportPreference::WebSocket => {
             openOutboundPeerLinkWebSocket(session, core, topologyStore).await
         }
@@ -1565,6 +1636,15 @@ async fn openOutboundPeerLinkHttp(
     let closedSignal = openedSender.clone();
     let chunkFrameQueueSender = frameQueueSender.clone();
     let closedFrameQueueSender = frameQueueSender.clone();
+    let openedLocalNodeId = localNodeId.clone();
+    let openedPeerNodeId = peerNodeId.clone();
+    let openedChannelId = channelId.clone();
+    let chunkLocalNodeId = localNodeId.clone();
+    let chunkPeerNodeId = peerNodeId.clone();
+    let chunkChannelId = channelId.clone();
+    let closedLocalNodeId = localNodeId.clone();
+    let closedPeerNodeId = peerNodeId.clone();
+    let closedChannelId = channelId.clone();
     let openResult = defaultHttpHost().openHttpByteStream(
         streamId,
         HttpRequestData {
@@ -1587,6 +1667,13 @@ async fn openOutboundPeerLinkHttp(
             proxyPort: 0,
         },
         Arc::new(move || {
+            operit_util::AppLogger::AppLogger::i(
+                "PeerCarrierTrace",
+                &format!(
+                    "http_stream_opened local={} peer={} channel={}",
+                    openedLocalNodeId, openedPeerNodeId, openedChannelId
+                ),
+            );
             if let Some(sender) = openedSignal
                 .lock()
                 .expect("Peer Link open signal lock poisoned")
@@ -1598,6 +1685,16 @@ async fn openOutboundPeerLinkHttp(
         Arc::new(move |chunk| {
             let frames = decodePeerFrameChunks(&chunkBuffer, chunk)
                 .expect("Peer Link frame stream must decode");
+            operit_util::AppLogger::AppLogger::i(
+                "PeerCarrierTrace",
+                &format!(
+                    "http_stream_chunk local={} peer={} channel={} frames={}",
+                    chunkLocalNodeId,
+                    chunkPeerNodeId,
+                    chunkChannelId,
+                    frames.len()
+                ),
+            );
             let sender = chunkFrameQueueSender
                 .lock()
                 .expect("Peer Link frame queue lock poisoned");
@@ -1619,6 +1716,13 @@ async fn openOutboundPeerLinkHttp(
                 Ok(()) => "Peer Link stream closed".to_string(),
                 Err(error) => error,
             };
+            operit_util::AppLogger::AppLogger::w(
+                "PeerCarrierTrace",
+                &format!(
+                    "http_stream_closed local={} peer={} channel={} reason={}",
+                    closedLocalNodeId, closedPeerNodeId, closedChannelId, reason
+                ),
+            );
             if let Some(sender) = closedSignal
                 .lock()
                 .expect("Peer Link close signal lock poisoned")
@@ -1670,11 +1774,9 @@ async fn openOutboundPeerLinkWebSocket(
     let peerNodeId = session.coreDeviceId.clone();
     let channelId = format!("peer-channel-{}", Uuid::new_v4().simple());
     let websocket = RemoteWsConnection::open(&session, "peer").await?;
-    websocket.sendPayload(RemoteWsPayload::PeerChannelOpen(
-        PeerChannelOpenEnvelope {
-            channelId: channelId.clone(),
-        },
-    ))?;
+    websocket.sendPayload(RemoteWsPayload::PeerChannelOpen(PeerChannelOpenEnvelope {
+        channelId: channelId.clone(),
+    }))?;
     match websocket.nextResponse().await? {
         RemoteWsResponse::PeerOpened(openedChannelId) if openedChannelId == channelId => {}
         RemoteWsResponse::Error(error) => return Err(error.to_string()),
@@ -1710,7 +1812,8 @@ async fn openOutboundPeerLinkWebSocket(
                         };
                         match response {
                             RemoteWsResponse::PeerFrame(frame) => {
-                                if let Err(error) = frameDispatchConnection.receiveFrame(frame).await
+                                if let Err(error) =
+                                    frameDispatchConnection.receiveFrame(frame).await
                                 {
                                     frameDispatchConnection
                                         .close(format!("Peer Link frame dispatch failed: {error}"));
@@ -1749,11 +1852,10 @@ impl PeerFrameSender for OutboundPeerWebSocketSender {
         if self.closed.load(Ordering::Acquire) {
             return Err("Outbound Peer WebSocket is closed".to_string());
         }
-        self.connection
-            .sendPayload(RemoteWsPayload::PeerFrame {
-                channelId: self.channelId.clone(),
-                frame,
-            })
+        self.connection.sendPayload(RemoteWsPayload::PeerFrame {
+            channelId: self.channelId.clone(),
+            frame,
+        })
     }
 
     /// Closes the Peer WebSocket carrier exactly once.

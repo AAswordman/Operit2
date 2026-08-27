@@ -1789,6 +1789,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-core-application"
+version = "0.1.0"
+dependencies = [
+ "operit-access-runtime",
+ "operit-host-api",
+ "operit-link",
+ "operit-node-runtime",
+ "operit-proxy-local",
+ "operit-runtime",
+]
+
+[[package]]
 name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
@@ -1879,6 +1891,7 @@ dependencies = [
  "base64",
  "ciborium",
  "criterion",
+ "operit-host-api",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -1924,11 +1937,14 @@ dependencies = [
  "operit-access-runtime",
  "operit-host-api",
  "operit-link",
+ "operit-model",
+ "operit-rslink-runtime",
  "operit-runtime",
  "operit-store",
  "operit-tools",
  "operit-util",
  "quote",
+ "rusqlite",
  "serde",
  "serde_json",
  "syn",

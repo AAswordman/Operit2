@@ -119,6 +119,12 @@ pub const RUNTIME_SPACE_MEMBERS_DIR_PATH: &str = RUNTIME_SPACE_MEMBERS.path;
 pub const RUNTIME_SPACE_TOPOLOGY: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree("runtime/space/topology", RuntimeStorageOwnership::Space);
 pub const RUNTIME_SPACE_TOPOLOGY_DIR_PATH: &str = RUNTIME_SPACE_TOPOLOGY.path;
+pub const RUNTIME_SPACE_DEVICE_PRESENCE: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::tree(
+        "runtime/space/device_presence",
+        RuntimeStorageOwnership::Space,
+    );
+pub const RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH: &str = RUNTIME_SPACE_DEVICE_PRESENCE.path;
 pub const RUNTIME_SPACE_DEVICE_PROFILES: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree(
         "runtime/space/device_profiles",

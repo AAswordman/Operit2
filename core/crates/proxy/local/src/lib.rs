@@ -3,18 +3,17 @@
 extern crate self as operit_proxy_local;
 
 use async_trait::async_trait;
-use operit_proxy_bridge::{LocalApplicationBridgeTarget, LocalApplicationSharedClient};
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{FileSystemHost, RuntimeStorageHost};
-pub use operit_rslink_runtime::{CoreReverseStreamSession, CoreStreamPool};
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreHandoffRequest, CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreValue,
-    CoreWatchRequest,
+    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CoreValue, CoreWatchRequest,
 };
-use operit_tools::runtime_support::{CoreNodeToolRuntime, ToolRuntimeSupport};
+use operit_proxy_bridge::{LocalApplicationBridgeTarget, LocalApplicationSharedClient};
+pub use operit_rslink_runtime::{CoreReverseStreamSession, CoreStreamPool};
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
+use operit_tools::runtime_support::{CoreNodeToolRuntime, ToolRuntimeSupport};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -119,17 +118,13 @@ impl LocalCoreProxy {
     }
 
     /// Returns the runtime holder used by generated local server dispatch.
-    pub fn chatRuntimeHolder(
-        &self,
-    ) -> Arc<tokio::sync::Mutex<ChatRuntimeHolder>> {
+    pub fn chatRuntimeHolder(&self) -> Arc<tokio::sync::Mutex<ChatRuntimeHolder>> {
         self.chatRuntimeHolder.clone()
     }
 
     /// Creates the server-internal client that dispatches only to the local application object.
     #[allow(non_snake_case)]
-    pub fn localApplicationSharedClient(
-        &self,
-    ) -> Arc<dyn CoreLinkSharedClient + Send + Sync> {
+    pub fn localApplicationSharedClient(&self) -> Arc<dyn CoreLinkSharedClient + Send + Sync> {
         Arc::new(LocalApplicationSharedClient::new(Arc::new(self.clone()), 0))
     }
 
@@ -139,9 +134,9 @@ impl LocalCoreProxy {
         &self,
     ) -> operit_node_runtime::CoreNodeRouter::CoreNodeLocalRuntime {
         let proxy = Arc::new(self.clone());
-        let spaceRuntime = Arc::new(
-            operit_node_runtime::SpaceRuntime::SpaceRuntime::new(self.chatRuntimeHolder()),
-        );
+        let spaceRuntime = Arc::new(operit_node_runtime::SpaceRuntime::SpaceRuntime::new(
+            self.chatRuntimeHolder(),
+        ));
         let sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync> = proxy.clone();
         let applicationClient = self.localApplicationSharedClient();
         let bindCoreNodeToolRuntime = {
@@ -154,12 +149,14 @@ impl LocalCoreProxy {
                 let spaceRuntime = spaceRuntime.clone();
                 Box::pin(async move { spaceRuntime.handoffAtBoundaryLocal(request).await })
                     as std::pin::Pin<
-                        Box<dyn std::future::Future<
-                            Output = Result<
-                                operit_link::CoreHandoffResponse,
-                                operit_link::CoreLinkError,
-                            >,
-                        > + Send>,
+                        Box<
+                            dyn std::future::Future<
+                                    Output = Result<
+                                        operit_link::CoreHandoffResponse,
+                                        operit_link::CoreLinkError,
+                                    >,
+                                > + Send,
+                        >,
                     >
             })
         };
@@ -220,7 +217,7 @@ impl CoreLinkClient for LocalCoreProxy {
 impl CoreLinkSharedClient for LocalCoreProxy {
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        let result = operit_link::withCoreForceLocal(self.dispatchCall(request)).await;
+        let result = self.dispatchCall(request).await;
         match result {
             Ok(value) => CoreCallResponse::ok(requestId, value),
             Err(error) => CoreCallResponse::err(requestId, error),
@@ -229,10 +226,8 @@ impl CoreLinkSharedClient for LocalCoreProxy {
 
     #[allow(non_snake_case)]
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
-        let (result, attachments) = operit_link::withCoreForceLocal(
-            operit_link::withCoreStreamCapture(
-                generated_dispatch_core_proxy_watch_snapshot_async(self, request),
-            ),
+        let (result, attachments) = operit_link::withCoreStreamCapture(
+            generated_dispatch_core_proxy_watch_snapshot_async(self, request),
         )
         .await;
         self.adoptCoreStreamAttachments(attachments);
@@ -243,8 +238,7 @@ impl CoreLinkSharedClient for LocalCoreProxy {
         if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {
             return self.openCoreStreamWatch(request);
         }
-        operit_link::withCoreForceLocal(generated_dispatch_core_proxy_watch_async(self, request))
-            .await
+        generated_dispatch_core_proxy_watch_async(self, request).await
     }
 }
 
@@ -299,10 +293,9 @@ impl LocalApplicationBridgeTarget for LocalCoreProxy {
 impl LocalCoreProxy {
     #[allow(non_snake_case)]
     async fn dispatchCall(&self, request: CoreCallRequest) -> Result<CoreValue, CoreLinkError> {
-        let (result, attachments) = operit_link::withCoreStreamCapture(
-            generated_dispatch_core_proxy_call(self, request),
-        )
-        .await;
+        let (result, attachments) =
+            operit_link::withCoreStreamCapture(generated_dispatch_core_proxy_call(self, request))
+                .await;
         self.adoptCoreStreamAttachments(attachments);
         result
     }
@@ -347,5 +340,98 @@ impl LocalCoreProxy {
         request: CoreWatchRequest,
     ) -> Result<CoreEventStream, CoreLinkError> {
         self.coreStreamPool.openCoreStreamWatch(request)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_host_api::HostManager::HostManager;
+    use operit_host_native_common::{
+        NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost,
+        NativeRuntimeStorageHost, PosixFileSystemHost,
+    };
+    use operit_link::{
+        CoreEventKind, CoreStreamAttachment, CoreStreamSource, CORE_STREAM_POOL_OBJECT_ID,
+    };
+    use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
+    use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
+    use std::collections::BTreeMap;
+
+    /// Verifies generated watch dispatch treats the protocol stream pool id as a stream source.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generated_async_watch_dispatch_opens_core_stream_pool() {
+        let mut hostManager = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+        let root = std::env::temp_dir().join(format!(
+            "operit-proxy-local-generated-dispatch-{}",
+            std::process::id()
+        ));
+        let runtimeRoot = root.join(RUNTIME_ROOT_DIR_PATH);
+        let workspaceRoot = root.join(WORKSPACE_DIR_PATH);
+        std::fs::create_dir_all(&runtimeRoot).expect("test runtime root must be created");
+        std::fs::create_dir_all(&workspaceRoot).expect("test workspace root must be created");
+        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
+            runtimeRoot.clone(),
+            workspaceRoot.clone(),
+        ));
+        let storageHost = Arc::new(NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
+        hostManager.runtimeStorageHost = Some(storageHost.clone());
+        hostManager.runtimeSqliteHost = Some(storageHost);
+        hostManager.hostJavaScriptRuntimeHost =
+            Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+        hostManager.hostRuntimeTaskSchedulerHost =
+            Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+        let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(hostManager));
+        let streamId = "generated-dispatch-core-stream".to_string();
+        let source = CoreStreamSource::new(|request| {
+            let (sender, receiver) = operit_rslink_runtime::core_event_stream_channel();
+            sender
+                .send(CoreEvent {
+                    requestId: Some(request.requestId.clone()),
+                    targetObjectId: request.targetObjectId,
+                    propertyName: request.propertyName.clone(),
+                    kind: CoreEventKind::Changed,
+                    value: CoreValue::String("stream-pool-opened".to_string()),
+                })
+                .expect("test stream event receiver must stay open");
+            sender
+                .send(CoreEvent {
+                    requestId: Some(request.requestId),
+                    targetObjectId: request.targetObjectId,
+                    propertyName: request.propertyName,
+                    kind: CoreEventKind::Completed,
+                    value: CoreValue::Null,
+                })
+                .expect("test stream completion receiver must stay open");
+            Ok(receiver)
+        });
+        proxy.adoptCoreStreamAttachments(vec![CoreStreamAttachment {
+            streamId: streamId.clone(),
+            source: Arc::new(source),
+        }]);
+        let mut args = BTreeMap::new();
+        args.insert("streamId".to_string(), CoreValue::String(streamId));
+
+        let mut stream = generated_dispatch_core_proxy_watch_async(
+            &proxy,
+            CoreWatchRequest::new(
+                "generated-dispatch-core-stream-watch",
+                CORE_STREAM_POOL_OBJECT_ID,
+                "openCoreStream",
+                CoreValue::Map(args),
+            ),
+        )
+        .await
+        .expect("generated dispatch must open the core stream pool");
+        let event = stream
+            .recv()
+            .await
+            .expect("generated dispatch stream must produce one event");
+
+        assert_eq!(event.kind, CoreEventKind::Changed);
+        assert_eq!(
+            event.value,
+            CoreValue::String("stream-pool-opened".to_string())
+        );
     }
 }

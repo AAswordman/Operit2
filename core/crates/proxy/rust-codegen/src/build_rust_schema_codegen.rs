@@ -169,8 +169,7 @@ fn render_schema_protocol(protocol: &MethodProtocol) -> String {
                 WatchStreamProtocol::JsonFlow { .. } | WatchStreamProtocol::JsonState { .. } => {
                     "Snapshot"
                 }
-                WatchStreamProtocol::JsonStream
-                | WatchStreamProtocol::StringStream => "None",
+                WatchStreamProtocol::JsonStream | WatchStreamProtocol::StringStream => "None",
             };
             format!("{{\"mode\":\"Watch\",\"payload\":\"{payload}\",\"initial\":\"{initial}\"}}")
         }

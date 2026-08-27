@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../common/CharacterAvatar.dart';
 import '../../../../../common/markdown/MarkdownNodeGrouper.dart';
+import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
@@ -35,6 +36,7 @@ class BubbleAiMessageComposable extends StatefulWidget {
     this.isHidden = false,
     this.enableDialogs = true,
     this.onAvatarLongPressMention,
+    this.splitMarkdownContent,
   });
 
   final ChatUiMessage message;
@@ -55,6 +57,7 @@ class BubbleAiMessageComposable extends StatefulWidget {
   final bool isHidden;
   final bool enableDialogs;
   final void Function(String roleName)? onAvatarLongPressMention;
+  final MarkdownContentSplitter? splitMarkdownContent;
 
   @override
   State<BubbleAiMessageComposable> createState() =>
@@ -155,6 +158,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
             initialThinkingExpanded: widget.initialThinkingExpanded,
             allowExpandedThinkingFullHeight:
                 widget.allowExpandedThinkingFullHeight,
+            splitMarkdownContent: widget.splitMarkdownContent,
           ),
         ),
       ),

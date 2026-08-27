@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -136,24 +137,13 @@ void main() {
     );
     expect(
       decodeCoreLink(encodeNativeCoreWatchSnapshotRequest(watchRequest)),
-      <Object?>[
-        'watch-1',
-        15,
-        'cards',
-        null,
-      ],
+      <Object?>['watch-1', 15, 'cards', null],
     );
     expect(
       decodeCoreLink(
         encodeNativeCoreWatchStreamRequest('subscription-1', watchRequest),
       ),
-      <Object?>[
-        'subscription-1',
-        'watch-1',
-        15,
-        'cards',
-        null,
-      ],
+      <Object?>['subscription-1', 'watch-1', 15, 'cards', null],
     );
   });
 
@@ -198,13 +188,7 @@ void main() {
     final frame = decodeNativeCoreWatchFrame(
       encodeCoreLink(<Object?>[
         'subscription-1',
-        <Object?>[
-          null,
-          15,
-          'cards',
-          'Completed',
-          null,
-        ],
+        <Object?>[null, 15, 'cards', 'Completed', null],
       ]),
     );
     expect(frame.subscriptionId, 'subscription-1');
@@ -231,4 +215,110 @@ void main() {
       ),
     );
   });
+
+  test(
+    'watch event decoder applies deltas before embedded stream decoding',
+    () async {
+      final decoder = CoreLinkEventValueDecoder();
+      final factory = _EmbeddedStreamFactoryRecorder();
+      final snapshot = _rawCoreEvent(
+        kind: 'Snapshot',
+        value: <Object?>[
+          <String, Object?>{'contentStream': null, 'text': 'waiting'},
+        ],
+      );
+
+      final first = decoder.decode<List<Stream<String>?>>(
+        snapshot,
+        decode: (bytes) => decodeCoreLink<List<Stream<String>?>>(
+          bytes,
+          decode: _decodeStreamList,
+          embeddedStreamFactory: factory.open,
+        ),
+      );
+
+      expect(first.single, isNull);
+
+      final delta = _rawCoreEvent(
+        kind: 'Delta',
+        value: <String, Object?>{
+          r'$coreDelta': <Object?>[
+            <String, Object?>{
+              'op': 'set',
+              'path': <Object?>[0, 'contentStream'],
+              'value': <String, Object?>{
+                r'$coreStream': <String, Object?>{
+                  'streamId': 'stream-ai',
+                  'targetObjectId': 64,
+                  'propertyName': 'openCoreStream',
+                  'args': <String, Object?>{'streamId': 'stream-ai'},
+                },
+              },
+            },
+          ],
+        },
+      );
+
+      final second = decoder.decode<List<Stream<String>?>>(
+        delta,
+        decode: (bytes) => decodeCoreLink<List<Stream<String>?>>(
+          bytes,
+          decode: _decodeStreamList,
+          embeddedStreamFactory: factory.open,
+        ),
+      );
+
+      expect(factory.openedStreamIds, <String>['stream-ai']);
+      expect(await second.single!.first, 'stream chunk');
+    },
+  );
+}
+
+/// Creates one raw Core watch event for protocol decoder tests.
+CoreEvent _rawCoreEvent({required String kind, required Object? value}) {
+  return CoreEvent.raw(
+    requestId: 'watch-1',
+    targetObjectId: 7,
+    propertyName: 'chatMessagesFlow',
+    kind: kind,
+    valueBytes: encodeCoreLink(value),
+    decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
+  );
+}
+
+/// Decodes the small stream-holder shape used by the incremental codec test.
+List<Stream<String>?> _decodeStreamList(CoreLinkValueReader reader) {
+  final length = reader.readArrayLength();
+  return List<Stream<String>?>.generate(length, (_) {
+    final fieldCount = reader.readMapLength();
+    Stream<String>? contentStream;
+    for (var index = 0; index < fieldCount; index += 1) {
+      final key = reader.readString();
+      if (key == 'contentStream') {
+        contentStream = reader.readNullable<Stream<String>>(
+          () => reader.readEmbeddedStream<String>((item) => item.readString()),
+        );
+        continue;
+      }
+      reader.skipValue();
+    }
+    return contentStream;
+  }, growable: false);
+}
+
+/// Records embedded stream openings during codec tests.
+class _EmbeddedStreamFactoryRecorder {
+  final openedStreamIds = <String>[];
+
+  /// Opens one deterministic test stream for an embedded descriptor.
+  Stream<T> open<T>(
+    String streamId,
+    int targetObjectId,
+    String propertyName,
+    Object? args,
+    T Function(CoreLinkValueReader reader) decode,
+  ) {
+    openedStreamIds.add(streamId);
+    return Stream<T>.value('stream chunk' as T);
+  }
 }
