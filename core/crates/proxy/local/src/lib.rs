@@ -13,7 +13,9 @@ use operit_proxy_bridge::{LocalApplicationBridgeTarget, LocalApplicationSharedCl
 pub use operit_rslink_runtime::{CoreReverseStreamSession, CoreStreamPool};
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
-use operit_tools::runtime_support::{CoreNodeToolRuntime, ToolRuntimeSupport};
+use operit_tools::runtime_support::{
+    CoreNodeToolRuntime, CoreRouteChangeHandler, ToolRuntimeSupport,
+};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -63,6 +65,15 @@ impl LocalCoreProxy {
         self.toolRuntimeSupport
             .bindCoreNodeToolRuntime(runtime)
             .map_err(CoreLinkError::internal)
+    }
+
+    /// Installs the route change controller used after a completed AI turn.
+    #[allow(non_snake_case)]
+    pub fn bindCoreRouteChangeHandler(
+        &self,
+        handler: CoreRouteChangeHandler,
+    ) -> Result<(), String> {
+        self.toolRuntimeSupport.bindCoreRouteChangeHandler(handler)
     }
 
     /// Opens one caller-owned input stream directly on this local Core proxy.
@@ -143,23 +154,6 @@ impl LocalCoreProxy {
             let proxy = proxy.clone();
             Arc::new(move |runtime| proxy.bindCoreNodeToolRuntime(runtime))
         };
-        let handoffAtBoundary = {
-            let spaceRuntime = spaceRuntime.clone();
-            Arc::new(move |request| {
-                let spaceRuntime = spaceRuntime.clone();
-                Box::pin(async move { spaceRuntime.handoffAtBoundaryLocal(request).await })
-                    as std::pin::Pin<
-                        Box<
-                            dyn std::future::Future<
-                                    Output = Result<
-                                        operit_link::CoreHandoffResponse,
-                                        operit_link::CoreLinkError,
-                                    >,
-                                > + Send,
-                        >,
-                    >
-            })
-        };
         let openPush = {
             let proxy = proxy.clone();
             Arc::new(move |request| proxy.openPushLocal(request))
@@ -170,7 +164,6 @@ impl LocalCoreProxy {
             self.runtimeStorageHost(),
             Arc::new(LocalCoreProxy::generatedObjectIdForSchema),
             bindCoreNodeToolRuntime,
-            handoffAtBoundary,
             openPush,
             spaceRuntime,
         )

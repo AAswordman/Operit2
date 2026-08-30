@@ -101,17 +101,15 @@ async fn delete_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<()
     Ok(())
 }
 
+/// Deletes one message from the active chat by its stable timestamp.
 async fn delete_chat_message_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
-    let index = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 chat delete-message <index>".to_string())?
-        .parse::<usize>()
-        .map_err(|error| error.to_string())?;
+    let messageTimestamp = parse_message_timestamp_arg(args, "delete-message")?;
+    let chatId = current_chat_id_with_core(core).await?;
     core.chat_runtime_holder_main()
-        .deleteMessage(index)
+        .deleteMessage(chatId, messageTimestamp)
         .await
         .map_err(|error| error.to_string())?;
-    println!("message deleted: {index}");
+    println!("message deleted: {messageTimestamp}");
     Ok(())
 }
 
@@ -124,22 +122,39 @@ async fn clear_current_chat_with_core(core: &mut CliCore) -> Result<(), String> 
     Ok(())
 }
 
+/// Rolls the active chat back to one user message by its stable timestamp.
 async fn rollback_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
-    let index = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 chat rollback <message-index>".to_string())?
-        .parse::<usize>()
-        .map_err(|error| error.to_string())?;
+    let messageTimestamp = parse_message_timestamp_arg(args, "rollback")?;
+    let chatId = current_chat_id_with_core(core).await?;
     let rolledBack = core
         .chat_runtime_holder_main()
-        .rollbackToMessage(index)
+        .rollbackToMessage(chatId, messageTimestamp)
         .await
         .map_err(|error| error.to_string())?;
     match rolledBack {
-        Some(message) => println!("rolled back to message: {index}\n{message}"),
+        Some(message) => println!("rolled back to message: {messageTimestamp}\n{message}"),
         None => println!("rollback skipped: message must exist and be a user message"),
     }
     Ok(())
+}
+
+/// Reads the active chat id used by timestamp-scoped message commands.
+async fn current_chat_id_with_core(core: &mut CliCore) -> Result<String, String> {
+    core
+        .chat_runtime_holder_main()
+        .currentChatIdFlowSnapshot()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "no current chat selected".to_string())
+}
+
+/// Parses the message timestamp used by a CLI message command.
+fn parse_message_timestamp_arg(args: &[String], command: &str) -> Result<i64, String> {
+    let usage = format!("usage: operit2 chat {command} <message-timestamp>");
+    args.get(0)
+        .ok_or_else(|| usage.clone())?
+        .parse::<i64>()
+        .map_err(|_| usage)
 }
 
 async fn create_chat_branch_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
@@ -936,6 +951,16 @@ fn print_chat_send_result(result: &ChatSendResult) {
     );
 }
 
+/// Sends one chat message command through a CoreNode-aware CLI proxy.
+pub(crate) async fn run_chat_send_command_with_core(
+    core: &mut CliCore,
+    args: &[String],
+) -> Result<(), String> {
+    let sendArgs = parse_chat_send_args(args)?;
+    send_chat_message_with_core(core, sendArgs).await
+}
+
+/// Sends one parsed chat message through a CoreNode-aware CLI proxy.
 async fn send_chat_message_with_core(
     core: &mut CliCore,
     sendArgs: ChatSendArgs,

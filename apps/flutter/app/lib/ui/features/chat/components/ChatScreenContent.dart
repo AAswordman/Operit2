@@ -88,7 +88,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
     required this.onSpeechInput,
-    this.selectedMessageIndices = const <int>{},
+    this.selectedMessageTimestamps = const <int>{},
   });
 
   final List<ChatUiMessage> messages;
@@ -111,17 +111,17 @@ class ChatScreenContent extends StatelessWidget {
   final Future<void> Function() onLoadNewerDisplayWindow;
   final Future<void> Function() onShowLatestDisplayWindow;
   final ToggleFavoriteMessage onToggleFavoriteMessage;
-  final MessageIndexAction onDeleteMessage;
-  final MessageIndexBoolAction onDeleteMessagesFrom;
+  final MessageTimestampAction onDeleteMessage;
+  final MessageTimestampBoolAction onDeleteMessagesFrom;
   final MessageVariantAction onDeleteMessageVariant;
-  final ValueChanged<int> onRollbackToMessage;
+  final MessageTimestampSelectionAction onRollbackToMessage;
   final MessageSelectionAction onSelectMessageToEdit;
-  final MessageIndexAction onRegenerateMessage;
+  final MessageTimestampAction onRegenerateMessage;
   final ValueChanged<ChatUiMessage> onInsertSummary;
   final MessageTimestampAction onCreateBranch;
   final ValueChanged<ChatUiMessage> onReplyToMessage;
-  final ValueChanged<int> onToggleMultiSelectMode;
-  final ValueChanged<int> onToggleMessageSelection;
+  final MessageTimestampSelectionAction onToggleMultiSelectMode;
+  final MessageTimestampSelectionAction onToggleMessageSelection;
   final VoidCallback onExitMultiSelectMode;
   final VoidCallback onSelectAllMessages;
   final VoidCallback onClearMessageSelection;
@@ -155,7 +155,7 @@ class ChatScreenContent extends StatelessWidget {
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
   final VoidCallback onSpeechInput;
-  final Set<int> selectedMessageIndices;
+  final Set<int> selectedMessageTimestamps;
 
   @override
   Widget build(BuildContext context) {
@@ -185,25 +185,25 @@ class ChatScreenContent extends StatelessWidget {
             if (!isPreparingChatSwitch) ...<Widget>[
               if (isMultiSelectMode)
                 ChatMultiSelectBar(
-                  selectedCount: selectedMessageIndices.length,
+                  selectedCount: selectedMessageTimestamps.length,
                   allSelected:
-                      _selectableMessageIndices.isNotEmpty &&
-                      _selectableMessageIndices.length ==
-                          selectedMessageIndices.length,
+                      _selectableMessageTimestamps.isNotEmpty &&
+                      _selectableMessageTimestamps.length ==
+                          selectedMessageTimestamps.length,
                   onClose: onExitMultiSelectMode,
                   onToggleSelectAll:
-                      _selectableMessageIndices.isNotEmpty &&
-                          _selectableMessageIndices.length ==
-                              selectedMessageIndices.length
+                      _selectableMessageTimestamps.isNotEmpty &&
+                          _selectableMessageTimestamps.length ==
+                              selectedMessageTimestamps.length
                       ? onClearMessageSelection
                       : onSelectAllMessages,
-                  onCopy: selectedMessageIndices.isEmpty
+                  onCopy: selectedMessageTimestamps.isEmpty
                       ? null
                       : () => _copySelectedMessages(context),
-                  onShareImage: selectedMessageIndices.isEmpty
+                  onShareImage: selectedMessageTimestamps.isEmpty
                       ? null
                       : () => _generateShareImage(context),
-                  onDelete: selectedMessageIndices.isEmpty
+                  onDelete: selectedMessageTimestamps.isEmpty
                       ? null
                       : () => _confirmDeleteSelected(context),
                 )
@@ -336,7 +336,7 @@ class ChatScreenContent extends StatelessWidget {
       onToggleMessageSelection: onToggleMessageSelection,
       onRefreshRequested: onRefreshRequested,
       isMultiSelectMode: isMultiSelectMode,
-      selectedMessageIndices: selectedMessageIndices,
+      selectedMessageTimestamps: selectedMessageTimestamps,
     );
   }
 
@@ -397,21 +397,27 @@ class ChatScreenContent extends StatelessWidget {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Resolves the message indices eligible for multi-select actions.
-  List<int> get _selectableMessageIndices {
-    return List<int>.generate(messages.length, (index) => index)
-        .where((index) {
-          final sender = messages[index].sender;
+  /// Resolves the message timestamps eligible for multi-select actions.
+  Set<int> get _selectableMessageTimestamps {
+    return messages
+        .where((message) {
+          final sender = message.sender;
           return sender == 'user' || sender == 'ai';
         })
+        .map((message) => message.timestamp)
+        .toSet();
+  }
+
+  /// Resolves selected visible messages in display order.
+  List<ChatUiMessage> get _selectedVisibleMessages {
+    return messages
+        .where((message) => selectedMessageTimestamps.contains(message.timestamp))
         .toList(growable: false);
   }
 
   /// Copies the selected messages into the system clipboard.
   Future<void> _copySelectedMessages(BuildContext context) async {
-    final selectedMessages = selectedMessageIndices.toList()..sort();
-    final text = selectedMessages
-        .map((index) => messages[index])
+    final text = _selectedVisibleMessages
         .map((message) => cleanMessageContent(message.copySourceText))
         .join('\n\n');
     try {
@@ -433,7 +439,7 @@ class ChatScreenContent extends StatelessWidget {
       builder: (context) {
         return AlertDialog(
           title: const Text('确认删除'),
-          content: Text('确定删除已选的 ${selectedMessageIndices.length} 条消息？'),
+          content: Text('确定删除已选的 ${selectedMessageTimestamps.length} 条消息？'),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -475,10 +481,9 @@ class ChatScreenContent extends StatelessWidget {
     );
 
     try {
-      final selectedMessages = selectedMessageIndices.toList()..sort();
       final image = await ChatShareImageGenerator.generate(
         context: context,
-        messages: selectedMessages.map((index) => messages[index]).toList(),
+        messages: _selectedVisibleMessages,
       );
       if (!context.mounted) {
         return;

@@ -275,20 +275,41 @@ class ChatViewModel {
     );
   }
 
-  Future<void> deleteMessage(int index) {
-    return _chat.deleteMessage(index: index);
+  /// Deletes one message from the specified chat by timestamp.
+  Future<void> deleteMessage(String chatId, int messageTimestamp) {
+    return _chat.deleteMessage(
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
+    );
   }
 
-  Future<bool> deleteMessages(Set<int> indices) {
-    return _chat.deleteMessages(indices: indices.toList(growable: false));
+  /// Deletes multiple messages from the specified chat by timestamp.
+  Future<bool> deleteMessages(String chatId, Set<int> messageTimestamps) {
+    return _chat.deleteMessages(
+      chatId: chatId,
+      messageTimestamps: messageTimestamps.toList(growable: false),
+    );
   }
 
-  Future<bool> updateMessage(int index, String editedContent) {
-    return _chat.updateMessage(index: index, editedContent: editedContent);
+  /// Updates one message in the specified chat by timestamp.
+  Future<bool> updateMessage(
+    String chatId,
+    int messageTimestamp,
+    String editedContent,
+  ) {
+    return _chat.updateMessage(
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
+      editedContent: editedContent,
+    );
   }
 
-  Future<bool> deleteMessagesFrom(int index) {
-    return _chat.deleteMessagesFrom(index: index);
+  /// Deletes a message and all following messages in one chat.
+  Future<bool> deleteMessagesFrom(String chatId, int messageTimestamp) {
+    return _chat.deleteMessagesFrom(
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
+    );
   }
 
   Future<void> deleteMessageVariant(int timestamp, int variantIndex) {
@@ -298,25 +319,44 @@ class ChatViewModel {
     );
   }
 
-  Future<String?> rollbackToMessage(int index) {
-    return _chat.rollbackToMessage(index: index);
+  /// Rolls a chat back to the message identified by timestamp.
+  Future<String?> rollbackToMessage(String chatId, int messageTimestamp) {
+    return _chat.rollbackToMessage(
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
+    );
   }
 
-  Future<bool> rewindAndResendMessage(int index, String editedContent) {
+  /// Rewinds and resends a message identified by timestamp.
+  Future<bool> rewindAndResendMessage(
+    String chatId,
+    int messageTimestamp,
+    String editedContent,
+  ) {
     return _chat.rewindAndResendMessage(
-      index: index,
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
       editedContent: editedContent,
     );
   }
 
+  /// Previews workspace changes associated with a message timestamp.
   Future<List<WorkspaceFileChange>> previewWorkspaceChangesForMessage(
-    int index,
+    String chatId,
+    int messageTimestamp,
   ) {
-    return _chat.previewWorkspaceChangesForMessage(index: index);
+    return _chat.previewWorkspaceChangesForMessage(
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
+    );
   }
 
-  Future<void> regenerateSingleAiMessage(int index) {
-    return _chat.regenerateSingleAiMessage(index: index);
+  /// Regenerates one AI message identified by timestamp.
+  Future<void> regenerateSingleAiMessage(String chatId, int messageTimestamp) {
+    return _chat.regenerateSingleAiMessage(
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
+    );
   }
 
   Future<void> createBranch(int timestamp) {

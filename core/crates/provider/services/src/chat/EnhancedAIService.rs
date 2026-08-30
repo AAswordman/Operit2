@@ -26,7 +26,7 @@ use crate::chat::llmprovider::AIService::{
 };
 use crate::runtime_support::{ProviderRuntimeContext, ProviderRuntimeSupport};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
-use operit_link::{CoreExecutionSegment, CoreHandoffRequest, CoreValue};
+use operit_link::CoreValue;
 use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
@@ -38,6 +38,7 @@ use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use operit_tools::runtime_support::ToolRuntimeSupport;
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
@@ -46,8 +47,8 @@ use operit_tools::ConversationMarkupManager::{
     ConversationMarkupManager, ToolResult, ENHANCED_PURE_THINKING_ONLY_WARNING,
 };
 use operit_tools::ToolExecutionManager::{
-    AITool as RuntimeAITool, CoreSwitchIntent, ToolBatchControl, ToolExecutionManager,
-    ToolExposureMode as RuntimeToolExposureMode,
+    AITool as RuntimeAITool, RouteChangeIntent, ToolExecutionManager,
+    ToolExposureMode as RuntimeToolExposureMode, ToolInvocation,
 };
 use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream};
 use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
@@ -96,8 +97,7 @@ pub struct EnhancedAISharedState {
     pub last_reply_content: Option<String>,
     pub last_provider_model: Option<String>,
     pub last_turn_token_snapshot: Option<TurnTokenSnapshot>,
-    pub handoffSegments: Vec<CoreExecutionSegment>,
-    pub handoffOwnershipTransferred: bool,
+    pub pendingRouteChange: Option<RouteChangeIntent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,15 +109,6 @@ pub struct TurnTokenSnapshot {
 
 pub trait SendMessageCallbacks: Send + Sync {
     fn onNonFatalError(&self, _error: String) {}
-
-    /// Supplies opaque runtime state at the exact handoff boundary.
-    fn runtimeChatSnapshot(
-        &self,
-        _assistantMessageTimestamp: Option<i64>,
-        _assistantContent: Option<String>,
-    ) -> Option<CoreValue> {
-        None
-    }
 
     fn onTokenLimitExceeded(&self) {}
 
@@ -154,39 +145,11 @@ pub struct SendMessageOptions {
     pub chatModelIdOverride: Option<String>,
     pub stream: bool,
     pub disableWarning: bool,
-    pub assistantMessageTimestamp: Option<i64>,
-    pub executionGeneration: i64,
-    pub segmentIndex: i64,
 }
 
-/// Carries the serialized EnhanceAI state to the next Core at a turn boundary.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[allow(non_snake_case)]
-pub struct CoreHandoffContinuation {
-    pub assistantMessageTimestamp: i64,
-    pub executionGeneration: i64,
-    pub segmentIndex: i64,
-    pub chatId: Option<String>,
-    pub chatHistory: Vec<PromptTurn>,
-    pub workspacePath: Option<String>,
-    pub functionType: FunctionType,
-    pub promptFunctionType: PromptFunctionType,
-    pub enableThinking: bool,
-    pub enableMemoryAutoUpdate: bool,
-    pub maxTokens: i32,
-    pub tokenUsageThreshold: f64,
-    pub isSubTask: bool,
-    pub characterName: Option<String>,
-    pub avatarUri: Option<String>,
-    pub roleCardId: Option<String>,
-    pub enableGroupOrchestrationHint: bool,
-    pub groupParticipantNamesText: Option<String>,
-    pub proxySenderName: Option<String>,
-    pub notifyReplyOverride: Option<bool>,
-    pub chatProviderIdOverride: Option<String>,
-    pub chatModelIdOverride: Option<String>,
-    pub stream: bool,
-    pub disableWarning: bool,
+/// Describes the model round that should resume after a completed route change.
+pub struct ResumeRequest {
+    pub options: SendMessageOptions,
 }
 
 impl SendMessageOptions {
@@ -219,9 +182,6 @@ impl SendMessageOptions {
             chatModelIdOverride: None,
             stream: true,
             disableWarning: false,
-            assistantMessageTimestamp: None,
-            executionGeneration: 0,
-            segmentIndex: 0,
         }
     }
 }
@@ -229,9 +189,6 @@ impl SendMessageOptions {
 #[derive(Clone, Debug)]
 pub struct MessageExecutionContext {
     pub executionId: i32,
-    pub assistantMessageTimestamp: Option<i64>,
-    pub executionGeneration: i64,
-    pub segmentIndex: i64,
     pub streamBuffer: String,
     pub roundManager: ConversationRoundManagerMirror,
     pub isConversationActive: bool,
@@ -253,9 +210,6 @@ impl MessageExecutionContext {
     ) -> Self {
         Self {
             executionId,
-            assistantMessageTimestamp: None,
-            executionGeneration: 0,
-            segmentIndex: 0,
             streamBuffer: String::new(),
             roundManager: ConversationRoundManagerMirror::new(),
             isConversationActive: true,
@@ -585,8 +539,7 @@ impl EnhancedAIService {
                 last_reply_content: None,
                 last_provider_model: None,
                 last_turn_token_snapshot: None,
-                handoffSegments: Vec::new(),
-                handoffOwnershipTransferred: false,
+                pendingRouteChange: None,
             })),
         }
     }
@@ -1045,38 +998,31 @@ impl EnhancedAIService {
         self.sendMessageWithRuntime(options, runtime).await
     }
 
-    /// Starts the next provider execution on a target Core from one handoff boundary.
-    #[allow(non_snake_case)]
-    pub async fn continueAtBoundary(
+    /// Resumes model processing with history already synchronized on the target CoreNode.
+    pub async fn resume(
         &mut self,
-        continuation: CoreHandoffContinuation,
+        request: ResumeRequest,
     ) -> Result<SharedAiResponseStream, AiServiceError> {
-        let mut options = SendMessageOptions::new();
-        options.chatId = continuation.chatId;
-        options.chatHistory = continuation.chatHistory;
-        options.workspacePath = continuation.workspacePath;
-        options.functionType = continuation.functionType;
-        options.promptFunctionType = continuation.promptFunctionType;
-        options.enableThinking = continuation.enableThinking;
-        options.enableMemoryAutoUpdate = continuation.enableMemoryAutoUpdate;
-        options.maxTokens = continuation.maxTokens;
-        options.tokenUsageThreshold = continuation.tokenUsageThreshold;
-        options.isSubTask = continuation.isSubTask;
-        options.characterName = continuation.characterName;
-        options.avatarUri = continuation.avatarUri;
-        options.roleCardId = continuation.roleCardId;
-        options.enableGroupOrchestrationHint = continuation.enableGroupOrchestrationHint;
-        options.groupParticipantNamesText = continuation.groupParticipantNamesText;
-        options.proxySenderName = continuation.proxySenderName;
-        options.notifyReplyOverride = continuation.notifyReplyOverride;
-        options.chatProviderIdOverride = continuation.chatProviderIdOverride;
-        options.chatModelIdOverride = continuation.chatModelIdOverride;
-        options.stream = continuation.stream;
-        options.disableWarning = continuation.disableWarning;
-        options.assistantMessageTimestamp = Some(continuation.assistantMessageTimestamp);
-        options.executionGeneration = continuation.executionGeneration;
-        options.segmentIndex = continuation.segmentIndex;
-        self.sendMessage(options).await
+        self.sendMessage(request.options).await
+    }
+
+    /// Takes the route intent produced by the completed tool batch.
+    #[allow(non_snake_case)]
+    pub fn takePendingRouteChange(&self) -> Option<RouteChangeIntent> {
+        self.shared_state().pendingRouteChange.take()
+    }
+
+    /// Requests the runtime-owned route controller to complete one route change.
+    #[allow(non_snake_case)]
+    pub async fn requestCoreRouteChange(
+        &self,
+        chatId: String,
+        targetNodeId: String,
+    ) -> Result<(), String> {
+        self.tool_handler
+            .runtimeSupport()
+            .requestCoreRouteChange(chatId, targetNodeId)
+            .await
     }
 
     #[allow(non_snake_case)]
@@ -1245,14 +1191,13 @@ impl EnhancedAIService {
 
         {
             let mut shared = self.shared_state();
-            shared.handoffSegments.clear();
             shared.accumulated_input_token_count = 0;
             shared.accumulated_output_token_count = 0;
             shared.accumulated_cached_input_token_count = 0;
             shared.current_request_input_token_count = 0;
             shared.current_request_output_token_count = 0;
             shared.current_request_cached_input_token_count = 0;
-            shared.handoffOwnershipTransferred = false;
+            shared.pendingRouteChange = None;
         }
 
         let mut lifecycle = Vec::new();
@@ -1270,9 +1215,6 @@ impl EnhancedAIService {
             proxySenderName.clone(),
             eventChannel,
         );
-        execContext.assistantMessageTimestamp = options.assistantMessageTimestamp;
-        execContext.executionGeneration = options.executionGeneration;
-        execContext.segmentIndex = options.segmentIndex;
         self.registerExecutionContext(execContext.clone());
         if !isSubTask {
             lifecycle.push(SendMessageLifecycleStage::StartAiService);
@@ -1668,14 +1610,6 @@ impl EnhancedAIService {
             shared.current_request_cached_input_token_count = 0;
             shared.per_request_token_counts = Some((inputTokens, outputTokens));
         }
-        self.recordCoreExecutionSegment(
-            execContext.executionGeneration,
-            execContext.segmentIndex,
-            providerModel.clone(),
-            inputTokens,
-            outputTokens,
-            cachedInputTokens,
-        );
         persistProviderModelTokenUsage(
             self.provider_runtime_context.support(),
             &providerModel,
@@ -1812,11 +1746,14 @@ impl EnhancedAIService {
             self.stopAiService(characterName, avatarUri);
         }
 
-        let aggregateTokenSnapshot = self.aggregateCoreExecutionTokens();
         {
             let mut shared = self.shared_state();
             shared.last_reply_content = Some(execContext.roundManager.getDisplayContent());
-            shared.last_turn_token_snapshot = Some(aggregateTokenSnapshot);
+            shared.last_turn_token_snapshot = Some(TurnTokenSnapshot {
+                inputTokens: shared.accumulated_input_token_count,
+                outputTokens: shared.accumulated_output_token_count,
+                cachedInputTokens: shared.accumulated_cached_input_token_count,
+            });
         }
         let _ = finalProcessedInput;
         let _ = requestHistory;
@@ -1860,7 +1797,6 @@ impl EnhancedAIService {
         stream: bool,
         enableGroupOrchestrationHint: bool,
         toolResultMessageOverride: Option<String>,
-        handoffIntent: Option<CoreSwitchIntent>,
         disableWarning: bool,
         callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
         runtime: &mut SendMessageRuntime,
@@ -1954,71 +1890,6 @@ impl EnhancedAIService {
                 toolResultMessageLen
             ),
         );
-        if let Some(handoffIntent) = handoffIntent {
-            let runtimeSnapshot = callbacks
-                .as_ref()
-                .and_then(|callback| {
-                    callback.runtimeChatSnapshot(
-                        context.assistantMessageTimestamp,
-                        Some(context.streamBuffer.clone()),
-                    )
-                })
-                .ok_or_else(|| {
-                    AiServiceError::RequestFailed(
-                        "Core handoff requires an in-memory chat runtime snapshot".to_string(),
-                    )
-                })?;
-            let continuation = CoreHandoffContinuation {
-                assistantMessageTimestamp: context.assistantMessageTimestamp.ok_or_else(|| {
-                    AiServiceError::RequestFailed(
-                        "Core handoff requires an assistant message timestamp".to_string(),
-                    )
-                })?,
-                executionGeneration: context.executionGeneration,
-                segmentIndex: context.segmentIndex + 1,
-                chatId: chatId.clone(),
-                chatHistory: currentChatHistory.clone(),
-                workspacePath: context.workspacePath.clone(),
-                functionType: functionType.clone(),
-                promptFunctionType: promptFunctionType.clone(),
-                enableThinking,
-                enableMemoryAutoUpdate,
-                maxTokens,
-                tokenUsageThreshold,
-                isSubTask,
-                characterName: characterName.clone(),
-                avatarUri: avatarUri.clone(),
-                roleCardId: roleCardId.clone(),
-                enableGroupOrchestrationHint,
-                groupParticipantNamesText: context.groupParticipantNamesText.clone(),
-                proxySenderName: context.proxySenderName.clone(),
-                notifyReplyOverride,
-                chatProviderIdOverride: chatProviderIdOverride.clone(),
-                chatModelIdOverride: chatModelIdOverride.clone(),
-                stream,
-                disableWarning,
-            };
-            let continuationValue = operit_link::toCoreValue(&continuation)
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            let bindingKey = chatId.clone().ok_or_else(|| {
-                AiServiceError::RequestFailed(
-                    "Core handoff requires a persisted chat binding key".to_string(),
-                )
-            })?;
-            self.provider_runtime_context
-                .shared_support()
-                .handoffCoreAtBoundary(CoreHandoffRequest {
-                    bindingKey,
-                    targetNodeId: handoffIntent.targetNodeId,
-                    continuation: continuationValue,
-                    runtimeSnapshot,
-                })
-                .await
-                .map_err(AiServiceError::RequestFailed)?;
-            self.shared_state().handoffOwnershipTransferred = true;
-            self.invalidateExecutionContext(context, "core.handoff.target_started".to_string());
-            return Ok(());
-        }
         self.startAssistantResponseRound(context);
         AppLogger::d(
             TAG,
@@ -2213,14 +2084,6 @@ impl EnhancedAIService {
             shared.current_request_cached_input_token_count = 0;
             shared.per_request_token_counts = Some((inputTokens, outputTokens));
         }
-        self.recordCoreExecutionSegment(
-            context.executionGeneration,
-            context.segmentIndex,
-            providerModel.clone(),
-            inputTokens,
-            outputTokens,
-            cachedInputTokens,
-        );
         persistProviderModelTokenUsage(
             self.provider_runtime_context.support(),
             &providerModel,
@@ -2283,7 +2146,7 @@ impl EnhancedAIService {
             stream,
             enableGroupOrchestrationHint,
             disableWarning,
-            None,
+            callbacks.clone(),
             runtime,
         ))
         .await?;
@@ -2629,7 +2492,7 @@ impl EnhancedAIService {
             ToolExposureMode::Cli => RuntimeToolExposureMode::CLI,
             ToolExposureMode::Full => RuntimeToolExposureMode::FULL,
         };
-        let (emittedToolResultMessages, allToolResults, batchControl) =
+        let (emittedToolResultMessages, allToolResults, routeChangeIntent) =
             ToolExecutionManager::executeInvocations(
                 &toolInvocations,
                 &mut self.tool_handler,
@@ -2641,6 +2504,12 @@ impl EnhancedAIService {
                 toolExposureMode,
             )
             .await;
+        let routeChangeTargetNodeId = routeChangeIntent
+            .as_ref()
+            .map(|intent| intent.targetNodeId.clone());
+        if let Some(routeChangeIntent) = routeChangeIntent {
+            self.shared_state().pendingRouteChange = Some(routeChangeIntent);
+        }
         let emittedChars = emittedToolResultMessages
             .iter()
             .map(|content| content.len())
@@ -2671,11 +2540,14 @@ impl EnhancedAIService {
             collector.emit_chunk(content);
         }
 
-        let handoffIntent = match &batchControl {
-            ToolBatchControl::Handoff(intent) => Some(intent.clone()),
-            _ => None,
-        };
-        if batchControl == ToolBatchControl::StopExecution && handoffIntent.is_none() {
+        if let Some(targetNodeId) = routeChangeTargetNodeId {
+            AppLogger::i(
+                TAG,
+                &format!(
+                    "chat.tool_call.route_pause executionId={} round={} targetNodeId={}",
+                    context.executionId, context.roundManager.roundIndex, targetNodeId
+                ),
+            );
             return Ok(());
         }
 
@@ -2704,7 +2576,6 @@ impl EnhancedAIService {
                 stream,
                 enableGroupOrchestrationHint,
                 None,
-                handoffIntent,
                 disableWarning,
                 callbacks.clone(),
                 runtime,
@@ -2738,7 +2609,6 @@ impl EnhancedAIService {
                 stream,
                 enableGroupOrchestrationHint,
                 toolResultOverrideMessage,
-                None,
                 disableWarning,
                 callbacks,
                 runtime,
@@ -2881,86 +2751,6 @@ impl EnhancedAIService {
     #[allow(non_snake_case)]
     pub fn getLastTurnTokenSnapshot(&self) -> Option<TurnTokenSnapshot> {
         self.shared_state().last_turn_token_snapshot.clone()
-    }
-
-    /// Records one provider request in the current physical Core execution segment.
-    #[allow(non_snake_case)]
-    pub fn recordCoreExecutionSegment(
-        &self,
-        executionGeneration: i64,
-        segmentIndex: i64,
-        providerModel: String,
-        inputTokens: i64,
-        outputTokens: i64,
-        cachedInputTokens: i64,
-    ) {
-        let (provider, modelName) = match providerModel.split_once(':') {
-            Some((provider, modelName)) => (provider.to_string(), modelName.to_string()),
-            None => (providerModel.clone(), String::new()),
-        };
-        let mut shared = self.shared_state();
-        shared.last_provider_model = Some(providerModel);
-        if let Some(segment) = shared.handoffSegments.iter_mut().find(|segment| {
-            segment.executionGeneration == executionGeneration
-                && segment.segmentIndex == segmentIndex
-                && segment.provider == provider
-                && segment.modelName == modelName
-        }) {
-            segment.inputTokens += inputTokens;
-            segment.outputTokens += outputTokens;
-            segment.cachedInputTokens += cachedInputTokens;
-            return;
-        }
-        shared.handoffSegments.push(CoreExecutionSegment {
-            executionGeneration,
-            segmentIndex,
-            provider,
-            modelName,
-            inputTokens,
-            outputTokens,
-            cachedInputTokens,
-        });
-    }
-
-    /// Merges completed segments received from a downstream Core into this execution.
-    #[allow(non_snake_case)]
-    pub fn mergeCoreExecutionSegments(&self, segments: &[CoreExecutionSegment]) {
-        for segment in segments {
-            let providerModel = format!("{}:{}", segment.provider, segment.modelName);
-            self.recordCoreExecutionSegment(
-                segment.executionGeneration,
-                segment.segmentIndex,
-                providerModel,
-                segment.inputTokens,
-                segment.outputTokens,
-                segment.cachedInputTokens,
-            );
-        }
-        let aggregate = self.aggregateCoreExecutionTokens();
-        self.shared_state().last_turn_token_snapshot = Some(aggregate);
-    }
-
-    /// Returns aggregate token usage across all physical Core segments.
-    #[allow(non_snake_case)]
-    pub fn aggregateCoreExecutionTokens(&self) -> TurnTokenSnapshot {
-        let shared = self.shared_state();
-        TurnTokenSnapshot {
-            inputTokens: shared
-                .handoffSegments
-                .iter()
-                .map(|segment| segment.inputTokens)
-                .sum(),
-            outputTokens: shared
-                .handoffSegments
-                .iter()
-                .map(|segment| segment.outputTokens)
-                .sum(),
-            cachedInputTokens: shared
-                .handoffSegments
-                .iter()
-                .map(|segment| segment.cachedInputTokens)
-                .sum(),
-        }
     }
 
     #[allow(non_snake_case)]

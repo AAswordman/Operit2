@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use operit_link::CoreHandoffRequest;
 use operit_model::FunctionType::FunctionType;
 use operit_model::MemorySearchConfig::MemorySearchConfig;
 use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
@@ -42,16 +41,6 @@ struct RuntimeProviderSupport {
 }
 
 impl ProviderRuntimeSupport for RuntimeProviderSupport {
-    /// Executes one route-owned Core handoff through the tool runtime boundary.
-    #[allow(non_snake_case)]
-    fn handoffCoreAtBoundary<'a>(
-        &'a self,
-        request: CoreHandoffRequest,
-    ) -> ProviderRuntimeSupportFuture<'a, Result<(), String>> {
-        let runtimeSupport = self.tool_handler.runtimeSupport();
-        Box::pin(async move { runtimeSupport.handoffCoreAtBoundary(request).await })
-    }
-
     /// Returns the root directory used by runtime data.
     fn dataDir(&self) -> Result<PathBuf, String> {
         Ok(ApiPreferences::data_dir())

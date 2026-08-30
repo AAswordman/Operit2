@@ -801,6 +801,7 @@ class _InputBody extends StatelessWidget {
           canSendMessage: canSendMessage,
           onSendMessage: onSendMessage,
           child: TextField(
+            key: const ValueKey<String>('chat.input'),
             controller: controller,
             focusNode: focusNode,
             minLines: inputExpanded ? 10 : 1,
@@ -911,6 +912,7 @@ class _InputBody extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             _ActionButton(
+              key: const ValueKey<String>('chat.send'),
               processing: processing || isSpeechTranscribing,
               progress: isSpeechTranscribing ? null : _progressFor(inputState),
               background: isSpeechRecording
@@ -1964,6 +1966,7 @@ class _IconTapTarget extends StatelessWidget {
 
 class _ActionButton extends StatelessWidget {
   const _ActionButton({
+    super.key,
     required this.processing,
     required this.progress,
     required this.background,

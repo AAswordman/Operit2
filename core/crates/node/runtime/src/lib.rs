@@ -7,6 +7,14 @@ pub enum GeneratedCoreRoute {
     Binding { scope: usize, key: String },
 }
 
+/// Identifies lifecycle hooks registered by annotated Space routes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeneratedRouteLifecycle {
+    Normal,
+    BeforeChangeRoute,
+    AfterChangeRoute,
+}
+
 /// Describes one annotation-generated Space route independent of local Proxy object IDs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GeneratedSpaceRoute {
@@ -14,6 +22,7 @@ pub struct GeneratedSpaceRoute {
     pub methodName: &'static str,
     pub bindingArgument: &'static str,
     pub targetType: &'static str,
+    pub lifecycle: GeneratedRouteLifecycle,
 }
 
 impl GeneratedSpaceRoute {
@@ -50,9 +59,6 @@ impl GeneratedSpaceRoute {
     }
 }
 
-pub const CORE_ROUTE_CURSOR_ARGUMENT: &str = "__operit_route_cursor";
-pub const CORE_ROUTE_CURSOR_PROPERTY: &str = "__operit_route_cursor";
-
 include!(concat!(env!("OUT_DIR"), "/generated_route_catalog.rs"));
 
 pub mod CoreNodeRouter;
@@ -61,3 +67,23 @@ pub mod RuntimeRemoteLinkDiscovery;
 pub mod RuntimeRemoteLinkService;
 pub mod SpacePersistenceSyncService;
 pub mod SpaceRuntime;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_route_catalog_contains_route_lifecycle_hooks() {
+        let before = generated_space_lifecycle_route(GeneratedRouteLifecycle::BeforeChangeRoute)
+            .expect("before-change route hook must be registered");
+        let after = generated_space_lifecycle_route(GeneratedRouteLifecycle::AfterChangeRoute)
+            .expect("after-change route hook must be registered");
+
+        assert_eq!(before.methodName, "beforeChangeRoute");
+        assert_eq!(before.bindingArgument, "chatId");
+        assert_eq!(before.lifecycle, GeneratedRouteLifecycle::BeforeChangeRoute);
+        assert_eq!(after.methodName, "afterChangeRoute");
+        assert_eq!(after.bindingArgument, "chatId");
+        assert_eq!(after.lifecycle, GeneratedRouteLifecycle::AfterChangeRoute);
+    }
+}

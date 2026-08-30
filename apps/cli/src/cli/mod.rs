@@ -65,7 +65,9 @@ use crate::bootstrap::{
     scope_cli_storage_command_args, select_cli_identity,
 };
 use crate::browser_callback::CliOAuthCallback;
-use crate::chat_runtime::{run_chat_shell_command_with_core, run_shell_command};
+use crate::chat_runtime::{
+    run_chat_send_command_with_core, run_chat_shell_command_with_core, run_shell_command,
+};
 use crate::core_proxy::local_cli_core;
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
 use link::run_link_command;
@@ -116,6 +118,9 @@ pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
         "backup" => run_backup_command(&mut core, &args[1..]).await,
+        "chat" if args.get(1).map(String::as_str) == Some("send") => {
+            run_chat_send_command_with_core(&mut core, &args[2..]).await
+        }
         "chat" if args.get(1).map(String::as_str) == Some("shell") => {
             run_chat_shell_command_with_core(&mut core, &args[2..]).await
         }
@@ -1362,7 +1367,7 @@ pub(crate) fn print_root_usage() {
     println!("operit2 install [--source <path>]");
     println!("operit2 uninstall");
     println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
-    println!("operit2 tui [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
+    println!("operit2 tui [--link-server --link-bind <addr:port> --link-token <token>] [--link-join <session>] [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
     println!("operit2 cli <version|identity|prefs|host|log|local-models|stt|memory|tts|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
     println!("operit2 cli --link <session> <version|prefs|host|log|local-models|stt|memory|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
@@ -1405,7 +1410,7 @@ fn print_cli_usage() {
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
     println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
-        "operit2 cli link <serve|discover|hello|connect|space|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|call|watch|tui|run>"
+        "operit2 cli link <serve|discover|hello|connect|space|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>"
     );
     println!("operit2 cli web <open|close|status|token>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -1416,9 +1421,9 @@ fn print_cli_usage() {
     println!("operit2 cli chat current");
     println!("operit2 cli chat switch <chat-id>");
     println!("operit2 cli chat delete <chat-id>");
-    println!("operit2 cli chat delete-message <index>");
+    println!("operit2 cli chat delete-message <message-timestamp>");
     println!("operit2 cli chat clear");
-    println!("operit2 cli chat rollback <message-index>");
+    println!("operit2 cli chat rollback <message-timestamp>");
     println!("operit2 cli chat branch [--up-to <message-timestamp>]");
     println!("operit2 cli chat branches [parent-chat-id]");
     println!("operit2 cli chat lock <chat-id> <true|false>");
@@ -1521,9 +1526,9 @@ fn print_chat_usage() {
     println!("operit2 cli chat current");
     println!("operit2 cli chat switch <chat-id>");
     println!("operit2 cli chat delete <chat-id>");
-    println!("operit2 cli chat delete-message <index>");
+    println!("operit2 cli chat delete-message <message-timestamp>");
     println!("operit2 cli chat clear");
-    println!("operit2 cli chat rollback <message-index>");
+    println!("operit2 cli chat rollback <message-timestamp>");
     println!("operit2 cli chat branch [--up-to <message-timestamp>]");
     println!("operit2 cli chat branches [parent-chat-id]");
     println!("operit2 cli chat lock <chat-id> <true|false>");
@@ -2007,3 +2012,4 @@ fn currentTimeMillis() -> i64 {
         .expect("system clock must be after unix epoch")
         .as_millis() as i64
 }
+

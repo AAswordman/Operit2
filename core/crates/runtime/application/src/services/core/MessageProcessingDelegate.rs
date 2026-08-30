@@ -12,7 +12,6 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
-use crate::services::ChatServiceCore::CoreHandoffRuntimeSnapshot;
 use crate::services::RuntimeHostInteractionService::{
     publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
 };
@@ -321,9 +320,7 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub proxySenderNameOverride: Option<String>,
     pub suppressUserMessageInHistory: bool,
     pub isAutoContinuation: bool,
-    pub assistantMessageTimestamp: Option<i64>,
-    pub executionGeneration: Option<i64>,
-    pub executionSegmentIndex: Option<i64>,
+    pub isResume: bool,
     pub turnOptions: ChatTurnOptions,
 }
 
@@ -379,8 +376,6 @@ pub struct MessageProcessingDelegate {
 /// Bridges enhanced AI callbacks back into processing delegate state flows.
 struct MessageProcessingCallbacks {
     nonFatalErrorEventFlow: MutableStateFlow<Option<String>>,
-    chatId: String,
-    chatHistoryDelegate: ChatHistoryDelegate,
 }
 
 impl SendMessageCallbacks for MessageProcessingCallbacks {
@@ -389,76 +384,6 @@ impl SendMessageCallbacks for MessageProcessingCallbacks {
     fn onNonFatalError(&self, error: String) {
         self.nonFatalErrorEventFlow.set_value(Some(error));
     }
-
-    /// Captures the opened chat flow state at the exact Core handoff boundary.
-    #[allow(non_snake_case)]
-    fn runtimeChatSnapshot(
-        &self,
-        assistantMessageTimestamp: Option<i64>,
-        assistantContent: Option<String>,
-    ) -> Option<CoreValue> {
-        let messages = self
-            .chatHistoryDelegate
-            .openedRuntimeChatHistorySnapshot(&self.chatId)
-            .ok()?
-            .into_iter()
-            .map(|mut message| {
-                if Some(message.timestamp) == assistantMessageTimestamp {
-                    message = assistantMessageWithHandoffProtocolSnapshot(
-                        message,
-                        assistantContent.as_deref(),
-                    )
-                    .ok()?;
-                } else {
-                    message.contentStream = None;
-                }
-                Some(message)
-            })
-            .collect::<Option<Vec<_>>>()?;
-        if let Some(timestamp) = assistantMessageTimestamp {
-            if let Some(message) = messages
-                .iter()
-                .find(|message| message.timestamp == timestamp)
-            {
-                AppLogger::i(
-                    "CoreHandoffTrace",
-                    &format!(
-                        "runtime.snapshot chatId={} timestamp={} messages={} assistantContentChars={} parts={} displayChars={} protocolChars={}",
-                        self.chatId,
-                        timestamp,
-                        messages.len(),
-                        assistantContent
-                            .as_ref()
-                            .map(|content| content.chars().count())
-                            .unwrap_or(0),
-                        message.parts.len(),
-                        message.displayText().chars().count(),
-                        message.assistantProtocolMarkup().chars().count()
-                    ),
-                );
-            }
-        }
-        operit_link::toCoreValue(CoreHandoffRuntimeSnapshot {
-            chatId: self.chatId.clone(),
-            messages,
-        })
-        .ok()
-    }
-}
-
-/// Builds the assistant message snapshot that crosses a Core handoff boundary.
-#[allow(non_snake_case)]
-fn assistantMessageWithHandoffProtocolSnapshot(
-    mut message: ChatMessage,
-    assistantSegmentContent: Option<&str>,
-) -> Result<ChatMessage, String> {
-    let mut content = message.assistantProtocolMarkup();
-    if let Some(segmentContent) = assistantSegmentContent {
-        content.push_str(segmentContent);
-    }
-    message.parts = MessagePartCodec::parseAssistantMarkup(&content)?;
-    message.contentStream = None;
-    Ok(message)
 }
 
 impl MessageProcessingDelegate {
@@ -1137,38 +1062,6 @@ impl MessageProcessingDelegate {
     > {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
-        let continuationAssistantMessage = match request.assistantMessageTimestamp {
-            Some(timestamp) => {
-                let message = request
-                    .chatHistory
-                    .iter()
-                    .find(|message| message.timestamp == timestamp)
-                    .cloned()
-                    .ok_or_else(|| {
-                        operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
-                            format!(
-                                "response continuation assistant message does not exist: {timestamp}"
-                            ),
-                        )
-                    })?;
-                if message.sender != "ai" {
-                    return Err(
-                        operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
-                            format!(
-                                "response continuation timestamp is not an assistant message: {timestamp}"
-                            ),
-                        ),
-                    );
-                }
-                Some(message)
-            }
-            None => None,
-        };
-        let continuationContentPrefix = match continuationAssistantMessage.as_ref() {
-            Some(message) => message.assistantProtocolMarkup(),
-            None => String::new(),
-        };
-        let isResponseExecutionContinuation = continuationAssistantMessage.is_some();
         AppLogger::i(
             "CoreSend",
             &format!(
@@ -1362,10 +1255,7 @@ impl MessageProcessingDelegate {
             "CoreSend",
             &format!("response stream create start chatId={}", chatId),
         );
-        let assistantMessageTimestamp = continuationAssistantMessage
-            .as_ref()
-            .map(|message| message.timestamp)
-            .unwrap_or_else(ChatMessageTimestampAllocator::next);
+        let assistantMessageTimestamp = ChatMessageTimestampAllocator::next();
         let completionStream = match AIMessageManager::sendMessage(AIMessageSendRequest {
             enhancedAiService: request.enhancedAiService,
             chatId: Some(chatId.clone()),
@@ -1392,13 +1282,9 @@ impl MessageProcessingDelegate {
             disableWarning: request.turnOptions.disableWarning,
             callbacks: Some(Arc::new(MessageProcessingCallbacks {
                 nonFatalErrorEventFlow: self.nonFatalErrorEventFlow.clone(),
-                chatId: chatId.clone(),
-                chatHistoryDelegate: request.chatHistoryDelegate.clone_for_core(),
             })),
             onToolInvocation: None,
-            assistantMessageTimestamp: Some(assistantMessageTimestamp),
-            executionGeneration: request.executionGeneration.unwrap_or(0),
-            segmentIndex: request.executionSegmentIndex.unwrap_or(0),
+            resume: request.isResume,
         })
         .await
         {
@@ -1441,7 +1327,7 @@ impl MessageProcessingDelegate {
             }
         };
         let sharedResponseStream = completionStream.clone();
-        sharedResponseStream.set_initial_content(continuationContentPrefix.clone());
+        sharedResponseStream.set_initial_content(String::new());
         self.withRuntime(Some(chatId.clone()), |runtime| {
             runtime.responseStream = Some(sharedResponseStream.clone());
         });
@@ -1450,20 +1336,17 @@ impl MessageProcessingDelegate {
             .getLastProviderModel()
             .unwrap_or_default();
         let (initialProvider, initialModelName) = split_provider_model(&initialProviderModel);
-        let mut aiMessage = match continuationAssistantMessage {
-            Some(message) => message,
-            None => ChatMessage {
-                sender: "ai".to_string(),
-                timestamp: assistantMessageTimestamp,
-                roleName: currentRoleName.clone(),
-                provider: initialProvider,
-                modelName: initialModelName,
-                inputTokens: 0,
-                outputTokens: 0,
-                cachedInputTokens: 0,
-                displayMode: ChatMessageDisplayMode::NORMAL,
-                ..ChatMessage::new("ai".to_string())
-            },
+        let mut aiMessage = ChatMessage {
+            sender: "ai".to_string(),
+            timestamp: assistantMessageTimestamp,
+            roleName: currentRoleName.clone(),
+            provider: initialProvider,
+            modelName: initialModelName,
+            inputTokens: 0,
+            outputTokens: 0,
+            cachedInputTokens: 0,
+            displayMode: ChatMessageDisplayMode::NORMAL,
+            ..ChatMessage::new("ai".to_string())
         };
         let streamKey = format!("chat-message-stream:{}", aiMessage.timestamp);
         let segmentSource = coreResponseStreamSource(sharedResponseStream.clone(), streamKey);
@@ -1474,20 +1357,15 @@ impl MessageProcessingDelegate {
         AppLogger::i(
             "ResponseExecutionTrace",
             &format!(
-                "response_segment_started chatId={} timestamp={} continuation={} initialChars={}",
-                chatId,
-                aiMessage.timestamp,
-                isResponseExecutionContinuation,
-                continuationContentPrefix.chars().count()
+                "response_started chatId={} timestamp={}",
+                chatId, aiMessage.timestamp,
             ),
         );
         let workerChatId = chatId.clone();
         let workerTurnOptions = request.turnOptions.clone();
         let workerAiMessage = Arc::new(Mutex::new(aiMessage.clone()));
         let workerResponseStream = sharedResponseStream.clone();
-        let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new(
-            &continuationContentPrefix,
-        )));
+        let workerRevisionTracker = Arc::new(Mutex::new(TextStreamRevisionTracker::new("")));
         let workerPartStream = Arc::new(Mutex::new(AssistantMarkupStreamState::new()));
         let workerService = request.enhancedAiService.clone();
         let workerChatHistoryDelegate =
@@ -1542,7 +1420,6 @@ impl MessageProcessingDelegate {
         let completionWorkspaceToolHookHandler = workerWorkspaceToolHookHandler.clone();
         let completionFirstResponseElapsed = workerFirstResponseElapsed.clone();
         let completionResponseStream = workerResponseStream.clone();
-        let completionExecutionGeneration = request.executionGeneration;
         let mut responseItems = workerResponseStream.clone();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
@@ -1685,11 +1562,6 @@ impl MessageProcessingDelegate {
                             workerAiMessage.outputTokens += tokenSnapshot.outputTokens;
                             workerAiMessage.cachedInputTokens += tokenSnapshot.cachedInputTokens;
                             workerAiMessage.parts = parts;
-                            if let Some(executionGeneration) = completionExecutionGeneration {
-                                workerAiMessage.completedExecutionGeneration = workerAiMessage
-                                    .completedExecutionGeneration
-                                    .max(executionGeneration);
-                            }
                             MessageProcessingDelegate::withTurnMetrics(
                                 ChatMessage {
                                     completedAt: completedElapsed,
@@ -1820,6 +1692,48 @@ impl MessageProcessingDelegate {
                             }
                         }
                         drop(workerChatHistoryDelegate);
+                        if let Some(routeChange) = workerService.takePendingRouteChange() {
+                            ChainLogger::info(
+                                SEND_CHAIN,
+                                "send.route_change.request",
+                                &[
+                                    ("chatId", completionChatId.clone()),
+                                    ("targetNodeId", routeChange.targetNodeId.clone()),
+                                ],
+                            );
+                            if let Err(error) = workerService
+                                .requestCoreRouteChange(
+                                    completionChatId.clone(),
+                                    routeChange.targetNodeId,
+                                )
+                                .await
+                            {
+                                let message = format!("route change failed: {error}");
+                                ChainLogger::error(
+                                    SEND_CHAIN,
+                                    "send.route_change.error",
+                                    &[
+                                        ("chatId", completionChatId.clone()),
+                                        ("error", message.clone()),
+                                    ],
+                                );
+                                completionMessageProcessingDelegate
+                                    .lock()
+                                    .expect(
+                                        "worker message processing delegate mutex poisoned",
+                                    )
+                                    .finishChatExecution(
+                                        completionChatId.clone(),
+                                        InputProcessingState::Error { message },
+                                    );
+                                return;
+                            }
+                            ChainLogger::info(
+                                SEND_CHAIN,
+                                "send.route_change.completed",
+                                &[("chatId", completionChatId.clone())],
+                            );
+                        }
                         completionMessageProcessingDelegate
                             .lock()
                             .expect("worker message processing delegate mutex poisoned")
@@ -1880,9 +1794,7 @@ impl MessageProcessingDelegate {
                 proxySenderNameOverride: None,
                 suppressUserMessageInHistory: true,
                 isAutoContinuation: false,
-                assistantMessageTimestamp: None,
-                executionGeneration: None,
-                executionSegmentIndex: None,
+                isResume: false,
                 turnOptions: ChatTurnOptions {
                     persistTurn: false,
                     ..ChatTurnOptions::default()
@@ -1974,83 +1886,6 @@ impl Default for MessageProcessingDelegate {
             FunctionalConfigManager::new(rootDir.clone()),
             ModelConfigManager::new(rootDir),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use operit_model::MessagePart::MessagePartKind;
-
-    /// Verifies that a handoff snapshot keeps prior protocol parts and the active segment.
-    #[test]
-    fn handoff_snapshot_appends_active_segment_to_existing_assistant_protocol() {
-        let timestamp = 42_100;
-        let prefix = concat!(
-            "<think>first segment</think>",
-            "第一个设备准备切换。",
-            "<tool_AAAA name=\"switch_core\">",
-            "<param name=\"node_id\">android-node</param>",
-            "</tool_AAAA>",
-            "<tool_result name=\"switch_core\" status=\"success\">",
-            "<content>android-node</content>",
-            "</tool_result>"
-        );
-        let activeSegment = concat!(
-            "<think>second segment</think>",
-            "第二个设备继续切换。",
-            "<tool_BBBB name=\"switch_core\">",
-            "<param name=\"node_id\">windows-node</param>",
-            "</tool_BBBB>",
-            "<tool_result name=\"switch_core\" status=\"success\">",
-            "<content>windows-node</content>",
-            "</tool_result>",
-            "切换完成。"
-        );
-        let message = ChatMessage::new_with_markdown_timestamp(
-            "ai".to_string(),
-            prefix.to_string(),
-            timestamp,
-        );
-
-        let snapshot = assistantMessageWithHandoffProtocolSnapshot(message, Some(activeSegment))
-            .expect("handoff assistant protocol snapshot must parse");
-
-        let toolCallCount = snapshot
-            .parts
-            .iter()
-            .filter(|part| part.kind == MessagePartKind::ToolCall)
-            .count();
-        let toolResultCount = snapshot
-            .parts
-            .iter()
-            .filter(|part| part.kind == MessagePartKind::ToolResult)
-            .count();
-        let toolNames = snapshot
-            .parts
-            .iter()
-            .filter(|part| part.kind == MessagePartKind::ToolCall)
-            .map(|part| part.toolName.as_deref())
-            .collect::<Vec<_>>();
-
-        assert_eq!(snapshot.timestamp, timestamp);
-        assert_eq!(toolCallCount, 2);
-        assert_eq!(toolResultCount, 2);
-        assert_eq!(toolNames, vec![Some("switch_core"), Some("switch_core")]);
-        assert_eq!(
-            snapshot
-                .parts
-                .iter()
-                .filter(|part| part.kind == MessagePartKind::Markdown)
-                .map(|part| part.content.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                "",
-                "第一个设备准备切换。",
-                "第二个设备继续切换。",
-                "切换完成。"
-            ]
-        );
     }
 }
 

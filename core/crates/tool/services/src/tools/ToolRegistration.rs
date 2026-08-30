@@ -217,10 +217,6 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                         .value
                         .trim()
                         .to_string();
-                    if let Err(error) = ToolExecutionManager::stageCoreSwitch(targetNodeId.clone())
-                    {
-                        return toolErrorResult(tool, error);
-                    }
                     ToolResult {
                         toolName: tool.name.clone(),
                         success: true,

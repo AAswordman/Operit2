@@ -1047,35 +1047,6 @@ impl CoreNodeTransportClient for SharedAccessCoreClient {
         })
     }
 
-    /// Executes one routed EnhanceAI continuation handoff through the runtime scheduler.
-    #[allow(non_snake_case)]
-    async fn routedHandoff(
-        &self,
-        previousNodeId: String,
-        request: CoreNodePeerLink::RoutedCoreRequest<operit_link::CoreHandoffRequest>,
-    ) -> Result<operit_link::CoreHandoffResponse, CoreLinkError> {
-        let (sender, receiver) = oneshot::channel();
-        let core = self.core.clone();
-        defaultHostRuntimeTaskSchedulerHost()
-            .scheduleHostRuntimeAsyncTask(
-                "link-access-routed-handoff",
-                Box::new(move || {
-                    Box::pin(async move {
-                        let mut client = core
-                            .lock()
-                            .expect("Link Access core mutex poisoned")
-                            .cloneCoreNodeLinkClient();
-                        let response = client.routedHandoff(previousNodeId, request).await;
-                        let _ = sender.send(response);
-                    })
-                }),
-            )
-            .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        receiver
-            .await
-            .map_err(|error| CoreLinkError::internal(error.to_string()))?
-    }
-
     /// Reads one routed watch snapshot through the runtime scheduler.
     #[allow(non_snake_case)]
     async fn routedWatchSnapshot(
@@ -1124,35 +1095,6 @@ impl CoreNodeTransportClient for SharedAccessCoreClient {
                             .expect("Link Access core mutex poisoned")
                             .cloneCoreNodeLinkClient();
                         let response = client.routedWatch(previousNodeId, request).await;
-                        let _ = sender.send(response);
-                    })
-                }),
-            )
-            .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        receiver
-            .await
-            .map_err(|error| CoreLinkError::internal(error.to_string()))?
-    }
-
-    /// Applies one routed committed Binding operation through the runtime scheduler.
-    #[allow(non_snake_case)]
-    async fn routedBindingApply(
-        &self,
-        previousNodeId: String,
-        request: CoreNodePeerLink::RoutedCoreRequest<CoreNodePeerLink::CoreNodeBindingApplyRequest>,
-    ) -> Result<(), CoreLinkError> {
-        let (sender, receiver) = oneshot::channel();
-        let core = self.core.clone();
-        defaultHostRuntimeTaskSchedulerHost()
-            .scheduleHostRuntimeAsyncTask(
-                "link-access-routed-binding-apply",
-                Box::new(move || {
-                    Box::pin(async move {
-                        let mut client = core
-                            .lock()
-                            .expect("Link Access core mutex poisoned")
-                            .cloneCoreNodeLinkClient();
-                        let response = client.routedBindingApply(previousNodeId, request).await;
                         let _ = sender.send(response);
                     })
                 }),

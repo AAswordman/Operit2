@@ -10,14 +10,15 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageTimestampAllocator::ChatMessageTimestampAllocator;
-use operit_model::MessagePart::MessagePartKind;
+use operit_model::MessagePart::{MessagePart, MessagePartKind};
+use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
 use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
-    EnhancedAIService, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
+    EnhancedAIService, ResumeRequest, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
 use operit_store::PreferencesDataStore::FlowLike;
 use operit_util::stream::RevisableTextStream::with_event_channel_shared;
@@ -77,9 +78,7 @@ pub struct SendMessageRequest<'a> {
     pub disableWarning: bool,
     pub callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    pub assistantMessageTimestamp: Option<i64>,
-    pub executionGeneration: i64,
-    pub segmentIndex: i64,
+    pub resume: bool,
 }
 
 pub struct StableContextWindowRequest<'a> {
@@ -322,9 +321,6 @@ impl AIMessageManager {
         options.callbacks = request.callbacks;
         options.onToolInvocation = request.onToolInvocation;
         options.stream = enableStream;
-        options.assistantMessageTimestamp = request.assistantMessageTimestamp;
-        options.executionGeneration = request.executionGeneration;
-        options.segmentIndex = request.segmentIndex;
 
         let providerOverrideSet = match options.chatProviderIdOverride.as_ref() {
             Some(value) => !value.trim().is_empty(),
@@ -348,7 +344,15 @@ impl AIMessageManager {
                 ("modelOverrideSet", ChainLogger::boolField(modelOverrideSet)),
             ],
         );
-        match request.enhancedAiService.sendMessage(options).await {
+        let providerResponse = if request.resume {
+            request
+                .enhancedAiService
+                .resume(ResumeRequest { options })
+                .await
+        } else {
+            request.enhancedAiService.sendMessage(options).await
+        };
+        match providerResponse {
             Ok(stream) => {
                 let cleanupChatKey = chatKey.clone();
                 let mut cleanupStream = stream.chunk_stream();
@@ -599,18 +603,18 @@ impl AIMessageManager {
 
         relevantMessages
             .iter()
-            .filter_map(|message| match message.sender.as_str() {
+            .flat_map(|message| match message.sender.as_str() {
                 "ai" => Self::processAiMessage(message, isRoleScopedMode, &normalizedTargetRole),
-                "user" => Some(Self::processUserMessage(
+                "user" => vec![Self::processUserMessage(
                     message,
                     isRoleScopedMode,
                     groupOrchestrationMode,
-                )),
-                "summary" => Some(PromptTurn::new(
+                )],
+                "summary" => vec![PromptTurn::new(
                     PromptTurnKind::SUMMARY,
                     message.displayText(),
-                )),
-                _ => None,
+                )],
+                _ => Vec::new(),
             })
             .collect()
     }
@@ -620,20 +624,14 @@ impl AIMessageManager {
         message: &ChatMessage,
         isRoleScopedMode: bool,
         targetRoleName: &str,
-    ) -> Option<PromptTurn> {
+    ) -> Vec<PromptTurn> {
         if !isRoleScopedMode {
-            return Some(PromptTurn::new(
-                PromptTurnKind::ASSISTANT,
-                message.assistantProtocolMarkup(),
-            ));
+            return Self::assistantPromptTurnsFromParts(message);
         }
 
         let messageRoleName = message.roleName.trim();
         if messageRoleName == targetRoleName {
-            return Some(PromptTurn::new(
-                PromptTurnKind::ASSISTANT,
-                message.assistantProtocolMarkup(),
-            ));
+            return Self::assistantPromptTurnsFromParts(message);
         }
 
         let cleanedContent = message
@@ -643,7 +641,7 @@ impl AIMessageManager {
             .map(|part| part.content.as_str())
             .collect::<String>();
         if cleanedContent.trim().is_empty() {
-            return None;
+            return Vec::new();
         }
 
         let roleLabel = if messageRoleName.is_empty() {
@@ -651,10 +649,67 @@ impl AIMessageManager {
         } else {
             messageRoleName
         };
-        Some(PromptTurn::new(
+        vec![PromptTurn::new(
             PromptTurnKind::USER,
             format!("[From role: {roleLabel}]\n{cleanedContent}"),
-        ))
+        )]
+    }
+
+    /// Converts stored assistant parts into provider turns while preserving tool boundaries.
+    #[allow(non_snake_case)]
+    fn assistantPromptTurnsFromParts(message: &ChatMessage) -> Vec<PromptTurn> {
+        let mut turns = Vec::new();
+        let mut assistantMarkup = String::new();
+        for part in MessagePartCodec::orderedParts(&message.parts) {
+            match part.kind {
+                MessagePartKind::Markdown | MessagePartKind::Thinking | MessagePartKind::Status => {
+                    assistantMarkup.push_str(&Self::assistantMarkupForPart(part));
+                }
+                MessagePartKind::ToolCall => {
+                    if !assistantMarkup.trim().is_empty() {
+                        turns.push(PromptTurn::new(
+                            PromptTurnKind::ASSISTANT,
+                            assistantMarkup.trim().to_string(),
+                        ));
+                        assistantMarkup.clear();
+                    }
+                    turns.push(PromptTurn {
+                        kind: PromptTurnKind::TOOL_CALL,
+                        content: Self::assistantMarkupForPart(part),
+                        tool_name: part.toolName.clone(),
+                        metadata: HashMap::new(),
+                    });
+                }
+                MessagePartKind::ToolResult => {
+                    if !assistantMarkup.trim().is_empty() {
+                        turns.push(PromptTurn::new(
+                            PromptTurnKind::ASSISTANT,
+                            assistantMarkup.trim().to_string(),
+                        ));
+                        assistantMarkup.clear();
+                    }
+                    turns.push(PromptTurn {
+                        kind: PromptTurnKind::TOOL_RESULT,
+                        content: Self::assistantMarkupForPart(part),
+                        tool_name: part.toolName.clone(),
+                        metadata: HashMap::new(),
+                    });
+                }
+            }
+        }
+        if !assistantMarkup.trim().is_empty() {
+            turns.push(PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                assistantMarkup.trim().to_string(),
+            ));
+        }
+        turns
+    }
+
+    /// Serializes one assistant message part into provider protocol markup.
+    #[allow(non_snake_case)]
+    fn assistantMarkupForPart(part: &MessagePart) -> String {
+        MessagePartCodec::assistantMarkup(&[part.clone()])
     }
 
     #[allow(non_snake_case)]
@@ -1134,4 +1189,60 @@ fn strip_tag_blocks(text: &str, tag_name: &str) -> String {
     }
     output.push_str(&text[cursor..]);
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// Verifies persisted assistant messages keep tool protocol roles in provider history.
+    #[test]
+    fn assistant_history_preserves_tool_turn_boundaries() {
+        let message = ChatMessage::new_with_parts(
+            "ai".to_string(),
+            vec![
+                MessagePart::markdown("part-0".to_string(), 0, "before".to_string()),
+                MessagePart::toolCall(
+                    "part-1".to_string(),
+                    1,
+                    "part-1".to_string(),
+                    "switch_core".to_string(),
+                    BTreeMap::from([("node_id".to_string(), "core-target".to_string())]),
+                ),
+                MessagePart::toolResult(
+                    "part-2".to_string(),
+                    2,
+                    Some("part-1".to_string()),
+                    "switch_core".to_string(),
+                    "success".to_string(),
+                    "core-target".to_string(),
+                ),
+                MessagePart::markdown("part-3".to_string(), 3, "after".to_string()),
+            ],
+        );
+
+        let turns = AIMessageManager::getMemoryFromMessages(vec![message], false, None, false);
+
+        assert_eq!(
+            turns
+                .iter()
+                .map(|turn| turn.kind.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PromptTurnKind::ASSISTANT,
+                PromptTurnKind::TOOL_CALL,
+                PromptTurnKind::TOOL_RESULT,
+                PromptTurnKind::ASSISTANT,
+            ]
+        );
+        assert_eq!(turns[0].content, "before");
+        assert!(turns[1].content.starts_with("<tool name=\"switch_core\""));
+        assert_eq!(turns[1].tool_name.as_deref(), Some("switch_core"));
+        assert!(turns[2]
+            .content
+            .starts_with("<tool_result name=\"switch_core\""));
+        assert_eq!(turns[2].tool_name.as_deref(), Some("switch_core"));
+        assert_eq!(turns[3].content, "after");
+    }
 }

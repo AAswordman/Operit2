@@ -7,16 +7,13 @@ use operit_access_runtime::{
 };
 use operit_core_application::CoreRemoteLinkServerConfig;
 use operit_link::{
-    CoreEvent, CoreEventKind, CoreEventStream, CoreHandoffRequest, CoreLinkSharedClient,
-    CoreStreamDescriptor, CoreValue, CoreWatchRequest, CORE_STREAM_POOL_OBJECT_ID,
+    CoreEvent, CoreEventKind, CoreEventStream, CoreLinkSharedClient, CoreStreamDescriptor,
+    CoreValue, CoreWatchRequest, CORE_STREAM_POOL_OBJECT_ID,
 };
 use operit_model::PromptTurn::PromptTurn;
 use operit_providers::chat::enhance::ConversationService::ConversationService;
-use operit_providers::chat::EnhancedAIService::{CoreHandoffContinuation, EnhancedAIService};
+use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::services::ChatServiceCore::{
-    CoreHandoffRuntimeSnapshot, CORE_HANDOFF_PROBE_MODEL_ID, CORE_HANDOFF_PROBE_PROVIDER_ID,
-};
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerToolPermissionAsync, RuntimeHostInteractionToolPermissionPayload,
     RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
@@ -49,7 +46,6 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("ping") => run_link_ping_command(&args[1..]).await,
         Some("refresh") => run_link_refresh_command(&args[1..]).await,
         Some("stream-probe") => run_link_stream_probe_command(&args[1..]).await,
-        Some("handoff-probe") => run_link_handoff_probe_command(&args[1..]).await,
         _ => {
             print_link_usage();
             Ok(())
@@ -519,107 +515,6 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Proves that a Core handoff routes to the paired node and transfers ownership.
-async fn run_link_handoff_probe_command(args: &[String]) -> Result<(), String> {
-    let name = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 cli link handoff-probe <session>".to_string())?;
-    let coreApplication = create_cli_core_application("client").await?;
-    let accessStore = coreApplication.accessStore();
-    let record = load_link_session_record(&accessStore, name)?;
-    let service = coreApplication.accessServices();
-    let space = service.joinPairedDeviceSpace(name.clone()).await?;
-    println!(
-        "handoff.space_joined name={} remoteNode={} members={}",
-        name,
-        record.coreDeviceId,
-        space.members.len()
-    );
-
-    let chatId = format!("handoff-probe-{}", link_probe_unix_millis());
-    CoreNodeBindingStore::new(coreApplication.nodeRuntime().runtimeStorageHost())?
-        .create(&chatId, &coreApplication.accessIdentity().deviceId)?;
-    println!(
-        "handoff.binding_created chatId={} source={}",
-        chatId,
-        coreApplication.accessIdentity().deviceId
-    );
-
-    let assistantTimestamp = link_probe_unix_millis() * 1000;
-    let continuation = CoreHandoffContinuation {
-        assistantMessageTimestamp: assistantTimestamp,
-        executionGeneration: 1,
-        segmentIndex: 1,
-        chatId: Some(chatId.clone()),
-        chatHistory: vec![PromptTurn::from_role(
-            "user",
-            "handoff probe",
-            None,
-            std::collections::HashMap::new(),
-        )],
-        workspacePath: None,
-        functionType: FunctionType::CHAT,
-        promptFunctionType: PromptFunctionType::CHAT,
-        enableThinking: false,
-        enableMemoryAutoUpdate: false,
-        maxTokens: 0,
-        tokenUsageThreshold: 0.0,
-        isSubTask: false,
-        characterName: None,
-        avatarUri: None,
-        roleCardId: None,
-        enableGroupOrchestrationHint: false,
-        groupParticipantNamesText: None,
-        proxySenderName: None,
-        notifyReplyOverride: None,
-        chatProviderIdOverride: Some(CORE_HANDOFF_PROBE_PROVIDER_ID.to_string()),
-        chatModelIdOverride: Some(CORE_HANDOFF_PROBE_MODEL_ID.to_string()),
-        stream: true,
-        disableWarning: true,
-    };
-    let snapshot = CoreHandoffRuntimeSnapshot {
-        chatId: chatId.clone(),
-        messages: vec![
-            ChatMessage::new_with_markdown_timestamp(
-                "user".to_string(),
-                "handoff probe".to_string(),
-                assistantTimestamp - 1,
-            ),
-            ChatMessage::new_with_markdown_timestamp(
-                "ai".to_string(),
-                "source-partial".to_string(),
-                assistantTimestamp,
-            ),
-        ],
-    };
-    coreApplication
-        .nodeRouter()
-        .handoffCoreAtBoundary(CoreHandoffRequest {
-            bindingKey: chatId.clone(),
-            targetNodeId: record.coreDeviceId.clone(),
-            continuation: operit_link::toCoreValue(continuation)
-                .map_err(|error| error.to_string())?,
-            runtimeSnapshot: operit_link::toCoreValue(snapshot)
-                .map_err(|error| error.to_string())?,
-        })
-        .await
-        .map_err(|error| error.to_string())?;
-
-    let binding = CoreNodeBindingStore::new(coreApplication.nodeRuntime().runtimeStorageHost())?
-        .binding(&chatId)?;
-    if binding.nodeId != record.coreDeviceId {
-        return Err(format!(
-            "handoff binding owner invalid: expected={} actual={}",
-            record.coreDeviceId, binding.nodeId
-        ));
-    }
-    println!(
-        "handoff.ok owner={} chatId={}",
-        binding.nodeId, chatId
-    );
-    Ok(())
-}
-
 /// Refreshes saved paired session URLs from current LAN discovery data.
 async fn run_link_refresh_command(args: &[String]) -> Result<(), String> {
     let (target_name, timeout_ms) = parse_link_refresh_args(args)?;
@@ -922,5 +817,4 @@ fn print_link_usage() {
     println!("operit2 cli link ping <name>");
     println!("operit2 cli link refresh [session] [--timeout-ms <ms>]");
     println!("operit2 cli link stream-probe <session>");
-    println!("operit2 cli link handoff-probe <session>");
 }

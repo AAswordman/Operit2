@@ -1,7 +1,7 @@
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream,
-    CoreHandoffRequest, CoreHandoffResponse, CoreLinkError, CoreStreamAttachment, CoreStreamSource,
-    CoreValue, CoreWatchRequest, CORE_STREAM_POOL_OBJECT_ID,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
+    CoreStreamAttachment, CoreStreamSource, CoreValue, CoreWatchRequest,
+    CORE_STREAM_POOL_OBJECT_ID,
 };
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
@@ -36,21 +36,9 @@ impl SpaceStreamPool {
             .sources
             .lock()
             .expect("Space stream pool mutex poisoned");
-        if let Some(existing) = sources.get(&attachment.streamId) {
-            if !Arc::ptr_eq(existing, &attachment.source) {
-                existing.attachNextSegment(attachment.source);
-            }
-        } else {
+        if !sources.contains_key(&attachment.streamId) {
             sources.insert(attachment.streamId, attachment.source);
         }
-    }
-
-    /// Removes one source after the corresponding Link watch closes.
-    fn remove(&self, streamId: &str) {
-        self.sources
-            .lock()
-            .expect("Space stream pool mutex poisoned")
-            .remove(streamId);
     }
 }
 
@@ -63,25 +51,10 @@ impl SpaceRuntime {
         }
     }
 
-    /// Continues one handoff on the local main runtime.
-    pub async fn handoffAtBoundaryLocal(
-        &self,
-        request: CoreHandoffRequest,
-    ) -> Result<CoreHandoffResponse, CoreLinkError> {
-        let mut holder = self.chatRuntimeHolder.lock().await;
-        let core = holder.getCore(ChatRuntimeSlot::MAIN);
-        core.applyCoreHandoffRuntimeSnapshotValue(request.runtimeSnapshot)
-            .map_err(CoreLinkError::internal)?;
-        core.continueCoreHandoffValue(request.continuation)
-            .await
-            .map_err(CoreLinkError::internal)?;
-        Ok(CoreHandoffResponse {})
-    }
-
     /// Executes one annotation-addressed Space call on the main runtime slot.
     pub async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        let Some(route) = crate::generated_space_call_route(&request) else {
+        let Some(_route) = crate::generated_space_call_route(&request) else {
             return CoreCallResponse::err(
                 requestId,
                 CoreLinkError::new(

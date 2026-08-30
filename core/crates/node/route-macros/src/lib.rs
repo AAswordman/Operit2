@@ -490,3 +490,15 @@ fn function_argument_names(function: &ImplItemFn) -> syn::Result<Vec<Ident>> {
 pub fn operit_core_internal(_attribute: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
+
+/// Marks the lifecycle callback invoked immediately before a Core route change.
+#[proc_macro_attribute]
+pub fn before_change_route(_attribute: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks the lifecycle callback invoked after a Core route reaches its target.
+#[proc_macro_attribute]
+pub fn after_change_route(_attribute: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}

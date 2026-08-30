@@ -10,6 +10,8 @@ use operit_access_runtime::{
     PendingOutboundPairingRecord, RemoteDeviceInfo, RemoteLinkClient,
 };
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
+use operit_host_api::TimeUtils::currentTimeMillis;
+use operit_link::{fromCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_ROUTE_OBJECT_ID};
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
 use operit_store::CoreSpaceStore::{
     CoreSpace, CoreSpaceDevicePresence, CoreSpaceDeviceProfile, CoreSpaceStore,
@@ -26,6 +28,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
+    GeneratedRouteLifecycle,
     SpacePersistenceSyncService::SpacePersistenceSyncService,
 };
 
@@ -283,11 +286,7 @@ impl RuntimeRemoteLinkService {
     /// Leaves the current device space while preserving all direct pairing records.
     #[allow(non_snake_case)]
     pub fn leaveDeviceSpace(&self) -> Result<CoreSpace, String> {
-        let deviceSpace = self.spaceStore.leave()?;
-        let memberNodeIds = deviceSpace.members.iter().cloned().collect::<BTreeSet<_>>();
-        CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?
-            .rebindOutsideNodesToLocal(&memberNodeIds)?;
-        Ok(deviceSpace)
+        self.spaceStore.leave()
     }
 
     /// Joins the Space exposed by one directly paired CoreNode.
@@ -453,6 +452,90 @@ impl RuntimeRemoteLinkService {
             || devicePresenceActive(&self.spaceStore.devicePresences()?, &deviceId))
     }
 
+    /// Commits a chat Binding change, synchronizes the target Core, and resumes there.
+    #[allow(non_snake_case)]
+    pub async fn requestChangeRoute(
+        &self,
+        chatId: String,
+        targetNodeId: String,
+    ) -> Result<(), String> {
+        if chatId.trim().is_empty() {
+            return Err("route change chat id must not be empty".to_string());
+        }
+        if targetNodeId.trim().is_empty() {
+            return Err("route change target node id must not be empty".to_string());
+        }
+        let space = self.spaceStore.initialize()?;
+        if !space.members.iter().any(|member| member == &targetNodeId) {
+            return Err(format!(
+                "route change target is not a member of the current device space: {targetNodeId}"
+            ));
+        }
+        let localNodeId = self.nodeRouter.localNodeId();
+        if targetNodeId != localNodeId && !self.nodeRouter.nodeIsReachable(&targetNodeId)? {
+            return Err(format!(
+                "route change target is not reachable in the current device space: {targetNodeId}"
+            ));
+        }
+        self.callChatCoreLifecycle(
+            &localNodeId,
+            GeneratedRouteLifecycle::BeforeChangeRoute,
+            chatId.clone(),
+        )
+        .await?;
+        let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
+        let currentBinding = bindingStore.binding(&chatId)?;
+        let commit = bindingStore.compareAndSet(&chatId, &currentBinding.nodeId, &targetNodeId)?;
+        if commit.binding.nodeId != targetNodeId {
+            return Err(format!(
+                "route change committed to an unexpected target: {}",
+                commit.binding.nodeId
+            ));
+        }
+
+        if targetNodeId != localNodeId {
+            self.persistenceSyncService()
+                .synchronizeReachablePeer(targetNodeId.clone(), 512, false)
+                .await?;
+        }
+
+        self.callChatCoreLifecycle(
+            &targetNodeId,
+            GeneratedRouteLifecycle::AfterChangeRoute,
+            chatId,
+        )
+        .await
+    }
+
+    /// Invokes one route lifecycle callback on an explicit CoreNode target.
+    #[allow(non_snake_case)]
+    async fn callChatCoreLifecycle(
+        &self,
+        targetNodeId: &str,
+        lifecycle: GeneratedRouteLifecycle,
+        chatId: String,
+    ) -> Result<(), String> {
+        let route = crate::generated_space_lifecycle_route(lifecycle)
+            .ok_or_else(|| format!("route lifecycle hook is not registered: {lifecycle:?}"))?;
+        let mut args = BTreeMap::new();
+        args.insert(route.bindingArgument.to_string(), CoreValue::String(chatId));
+        let request = CoreCallRequest::new(
+            format!("core-route-lifecycle-{}", currentTimeMillis()),
+            CORE_INTERNAL_ROUTE_OBJECT_ID,
+            route.methodName,
+            CoreValue::Map(args),
+        );
+        let response = if targetNodeId == self.nodeRouter.localNodeId() {
+            self.localRuntime.callSpace(request).await
+        } else {
+            self.nodeRouter
+                .callNodeSpace(targetNodeId.to_string(), request)
+                .await
+        };
+        let value = response.result.map_err(|error| error.to_string())?;
+        fromCoreValue::<()>(value).map_err(|error| error.to_string())
+    }
+
     /// Resolves the persisted pairing and reports revocation or Space removal explicitly.
     #[allow(non_snake_case)]
     pub async fn pairedDeviceStatus(
@@ -546,8 +629,6 @@ impl RuntimeRemoteLinkService {
             return Ok(());
         }
         self.spaceStore.removeMembers(removedNodeIds)?;
-        CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?
-            .rebindOutsideNodesToLocal(&reachable)?;
         Ok(())
     }
 

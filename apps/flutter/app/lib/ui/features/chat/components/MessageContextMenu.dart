@@ -10,11 +10,10 @@ import '../../../../util/ChatMarkupRegex.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'MessageCopyPreview.dart';
 
-typedef MessageIndexAction = Future<void> Function(int index);
-typedef MessageIndexBoolAction = Future<bool> Function(int index);
-typedef MessageSelectionAction =
-    void Function(int index, ChatUiMessage message);
 typedef MessageTimestampAction = Future<void> Function(int timestamp);
+typedef MessageTimestampBoolAction = Future<bool> Function(int timestamp);
+typedef MessageTimestampSelectionAction = void Function(int timestamp);
+typedef MessageSelectionAction = void Function(ChatUiMessage message);
 typedef MessageVariantAction =
     Future<void> Function(int timestamp, int variantIndex);
 typedef MessageFavoriteAction =
@@ -24,7 +23,6 @@ typedef MessageVoiceAction = Future<void> Function(ChatUiMessage message);
 class MessageContextMenu extends StatefulWidget {
   const MessageContextMenu({
     super.key,
-    required this.index,
     required this.message,
     required this.onToggleFavoriteMessage,
     this.splitMarkdownContent,
@@ -43,21 +41,20 @@ class MessageContextMenu extends StatefulWidget {
     this.onRefresh,
   });
 
-  final int index;
   final ChatUiMessage message;
   final MessageFavoriteAction onToggleFavoriteMessage;
   final MarkdownCopySplitter? splitMarkdownContent;
-  final MessageIndexAction? onDeleteMessage;
-  final MessageIndexBoolAction? onDeleteMessagesFrom;
+  final MessageTimestampAction? onDeleteMessage;
+  final MessageTimestampBoolAction? onDeleteMessagesFrom;
   final MessageVariantAction? onDeleteMessageVariant;
-  final ValueChanged<int>? onRollbackToMessage;
+  final MessageTimestampSelectionAction? onRollbackToMessage;
   final MessageSelectionAction? onSelectMessageToEdit;
-  final MessageIndexAction? onRegenerateMessage;
+  final MessageTimestampAction? onRegenerateMessage;
   final ValueChanged<ChatUiMessage>? onInsertSummary;
   final MessageTimestampAction? onCreateBranch;
   final ValueChanged<ChatUiMessage>? onReplyToMessage;
   final MessageVoiceAction? onPlayVoice;
-  final ValueChanged<int>? onToggleMultiSelectMode;
+  final MessageTimestampSelectionAction? onToggleMultiSelectMode;
   final Future<void> Function()? onRefresh;
   final Widget child;
 
@@ -320,16 +317,16 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         );
         break;
       case _MessageMenuAction.editAndResend:
-        widget.onSelectMessageToEdit?.call(widget.index, widget.message);
+        widget.onSelectMessageToEdit?.call(widget.message);
         break;
       case _MessageMenuAction.modifyMemory:
-        widget.onSelectMessageToEdit?.call(widget.index, widget.message);
+        widget.onSelectMessageToEdit?.call(widget.message);
         break;
       case _MessageMenuAction.rollback:
-        widget.onRollbackToMessage?.call(widget.index);
+        widget.onRollbackToMessage?.call(widget.message.timestamp);
         break;
       case _MessageMenuAction.regenerate:
-        await widget.onRegenerateMessage?.call(widget.index);
+        await widget.onRegenerateMessage?.call(widget.message.timestamp);
         await widget.onRefresh?.call();
         break;
       case _MessageMenuAction.deleteVariant:
@@ -359,7 +356,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         await _showInfoDialog();
         break;
       case _MessageMenuAction.multiSelect:
-        widget.onToggleMultiSelectMode?.call(widget.index);
+        widget.onToggleMultiSelectMode?.call(widget.message.timestamp);
         break;
     }
   }
@@ -369,7 +366,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     if (!confirmed) {
       return;
     }
-    await widget.onDeleteMessage?.call(widget.index);
+    await widget.onDeleteMessage?.call(widget.message.timestamp);
     await widget.onRefresh?.call();
   }
 

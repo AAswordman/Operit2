@@ -24,7 +24,7 @@ fn main() {
 fn scan_source_tree(
     runtime_root: &Path,
     path: &Path,
-    declarations: &mut BTreeSet<(String, String, String, String)>,
+    declarations: &mut BTreeSet<(String, String, String, String, String)>,
 ) {
     let Ok(entries) = fs::read_dir(path) else {
         return;
@@ -56,11 +56,13 @@ fn scan_source_tree(
                 let targetType =
                     generated_target_type(runtime_root, &entry_path, &item_impl.self_ty);
                 let routeKind = route_kind(&function.sig.output);
+                let lifecycle = route_lifecycle(&function.attrs);
                 declarations.insert((
                     function.sig.ident.to_string(),
                     binding,
                     targetType,
                     routeKind,
+                    lifecycle,
                 ));
             }
         }
@@ -137,6 +139,29 @@ fn route_kind(output: &ReturnType) -> String {
     }
 }
 
+/// Identifies whether a route declaration participates in route lifecycle dispatch.
+fn route_lifecycle(attributes: &[syn::Attribute]) -> String {
+    if attributes.iter().any(|attribute| {
+        attribute
+            .path()
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "before_change_route")
+    }) {
+        return "BeforeChangeRoute".to_string();
+    }
+    if attributes.iter().any(|attribute| {
+        attribute
+            .path()
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "after_change_route")
+    }) {
+        return "AfterChangeRoute".to_string();
+    }
+    "Normal".to_string()
+}
+
 /// Returns whether a route return type is a StateFlow.
 fn return_type_is_state_flow(output: &ReturnType) -> bool {
     let ReturnType::Type(_, ty) = output else {
@@ -152,26 +177,45 @@ fn return_type_is_state_flow(output: &ReturnType) -> bool {
 }
 
 /// Renders server-owned route lookup functions from annotation declarations.
-fn render_route_catalog(declarations: &BTreeSet<(String, String, String, String)>) -> String {
+fn render_route_catalog(
+    declarations: &BTreeSet<(String, String, String, String, String)>,
+) -> String {
     let mut output = String::new();
     output.push_str("/// Resolves one annotation-generated Space route by its wire route ID.\n");
     output.push_str("pub fn generated_space_route_for_id(routeId: u32, methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match (routeId, methodName) {\n");
-    for (routeId, (method, binding, targetType, _routeKind)) in declarations.iter().enumerate() {
+    for (routeId, (method, binding, targetType, _routeKind, lifecycle)) in
+        declarations.iter().enumerate()
+    {
         output.push_str(&format!(
-            "        ({routeId}, {method:?}) => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?} }}),\n"
+            "        ({routeId}, {method:?}) => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
     output.push_str("/// Resolves one internal annotation route without a Proxy object address.\n");
     output.push_str("pub fn generated_space_route_for_method(methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match methodName {\n");
-    for (routeId, (method, binding, targetType, _routeKind)) in declarations.iter().enumerate() {
+    for (routeId, (method, binding, targetType, _routeKind, lifecycle)) in
+        declarations.iter().enumerate()
+    {
         output.push_str(&format!(
-            "        {method:?} => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?} }}),\n"
+            "        {method:?} => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
+    output.push_str("/// Resolves the generated Space route registered for one lifecycle hook.\n");
+    output.push_str("pub fn generated_space_lifecycle_route(lifecycle: GeneratedRouteLifecycle) -> Option<GeneratedSpaceRoute> {\n");
+    output.push_str("    match lifecycle {\n");
+    for (routeId, (method, binding, targetType, _routeKind, lifecycle)) in
+        declarations.iter().enumerate()
+    {
+        if lifecycle != "Normal" {
+            output.push_str(&format!(
+                "        GeneratedRouteLifecycle::{lifecycle} => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
+            ));
+        }
+    }
+    output.push_str("        GeneratedRouteLifecycle::Normal => None,\n    }\n}\n\n");
     output.push_str(
         "/// Resolves one annotation-generated Space route from a standard Link call request.\n",
     );
@@ -189,7 +233,7 @@ fn render_route_catalog(declarations: &BTreeSet<(String, String, String, String)
     );
     output.push_str("pub async fn generated_space_call_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.methodName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
         if routeKind == "call" {
             output.push_str(&format!(
                 "        {method:?} => core.__operit_core_route_call_{method}(request).await,\n"
@@ -202,7 +246,7 @@ fn render_route_catalog(declarations: &BTreeSet<(String, String, String, String)
     );
     output.push_str("pub async fn generated_space_watch_snapshot_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!("        {method:?} => core.__operit_core_route_watch_snapshot_{method}(request).await,\n"));
         }
@@ -211,7 +255,7 @@ fn render_route_catalog(declarations: &BTreeSet<(String, String, String, String)
     output.push_str("/// Opens one generated Space watch on the runtime's main ChatServiceCore.\n");
     output.push_str("pub async fn generated_space_watch_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
-    for (method, _binding, _targetType, routeKind) in declarations {
+    for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
                 "        {method:?} => core.__operit_core_route_watch_{method}(request, attachmentAdopter).await,\n"
@@ -223,7 +267,7 @@ fn render_route_catalog(declarations: &BTreeSet<(String, String, String, String)
         .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
     output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");
     output.push_str("    let bindingArgument = match methodName {\n");
-    for (method, binding, _, _) in declarations {
+    for (method, binding, _, _, _) in declarations {
         output.push_str(&format!("        {method:?} => Some({binding:?}),\n"));
     }
     output.push_str("        _ => None,\n    };\n");

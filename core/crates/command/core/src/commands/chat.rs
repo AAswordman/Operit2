@@ -31,6 +31,14 @@ fn with_main_chat_core<R>(
     Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
 }
 
+/// Builds the single-thread runtime used by chat commands that call async Core APIs.
+fn build_chat_command_runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 pub fn run_chat_command(
     application: &mut OperitApplication,
     args: &[String],
@@ -136,13 +144,23 @@ fn delete_chat_message(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let index = args
+    let messageTimestamp = args
         .get(0)
-        .ok_or_else(|| "usage: operit2 chat delete-message <index>".to_string())?
-        .parse::<usize>()
+        .ok_or_else(|| "usage: operit2 chat delete-message <message-timestamp>".to_string())?
+        .parse::<i64>()
         .map_err(|error| error.to_string())?;
-    with_main_chat_core(application, |core| core.deleteMessage(index))?;
-    output.push_stdout_line(format!("message deleted: {index}"));
+    let runtime = build_chat_command_runtime()?;
+    let chatId = runtime.block_on(async {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        let core = holder.getCore(ChatRuntimeSlot::MAIN);
+        let chatId = core
+            .currentChatIdFlow()
+            .value()
+            .ok_or_else(|| "core has no active chat".to_string())?;
+        core.deleteMessage(chatId.clone(), messageTimestamp).await;
+        Ok::<_, String>(chatId)
+    })?;
+    output.push_stdout_line(format!("message deleted: {chatId}\t{messageTimestamp}"));
     Ok(())
 }
 
@@ -160,14 +178,26 @@ fn rollback_chat(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let index = args
+    let messageTimestamp = args
         .get(0)
-        .ok_or_else(|| "usage: operit2 chat rollback <message-index>".to_string())?
-        .parse::<usize>()
+        .ok_or_else(|| "usage: operit2 chat rollback <message-timestamp>".to_string())?
+        .parse::<i64>()
         .map_err(|error| error.to_string())?;
-    let rolledBack = with_main_chat_core(application, |core| core.rollbackToMessage(index))?;
+    let runtime = build_chat_command_runtime()?;
+    let (chatId, rolledBack) = runtime.block_on(async {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        let core = holder.getCore(ChatRuntimeSlot::MAIN);
+        let chatId = core
+            .currentChatIdFlow()
+            .value()
+            .ok_or_else(|| "core has no active chat".to_string())?;
+        let rolledBack = core
+            .rollbackToMessage(chatId.clone(), messageTimestamp)
+            .await;
+        Ok::<_, String>((chatId, rolledBack))
+    })?;
     if rolledBack.is_some() {
-        output.push_stdout_line(format!("rolled back to message: {index}"));
+        output.push_stdout_line(format!("rolled back to message: {chatId}\t{messageTimestamp}"));
     } else {
         output.push_stdout_line("rollback skipped: message must exist and be a user message");
     }
@@ -513,10 +543,7 @@ fn send_chat_message_command(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let sendArgs = parse_chat_send_args(args)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
+    let runtime = build_chat_command_runtime()?;
     let result = runtime.block_on(send_chat_message_with_application(application, sendArgs))?;
     print_chat_send_result(&result, output);
     Ok(())
@@ -833,9 +860,9 @@ fn print_chat_usage(output: &mut CoreCommandOutput) {
     output.push_stdout_line("operit2 chat current");
     output.push_stdout_line("operit2 chat switch <chat-id>");
     output.push_stdout_line("operit2 chat delete <chat-id>");
-    output.push_stdout_line("operit2 chat delete-message <index>");
+    output.push_stdout_line("operit2 chat delete-message <message-timestamp>");
     output.push_stdout_line("operit2 chat clear");
-    output.push_stdout_line("operit2 chat rollback <message-index>");
+    output.push_stdout_line("operit2 chat rollback <message-timestamp>");
     output.push_stdout_line("operit2 chat branch [--up-to <message-timestamp>]");
     output.push_stdout_line("operit2 chat branches [parent-chat-id]");
     output.push_stdout_line("operit2 chat lock <chat-id> <true|false>");

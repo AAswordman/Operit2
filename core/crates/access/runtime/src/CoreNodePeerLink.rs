@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 #[cfg(feature = "test-support")]
 use std::sync::Weak;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
@@ -9,12 +9,10 @@ use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, defaultH
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{HostRuntimeTaskSchedulerHost, HttpRequestData};
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream,
-    CoreHandoffRequest, CoreHandoffResponse, CoreLinkError, CoreLinkPushSession, CorePushItem,
-    CorePushRequest, CoreWatchRequest,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
+    CoreLinkPushSession, CorePushItem, CorePushRequest, CoreWatchRequest,
 };
 use operit_store::CoreSpaceStore::CoreSpaceStore;
-use operit_store::SyncOperationStore::SyncOperation;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use uuid::Uuid;
@@ -48,15 +46,6 @@ pub struct RoutedCoreRequest<T> {
     pub payload: T,
 }
 
-/// Carries one committed Binding operation directly to its selected CoreNode.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreNodeBindingApplyRequest {
-    pub bindingKey: String,
-    pub nodeId: String,
-    pub generation: i64,
-    pub operation: SyncOperation,
-}
-
 /// Exposes local and routed Core operations to Link Access without fixing a transport direction.
 #[async_trait(?Send)]
 pub trait CoreNodeLinkClient: operit_link::CoreLinkClient {
@@ -71,14 +60,6 @@ pub trait CoreNodeLinkClient: operit_link::CoreLinkClient {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreCallRequest>,
     ) -> CoreCallResponse;
-
-    /// Executes a routed EnhanceAI continuation handoff.
-    #[allow(non_snake_case)]
-    async fn routedHandoff(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreHandoffRequest>,
-    ) -> Result<CoreHandoffResponse, CoreLinkError>;
 
     /// Reads a routed watch snapshot received from one directly paired CoreNode.
     #[allow(non_snake_case)]
@@ -95,14 +76,6 @@ pub trait CoreNodeLinkClient: operit_link::CoreLinkClient {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEventStream, CoreLinkError>;
-
-    /// Applies or forwards one committed Binding operation.
-    #[allow(non_snake_case)]
-    async fn routedBindingApply(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-    ) -> Result<(), CoreLinkError>;
 
     /// Opens a routed push stream received from one directly paired CoreNode.
     #[allow(non_snake_case)]
@@ -141,14 +114,6 @@ pub trait CoreNodeTransportClient: Send + Sync {
         request: RoutedCoreRequest<CoreCallRequest>,
     ) -> CoreCallResponse;
 
-    /// Executes a routed EnhanceAI continuation handoff from one adjacent CoreNode.
-    #[allow(non_snake_case)]
-    async fn routedHandoff(
-        &self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreHandoffRequest>,
-    ) -> Result<CoreHandoffResponse, CoreLinkError>;
-
     /// Reads a routed watch snapshot from one adjacent CoreNode.
     #[allow(non_snake_case)]
     async fn routedWatchSnapshot(
@@ -164,14 +129,6 @@ pub trait CoreNodeTransportClient: Send + Sync {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEventStream, CoreLinkError>;
-
-    /// Applies one routed committed Binding operation.
-    #[allow(non_snake_case)]
-    async fn routedBindingApply(
-        &self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-    ) -> Result<(), CoreLinkError>;
 
     /// Opens a routed push stream from one adjacent CoreNode.
     #[allow(non_snake_case)]
@@ -217,8 +174,6 @@ pub enum PeerFramePayload {
 #[serde(tag = "type", content = "body")]
 pub enum PeerRequest {
     Call(RoutedCoreRequest<CoreCallRequest>),
-    Handoff(RoutedCoreRequest<CoreHandoffRequest>),
-    BindingApply(RoutedCoreRequest<CoreNodeBindingApplyRequest>),
     WatchSnapshot(RoutedCoreRequest<CoreWatchRequest>),
     WatchOpen(PeerWatchOpenRequest),
     WatchClose(PeerWatchCloseRequest),
@@ -232,7 +187,6 @@ pub enum PeerRequest {
 #[serde(tag = "type", content = "body")]
 pub enum PeerResponse {
     Call(CoreCallResponse),
-    Handoff(Result<CoreHandoffResponse, CoreLinkError>),
     WatchSnapshot(Result<CoreEvent, CoreLinkError>),
     Operation(Result<(), CoreLinkError>),
 }
@@ -484,44 +438,6 @@ impl PeerLinkClient {
                 ),
             ),
             Err(error) => CoreCallResponse::err(requestId, error),
-        }
-    }
-
-    /// Executes one EnhanceAI continuation handoff through the adjacent CoreNode.
-    #[allow(non_snake_case)]
-    pub async fn routedHandoff(
-        &self,
-        request: RoutedCoreRequest<CoreHandoffRequest>,
-    ) -> Result<CoreHandoffResponse, CoreLinkError> {
-        match self
-            .connection
-            .request(PeerRequest::Handoff(request))
-            .await?
-        {
-            PeerResponse::Handoff(result) => result,
-            _ => Err(CoreLinkError::new(
-                "PEER_PROTOCOL_ERROR",
-                "Peer Link returned the wrong response",
-            )),
-        }
-    }
-
-    /// Applies one committed Binding operation through the adjacent CoreNode.
-    #[allow(non_snake_case)]
-    pub async fn routedBindingApply(
-        &self,
-        request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-    ) -> Result<(), CoreLinkError> {
-        match self
-            .connection
-            .request(PeerRequest::BindingApply(request))
-            .await?
-        {
-            PeerResponse::Operation(result) => result,
-            _ => Err(CoreLinkError::new(
-                "PEER_PROTOCOL_ERROR",
-                "Peer Link returned the wrong response",
-            )),
         }
     }
 
@@ -832,16 +748,6 @@ impl PeerConnection {
             PeerRequest::Call(request) => {
                 PeerResponse::Call(self.core.routedCall(self.peerNodeId.clone(), request).await)
             }
-            PeerRequest::Handoff(request) => PeerResponse::Handoff(
-                self.core
-                    .routedHandoff(self.peerNodeId.clone(), request)
-                    .await,
-            ),
-            PeerRequest::BindingApply(request) => PeerResponse::Operation(
-                self.core
-                    .routedBindingApply(self.peerNodeId.clone(), request)
-                    .await,
-            ),
             PeerRequest::WatchSnapshot(request) => PeerResponse::WatchSnapshot(
                 self.core
                     .routedWatchSnapshot(self.peerNodeId.clone(), request)
@@ -1515,6 +1421,11 @@ fn failOutboundPeerFrameBatch(state: &Arc<OutboundPeerFrameBatchState>, error: S
     );
 }
 
+/// Returns whether one HTTP Peer carrier chunk should be logged.
+fn shouldLogPeerCarrierChunk(count: u64) -> bool {
+    count <= 5 || count % 256 == 0
+}
+
 /// Drains queued Peer frames into ordered bounded HTTP batches.
 async fn runOutboundPeerFrameBatchSender(
     state: Arc<OutboundPeerFrameBatchState>,
@@ -1642,6 +1553,8 @@ async fn openOutboundPeerLinkHttp(
     let chunkLocalNodeId = localNodeId.clone();
     let chunkPeerNodeId = peerNodeId.clone();
     let chunkChannelId = channelId.clone();
+    let chunkCount = Arc::new(AtomicU64::new(0));
+    let chunkCountForLog = chunkCount.clone();
     let closedLocalNodeId = localNodeId.clone();
     let closedPeerNodeId = peerNodeId.clone();
     let closedChannelId = channelId.clone();
@@ -1685,16 +1598,20 @@ async fn openOutboundPeerLinkHttp(
         Arc::new(move |chunk| {
             let frames = decodePeerFrameChunks(&chunkBuffer, chunk)
                 .expect("Peer Link frame stream must decode");
-            operit_util::AppLogger::AppLogger::i(
-                "PeerCarrierTrace",
-                &format!(
-                    "http_stream_chunk local={} peer={} channel={} frames={}",
-                    chunkLocalNodeId,
-                    chunkPeerNodeId,
-                    chunkChannelId,
-                    frames.len()
-                ),
-            );
+            let chunkIndex = chunkCountForLog.fetch_add(1, Ordering::Relaxed) + 1;
+            if shouldLogPeerCarrierChunk(chunkIndex) || frames.len() > 1 {
+                operit_util::AppLogger::AppLogger::i(
+                    "PeerCarrierTrace",
+                    &format!(
+                        "http_stream_chunk local={} peer={} channel={} chunk={} frames={}",
+                        chunkLocalNodeId,
+                        chunkPeerNodeId,
+                        chunkChannelId,
+                        chunkIndex,
+                        frames.len()
+                    ),
+                );
+            }
             let sender = chunkFrameQueueSender
                 .lock()
                 .expect("Peer Link frame queue lock poisoned");

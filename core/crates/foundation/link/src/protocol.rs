@@ -643,33 +643,6 @@ pub struct CoreWatchRequest {
     pub args: CoreValue,
 }
 
-/// Carries one EnhanceAI continuation into the route-owned Core handoff service.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreHandoffRequest {
-    pub bindingKey: String,
-    pub targetNodeId: String,
-    pub continuation: CoreValue,
-    /// Runtime-owned state transferred alongside the provider continuation.
-    pub runtimeSnapshot: CoreValue,
-}
-
-/// Describes one physical Core execution segment contributing to one assistant message.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[allow(non_snake_case)]
-pub struct CoreExecutionSegment {
-    pub executionGeneration: i64,
-    pub segmentIndex: i64,
-    pub provider: String,
-    pub modelName: String,
-    pub inputTokens: i64,
-    pub outputTokens: i64,
-    pub cachedInputTokens: i64,
-}
-
-/// Acknowledges that the target Core accepted a handoff boundary.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreHandoffResponse {}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CorePushRequest {
     pub requestId: CoreRequestId,

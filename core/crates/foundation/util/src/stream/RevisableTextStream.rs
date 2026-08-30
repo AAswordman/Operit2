@@ -2,6 +2,7 @@ use crate::stream::HotStream::{
     mutable_shared_stream, share, MutableSharedStreamImpl, SharedStream, StreamStart,
 };
 use crate::stream::Stream::{CollectFuture, Stream};
+use crate::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -161,6 +162,7 @@ pub struct DelegatingRevisableSharedTextStream {
     item_stream: ResponseItemStream,
     terminalFailure: Arc<Mutex<Option<String>>>,
     initialContent: Arc<Mutex<String>>,
+    renderedSegment: Arc<Mutex<TextStreamRevisionTracker>>,
 }
 
 impl DelegatingRevisableSharedTextStream {
@@ -196,11 +198,16 @@ impl DelegatingRevisableSharedTextStream {
             item_stream,
             terminalFailure: Arc::new(Mutex::new(None)),
             initialContent: Arc::new(Mutex::new(String::new())),
+            renderedSegment: Arc::new(Mutex::new(TextStreamRevisionTracker::new(""))),
         }
     }
 
     /// Emits one response chunk to both legacy and ordered subscribers.
     pub fn emit_chunk(&self, chunk: String) {
+        self.renderedSegment
+            .lock()
+            .expect("shared text stream rendered segment mutex poisoned")
+            .append(&chunk);
         if let ResponseItemStream::Ordered(orderedItems) = &self.item_stream {
             orderedItems.emit(ResponseStreamItem::Chunk(chunk.clone()));
         }
@@ -209,6 +216,20 @@ impl DelegatingRevisableSharedTextStream {
 
     /// Emits one response revision to both legacy and ordered subscribers.
     pub fn emit_revision(&self, event: TextStreamEvent) {
+        {
+            let mut renderedSegment = self
+                .renderedSegment
+                .lock()
+                .expect("shared text stream rendered segment mutex poisoned");
+            match event.event_type {
+                TextStreamEventType::Savepoint => renderedSegment.savepoint(&event.id),
+                TextStreamEventType::Rollback => {
+                    renderedSegment
+                        .rollback(&event.id)
+                        .expect("shared text stream rollback must reference an active savepoint");
+                }
+            }
+        }
         let ResponseItemStream::Ordered(orderedItems) = &self.item_stream else {
             panic!("revisable response stream must preserve item order");
         };
@@ -260,6 +281,18 @@ impl DelegatingRevisableSharedTextStream {
             .lock()
             .expect("shared text stream initial content mutex poisoned")
             .clone()
+    }
+
+    /// Returns the currently renderable text represented by the retained prefix and emitted segment.
+    pub fn current_render_content(&self) -> String {
+        let initialContent = self.initial_content();
+        let segmentContent = self
+            .renderedSegment
+            .lock()
+            .expect("shared text stream rendered segment mutex poisoned")
+            .current_content()
+            .to_string();
+        format!("{initialContent}{segmentContent}")
     }
 }
 
@@ -469,5 +502,29 @@ mod tests {
         stream.set_initial_content("persisted prefix".to_string());
 
         assert_eq!(clone.initial_render_content(), "persisted prefix");
+    }
+
+    /// Verifies the render snapshot tracks emitted chunks and ordered revisions.
+    #[test]
+    fn current_render_content_tracks_chunks_and_revisions() {
+        let stream = DelegatingRevisableSharedTextStream::new_ordered(
+            mutable_shared_stream(usize::MAX),
+            mutable_shared_stream(usize::MAX),
+        );
+
+        stream.set_initial_content("prefix ".to_string());
+        stream.emit_chunk("first ".to_string());
+        stream.emit_revision(TextStreamEvent {
+            event_type: TextStreamEventType::Savepoint,
+            id: "retry".to_string(),
+        });
+        stream.emit_chunk("discarded".to_string());
+        stream.emit_revision(TextStreamEvent {
+            event_type: TextStreamEventType::Rollback,
+            id: "retry".to_string(),
+        });
+        stream.emit_chunk("second".to_string());
+
+        assert_eq!(stream.current_render_content(), "prefix first second");
     }
 }

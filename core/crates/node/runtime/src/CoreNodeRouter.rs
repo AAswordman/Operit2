@@ -1,40 +1,34 @@
 use async_trait::async_trait;
 use operit_access_runtime::CoreNodePeerLink::{
-    activePeerNodeIds, peerLink, subscribePeerLinkChanges, CoreNodeBindingApplyRequest,
-    CoreNodeLinkClient, PeerLinkClient, RoutedCoreRequest, RoutedCoreRequestKind,
+    activePeerNodeIds, peerLink, CoreNodeLinkClient, PeerLinkClient, RoutedCoreRequest,
+    RoutedCoreRequestKind,
 };
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
-use operit_host_api::{HostRuntimeTaskSchedulerHost, RuntimeStorageHost};
+use operit_host_api::RuntimeStorageHost;
 use operit_link::route_runtime::CoreRouteRuntime;
 use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream,
-    CoreHandoffRequest, CoreHandoffResponse, CoreLinkClient, CoreLinkError, CoreLinkPushSession,
-    CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreValue, CoreWatchRequest,
-    CORE_INTERNAL_ROUTE_OBJECT_ID, CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT,
-    CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT,
-    CORE_STREAM_POOL_OBJECT_ID,
+    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
+    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest,
+    CoreValue, CoreWatchRequest, CORE_INTERNAL_ROUTE_OBJECT_ID,
+    CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT,
+    CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT, CORE_STREAM_POOL_OBJECT_ID,
 };
-use operit_store::CoreNodeBindingStore::{
-    CoreNodeBindingChange, CoreNodeBindingChangeObserver, CoreNodeBindingCommit,
-    CoreNodeBindingRecord, CoreNodeBindingStore,
-};
+use operit_store::CoreNodeBindingStore::{CoreNodeBindingRecord, CoreNodeBindingStore};
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
-use operit_store::SyncOperationStore::SyncOperation;
 use operit_tools::runtime_support::{
     CoreNodeToolRuntime, RuntimeCoreNodeRouteState, RuntimeCoreNodeStatus,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{oneshot, Mutex};
 
+use crate::GeneratedCoreRoute;
 use crate::SpaceRuntime::SpaceRuntime;
-use crate::{GeneratedCoreRoute, CORE_ROUTE_CURSOR_ARGUMENT, CORE_ROUTE_CURSOR_PROPERTY};
 
-static CORE_NODE_ROUTER_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+const ROUTED_BINDING_WATCH_RECHECK_DELAY_MS: u64 = 50;
 
 /// Stores one push session whose CoreNode route is fixed when the stream opens.
 #[derive(Clone)]
@@ -55,8 +49,6 @@ pub struct CoreNodeRouter {
     bindingStore: Arc<dyn CoreNodeBindingRuntime>,
     localNodeId: String,
     spaceStore: CoreSpaceStore,
-    bindingChanges: broadcast::Sender<String>,
-    _bindingChangeObserver: Arc<CoreNodeBindingChangeObserver>,
 }
 
 /// Carries local Core capabilities into the server-side Space router.
@@ -68,14 +60,6 @@ pub struct CoreNodeLocalRuntime {
     objectIdForSchema: Arc<dyn Fn(&str) -> Option<u32> + Send + Sync>,
     bindCoreNodeToolRuntime:
         Arc<dyn Fn(Arc<dyn CoreNodeToolRuntime>) -> Result<(), CoreLinkError> + Send + Sync>,
-    handoffAtBoundary: Arc<
-        dyn Fn(
-                CoreHandoffRequest,
-            )
-                -> Pin<Box<dyn Future<Output = Result<CoreHandoffResponse, CoreLinkError>> + Send>>
-            + Send
-            + Sync,
-    >,
     openPush: Arc<
         dyn Fn(CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>
             + Send
@@ -94,14 +78,6 @@ impl CoreNodeLocalRuntime {
         bindCoreNodeToolRuntime: Arc<
             dyn Fn(Arc<dyn CoreNodeToolRuntime>) -> Result<(), CoreLinkError> + Send + Sync,
         >,
-        handoffAtBoundary: Arc<
-            dyn Fn(
-                    CoreHandoffRequest,
-                ) -> Pin<
-                    Box<dyn Future<Output = Result<CoreHandoffResponse, CoreLinkError>> + Send>,
-                > + Send
-                + Sync,
-        >,
         openPush: Arc<
             dyn Fn(CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>
                 + Send
@@ -115,7 +91,6 @@ impl CoreNodeLocalRuntime {
             runtimeStorageHost,
             objectIdForSchema,
             bindCoreNodeToolRuntime,
-            handoffAtBoundary,
             openPush,
             spaceRuntime,
         }
@@ -140,15 +115,6 @@ impl CoreNodeLocalRuntime {
         runtime: Arc<dyn CoreNodeToolRuntime>,
     ) -> Result<(), CoreLinkError> {
         (self.bindCoreNodeToolRuntime)(runtime)
-    }
-
-    /// Starts one continuation on the Core selected by the route server.
-    #[allow(non_snake_case)]
-    async fn handoffAtBoundary(
-        &self,
-        request: CoreHandoffRequest,
-    ) -> Result<CoreHandoffResponse, CoreLinkError> {
-        (self.handoffAtBoundary)(request).await
     }
 
     /// Executes one local Core call through the local shared client.
@@ -182,7 +148,7 @@ impl CoreNodeLocalRuntime {
     }
 
     /// Executes one Space call in the server-owned Space route namespace.
-    async fn callSpace(&self, request: CoreCallRequest) -> CoreCallResponse {
+    pub(crate) async fn callSpace(&self, request: CoreCallRequest) -> CoreCallResponse {
         self.spaceRuntime.call(request).await
     }
 
@@ -223,27 +189,6 @@ trait CoreNodeBindingRuntime: Send + Sync {
     /// Returns the CoreNode currently selected by one Binding key.
     #[allow(non_snake_case)]
     fn bindingNodeId(&self, key: &str) -> Result<String, CoreLinkError>;
-
-    /// Atomically changes one Binding and returns its committed operation.
-    #[allow(non_snake_case)]
-    fn compareAndSetBinding(
-        &self,
-        key: &str,
-        expectedNodeId: &str,
-        expectedGeneration: i64,
-        targetNodeId: &str,
-    ) -> Result<CoreNodeBindingCommit, CoreLinkError>;
-
-    /// Registers one observer for committed Binding keys.
-    #[allow(non_snake_case)]
-    fn addBindingChangeObserver(&self, observer: Arc<CoreNodeBindingChangeObserver>);
-
-    /// Applies one directly transported Binding operation and returns its materialized record.
-    #[allow(non_snake_case)]
-    fn applyImmediateBindingOperation(
-        &self,
-        operation: &SyncOperation,
-    ) -> Result<CoreNodeBindingRecord, CoreLinkError>;
 }
 
 impl CoreNodeBindingRuntime for CoreNodeBindingStore {
@@ -264,37 +209,6 @@ impl CoreNodeBindingRuntime for CoreNodeBindingStore {
     #[allow(non_snake_case)]
     fn bindingNodeId(&self, key: &str) -> Result<String, CoreLinkError> {
         CoreNodeBindingRuntime::binding(self, key).map(|binding| binding.nodeId)
-    }
-
-    /// Commits or joins one exact Binding source transition.
-    #[allow(non_snake_case)]
-    fn compareAndSetBinding(
-        &self,
-        key: &str,
-        expectedNodeId: &str,
-        expectedGeneration: i64,
-        targetNodeId: &str,
-    ) -> Result<CoreNodeBindingCommit, CoreLinkError> {
-        self.transitionGeneration(key, expectedNodeId, expectedGeneration, targetNodeId)
-            .map_err(|error| CoreLinkError::new("CORE_BINDING_TRANSITION_FAILED", error))
-    }
-
-    /// Registers one observer on the persistent Binding store.
-    #[allow(non_snake_case)]
-    fn addBindingChangeObserver(&self, observer: Arc<CoreNodeBindingChangeObserver>) {
-        self.addChangeObserver(observer);
-    }
-
-    /// Installs one directly transported Binding operation before business continuation.
-    #[allow(non_snake_case)]
-    fn applyImmediateBindingOperation(
-        &self,
-        operation: &SyncOperation,
-    ) -> Result<CoreNodeBindingRecord, CoreLinkError> {
-        self.applyImmediateOperation(operation)
-            .map_err(|error| CoreLinkError::new("CORE_BINDING_APPLY_FAILED", error))?;
-        self.binding(&operation.entityId)
-            .map_err(|error| CoreLinkError::new("CORE_BINDING_READ_FAILED", error))
     }
 }
 
@@ -322,21 +236,10 @@ impl CoreNodeRouter {
         spaceStore
             .initialize()
             .expect("CoreNodeRouter requires an initialized Space");
-        let (bindingChanges, _) = broadcast::channel(256);
-        let bindingChangeSender = bindingChanges.clone();
-        let bindingChangeObserver: Arc<CoreNodeBindingChangeObserver> = Arc::new(move |change| {
-            let key = match change {
-                CoreNodeBindingChange::Upsert(binding) => binding.key,
-                CoreNodeBindingChange::Delete(key) => key,
-            };
-            let _ = bindingChangeSender.send(key);
-        });
-        bindingStore.addBindingChangeObserver(bindingChangeObserver.clone());
         localCore
             .bindCoreNodeToolRuntime(Arc::new(CoreNodeToolRouteRuntime {
                 localNodeId: localNodeId.clone(),
                 spaceStore: spaceStore.clone(),
-                bindingStore: bindingStore.clone(),
             }))
             .expect("CoreNodeRouter requires tool routing state registration");
         let router = Self {
@@ -344,8 +247,6 @@ impl CoreNodeRouter {
             bindingStore,
             localNodeId,
             spaceStore,
-            bindingChanges,
-            _bindingChangeObserver: bindingChangeObserver,
         };
         operit_link::installCoreRouteRuntime(Arc::new(router.clone()));
         router
@@ -355,21 +256,6 @@ impl CoreNodeRouter {
     #[allow(non_snake_case)]
     pub fn localNodeId(&self) -> String {
         self.localNodeId.clone()
-    }
-
-    /// Executes one route-owned handoff at an EnhanceAI continuation boundary.
-    #[allow(non_snake_case)]
-    pub async fn handoffCoreAtBoundary(
-        &self,
-        request: CoreHandoffRequest,
-    ) -> Result<(), CoreLinkError> {
-        performCoreHandoff(
-            &self.bindingStore,
-            &self.localNodeId,
-            &self.spaceStore,
-            request,
-        )
-        .await
     }
 
     /// Resolves one generated Core schema through the owning local runtime.
@@ -446,35 +332,34 @@ impl CoreNodeRouter {
         }
     }
 
-    /// Resolves one Binding and requires its selected device to be reachable.
+    /// Resolves one Binding to its selected device.
     #[allow(non_snake_case)]
     fn bindingRouteNodeId(&self, key: &str) -> Result<String, CoreLinkError> {
         let targetNodeId = self.bindingStore.bindingNodeId(key)?;
-        if !self.nodeIsReachable(&targetNodeId)? {
-            operit_util::AppLogger::AppLogger::w(
-                "CoreNodeRouter",
-                &format!(
-                    "binding target unreachable; executing locally key={} target={} local={}",
-                    key, targetNodeId, self.localNodeId
-                ),
-            );
-            return Ok(self.localNodeId.clone());
-        }
+        let reachable = self
+            .nodeIsReachable(&targetNodeId)
+            .map_err(CoreLinkError::internal)?;
+        operit_util::AppLogger::AppLogger::i(
+            "CoreNodeRouteTrace",
+            &format!(
+                "binding_target_resolve key={} local={} selected={} reachable={}",
+                key, self.localNodeId, targetNodeId, reachable
+            ),
+        );
         Ok(targetNodeId)
     }
 
     /// Reports whether the active Peer Link graph currently proves one device reachable.
     #[allow(non_snake_case)]
-    fn nodeIsReachable(&self, targetNodeId: &str) -> Result<bool, CoreLinkError> {
+    pub fn nodeIsReachable(&self, targetNodeId: &str) -> Result<bool, String> {
         coreNodeIsReachable(&self.localNodeId, &self.spaceStore, targetNodeId)
-            .map_err(CoreLinkError::internal)
     }
 
     /// Opens the generic push session selected by generated CoreNode routing metadata.
     #[allow(non_snake_case)]
     async fn openPushSession(
         &self,
-        mut request: CorePushRequest,
+        request: CorePushRequest,
     ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
         let route = crate::generated_core_push_route(&request)?;
         let targetNodeId = self.routeNodeId(route).await?;
@@ -569,6 +454,19 @@ impl CoreNodeRouter {
             previousNodeId,
             excludedPeerNodeIds,
         )?;
+        operit_util::AppLogger::AppLogger::i(
+            "CoreNodeRouteTrace",
+            &format!(
+                "route_hop_resolve source={} target={} previous={:?} ttl={} next={} excluded={:?} kind={:?}",
+                self.localNodeId,
+                request.targetNodeId,
+                previousNodeId,
+                request.ttl,
+                nextNodeId,
+                excludedPeerNodeIds,
+                request.routeKind
+            ),
+        );
         if previousNodeId == Some(nextNodeId.as_str()) {
             return Err(CoreLinkError::new(
                 "CORE_NODE_ROUTE_LOOP",
@@ -579,16 +477,6 @@ impl CoreNodeRouter {
         let peer = peerLink(&self.localNodeId, &nextNodeId)
             .map_err(|error| CoreLinkError::new("PEER_LINK_CLOSED", error))?;
         Ok((peer, request))
-    }
-
-    /// Resolves one route through the CoreNode's currently active direct Peer Links.
-    #[allow(non_snake_case)]
-    fn nextActiveHop(
-        &self,
-        targetNodeId: String,
-        previousNodeId: Option<&str>,
-    ) -> Result<String, CoreLinkError> {
-        self.nextActiveHopAvoiding(targetNodeId, previousNodeId, &BTreeSet::new())
     }
 
     /// Resolves one active first hop after removing previous and failed adjacent devices.
@@ -674,6 +562,17 @@ impl CoreNodeRouter {
         request: CoreCallRequest,
     ) -> CoreCallResponse {
         self.callNodeWithKind(targetNodeId, request, RoutedCoreRequestKind::ObjectId)
+            .await
+    }
+
+    /// Executes one Space route call on an explicit target CoreNode.
+    #[allow(non_snake_case)]
+    pub async fn callNodeSpace(
+        &self,
+        targetNodeId: String,
+        request: CoreCallRequest,
+    ) -> CoreCallResponse {
+        self.callNodeWithKind(targetNodeId, request, RoutedCoreRequestKind::SpaceRoute)
             .await
     }
 
@@ -811,7 +710,7 @@ impl CoreNodeRouter {
         let targetNodeId = self
             .routeNodeId(GeneratedCoreRoute::Binding {
                 scope: 0,
-                key: bindingKey,
+                key: bindingKey.clone(),
             })
             .await?;
         if targetNodeId == self.localNodeId {
@@ -835,16 +734,7 @@ impl CoreNodeRouter {
             )
         })?;
         let bindingKey = route.bindingKey(&request.args)?;
-        let targetNodeId = self
-            .routeNodeId(GeneratedCoreRoute::Binding {
-                scope: 0,
-                key: bindingKey,
-            })
-            .await?;
-        if targetNodeId == self.localNodeId {
-            return self.localCore.watchSpace(request).await;
-        }
-        self.watchNodeSpace(targetNodeId, request).await
+        self.watchBindingFlow(bindingKey, request, None)
     }
 
     /// Opens one embedded stream on the CoreNode selected by its producing route.
@@ -853,18 +743,43 @@ impl CoreNodeRouter {
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEventStream, CoreLinkError> {
+        let arguments = embeddedStreamArguments(&request)?;
+        let streamId = embeddedStreamStringArgument(arguments, "streamId")?;
+        let sourceMethod =
+            embeddedStreamStringArgument(arguments, CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT)?;
+        let sourceMode =
+            embeddedStreamStringArgument(arguments, CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT)?;
+        let sourceArgs = embeddedStreamSourceArgs(&request)?;
         let route = embeddedStreamSourceRoute(&request)?;
-        let bindingKey = route.bindingKey(embeddedStreamSourceArgs(&request)?)?;
+        let bindingKey = route.bindingKey(sourceArgs)?;
+        operit_util::AppLogger::AppLogger::i(
+            "CoreNodeRouteTrace",
+            &format!(
+                "embedded_route_resolve requestId={} streamId={} sourceMode={} sourceMethod={} routeId={} routeMethod={} key={} local={}",
+                request.requestId.0,
+                streamId,
+                sourceMode,
+                sourceMethod,
+                route.routeId,
+                route.methodName,
+                bindingKey,
+                self.localNodeId
+            ),
+        );
         let targetNodeId = self
             .routeNodeId(GeneratedCoreRoute::Binding {
                 scope: 0,
-                key: bindingKey,
+                key: bindingKey.clone(),
             })
             .await?;
-        if targetNodeId == self.localNodeId {
-            return self.localCore.watchSpace(request).await;
-        }
-        self.watchNodeSpace(targetNodeId, request).await
+        operit_util::AppLogger::AppLogger::i(
+            "CoreNodeRouteTrace",
+            &format!(
+                "embedded_route_target requestId={} streamId={} routeMethod={} local={} target={}",
+                request.requestId.0, streamId, route.methodName, self.localNodeId, targetNodeId
+            ),
+        );
+        self.watchBindingNode(targetNodeId, request).await
     }
 
     /// Opens one push on an explicit target CoreNode.
@@ -993,29 +908,6 @@ impl CoreNodeRouter {
         response
     }
 
-    /// Verifies every locally executed Binding call against its current target.
-    #[allow(non_snake_case)]
-    async fn validateLocalCall(&self, request: &CoreCallRequest) -> Result<(), CoreLinkError> {
-        let bindingKey = match crate::generated_core_call_route(request)? {
-            GeneratedCoreRoute::Binding { key, .. } => Some(key),
-            GeneratedCoreRoute::Local => None,
-        };
-        let Some(key) = bindingKey else {
-            return Ok(());
-        };
-        let binding = self.bindingStore.bindingNodeId(&key)?;
-        if binding != self.localNodeId {
-            return Err(CoreLinkError::new(
-                "CORE_BINDING_TARGET_MISMATCH",
-                format!(
-                    "CoreNode {} cannot execute Binding {key}; selected node is {binding}",
-                    self.localNodeId
-                ),
-            ));
-        }
-        Ok(())
-    }
-
     /// Opens one Binding watch segment on an explicit CoreNode.
     #[allow(non_snake_case)]
     pub(crate) async fn watchBindingNode(
@@ -1023,6 +915,26 @@ impl CoreNodeRouter {
         targetNodeId: String,
         request: CoreWatchRequest,
     ) -> Result<CoreEventStream, CoreLinkError> {
+        if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+            if targetNodeId == self.localNodeId {
+                operit_util::AppLogger::AppLogger::i(
+                    "CoreNodeRouteTrace",
+                    &format!(
+                        "binding_watch_open_local_embedded_stream requestId={} property={} local={}",
+                        request.requestId.0, request.propertyName, self.localNodeId
+                    ),
+                );
+                return self.localCore.watchSpace(request).await;
+            }
+            operit_util::AppLogger::AppLogger::i(
+                "CoreNodeRouteTrace",
+                &format!(
+                    "binding_watch_open_remote_embedded_stream requestId={} property={} local={} target={}",
+                    request.requestId.0, request.propertyName, self.localNodeId, targetNodeId
+                ),
+            );
+            return self.watchNodeSpace(targetNodeId, request).await;
+        }
         if crate::generated_space_watch_route(&request).is_some() {
             if targetNodeId == self.localNodeId {
                 operit_util::AppLogger::AppLogger::i(
@@ -1049,393 +961,248 @@ impl CoreNodeRouter {
         self.watchNode(targetNodeId, request).await
     }
 
-    /// Returns one logical Binding watch while recovery runs outside the caller's open operation.
+    /// Opens a long-lived logical Binding Flow over replaceable physical watch segments.
     #[allow(non_snake_case)]
-    async fn openRecoveringBindingWatch(
+    fn watchBindingFlow(
         &self,
-        key: String,
+        bindingKey: String,
         request: CoreWatchRequest,
+        localStream: Option<CoreEventStream>,
     ) -> Result<CoreEventStream, CoreLinkError> {
-        let mut bindingChanges = self.bindingChanges.subscribe();
-        let mut peerChanges = subscribePeerLinkChanges();
-        let (cancelSender, mut cancelReceiver) = tokio::sync::oneshot::channel();
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, receiver) = CoreEventStream::channel();
+        let (cancelSender, cancelReceiver) = oneshot::channel();
         let router = self.clone();
-        let taskKey = key.clone();
-        HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
-            defaultHostRuntimeTaskSchedulerHost().as_ref(),
-            "core-node-binding-watch",
-            Box::new(move || {
-                Box::pin(async move {
-                    match openBindingWatchSourceUntilReachable(
-                        &router,
-                        &taskKey,
-                        &request,
-                        None,
-                        &mut bindingChanges,
-                        &mut peerChanges,
-                        &mut cancelReceiver,
-                    )
-                    .await
-                    {
-                        Ok(Some((sourceBinding, stream))) => {
-                            runRecoveringBindingWatch(
-                                router,
-                                taskKey,
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "core-node-route-binding-flow",
+                Box::new(move || {
+                    Box::pin(async move {
+                        router
+                            .pumpBindingFlow(
+                                bindingKey,
                                 request,
-                                sourceBinding,
-                                stream,
-                                bindingChanges,
-                                peerChanges,
                                 sender,
                                 cancelReceiver,
+                                localStream,
                             )
                             .await;
+                    })
+                }),
+            )
+            .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+        Ok(receiver.withOnClose(move || {
+            let _ = cancelSender.send(());
+        }))
+    }
+
+    /// Continuously forwards the current Binding owner into one stable outer Flow stream.
+    #[allow(non_snake_case)]
+    async fn pumpBindingFlow(
+        &self,
+        bindingKey: String,
+        request: CoreWatchRequest,
+        sender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
+        mut cancelReceiver: oneshot::Receiver<()>,
+        mut initialLocalStream: Option<CoreEventStream>,
+    ) {
+        let requestId = request.requestId.0.clone();
+        let propertyName = request.propertyName.clone();
+        let mut segmentCount = 0_u64;
+        'outer: loop {
+            let binding = match self.bindingStore.binding(&bindingKey) {
+                Ok(binding) => binding,
+                Err(error) => {
+                    operit_util::AppLogger::AppLogger::e(
+                        "CoreNodeRouteTrace",
+                        &format!(
+                            "binding_flow_binding_missing requestId={} property={} key={} error={}",
+                            requestId, propertyName, bindingKey, error
+                        ),
+                    );
+                    break;
+                }
+            };
+            segmentCount += 1;
+            let useInitialLocalStream =
+                binding.nodeId == self.localNodeId && initialLocalStream.is_some();
+            if binding.nodeId != self.localNodeId {
+                initialLocalStream = None;
+            }
+            operit_util::AppLogger::AppLogger::i(
+                "CoreNodeRouteTrace",
+                &format!(
+                    "binding_flow_segment_open requestId={} property={} key={} segment={} owner={} generation={} localSource={}",
+                    requestId,
+                    propertyName,
+                    bindingKey,
+                    segmentCount,
+                    binding.nodeId,
+                    binding.generation,
+                    useInitialLocalStream
+                ),
+            );
+            let mut stream = if useInitialLocalStream {
+                initialLocalStream
+                    .take()
+                    .expect("initial local stream must be present")
+            } else {
+                match self
+                    .watchBindingNode(binding.nodeId.clone(), request.clone())
+                    .await
+                {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        operit_util::AppLogger::AppLogger::w(
+                            "CoreNodeRouteTrace",
+                            &format!(
+                                "binding_flow_segment_open_failed requestId={} property={} key={} owner={} generation={} error={}",
+                                requestId,
+                                propertyName,
+                                bindingKey,
+                                binding.nodeId,
+                                binding.generation,
+                                error
+                            ),
+                        );
+                        if self
+                            .waitForBindingFlowRetryOrCancel(&mut cancelReceiver)
+                            .await
+                        {
+                            break;
                         }
-                        Ok(None) => {}
-                        Err(error) => {
-                            operit_util::AppLogger::AppLogger::e(
+                        continue;
+                    }
+                }
+            };
+
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut cancelReceiver => {
+                        operit_util::AppLogger::AppLogger::i(
+                            "CoreNodeRouteTrace",
+                            &format!(
+                                "binding_flow_cancelled requestId={} property={} key={} segment={}",
+                                requestId, propertyName, bindingKey, segmentCount
+                            ),
+                        );
+                        break 'outer;
+                    }
+                    maybeEvent = stream.recv() => {
+                        let Some(event) = maybeEvent else {
+                            operit_util::AppLogger::AppLogger::w(
                                 "CoreNodeRouteTrace",
                                 &format!(
-                                    "binding_watch_initial_source_failed requestId={} property={} key={} local={} code={} error={}",
-                                    request.requestId.0,
-                                    request.propertyName,
-                                    taskKey,
-                                    router.localNodeId,
-                                    error.code,
-                                    error
+                                    "binding_flow_segment_closed requestId={} property={} key={} segment={} owner={} generation={}",
+                                    requestId,
+                                    propertyName,
+                                    bindingKey,
+                                    segmentCount,
+                                    binding.nodeId,
+                                    binding.generation
                                 ),
                             );
+                            break;
+                        };
+                        if event.kind == CoreEventKind::Completed {
+                            operit_util::AppLogger::AppLogger::i(
+                                "CoreNodeRouteTrace",
+                                &format!(
+                                    "binding_flow_segment_completed requestId={} property={} key={} segment={} owner={} generation={}",
+                                    requestId,
+                                    propertyName,
+                                    bindingKey,
+                                    segmentCount,
+                                    binding.nodeId,
+                                    binding.generation
+                                ),
+                            );
+                            break;
+                        }
+                        if !self.bindingStillCurrent(&bindingKey, &binding) {
+                            operit_util::AppLogger::AppLogger::i(
+                                "CoreNodeRouteTrace",
+                                &format!(
+                                    "binding_flow_stale_event requestId={} property={} key={} segment={} owner={} generation={} kind={:?}",
+                                    requestId,
+                                    propertyName,
+                                    bindingKey,
+                                    segmentCount,
+                                    binding.nodeId,
+                                    binding.generation,
+                                    event.kind
+                                ),
+                            );
+                            break;
+                        }
+                        if sender.send(event).is_err() {
+                            break 'outer;
                         }
                     }
-                })
-            }),
-        )
-        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        Ok(CoreEventStream::new(receiver).withOnClose(move || {
-            let _ = cancelSender.send(());
-        }))
-    }
-
-    /// Returns one logical Binding watch beginning with a wrapper-opened local source stream.
-    #[allow(non_snake_case)]
-    async fn openRecoveringBindingWatchWithLocalSource(
-        &self,
-        key: String,
-        request: CoreWatchRequest,
-        stream: CoreEventStream,
-    ) -> Result<CoreEventStream, CoreLinkError> {
-        let currentBinding = self.bindingStore.binding(&key)?;
-        let sourceBinding = CoreNodeBindingRecord {
-            key: key.clone(),
-            nodeId: self.localNodeId.clone(),
-            generation: currentBinding.generation,
-        };
-        let bindingChanges = self.bindingChanges.subscribe();
-        let peerChanges = subscribePeerLinkChanges();
-        let (cancelSender, cancelReceiver) = tokio::sync::oneshot::channel();
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        let router = self.clone();
-        HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
-            defaultHostRuntimeTaskSchedulerHost().as_ref(),
-            "core-node-binding-watch-local-source",
-            Box::new(move || {
-                Box::pin(async move {
-                    runRecoveringBindingWatch(
-                        router,
-                        key,
-                        request,
-                        sourceBinding,
-                        stream,
-                        bindingChanges,
-                        peerChanges,
-                        sender,
-                        cancelReceiver,
-                    )
-                    .await;
-                })
-            }),
-        )
-        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        Ok(CoreEventStream::new(receiver).withOnClose(move || {
-            let _ = cancelSender.send(());
-        }))
-    }
-
-    /// Applies one committed Binding operation on its exact selected CoreNode.
-    #[allow(non_snake_case)]
-    async fn applyBindingCommitAtNode(
-        &self,
-        targetNodeId: String,
-        request: CoreNodeBindingApplyRequest,
-    ) -> Result<(), CoreLinkError> {
-        if targetNodeId == self.localNodeId {
-            return self.executeBindingApply(request);
-        }
-        let route = self.initialRoute(targetNodeId, request)?;
-        let mut excludedPeerNodeIds = BTreeSet::new();
-        loop {
-            let (peer, forwardedRoute) =
-                self.forwardRouteAvoiding(None, &excludedPeerNodeIds, route.clone())?;
-            let peerNodeId = peer.peerNodeId();
-            match peer.routedBindingApply(forwardedRoute).await {
-                Err(error) if isRouteUnavailableError(&error) => {
-                    excludedPeerNodeIds.insert(peerNodeId);
+                    delayResult = defaultHostRuntimeTaskSchedulerHost()
+                        .waitForHostRuntimeDelay(ROUTED_BINDING_WATCH_RECHECK_DELAY_MS) => {
+                        let _ = delayResult;
+                        if !self.bindingStillCurrent(&bindingKey, &binding) {
+                            operit_util::AppLogger::AppLogger::i(
+                                "CoreNodeRouteTrace",
+                                &format!(
+                                    "binding_flow_generation_changed requestId={} property={} key={} segment={} owner={} generation={}",
+                                    requestId,
+                                    propertyName,
+                                    bindingKey,
+                                    segmentCount,
+                                    binding.nodeId,
+                                    binding.generation
+                                ),
+                            );
+                            break;
+                        }
+                    }
                 }
-                result => return result,
+            }
+            if self.bindingStillCurrent(&bindingKey, &binding)
+                && self
+                    .waitForBindingFlowRetryOrCancel(&mut cancelReceiver)
+                    .await
+            {
+                break;
             }
         }
+        operit_util::AppLogger::AppLogger::i(
+            "CoreNodeRouteTrace",
+            &format!(
+                "binding_flow_stopped requestId={} property={} key={}",
+                requestId, propertyName, bindingKey
+            ),
+        );
     }
 
-    /// Materializes one directly transported Binding operation on the local CoreNode.
+    /// Waits briefly before retrying a physical Binding Flow segment.
     #[allow(non_snake_case)]
-    fn executeBindingApply(
+    async fn waitForBindingFlowRetryOrCancel(
         &self,
-        request: CoreNodeBindingApplyRequest,
-    ) -> Result<(), CoreLinkError> {
-        let binding = self
-            .bindingStore
-            .applyImmediateBindingOperation(&request.operation)?;
-        if binding.key != request.bindingKey
-            || binding.nodeId != request.nodeId
-            || binding.generation != request.generation
-            || binding.nodeId != self.localNodeId
-        {
-            return Err(CoreLinkError::new(
-                "CORE_BINDING_APPLY_MISMATCH",
-                format!(
-                    "Binding apply expected key={} node={} generation={}, applied key={} node={} generation={}",
-                    request.bindingKey,
-                    request.nodeId,
-                    request.generation,
-                    binding.key,
-                    binding.nodeId,
-                    binding.generation
-                ),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Executes one route-owned continuation transition and commits the target owner.
-async fn performCoreHandoff(
-    bindingStore: &Arc<dyn CoreNodeBindingRuntime>,
-    localNodeId: &str,
-    spaceStore: &CoreSpaceStore,
-    request: CoreHandoffRequest,
-) -> Result<(), CoreLinkError> {
-    let binding = bindingStore.binding(&request.bindingKey)?;
-    if binding.nodeId != localNodeId {
-        return Err(CoreLinkError::new(
-            "CORE_HANDOFF_SOURCE_MISMATCH",
-            format!(
-                "Binding {} is owned by {}, not {}",
-                request.bindingKey, binding.nodeId, localNodeId
-            ),
-        ));
-    }
-    if request.targetNodeId.trim().is_empty() {
-        return Err(CoreLinkError::new(
-            "CORE_HANDOFF_TARGET_REQUIRED",
-            "Core handoff target must not be empty",
-        ));
-    }
-    if request.targetNodeId == localNodeId {
-        return Err(CoreLinkError::new(
-            "CORE_HANDOFF_TARGET_LOCAL",
-            "Core handoff target must differ from the current owner",
-        ));
-    }
-    if !spaceStore
-        .contains(request.targetNodeId.clone())
-        .map_err(CoreLinkError::internal)?
-    {
-        return Err(CoreLinkError::new(
-            "CORE_HANDOFF_TARGET_NOT_IN_SPACE",
-            format!(
-                "Core handoff target is not a Space member: {}",
-                request.targetNodeId
-            ),
-        ));
-    }
-    if !coreNodeIsReachable(localNodeId, spaceStore, &request.targetNodeId)
-        .map_err(CoreLinkError::internal)?
-    {
-        return Err(CoreLinkError::new(
-            "CORE_HANDOFF_TARGET_UNREACHABLE",
-            format!(
-                "Core handoff target is not reachable: {}",
-                request.targetNodeId
-            ),
-        ));
-    }
-    let space = spaceStore.initialize().map_err(CoreLinkError::internal)?;
-    let ttl = routeTtl(&space)?;
-    let routedRequest = RoutedCoreRequest {
-        spaceId: space.spaceId.clone(),
-        targetNodeId: request.targetNodeId.clone(),
-        ttl,
-        routeKind: RoutedCoreRequestKind::ObjectId,
-        payload: request.clone(),
-    };
-    routeHandoffNode(localNodeId, spaceStore, routedRequest).await?;
-    let commit = bindingStore.compareAndSetBinding(
-        &request.bindingKey,
-        &binding.nodeId,
-        binding.generation,
-        &request.targetNodeId,
-    )?;
-    routeBindingCommitNode(
-        localNodeId,
-        spaceStore,
-        request.targetNodeId.clone(),
-        CoreNodeBindingApplyRequest {
-            bindingKey: commit.binding.key.clone(),
-            nodeId: commit.binding.nodeId.clone(),
-            generation: commit.binding.generation,
-            operation: commit.operation.clone(),
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-/// Routes one handoff start request through the active Space Peer Links.
-async fn routeHandoffNode(
-    localNodeId: &str,
-    spaceStore: &CoreSpaceStore,
-    mut request: RoutedCoreRequest<CoreHandoffRequest>,
-) -> Result<CoreHandoffResponse, CoreLinkError> {
-    let mut excludedPeerNodeIds = BTreeSet::new();
-    loop {
-        let peers = activePeerNodeIds(localNodeId).map_err(CoreLinkError::internal)?;
-        let nextNodeId = spaceStore
-            .reachableNextHopThroughPeers(
-                request.targetNodeId.clone(),
-                peers
-                    .into_iter()
-                    .filter(|nodeId| !excludedPeerNodeIds.contains(nodeId))
-                    .collect(),
-            )
-            .map_err(CoreLinkError::internal)?
-            .ok_or_else(|| {
-                CoreLinkError::new("CORE_NODE_UNREACHABLE", "Core handoff route is unavailable")
-            })?;
-        let peer = peerLink(localNodeId, &nextNodeId)
-            .map_err(|error| CoreLinkError::new("PEER_LINK_CLOSED", error))?;
-        request.ttl = request.ttl.checked_sub(1).ok_or_else(|| {
-            CoreLinkError::new(
-                "CORE_NODE_ROUTE_TTL_EXHAUSTED",
-                "Core handoff route TTL is exhausted",
-            )
-        })?;
-        match peer.routedHandoff(request.clone()).await {
-            Ok(response) => return Ok(response),
-            Err(error) if isRouteUnavailableError(&error) => {
-                excludedPeerNodeIds.insert(nextNodeId);
+        cancelReceiver: &mut oneshot::Receiver<()>,
+    ) -> bool {
+        tokio::select! {
+            biased;
+            _ = &mut *cancelReceiver => true,
+            delayResult = defaultHostRuntimeTaskSchedulerHost()
+                .waitForHostRuntimeDelay(ROUTED_BINDING_WATCH_RECHECK_DELAY_MS) => {
+                let _ = delayResult;
+                false
             }
-            Err(error) => return Err(error),
         }
     }
-}
 
-/// Materializes one committed Binding on the selected target before continuation starts.
-async fn routeBindingCommitNode(
-    localNodeId: &str,
-    spaceStore: &CoreSpaceStore,
-    targetNodeId: String,
-    request: CoreNodeBindingApplyRequest,
-) -> Result<(), CoreLinkError> {
-    let space = spaceStore.initialize().map_err(CoreLinkError::internal)?;
-    let mut routedRequest = RoutedCoreRequest {
-        spaceId: space.spaceId.clone(),
-        targetNodeId,
-        ttl: routeTtl(&space)?,
-        routeKind: RoutedCoreRequestKind::ObjectId,
-        payload: request,
-    };
-    let mut excludedPeerNodeIds = BTreeSet::new();
-    loop {
-        let peers = activePeerNodeIds(localNodeId).map_err(CoreLinkError::internal)?;
-        let nextNodeId = spaceStore
-            .reachableNextHopThroughPeers(
-                routedRequest.targetNodeId.clone(),
-                peers
-                    .into_iter()
-                    .filter(|nodeId| !excludedPeerNodeIds.contains(nodeId))
-                    .collect(),
-            )
-            .map_err(CoreLinkError::internal)?
-            .ok_or_else(|| {
-                CoreLinkError::new(
-                    "CORE_NODE_UNREACHABLE",
-                    "Binding commit route is unavailable",
-                )
-            })?;
-        let peer = peerLink(localNodeId, &nextNodeId)
-            .map_err(|error| CoreLinkError::new("PEER_LINK_CLOSED", error))?;
-        routedRequest.ttl = routedRequest.ttl.checked_sub(1).ok_or_else(|| {
-            CoreLinkError::new(
-                "CORE_NODE_ROUTE_TTL_EXHAUSTED",
-                "Binding commit route TTL is exhausted",
-            )
-        })?;
-        match peer.routedBindingApply(routedRequest.clone()).await {
-            Ok(()) => return Ok(()),
-            Err(error) if isRouteUnavailableError(&error) => {
-                excludedPeerNodeIds.insert(nextNodeId);
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-/// Opens the target continuation stream through the active Space Peer Links.
-async fn routeWatchNode(
-    localNodeId: &str,
-    spaceStore: &CoreSpaceStore,
-    targetNodeId: String,
-    request: CoreWatchRequest,
-) -> Result<CoreEventStream, CoreLinkError> {
-    let space = spaceStore.initialize().map_err(CoreLinkError::internal)?;
-    let mut routedRequest = RoutedCoreRequest {
-        spaceId: space.spaceId.clone(),
-        targetNodeId,
-        ttl: routeTtl(&space)?,
-        routeKind: RoutedCoreRequestKind::ObjectId,
-        payload: request,
-    };
-    let mut excludedPeerNodeIds = BTreeSet::new();
-    loop {
-        let peers = activePeerNodeIds(localNodeId).map_err(CoreLinkError::internal)?;
-        let nextNodeId = spaceStore
-            .reachableNextHopThroughPeers(
-                routedRequest.targetNodeId.clone(),
-                peers
-                    .into_iter()
-                    .filter(|nodeId| !excludedPeerNodeIds.contains(nodeId))
-                    .collect(),
-            )
-            .map_err(CoreLinkError::internal)?
-            .ok_or_else(|| {
-                CoreLinkError::new("CORE_NODE_UNREACHABLE", "Core watch route is unavailable")
-            })?;
-        let peer = peerLink(localNodeId, &nextNodeId)
-            .map_err(|error| CoreLinkError::new("PEER_LINK_CLOSED", error))?;
-        routedRequest.ttl = routedRequest.ttl.checked_sub(1).ok_or_else(|| {
-            CoreLinkError::new(
-                "CORE_NODE_ROUTE_TTL_EXHAUSTED",
-                "Core watch route TTL is exhausted",
-            )
-        })?;
-        match peer.routedWatch(routedRequest.clone()).await {
-            Ok(stream) => return Ok(stream),
-            Err(error) if isRouteUnavailableError(&error) => {
-                excludedPeerNodeIds.insert(nextNodeId);
-            }
-            Err(error) => return Err(error),
-        }
+    /// Reports whether a Binding record still selects the same physical watch segment.
+    #[allow(non_snake_case)]
+    fn bindingStillCurrent(&self, bindingKey: &str, previous: &CoreNodeBindingRecord) -> bool {
+        self.bindingStore
+            .binding(bindingKey)
+            .map(|current| {
+                current.nodeId == previous.nodeId && current.generation == previous.generation
+            })
+            .unwrap_or(false)
     }
 }
 
@@ -1443,7 +1210,6 @@ async fn routeWatchNode(
 struct CoreNodeToolRouteRuntime {
     localNodeId: String,
     spaceStore: CoreSpaceStore,
-    bindingStore: Arc<dyn CoreNodeBindingRuntime>,
 }
 
 impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
@@ -1475,24 +1241,6 @@ impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
         Ok(RuntimeCoreNodeRouteState {
             currentNodeId: self.localNodeId.clone(),
             nodes,
-        })
-    }
-
-    /// Executes one route-owned handoff after EnhanceAI reaches a continuation boundary.
-    #[allow(non_snake_case)]
-    fn handoffCoreAtBoundary<'a>(
-        &'a self,
-        request: CoreHandoffRequest,
-    ) -> operit_tools::runtime_support::ToolRuntimeSupportFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            performCoreHandoff(
-                &self.bindingStore,
-                &self.localNodeId,
-                &self.spaceStore,
-                request,
-            )
-            .await
-            .map_err(|error| error.to_string())
         })
     }
 }
@@ -1528,361 +1276,6 @@ fn coreNodeIsReachableThroughPeers(
     spaceStore
         .reachableNextHopThroughPeers(targetNodeId.to_string(), peers.clone())
         .map(|nextHop| nextHop.is_some())
-}
-
-/// Opens the current Binding source while waiting for a temporary route outage to clear.
-#[allow(non_snake_case)]
-async fn openBindingWatchSourceUntilReachable(
-    router: &CoreNodeRouter,
-    key: &str,
-    request: &CoreWatchRequest,
-    cursor: Option<CoreValue>,
-    bindingChanges: &mut broadcast::Receiver<String>,
-    peerChanges: &mut broadcast::Receiver<()>,
-    cancelReceiver: &mut tokio::sync::oneshot::Receiver<()>,
-) -> Result<Option<(CoreNodeBindingRecord, CoreEventStream)>, CoreLinkError> {
-    loop {
-        let binding = router.bindingStore.binding(key)?;
-        if !router.nodeIsReachable(&binding.nodeId)? {
-            operit_util::AppLogger::AppLogger::w(
-                "CoreNodeRouter",
-                &format!(
-                    "binding watch target unreachable; opening local source key={} target={} local={}",
-                    key, binding.nodeId, router.localNodeId
-                ),
-            );
-            let nextRequest = watchRequestWithRouteState(request, cursor.clone())?;
-            let stream = router
-                .watchBindingNode(router.localNodeId.clone(), nextRequest)
-                .await?;
-            let localBinding = CoreNodeBindingRecord {
-                key: key.to_string(),
-                nodeId: router.localNodeId.clone(),
-                generation: binding.generation,
-            };
-            operit_util::AppLogger::AppLogger::i(
-                "CoreNodeRouteTrace",
-                &format!(
-                    "binding_watch_source_opened_local requestId={} property={} key={} local={} selected={} generation={}",
-                    request.requestId.0,
-                    request.propertyName,
-                    key,
-                    router.localNodeId,
-                    binding.nodeId,
-                    binding.generation
-                ),
-            );
-            return Ok(Some((localBinding, stream)));
-        }
-        let targetNodeId = binding.nodeId.clone();
-        let nextRequest = watchRequestWithRouteState(request, cursor.clone())?;
-        match router.watchBindingNode(targetNodeId, nextRequest).await {
-            Ok(stream) => {
-                operit_util::AppLogger::AppLogger::i(
-                    "CoreNodeRouteTrace",
-                    &format!(
-                        "binding_watch_source_opened requestId={} property={} key={} local={} source={} generation={}",
-                        request.requestId.0,
-                        request.propertyName,
-                        key,
-                        router.localNodeId,
-                        binding.nodeId,
-                        binding.generation
-                    ),
-                );
-                return Ok(Some((binding, stream)));
-            }
-            Err(error) if isRouteUnavailableError(&error) => {
-                tokio::select! {
-                    biased;
-                    _ = &mut *cancelReceiver => return Ok(None),
-                    change = bindingChanges.recv() => match change {
-                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(broadcast::error::RecvError::Closed) => return Err(error),
-                    },
-                    change = peerChanges.recv() => match change {
-                        Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(broadcast::error::RecvError::Closed) => return Err(error),
-                    },
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-/// Pumps one stable outer Binding stream while replacing its inner source by generation.
-#[allow(non_snake_case)]
-async fn runRecoveringBindingWatch(
-    router: CoreNodeRouter,
-    key: String,
-    request: CoreWatchRequest,
-    sourceBinding: CoreNodeBindingRecord,
-    mut stream: CoreEventStream,
-    mut bindingChanges: broadcast::Receiver<String>,
-    mut peerChanges: broadcast::Receiver<()>,
-    sender: tokio::sync::mpsc::UnboundedSender<CoreEvent>,
-    mut cancelReceiver: tokio::sync::oneshot::Receiver<()>,
-) {
-    let mut routeCursor = None;
-    let mut sourceNodeId = sourceBinding.nodeId;
-    let mut sourceGeneration = sourceBinding.generation;
-    operit_util::AppLogger::AppLogger::i(
-        "CoreNodeRouteTrace",
-        &format!(
-            "binding_watch_recovery_started requestId={} property={} key={} local={} source={}",
-            request.requestId.0, request.propertyName, key, router.localNodeId, sourceNodeId
-        ),
-    );
-    loop {
-        tokio::select! {
-            biased;
-            _ = &mut cancelReceiver => return,
-            event = stream.recv() => {
-                let Some(event) = event else {
-                    match openBindingWatchSourceUntilReachable(
-                        &router,
-                        &key,
-                        &request,
-                        routeCursor.clone(),
-                        &mut bindingChanges,
-                        &mut peerChanges,
-                        &mut cancelReceiver,
-                    )
-                    .await
-                    {
-                        Ok(Some((binding, nextStream))) => {
-                            sourceNodeId = binding.nodeId;
-                            sourceGeneration = binding.generation;
-                            stream = nextStream;
-                            continue;
-                        }
-                        Ok(None) => return,
-                        Err(error) => {
-                            operit_util::AppLogger::AppLogger::e(
-                                "CoreNodeRouteTrace",
-                                &format!(
-                                    "binding_watch_source_reopen_failed requestId={} property={} key={} local={} source={} generation={} code={} error={}",
-                                    request.requestId.0,
-                                    request.propertyName,
-                                    key,
-                                    router.localNodeId,
-                                    sourceNodeId,
-                                    sourceGeneration,
-                                    error.code,
-                                    error
-                                ),
-                            );
-                            return;
-                        }
-                    }
-                };
-                if event.propertyName == CORE_ROUTE_CURSOR_PROPERTY {
-                    routeCursor = Some(event.value);
-                    continue;
-                }
-                if event.kind == CoreEventKind::Completed {
-                    if let Ok(binding) = router.bindingStore.binding(&key) {
-                        if binding.nodeId != sourceNodeId
-                            || binding.generation != sourceGeneration
-                        {
-                            match openBindingWatchSourceUntilReachable(
-                                &router,
-                                &key,
-                                &request,
-                                routeCursor.clone(),
-                                &mut bindingChanges,
-                                &mut peerChanges,
-                                &mut cancelReceiver,
-                            )
-                            .await
-                            {
-                                Ok(Some((nextBinding, nextStream))) => {
-                                    sourceNodeId = nextBinding.nodeId;
-                                    sourceGeneration = nextBinding.generation;
-                                    stream = nextStream;
-                                    continue;
-                                }
-                                Ok(None) => return,
-                                Err(error) => {
-                                    operit_util::AppLogger::AppLogger::e(
-                                        "CoreNodeRouteTrace",
-                                        &format!(
-                                            "binding_watch_completion_reopen_failed requestId={} key={} code={} error={}",
-                                            request.requestId.0, key, error.code, error
-                                        ),
-                                    );
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                    let _ = sender.send(event);
-                    return;
-                }
-                if sender.send(event).is_err() {
-                    return;
-                }
-            }
-            change = bindingChanges.recv() => {
-                let changedKey = match change {
-                    Ok(changedKey) => changedKey,
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!("Binding watch missed {skipped} Binding changes"),
-                        );
-                        key.clone()
-                    }
-                    Err(broadcast::error::RecvError::Closed) => return,
-                };
-                if changedKey != key {
-                    continue;
-                }
-                operit_util::AppLogger::AppLogger::i(
-                    "CoreNodeRouteTrace",
-                    &format!(
-                        "binding_watch_change_received requestId={} property={} key={} local={} source={} generation={}",
-                        request.requestId.0,
-                        request.propertyName,
-                        key,
-                        router.localNodeId,
-                        sourceNodeId,
-                        sourceGeneration
-                    ),
-                );
-                let binding = match router.bindingStore.binding(&key) {
-                    Ok(binding) => binding,
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "binding_watch_change_read_failed requestId={} property={} key={} local={} error={}",
-                                request.requestId.0,
-                                request.propertyName,
-                                key,
-                                router.localNodeId,
-                                error
-                            ),
-                        );
-                        return;
-                    }
-                };
-                if binding.nodeId == sourceNodeId && binding.generation == sourceGeneration {
-                    continue;
-                }
-                operit_util::AppLogger::AppLogger::i(
-                    "CoreNodeRouteTrace",
-                    &format!(
-                        "binding_watch_rebind_open requestId={} property={} key={} local={} nextSource={} nextGeneration={}",
-                        request.requestId.0,
-                        request.propertyName,
-                        key,
-                        router.localNodeId,
-                        binding.nodeId,
-                        binding.generation
-                    ),
-                );
-                match openBindingWatchSourceUntilReachable(
-                    &router,
-                    &key,
-                    &request,
-                    routeCursor.clone(),
-                    &mut bindingChanges,
-                    &mut peerChanges,
-                    &mut cancelReceiver,
-                )
-                .await
-                {
-                    Ok(Some((nextBinding, nextStream))) => {
-                        sourceNodeId = nextBinding.nodeId;
-                        sourceGeneration = nextBinding.generation;
-                        stream = nextStream;
-                    }
-                    Ok(None) => return,
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "binding_watch_rebind_failed requestId={} key={} code={} error={}",
-                                request.requestId.0, key, error.code, error
-                            ),
-                        );
-                        return;
-                    }
-                }
-            }
-            change = peerChanges.recv() => {
-                match change {
-                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => return,
-                }
-                let binding = match router.bindingStore.binding(&key) {
-                    Ok(binding) => binding,
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "binding_watch_peer_change_read_failed requestId={} property={} key={} local={} error={}",
-                                request.requestId.0,
-                                request.propertyName,
-                                key,
-                                router.localNodeId,
-                                error
-                            ),
-                        );
-                        return;
-                    }
-                };
-                if binding.nodeId == sourceNodeId && binding.generation == sourceGeneration {
-                    continue;
-                }
-                if !matches!(router.nodeIsReachable(&binding.nodeId), Ok(true)) {
-                    continue;
-                }
-                operit_util::AppLogger::AppLogger::i(
-                    "CoreNodeRouteTrace",
-                    &format!(
-                        "binding_watch_peer_rebind_open requestId={} property={} key={} local={} nextSource={} nextGeneration={}",
-                        request.requestId.0,
-                        request.propertyName,
-                        key,
-                        router.localNodeId,
-                        binding.nodeId,
-                        binding.generation
-                    ),
-                );
-                match openBindingWatchSourceUntilReachable(
-                    &router,
-                    &key,
-                    &request,
-                    routeCursor.clone(),
-                    &mut bindingChanges,
-                    &mut peerChanges,
-                    &mut cancelReceiver,
-                )
-                .await
-                {
-                    Ok(Some((nextBinding, nextStream))) => {
-                        sourceNodeId = nextBinding.nodeId;
-                        sourceGeneration = nextBinding.generation;
-                        stream = nextStream;
-                    }
-                    Ok(None) => return,
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::e(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "binding_watch_peer_rebind_failed requestId={} key={} code={} error={}",
-                                request.requestId.0, key, error.code, error
-                            ),
-                        );
-                        return;
-                    }
-                }
-            }
-        }
-    }
 }
 
 /// Resolves the route that produced one embedded stream descriptor.
@@ -1970,38 +1363,6 @@ fn embeddedStreamStringArgument(
     }
 }
 
-/// Adds adapter-owned render and source state to one reopened watch request.
-#[allow(non_snake_case)]
-fn watchRequestWithRouteState(
-    request: &CoreWatchRequest,
-    cursor: Option<CoreValue>,
-) -> Result<CoreWatchRequest, CoreLinkError> {
-    if cursor.is_none() {
-        return Ok(request.clone());
-    }
-    let mut reopened = request.clone();
-    let arguments = match &mut reopened.args {
-        CoreValue::Map(arguments) => arguments,
-        CoreValue::Null => {
-            reopened.args = CoreValue::Map(BTreeMap::new());
-            let CoreValue::Map(arguments) = &mut reopened.args else {
-                unreachable!("Core watch arguments were initialized as a map")
-            };
-            arguments
-        }
-        _ => {
-            return Err(CoreLinkError::new(
-                "INVALID_ARGS",
-                "Core watch arguments must be a map before route state injection",
-            ))
-        }
-    };
-    if let Some(cursor) = cursor {
-        arguments.insert(CORE_ROUTE_CURSOR_ARGUMENT.to_string(), cursor);
-    }
-    Ok(reopened)
-}
-
 /// Computes a route TTL that permits one traversal of every Space member.
 #[allow(non_snake_case)]
 fn routeTtl(space: &CoreSpace) -> Result<u32, CoreLinkError> {
@@ -2020,13 +1381,6 @@ fn isRouteUnavailableError(error: &CoreLinkError) -> bool {
             | "PEER_SEND_FAILED"
             | "PEER_WATCH_SOURCE_CLOSED"
     )
-}
-
-/// Creates a process-unique request id for one internal CoreNode control call.
-#[allow(non_snake_case)]
-pub(crate) fn nextCoreNodeRouterRequestId(methodName: &str) -> String {
-    let sequence = CORE_NODE_ROUTER_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    format!("core-node-router-{methodName}-{sequence}")
 }
 
 #[async_trait(?Send)]
@@ -2065,33 +1419,6 @@ impl CoreNodeLinkClient for CoreNodeRouter {
     #[allow(non_snake_case)]
     fn cloneCoreNodeLinkClient(&self) -> Box<dyn CoreNodeLinkClient + Send> {
         Box::new(self.clone())
-    }
-
-    /// Executes or forwards one routed EnhanceAI handoff.
-    #[allow(non_snake_case)]
-    async fn routedHandoff(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreHandoffRequest>,
-    ) -> Result<CoreHandoffResponse, CoreLinkError> {
-        if self.validateIncomingRoute(&previousNodeId, &request)? {
-            return self.localCore.handoffAtBoundary(request.payload).await;
-        }
-        let mut excludedPeerNodeIds = BTreeSet::new();
-        loop {
-            let (peer, forwardedRequest) = self.forwardRouteAvoiding(
-                Some(&previousNodeId),
-                &excludedPeerNodeIds,
-                request.clone(),
-            )?;
-            let peerNodeId = peer.peerNodeId();
-            match peer.routedHandoff(forwardedRequest).await {
-                Err(error) if isRouteUnavailableError(&error) => {
-                    excludedPeerNodeIds.insert(peerNodeId);
-                }
-                result => return result,
-            }
-        }
     }
 
     /// Executes or forwards one routed call.
@@ -2178,7 +1505,23 @@ impl CoreNodeLinkClient for CoreNodeRouter {
         previousNodeId: String,
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEventStream, CoreLinkError> {
-        if self.validateIncomingRoute(&previousNodeId, &request)? {
+        let atTarget = self.validateIncomingRoute(&previousNodeId, &request)?;
+        operit_util::AppLogger::AppLogger::i(
+            "CoreNodeRouteTrace",
+            &format!(
+                "route_watch_incoming requestId={} property={} object={} previous={} local={} target={} ttl={} routeKind={:?} atTarget={}",
+                request.payload.requestId.0,
+                request.payload.propertyName,
+                request.payload.targetObjectId,
+                previousNodeId,
+                self.localNodeId,
+                request.targetNodeId,
+                request.ttl,
+                request.routeKind,
+                atTarget
+            ),
+        );
+        if atTarget {
             return if request.routeKind == RoutedCoreRequestKind::SpaceRoute {
                 self.localCore.watchSpace(request.payload).await
             } else if request.payload.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
@@ -2196,33 +1539,6 @@ impl CoreNodeLinkClient for CoreNodeRouter {
             )?;
             let peerNodeId = peer.peerNodeId();
             match peer.routedWatch(forwardedRequest).await {
-                Err(error) if isRouteUnavailableError(&error) => {
-                    excludedPeerNodeIds.insert(peerNodeId);
-                }
-                result => return result,
-            }
-        }
-    }
-
-    /// Applies or forwards one committed Binding operation.
-    #[allow(non_snake_case)]
-    async fn routedBindingApply(
-        &mut self,
-        previousNodeId: String,
-        request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-    ) -> Result<(), CoreLinkError> {
-        if self.validateIncomingRoute(&previousNodeId, &request)? {
-            return self.executeBindingApply(request.payload);
-        }
-        let mut excludedPeerNodeIds = BTreeSet::new();
-        loop {
-            let (peer, forwardedRequest) = self.forwardRouteAvoiding(
-                Some(&previousNodeId),
-                &excludedPeerNodeIds,
-                request.clone(),
-            )?;
-            let peerNodeId = peer.peerNodeId();
-            match peer.routedBindingApply(forwardedRequest).await {
                 Err(error) if isRouteUnavailableError(&error) => {
                     excludedPeerNodeIds.insert(peerNodeId);
                 }
@@ -2266,7 +1582,7 @@ impl CoreNodeLinkClient for CoreNodeRouter {
 #[async_trait(?Send)]
 impl CoreLinkSharedClient for CoreNodeRouter {
     /// Executes a one-shot request on the CoreNode selected by generated metadata.
-    async fn call(&self, mut request: CoreCallRequest) -> CoreCallResponse {
+    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
         let generatedRoute = match crate::generated_core_call_route(&request) {
             Ok(route) => route,
@@ -2325,10 +1641,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
 
     /// Reads a watch snapshot on the CoreNode selected by generated metadata.
     #[allow(non_snake_case)]
-    async fn watchSnapshot(
-        &self,
-        mut request: CoreWatchRequest,
-    ) -> Result<CoreEvent, CoreLinkError> {
+    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
         let route = crate::generated_core_watch_route(&request)?;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
             operit_util::AppLogger::AppLogger::i(
@@ -2351,8 +1664,18 @@ impl CoreLinkSharedClient for CoreNodeRouter {
     }
 
     /// Opens a watch stream on the CoreNode selected by generated metadata.
-    async fn watch(&self, mut request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+            operit_util::AppLogger::AppLogger::i(
+                "CoreNodeRouteTrace",
+                &format!(
+                    "watch_embedded_open requestId={} property={} object={} local={}",
+                    request.requestId.0,
+                    request.propertyName,
+                    request.targetObjectId,
+                    self.localNodeId
+                ),
+            );
             return self.watchSpaceEmbeddedStream(request).await;
         }
         let route = crate::generated_core_watch_route(&request)?;
@@ -2381,9 +1704,20 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                     self.localNodeId
                 ),
             );
-            return self.openRecoveringBindingWatch(key.clone(), request).await;
+            return self.watchBindingFlow(key.clone(), request, None);
         }
         let targetNodeId = self.routeNodeId(route).await?;
+        operit_util::AppLogger::AppLogger::i(
+            "CoreNodeRouteTrace",
+            &format!(
+                "watch_target_resolve requestId={} property={} object={} local={} target={}",
+                request.requestId.0,
+                request.propertyName,
+                request.targetObjectId,
+                self.localNodeId,
+                targetNodeId
+            ),
+        );
         if targetNodeId == self.localNodeId {
             return operit_link::withCoreForceLocal(self.localCore.watch(request)).await;
         }
@@ -2415,7 +1749,10 @@ impl CoreRouteRuntime for CoreNodeRouter {
                     Err(error) if error.code == "CORE_BINDING_NOT_FOUND" => return Ok(false),
                     Err(error) => return Err(error),
                 };
-                Ok(targetNodeId != self.localNodeId && self.nodeIsReachable(&targetNodeId)?)
+                Ok(targetNodeId != self.localNodeId
+                    && self
+                        .nodeIsReachable(&targetNodeId)
+                        .map_err(CoreLinkError::internal)?)
             }
         }
     }
@@ -2444,7 +1781,10 @@ impl CoreRouteRuntime for CoreNodeRouter {
                     Err(error) if error.code == "CORE_BINDING_NOT_FOUND" => return Ok(false),
                     Err(error) => return Err(error),
                 };
-                Ok(targetNodeId != self.localNodeId && self.nodeIsReachable(&targetNodeId)?)
+                Ok(targetNodeId != self.localNodeId
+                    && self
+                        .nodeIsReachable(&targetNodeId)
+                        .map_err(CoreLinkError::internal)?)
             }
         }
     }
@@ -2477,7 +1817,7 @@ impl CoreRouteRuntime for CoreNodeRouter {
                     Err(error) if error.code == "CORE_BINDING_NOT_FOUND" => return Ok(false),
                     Err(error) => return Err(error),
                 };
-                Ok(targetNodeId == self.localNodeId || !self.nodeIsReachable(&targetNodeId)?)
+                Ok(targetNodeId == self.localNodeId)
             }
         }
     }
@@ -2508,12 +1848,24 @@ impl CoreRouteRuntime for CoreNodeRouter {
     ) -> Pin<Box<dyn Future<Output = Result<CoreEventStream, CoreLinkError>>>> {
         let router = self.clone();
         Box::pin(async move {
+            if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+                let route = embeddedStreamSourceRoute(&request)?;
+                let bindingKey = route.bindingKey(embeddedStreamSourceArgs(&request)?)?;
+                let targetNodeId = router
+                    .routeNodeId(GeneratedCoreRoute::Binding {
+                        scope: 0,
+                        key: bindingKey,
+                    })
+                    .await?;
+                if targetNodeId == router.localNodeId {
+                    return Ok(localStream);
+                }
+                return router.watchNodeSpace(targetNodeId, request).await;
+            }
             let route = crate::generated_core_watch_route(&request)?;
             match route {
                 GeneratedCoreRoute::Binding { key, .. } => {
-                    router
-                        .openRecoveringBindingWatchWithLocalSource(key, request, localStream)
-                        .await
+                    router.watchBindingFlow(key, request, Some(localStream))
                 }
                 GeneratedCoreRoute::Local => Ok(localStream),
             }
@@ -2528,7 +1880,9 @@ mod tests {
         connectInMemoryPeerLinks, peerLink, CoreNodeTransportClient, RoutedCoreRequest,
         RoutedCoreRequestKind,
     };
-    use operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost;
+    use operit_host_api::HostManager::{
+        defaultHostRuntimeTaskSchedulerHost, setDefaultHostRuntimeTaskSchedulerHost,
+    };
     use operit_host_api::{
         FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
         GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult, HostRuntimeAsyncTask,
@@ -2537,10 +1891,12 @@ mod tests {
         SqliteRow, SqliteValue,
     };
     use operit_link::{
-        CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_ROUTE_OBJECT_ID,
+        CoreEventKind, CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_ROUTE_OBJECT_ID,
     };
     use operit_model::ChatMessage::ChatMessage;
+    use operit_model::ChatTurnOptions::ChatTurnOptions;
     use operit_model::InputProcessingState::InputProcessingState;
+    use operit_model::PromptFunctionType::PromptFunctionType;
     use operit_rslink_runtime::CoreStreamPool;
     use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
     use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
@@ -2548,12 +1904,11 @@ mod tests {
     use operit_runtime::services::ChatServiceCore::ChatState;
     use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
     use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
-    use operit_store::SyncOperationStore::SyncOperationSemantics;
     use operit_util::stream::HotStream::mutable_shared_stream;
     use operit_util::stream::RevisableTextStream::DelegatingRevisableSharedTextStream;
     use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
     use serde::{Deserialize, Serialize};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Mutex as StdMutex, Once, OnceLock};
     use std::time::Duration;
 
@@ -3120,33 +2475,16 @@ mod tests {
             }
         }
 
-        /// Changes the selected test node and increments the binding generation.
+        /// Selects a new owner for the test Binding and advances its generation.
         #[allow(non_snake_case)]
-        fn setNodeId(&self, targetNodeId: String) -> CoreNodeBindingRecord {
+        fn setNodeId(&self, nodeId: String) {
             let mut binding = self
                 .binding
                 .lock()
                 .expect("test binding mutex must not be poisoned");
-            binding.nodeId = targetNodeId;
-            binding.generation += 1;
-            binding.clone()
-        }
-
-        /// Builds a synthetic operation for unexercised binding transition tests.
-        #[allow(non_snake_case)]
-        fn operationFor(binding: &CoreNodeBindingRecord) -> SyncOperation {
-            SyncOperation {
-                opId: "test-binding-operation".to_string(),
-                originDeviceId: binding.nodeId.clone(),
-                sequence: binding.generation,
-                domain: "core_node".to_string(),
-                entityType: "binding".to_string(),
-                entityId: binding.key.clone(),
-                operation: "set".to_string(),
-                semantics: SyncOperationSemantics::EntityState,
-                payload: serde_json::json!({ "nodeId": binding.nodeId }),
-                createdAt: 1,
-                schemaVersion: 1,
+            if binding.nodeId != nodeId {
+                binding.nodeId = nodeId;
+                binding.generation += 1;
             }
         }
     }
@@ -3172,57 +2510,6 @@ mod tests {
         #[allow(non_snake_case)]
         fn bindingNodeId(&self, key: &str) -> Result<String, CoreLinkError> {
             self.binding(key).map(|binding| binding.nodeId)
-        }
-
-        /// Commits a synthetic binding transition in tests that exercise handoff plumbing.
-        #[allow(non_snake_case)]
-        fn compareAndSetBinding(
-            &self,
-            key: &str,
-            expectedNodeId: &str,
-            expectedGeneration: i64,
-            targetNodeId: &str,
-        ) -> Result<CoreNodeBindingCommit, CoreLinkError> {
-            let mut current = self
-                .binding
-                .lock()
-                .expect("test binding mutex must not be poisoned");
-            if key != current.key
-                || expectedNodeId != current.nodeId
-                || expectedGeneration != current.generation
-            {
-                return Err(CoreLinkError::new(
-                    "CORE_BINDING_TRANSITION_FAILED",
-                    "test binding transition did not match the current record",
-                ));
-            }
-            let binding = CoreNodeBindingRecord {
-                key: key.to_string(),
-                nodeId: targetNodeId.to_string(),
-                generation: expectedGeneration + 1,
-            };
-            *current = binding.clone();
-            Ok(CoreNodeBindingCommit {
-                operation: Self::operationFor(&binding),
-                binding,
-            })
-        }
-
-        /// Ignores observers because the test opens a fixed route only.
-        #[allow(non_snake_case)]
-        fn addBindingChangeObserver(&self, _observer: Arc<CoreNodeBindingChangeObserver>) {}
-
-        /// Applies one directly transported binding operation to the synthetic record shape.
-        #[allow(non_snake_case)]
-        fn applyImmediateBindingOperation(
-            &self,
-            _operation: &SyncOperation,
-        ) -> Result<CoreNodeBindingRecord, CoreLinkError> {
-            Ok(self
-                .binding
-                .lock()
-                .expect("test binding mutex must not be poisoned")
-                .clone())
         }
     }
 
@@ -3271,14 +2558,6 @@ mod tests {
                 storage,
                 Arc::new(|_schema| None),
                 Arc::new(|_runtime| Ok(())),
-                Arc::new(|_request| {
-                    Box::pin(async {
-                        Err(CoreLinkError::new(
-                            "UNEXPECTED_LOCAL_HANDOFF",
-                            "local shell handoff was invoked",
-                        ))
-                    })
-                }),
                 Arc::new(|request| {
                     Err(CoreLinkError::new(
                         "UNEXPECTED_LOCAL_PUSH",
@@ -3318,7 +2597,6 @@ mod tests {
         spaceStore
             .setDirectPeers(vec![targetNodeId.to_string()])
             .expect("test space topology must contain the direct peer");
-        let (bindingChanges, _) = broadcast::channel(16);
         let bindingStore: Arc<dyn CoreNodeBindingRuntime> = Arc::new(TestBindingRuntime::new(
             bindingKey,
             targetNodeId.to_string(),
@@ -3328,8 +2606,6 @@ mod tests {
             bindingStore,
             localNodeId: localNodeId.to_string(),
             spaceStore,
-            bindingChanges,
-            _bindingChangeObserver: Arc::new(|_change| {}),
         }
     }
 
@@ -3377,7 +2653,6 @@ mod tests {
             .setDirectPeers(vec![peerNodeId.to_string()])
             .expect("test joined Space topology must contain the direct peer");
         let (localRuntime, holder) = testLocalRuntimeWithHolder(storage);
-        let (bindingChanges, _) = broadcast::channel(16);
         let bindingStore = Arc::new(TestBindingRuntime::new(
             bindingKey,
             bindingNodeId.to_string(),
@@ -3389,8 +2664,6 @@ mod tests {
                 bindingStore: bindingRuntime,
                 localNodeId: localNodeId.to_string(),
                 spaceStore,
-                bindingChanges,
-                _bindingChangeObserver: Arc::new(|_change| {}),
             },
             holder,
             bindingStore,
@@ -3533,6 +2806,7 @@ mod tests {
         messages: MutableStateFlow<Vec<RoutedChatMessage>>,
         streamPool: Arc<CoreStreamPool>,
         embeddedStreamOpened: AtomicBool,
+        chatFlowOpened: AtomicBool,
     }
 
     impl TestSpaceEndpoint {
@@ -3542,6 +2816,7 @@ mod tests {
                 messages: mutableStateFlow(Vec::new()),
                 streamPool: Arc::new(CoreStreamPool::new()),
                 embeddedStreamOpened: AtomicBool::new(false),
+                chatFlowOpened: AtomicBool::new(false),
             })
         }
 
@@ -3572,6 +2847,7 @@ mod tests {
             &self,
             request: CoreWatchRequest,
         ) -> Result<CoreEventStream, CoreLinkError> {
+            self.chatFlowOpened.store(true, Ordering::SeqCst);
             operit_rslink_runtime::core_state_flow_event_stream(
                 self.messages.asStateFlow(),
                 request,
@@ -3587,6 +2863,30 @@ mod tests {
         ) -> Result<CoreEventStream, CoreLinkError> {
             self.embeddedStreamOpened.store(true, Ordering::SeqCst);
             self.streamPool.openCoreStreamWatch(request)
+        }
+    }
+
+    /// Captures annotation-routed calls without running any chat business logic.
+    struct TestRoutedCallEndpoint {
+        callCount: AtomicUsize,
+        methods: StdMutex<Vec<String>>,
+    }
+
+    impl TestRoutedCallEndpoint {
+        /// Creates an endpoint that accepts SpaceRoute calls and records their method names.
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                callCount: AtomicUsize::new(0),
+                methods: StdMutex::new(Vec::new()),
+            })
+        }
+
+        /// Returns every routed method name received by this endpoint.
+        fn methodNames(&self) -> Vec<String> {
+            self.methods
+                .lock()
+                .expect("test routed call methods mutex must not be poisoned")
+                .clone()
         }
     }
 
@@ -3707,19 +3007,6 @@ mod tests {
             )
         }
 
-        /// Rejects routed handoff because this test exercises routed Flow watches.
-        #[allow(non_snake_case)]
-        async fn routedHandoff(
-            &self,
-            _previousNodeId: String,
-            _request: RoutedCoreRequest<CoreHandoffRequest>,
-        ) -> Result<CoreHandoffResponse, CoreLinkError> {
-            Err(CoreLinkError::new(
-                "UNEXPECTED_TEST_HANDOFF",
-                "routed handoff is not part of this test",
-            ))
-        }
-
         /// Rejects routed snapshots because this test opens streaming watches.
         #[allow(non_snake_case)]
         async fn routedWatchSnapshot(
@@ -3746,19 +3033,6 @@ mod tests {
                 assert_eq!(payload.propertyName, "chatMessagesFlow");
             }
             self.spaceRuntime.watch(payload).await
-        }
-
-        /// Rejects routed binding application because this test opens Flow watches.
-        #[allow(non_snake_case)]
-        async fn routedBindingApply(
-            &self,
-            _previousNodeId: String,
-            _request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-        ) -> Result<(), CoreLinkError> {
-            Err(CoreLinkError::new(
-                "UNEXPECTED_TEST_BINDING",
-                "binding apply is not part of this test",
-            ))
         }
 
         /// Rejects routed push streams because this test opens Flow watches.
@@ -3836,19 +3110,6 @@ mod tests {
             )
         }
 
-        /// Rejects routed handoff because the test exercises routed watches only.
-        #[allow(non_snake_case)]
-        async fn routedHandoff(
-            &self,
-            _previousNodeId: String,
-            _request: RoutedCoreRequest<CoreHandoffRequest>,
-        ) -> Result<CoreHandoffResponse, CoreLinkError> {
-            Err(CoreLinkError::new(
-                "UNEXPECTED_TEST_HANDOFF",
-                "routed handoff is not part of this test",
-            ))
-        }
-
         /// Rejects routed snapshots because the test exercises streaming watches only.
         #[allow(non_snake_case)]
         async fn routedWatchSnapshot(
@@ -3876,19 +3137,6 @@ mod tests {
             self.openChatMessagesFlow(payload)
         }
 
-        /// Rejects routed binding application because the test exercises routed watches only.
-        #[allow(non_snake_case)]
-        async fn routedBindingApply(
-            &self,
-            _previousNodeId: String,
-            _request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-        ) -> Result<(), CoreLinkError> {
-            Err(CoreLinkError::new(
-                "UNEXPECTED_TEST_BINDING",
-                "binding apply is not part of this test",
-            ))
-        }
-
         /// Rejects routed push streams because the test exercises routed watches only.
         #[allow(non_snake_case)]
         async fn routedOpenPush(
@@ -3900,6 +3148,105 @@ mod tests {
                 "UNEXPECTED_TEST_PUSH",
                 format!(
                     "routed push is not part of this test: {}",
+                    request.payload.methodName
+                ),
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl CoreNodeTransportClient for TestRoutedCallEndpoint {
+        /// Rejects direct calls because this endpoint only accepts routed Space calls.
+        async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+            CoreCallResponse::err(
+                request.requestId,
+                CoreLinkError::new(
+                    "UNEXPECTED_TEST_CALL",
+                    "direct call is not part of this route wrapper test",
+                ),
+            )
+        }
+
+        /// Rejects direct snapshots because this endpoint only accepts routed Space calls.
+        #[allow(non_snake_case)]
+        async fn watchSnapshot(
+            &self,
+            request: CoreWatchRequest,
+        ) -> Result<CoreEvent, CoreLinkError> {
+            Err(CoreLinkError::watchNotFound(&request.registryKey()))
+        }
+
+        /// Rejects direct watches because this endpoint only accepts routed Space calls.
+        async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+            Err(CoreLinkError::watchNotFound(&request.registryKey()))
+        }
+
+        /// Rejects direct push streams because this endpoint only accepts routed Space calls.
+        #[allow(non_snake_case)]
+        async fn openPush(
+            &self,
+            request: CorePushRequest,
+        ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+            Err(CoreLinkError::new(
+                "UNEXPECTED_TEST_PUSH",
+                format!(
+                    "direct push is not part of this route wrapper test: {}",
+                    request.methodName
+                ),
+            ))
+        }
+
+        /// Records one annotation-routed Space call and returns a unit response.
+        #[allow(non_snake_case)]
+        async fn routedCall(
+            &self,
+            _previousNodeId: String,
+            request: RoutedCoreRequest<CoreCallRequest>,
+        ) -> CoreCallResponse {
+            assert_eq!(request.routeKind, RoutedCoreRequestKind::SpaceRoute);
+            assert_eq!(
+                request.payload.targetObjectId,
+                CORE_INTERNAL_ROUTE_OBJECT_ID
+            );
+            self.callCount.fetch_add(1, Ordering::SeqCst);
+            self.methods
+                .lock()
+                .expect("test routed call methods mutex must not be poisoned")
+                .push(request.payload.methodName.clone());
+            CoreCallResponse::ok(request.payload.requestId, CoreValue::Null)
+        }
+
+        /// Rejects routed snapshots because this endpoint only accepts routed Space calls.
+        #[allow(non_snake_case)]
+        async fn routedWatchSnapshot(
+            &self,
+            _previousNodeId: String,
+            request: RoutedCoreRequest<CoreWatchRequest>,
+        ) -> Result<CoreEvent, CoreLinkError> {
+            Err(CoreLinkError::watchNotFound(&request.payload.registryKey()))
+        }
+
+        /// Rejects routed watches because this endpoint only accepts routed Space calls.
+        #[allow(non_snake_case)]
+        async fn routedWatch(
+            &self,
+            _previousNodeId: String,
+            request: RoutedCoreRequest<CoreWatchRequest>,
+        ) -> Result<CoreEventStream, CoreLinkError> {
+            Err(CoreLinkError::watchNotFound(&request.payload.registryKey()))
+        }
+
+        /// Rejects routed push streams because this endpoint only accepts routed Space calls.
+        #[allow(non_snake_case)]
+        async fn routedOpenPush(
+            &self,
+            _previousNodeId: String,
+            request: RoutedCoreRequest<CorePushRequest>,
+        ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+            Err(CoreLinkError::new(
+                "UNEXPECTED_TEST_PUSH",
+                format!(
+                    "routed push is not part of this route wrapper test: {}",
                     request.payload.methodName
                 ),
             ))
@@ -4002,19 +3349,6 @@ mod tests {
             .await
         }
 
-        /// Executes a routed handoff through the wrapped router.
-        #[allow(non_snake_case)]
-        async fn routedHandoff(
-            &self,
-            previousNodeId: String,
-            request: RoutedCoreRequest<CoreHandoffRequest>,
-        ) -> Result<CoreHandoffResponse, CoreLinkError> {
-            self.run_on_router_executor("test-router-routed-handoff", move |mut router| {
-                Box::pin(async move { router.routedHandoff(previousNodeId, request).await })
-            })
-            .await
-        }
-
         /// Reads a routed watch snapshot through the wrapped router.
         #[allow(non_snake_case)]
         async fn routedWatchSnapshot(
@@ -4037,19 +3371,6 @@ mod tests {
         ) -> Result<CoreEventStream, CoreLinkError> {
             self.run_on_router_executor("test-router-routed-watch", move |mut router| {
                 Box::pin(async move { router.routedWatch(previousNodeId, request).await })
-            })
-            .await
-        }
-
-        /// Applies a routed Binding operation through the wrapped router.
-        #[allow(non_snake_case)]
-        async fn routedBindingApply(
-            &self,
-            previousNodeId: String,
-            request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-        ) -> Result<(), CoreLinkError> {
-            self.run_on_router_executor("test-router-routed-binding-apply", move |mut router| {
-                Box::pin(async move { router.routedBindingApply(previousNodeId, request).await })
             })
             .await
         }
@@ -4129,19 +3450,6 @@ mod tests {
             )
         }
 
-        /// Rejects routed handoff because the client endpoint only receives peer events.
-        #[allow(non_snake_case)]
-        async fn routedHandoff(
-            &self,
-            _previousNodeId: String,
-            _request: RoutedCoreRequest<CoreHandoffRequest>,
-        ) -> Result<CoreHandoffResponse, CoreLinkError> {
-            Err(CoreLinkError::new(
-                "UNEXPECTED_TEST_HANDOFF",
-                "client routed handoff is not part of this test",
-            ))
-        }
-
         /// Rejects routed snapshots because the client endpoint only receives peer events.
         #[allow(non_snake_case)]
         async fn routedWatchSnapshot(
@@ -4160,19 +3468,6 @@ mod tests {
             request: RoutedCoreRequest<CoreWatchRequest>,
         ) -> Result<CoreEventStream, CoreLinkError> {
             Err(CoreLinkError::watchNotFound(&request.payload.registryKey()))
-        }
-
-        /// Rejects routed binding application because the client endpoint only receives peer events.
-        #[allow(non_snake_case)]
-        async fn routedBindingApply(
-            &self,
-            _previousNodeId: String,
-            _request: RoutedCoreRequest<CoreNodeBindingApplyRequest>,
-        ) -> Result<(), CoreLinkError> {
-            Err(CoreLinkError::new(
-                "UNEXPECTED_TEST_BINDING",
-                "client binding apply is not part of this test",
-            ))
         }
 
         /// Rejects routed push streams because the client endpoint only receives peer events.
@@ -4327,7 +3622,6 @@ mod tests {
     /// Creates one Core stream source that emits a complete structured Markdown event sequence.
     #[allow(non_snake_case)]
     fn testStructuredMarkdownStreamSource(
-        chatId: String,
         events: Vec<MarkdownStreamEvent>,
     ) -> Arc<CoreStreamSource> {
         Arc::new(CoreStreamSource::new(move |request| {
@@ -4396,77 +3690,20 @@ mod tests {
         panic!("real routed chat message Flow did not receive the live content stream");
     }
 
-    /// Waits until the real routed chat message Flow contains the selected live content stream.
+    /// Waits until the real routed chat message Flow contains a specific visible message.
     #[allow(non_snake_case)]
-    async fn waitForRoutedChatMessageStream(
-        flow: &StateFlow<Vec<ChatMessage>>,
-        streamId: &str,
-    ) -> CoreStream<MarkdownStreamEvent> {
+    async fn waitForRoutedChatText(flow: &StateFlow<Vec<ChatMessage>>, expectedText: &str) {
         for _ in 0..100 {
             let messages = flow.value();
-            if let Some(stream) = messages.iter().find_map(|message| {
-                message
-                    .contentStream
-                    .as_ref()
-                    .filter(|stream| stream.descriptor.streamId == streamId)
-                    .cloned()
-            }) {
-                return stream;
+            if messages
+                .iter()
+                .any(|message| message.displayText() == expectedText)
+            {
+                return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        panic!("real routed chat message Flow did not receive stream {streamId}");
-    }
-
-    /// Publishes one live Markdown stream message through the selected test holder.
-    #[allow(non_snake_case)]
-    async fn publishHolderChatMessageWithStream(
-        holder: &Arc<tokio::sync::Mutex<ChatRuntimeHolder>>,
-        chatId: &str,
-        streamId: &str,
-        text: &str,
-    ) {
-        let source = testMarkdownStreamSource(chatId.to_string(), text.to_string());
-        let mut message = ChatMessage::new("ai".to_string());
-        message.contentStream = Some(CoreStream::fromSourceWithId(streamId.to_string(), source));
-        let mut holder = holder.lock().await;
-        let core = holder.getCore(ChatRuntimeSlot::MAIN);
-        let _flow = core
-            .chatHistoryDelegate
-            .chatMessageFlowForChat(chatId.to_string());
-        core.chatHistoryDelegate.publishChatMessage(chatId, message);
-    }
-
-    /// Opens one routed Markdown stream and verifies its first chunk and completion.
-    #[allow(non_snake_case)]
-    async fn assertRoutedMarkdownStreamChunk(
-        stream: CoreStream<MarkdownStreamEvent>,
-        requestId: &str,
-        expectedChatId: &str,
-        expectedText: &str,
-    ) {
-        let localPool = Arc::new(CoreStreamPool::new());
-        let (_encoded, attachments) =
-            operit_link::withCoreStreamCaptureSync(|| operit_link::toCoreValue(stream.clone()));
-        assert_eq!(attachments.len(), 1);
-        localPool.adoptAll(attachments);
-        let mut openedStream = localPool
-            .openCoreStreamWatch(CoreWatchRequest::new(
-                requestId,
-                CORE_STREAM_POOL_OBJECT_ID,
-                "openCoreStream",
-                stream.descriptor.args.clone(),
-            ))
-            .expect("routed embedded stream must reopen through CoreNodeRouter");
-        let chunk = receiveEvent(&mut openedStream).await;
-        assert_eq!(chunk.kind, CoreEventKind::Changed);
-        let event: MarkdownStreamEvent =
-            operit_link::fromCoreValue(chunk.value).expect("Markdown stream event must decode");
-        assert_eq!(event.chatId, expectedChatId);
-        assert_eq!(event.eventType, "chunk");
-        assert_eq!(event.value, Some(expectedText.to_string()));
-        let completed = receiveEvent(&mut openedStream).await;
-        assert_eq!(completed.kind, CoreEventKind::Completed);
+        panic!("real routed chat message Flow did not receive text: {expectedText}");
     }
 
     /// Waits until the routed chat state Flow reports the selected input-processing state.
@@ -4492,6 +3729,62 @@ mod tests {
             .recv()
             .await
             .expect("Core event stream ended before the expected event")
+    }
+
+    /// Verifies an async annotation wrapper routes public Rust calls to the selected remote Core.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rust_internal_annotated_call_routes_when_binding_owner_is_remote() {
+        let _globalGuard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let localNodeId = "core-node-call-wrapper-client".to_string();
+        let targetNodeId = "core-node-call-wrapper-source".to_string();
+        let chatId = "chat-call-wrapper-route-a".to_string();
+        let joinedSpace = CoreSpace {
+            spaceId: "space-call-wrapper-route-test".to_string(),
+            spaceName: "Route Call Wrapper Test Space".to_string(),
+            spaceRevision: 2,
+            members: vec![localNodeId.clone(), targetNodeId.clone()],
+        };
+        let (localRouter, localHolder, _localBinding) =
+            testCoreNodeRouterInJoinedSpaceWithBindingRuntime(
+                &localNodeId,
+                &targetNodeId,
+                &chatId,
+                &targetNodeId,
+                joinedSpace,
+            );
+        let target = TestRoutedCallEndpoint::new();
+        let peerHandle = connectInMemoryPeerLinks(
+            localNodeId.clone(),
+            TestCoreNodeRouterEndpoint::new(localRouter.clone()),
+            targetNodeId.clone(),
+            target.clone(),
+        )
+        .expect("in-memory PeerLink must connect route wrapper call endpoints");
+        let _routeGuard = installTestCoreRouteRuntime(Arc::new(localRouter));
+
+        {
+            let mut holder = localHolder.lock().await;
+            holder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .sendUserMessage(
+                    PromptFunctionType::CHAT,
+                    None,
+                    Some(chatId),
+                    "route wrapper send probe".to_string(),
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                    None,
+                    ChatTurnOptions::default(),
+                )
+                .await;
+        }
+
+        assert_eq!(target.callCount.load(Ordering::SeqCst), 1);
+        assert_eq!(target.methodNames(), vec!["sendUserMessage".to_string()]);
+        peerHandle.close();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4861,6 +4154,107 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rust_internal_chat_messages_flow_stays_open_across_binding_owner_changes() {
+        let _globalGuard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let localNodeId = "core-node-flow-owner-a".to_string();
+        let targetNodeId = "core-node-flow-owner-b".to_string();
+        let chatId = "chat-flow-owner-switch".to_string();
+        let joinedSpace = CoreSpace {
+            spaceId: "space-flow-owner-switch-test".to_string(),
+            spaceName: "Route Flow Owner Switch Test Space".to_string(),
+            spaceRevision: 2,
+            members: vec![localNodeId.clone(), targetNodeId.clone()],
+        };
+        let (localRouter, localHolder, localBinding) =
+            testCoreNodeRouterInJoinedSpaceWithBindingRuntime(
+                &localNodeId,
+                &targetNodeId,
+                &chatId,
+                &localNodeId,
+                joinedSpace.clone(),
+            );
+        let (targetRouter, targetHolder) = testCoreNodeRouterInJoinedSpace(
+            &targetNodeId,
+            &localNodeId,
+            &chatId,
+            &targetNodeId,
+            joinedSpace,
+        );
+        let peerHandle = connectInMemoryPeerLinks(
+            localNodeId.clone(),
+            TestCoreNodeRouterEndpoint::new(localRouter.clone()),
+            targetNodeId.clone(),
+            TestCoreNodeRouterEndpoint::new(targetRouter),
+        )
+        .expect("in-memory PeerLink must connect both routed Flow owners");
+        operit_link::withCoreForceLocal(async {
+            let mut holder = targetHolder.lock().await;
+            let _ = holder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .chatMessagesFlow(chatId.clone())
+                .await;
+        })
+        .await;
+        let _routeGuard = installTestCoreRouteRuntime(Arc::new(localRouter));
+        let routedFlow = {
+            let mut holder = localHolder.lock().await;
+            holder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .chatMessagesFlow(chatId.clone())
+                .await
+        };
+
+        {
+            let mut holder = localHolder.lock().await;
+            holder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .chatHistoryDelegate
+                .publishChatMessage(
+                    &chatId,
+                    ChatMessage::new_with_markdown(
+                        "ai".to_string(),
+                        "local-before-switch".to_string(),
+                    ),
+                );
+        }
+        waitForRoutedChatText(&routedFlow, "local-before-switch").await;
+
+        localBinding.setNodeId(targetNodeId.clone());
+        {
+            let mut holder = targetHolder.lock().await;
+            holder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .chatHistoryDelegate
+                .publishChatMessage(
+                    &chatId,
+                    ChatMessage::new_with_markdown(
+                        "ai".to_string(),
+                        "remote-after-switch".to_string(),
+                    ),
+                );
+        }
+        waitForRoutedChatText(&routedFlow, "remote-after-switch").await;
+
+        localBinding.setNodeId(localNodeId.clone());
+        {
+            let mut holder = localHolder.lock().await;
+            holder
+                .getCore(ChatRuntimeSlot::MAIN)
+                .chatHistoryDelegate
+                .publishChatMessage(
+                    &chatId,
+                    ChatMessage::new_with_markdown(
+                        "ai".to_string(),
+                        "local-after-switch-back".to_string(),
+                    ),
+                );
+        }
+        waitForRoutedChatText(&routedFlow, "local-after-switch-back").await;
+        peerHandle.close();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rust_internal_route_preserves_structured_embedded_stream_events() {
         let _globalGuard = routeTestGlobalLock().lock().await;
         installTestRuntimeScheduler();
@@ -4971,10 +4365,7 @@ mod tests {
                 .await
         };
         {
-            let source = testStructuredMarkdownStreamSource(
-                "chat-structured-route-a".to_string(),
-                expectedEvents.clone(),
-            );
+            let source = testStructuredMarkdownStreamSource(expectedEvents.clone());
             let mut message = ChatMessage::new("ai".to_string());
             message.contentStream = Some(CoreStream::fromSourceWithId(
                 "chat-message-stream:structured-route-test".to_string(),
@@ -5025,329 +4416,6 @@ mod tests {
             .map(|event| operit_link::toCoreValue(event).expect("expected event must encode"))
             .collect::<Vec<_>>();
         assert_eq!(receivedValues, expectedValues);
-        peerHandle.close();
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rust_internal_chat_messages_flow_rebinds_after_binding_owner_changes() {
-        let _globalGuard = routeTestGlobalLock().lock().await;
-        installTestRuntimeScheduler();
-        let localNodeId = "core-node-rebind-client".to_string();
-        let targetNodeId = "core-node-rebind-source".to_string();
-        let chatId = "chat-rebind-flow-a".to_string();
-        let joinedSpace = CoreSpace {
-            spaceId: "space-rebind-route-test".to_string(),
-            spaceName: "Route Rebind Test Space".to_string(),
-            spaceRevision: 2,
-            members: vec![localNodeId.clone(), targetNodeId.clone()],
-        };
-        let (localRouter, localHolder, localBinding) =
-            testCoreNodeRouterInJoinedSpaceWithBindingRuntime(
-                &localNodeId,
-                &targetNodeId,
-                &chatId,
-                &targetNodeId,
-                joinedSpace.clone(),
-            );
-        let (targetRouter, targetHolder) = testCoreNodeRouterInJoinedSpace(
-            &targetNodeId,
-            &localNodeId,
-            &chatId,
-            &targetNodeId,
-            joinedSpace,
-        );
-        let peerHandle = connectInMemoryPeerLinks(
-            localNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(localRouter.clone()),
-            targetNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(targetRouter),
-        )
-        .expect("in-memory PeerLink must connect both real CoreNodeRouters");
-        let _routeGuard = installTestCoreRouteRuntime(Arc::new(localRouter.clone()));
-        let routedFlow = {
-            let mut holder = localHolder.lock().await;
-            holder
-                .getCore(ChatRuntimeSlot::MAIN)
-                .chatMessagesFlow(chatId.clone())
-                .await
-        };
-        assert!(routedFlow.value().is_empty());
-        {
-            let source = testMarkdownStreamSource(
-                chatId.clone(),
-                "hello after binding owner moved".to_string(),
-            );
-            let mut message = ChatMessage::new("ai".to_string());
-            message.contentStream = Some(CoreStream::fromSourceWithId(
-                "chat-message-stream:binding-rebind-route-test".to_string(),
-                source,
-            ));
-            let mut holder = localHolder.lock().await;
-            let core = holder.getCore(ChatRuntimeSlot::MAIN);
-            let _localFlow = core
-                .chatHistoryDelegate
-                .chatMessageFlowForChat(chatId.clone());
-            core.chatHistoryDelegate
-                .publishChatMessage(&chatId, message);
-        }
-        let binding = localBinding.setNodeId(localNodeId.clone());
-        assert_eq!(binding.nodeId, localNodeId);
-        let _ = localRouter.bindingChanges.send(chatId.clone());
-        let messages = waitForRoutedChatMessages(&routedFlow).await;
-        let stream = messages
-            .iter()
-            .find_map(|message| message.contentStream.clone())
-            .expect("rebound routed message must carry an embedded content stream");
-        let localPool = Arc::new(CoreStreamPool::new());
-        let (_encoded, attachments) =
-            operit_link::withCoreStreamCaptureSync(|| operit_link::toCoreValue(stream.clone()));
-        assert_eq!(attachments.len(), 1);
-        localPool.adoptAll(attachments);
-        let mut openedStream = localPool
-            .openCoreStreamWatch(CoreWatchRequest::new(
-                "embedded-open-binding-rebind-test",
-                CORE_STREAM_POOL_OBJECT_ID,
-                "openCoreStream",
-                stream.descriptor.args.clone(),
-            ))
-            .expect("rebound embedded stream must reopen through CoreNodeRouter");
-        let chunk = receiveEvent(&mut openedStream).await;
-        assert_eq!(chunk.kind, CoreEventKind::Changed);
-        let event: MarkdownStreamEvent =
-            operit_link::fromCoreValue(chunk.value).expect("Markdown stream event must decode");
-        assert_eq!(event.chatId, chatId);
-        assert_eq!(event.eventType, "chunk");
-        assert_eq!(
-            event.value,
-            Some("hello after binding owner moved".to_string())
-        );
-        let completed = receiveEvent(&mut openedStream).await;
-        assert_eq!(completed.kind, CoreEventKind::Completed);
-        peerHandle.close();
-    }
-
-    /// Verifies an annotated chat message Flow follows a Binding owner moving from local to remote.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rust_internal_chat_messages_flow_rebinds_after_local_owner_moves_remote() {
-        let _globalGuard = routeTestGlobalLock().lock().await;
-        installTestRuntimeScheduler();
-        let localNodeId = "core-node-local-remote-rebind-client".to_string();
-        let targetNodeId = "core-node-local-remote-rebind-source".to_string();
-        let chatId = "chat-local-remote-rebind-flow-a".to_string();
-        let joinedSpace = CoreSpace {
-            spaceId: "space-local-remote-rebind-route-test".to_string(),
-            spaceName: "Route Local Remote Rebind Test Space".to_string(),
-            spaceRevision: 2,
-            members: vec![localNodeId.clone(), targetNodeId.clone()],
-        };
-        let (localRouter, localHolder, localBinding) =
-            testCoreNodeRouterInJoinedSpaceWithBindingRuntime(
-                &localNodeId,
-                &targetNodeId,
-                &chatId,
-                &localNodeId,
-                joinedSpace.clone(),
-            );
-        let (targetRouter, targetHolder) = testCoreNodeRouterInJoinedSpace(
-            &targetNodeId,
-            &localNodeId,
-            &chatId,
-            &targetNodeId,
-            joinedSpace,
-        );
-        let peerHandle = connectInMemoryPeerLinks(
-            localNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(localRouter.clone()),
-            targetNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(targetRouter),
-        )
-        .expect("in-memory PeerLink must connect both real CoreNodeRouters");
-        let _routeGuard = installTestCoreRouteRuntime(Arc::new(localRouter.clone()));
-        let routedFlow = {
-            let mut holder = localHolder.lock().await;
-            holder
-                .getCore(ChatRuntimeSlot::MAIN)
-                .chatMessagesFlow(chatId.clone())
-                .await
-        };
-        assert!(routedFlow.value().is_empty());
-        let binding = localBinding.setNodeId(targetNodeId.clone());
-        assert_eq!(binding.nodeId, targetNodeId);
-        let _ = localRouter.bindingChanges.send(chatId.clone());
-        {
-            let source = testMarkdownStreamSource(
-                chatId.clone(),
-                "hello after local owner moved remote".to_string(),
-            );
-            let mut message = ChatMessage::new("ai".to_string());
-            message.contentStream = Some(CoreStream::fromSourceWithId(
-                "chat-message-stream:local-remote-rebind-route-test".to_string(),
-                source,
-            ));
-            let mut holder = targetHolder.lock().await;
-            let core = holder.getCore(ChatRuntimeSlot::MAIN);
-            let _targetFlow = core
-                .chatHistoryDelegate
-                .chatMessageFlowForChat(chatId.clone());
-            core.chatHistoryDelegate
-                .publishChatMessage(&chatId, message);
-        }
-        let messages = waitForRoutedChatMessages(&routedFlow).await;
-        let stream = messages
-            .iter()
-            .find_map(|message| message.contentStream.clone())
-            .expect("local-remote rebound message must carry an embedded content stream");
-        let localPool = Arc::new(CoreStreamPool::new());
-        let (_encoded, attachments) =
-            operit_link::withCoreStreamCaptureSync(|| operit_link::toCoreValue(stream.clone()));
-        assert_eq!(attachments.len(), 1);
-        localPool.adoptAll(attachments);
-        let mut openedStream = localPool
-            .openCoreStreamWatch(CoreWatchRequest::new(
-                "embedded-open-local-remote-binding-rebind-test",
-                CORE_STREAM_POOL_OBJECT_ID,
-                "openCoreStream",
-                stream.descriptor.args.clone(),
-            ))
-            .expect("local-remote rebound embedded stream must reopen through CoreNodeRouter");
-        let chunk = receiveEvent(&mut openedStream).await;
-        assert_eq!(chunk.kind, CoreEventKind::Changed);
-        let event: MarkdownStreamEvent =
-            operit_link::fromCoreValue(chunk.value).expect("Markdown stream event must decode");
-        assert_eq!(event.chatId, chatId);
-        assert_eq!(event.eventType, "chunk");
-        assert_eq!(
-            event.value,
-            Some("hello after local owner moved remote".to_string())
-        );
-        let completed = receiveEvent(&mut openedStream).await;
-        assert_eq!(completed.kind, CoreEventKind::Completed);
-        peerHandle.close();
-    }
-
-    /// Verifies an annotated chat message Flow follows repeated Binding owner changes.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rust_internal_chat_messages_flow_rebinds_across_multiple_owner_changes() {
-        let _globalGuard = routeTestGlobalLock().lock().await;
-        installTestRuntimeScheduler();
-        let localNodeId = "core-node-multi-rebind-client".to_string();
-        let targetNodeId = "core-node-multi-rebind-source".to_string();
-        let chatId = "chat-multi-rebind-flow-a".to_string();
-        let joinedSpace = CoreSpace {
-            spaceId: "space-multi-rebind-route-test".to_string(),
-            spaceName: "Route Multi Rebind Test Space".to_string(),
-            spaceRevision: 2,
-            members: vec![localNodeId.clone(), targetNodeId.clone()],
-        };
-        let (localRouter, localHolder, localBinding) =
-            testCoreNodeRouterInJoinedSpaceWithBindingRuntime(
-                &localNodeId,
-                &targetNodeId,
-                &chatId,
-                &localNodeId,
-                joinedSpace.clone(),
-            );
-        let (targetRouter, targetHolder) = testCoreNodeRouterInJoinedSpace(
-            &targetNodeId,
-            &localNodeId,
-            &chatId,
-            &targetNodeId,
-            joinedSpace,
-        );
-        let peerHandle = connectInMemoryPeerLinks(
-            localNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(localRouter.clone()),
-            targetNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(targetRouter),
-        )
-        .expect("in-memory PeerLink must connect both real CoreNodeRouters");
-        let _routeGuard = installTestCoreRouteRuntime(Arc::new(localRouter.clone()));
-        let routedFlow = {
-            let mut holder = localHolder.lock().await;
-            holder
-                .getCore(ChatRuntimeSlot::MAIN)
-                .chatMessagesFlow(chatId.clone())
-                .await
-        };
-        assert!(routedFlow.value().is_empty());
-
-        let firstStreamId = "chat-message-stream:multi-rebind-local-1";
-        publishHolderChatMessageWithStream(
-            &localHolder,
-            &chatId,
-            firstStreamId,
-            "multi rebind local first",
-        )
-        .await;
-        let firstStream = waitForRoutedChatMessageStream(&routedFlow, firstStreamId).await;
-        assertRoutedMarkdownStreamChunk(
-            firstStream,
-            "embedded-open-multi-rebind-local-1",
-            &chatId,
-            "multi rebind local first",
-        )
-        .await;
-
-        let binding = localBinding.setNodeId(targetNodeId.clone());
-        assert_eq!(binding.nodeId, targetNodeId);
-        let _ = localRouter.bindingChanges.send(chatId.clone());
-        let secondStreamId = "chat-message-stream:multi-rebind-remote-1";
-        publishHolderChatMessageWithStream(
-            &targetHolder,
-            &chatId,
-            secondStreamId,
-            "multi rebind remote first",
-        )
-        .await;
-        let secondStream = waitForRoutedChatMessageStream(&routedFlow, secondStreamId).await;
-        assertRoutedMarkdownStreamChunk(
-            secondStream,
-            "embedded-open-multi-rebind-remote-1",
-            &chatId,
-            "multi rebind remote first",
-        )
-        .await;
-
-        let binding = localBinding.setNodeId(localNodeId.clone());
-        assert_eq!(binding.nodeId, localNodeId);
-        let _ = localRouter.bindingChanges.send(chatId.clone());
-        let thirdStreamId = "chat-message-stream:multi-rebind-local-2";
-        publishHolderChatMessageWithStream(
-            &localHolder,
-            &chatId,
-            thirdStreamId,
-            "multi rebind local second",
-        )
-        .await;
-        let thirdStream = waitForRoutedChatMessageStream(&routedFlow, thirdStreamId).await;
-        assertRoutedMarkdownStreamChunk(
-            thirdStream,
-            "embedded-open-multi-rebind-local-2",
-            &chatId,
-            "multi rebind local second",
-        )
-        .await;
-
-        let binding = localBinding.setNodeId(targetNodeId.clone());
-        assert_eq!(binding.nodeId, targetNodeId);
-        let _ = localRouter.bindingChanges.send(chatId.clone());
-        let fourthStreamId = "chat-message-stream:multi-rebind-remote-2";
-        publishHolderChatMessageWithStream(
-            &targetHolder,
-            &chatId,
-            fourthStreamId,
-            "multi rebind remote second",
-        )
-        .await;
-        let fourthStream = waitForRoutedChatMessageStream(&routedFlow, fourthStreamId).await;
-        assertRoutedMarkdownStreamChunk(
-            fourthStream,
-            "embedded-open-multi-rebind-remote-2",
-            &chatId,
-            "multi rebind remote second",
-        )
-        .await;
-
         peerHandle.close();
     }
 
@@ -5410,112 +4478,6 @@ mod tests {
     }
 
     /// Verifies a routed chat StateFlow opens from the local Core while its selected owner has no live channel.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rust_internal_chat_state_flow_opens_local_source_when_binding_owner_unreachable() {
-        let _globalGuard = routeTestGlobalLock().lock().await;
-        installTestRuntimeScheduler();
-        let localNodeId = "core-node-state-local-source-client".to_string();
-        let targetNodeId = "core-node-state-local-source-owner".to_string();
-        let chatId = "chat-state-local-source-a".to_string();
-        let joinedSpace = CoreSpace {
-            spaceId: "space-state-local-source-test".to_string(),
-            spaceName: "Route State Local Source Test Space".to_string(),
-            spaceRevision: 2,
-            members: vec![localNodeId.clone(), targetNodeId.clone()],
-        };
-        let (localRouter, _localHolder) = testCoreNodeRouterInJoinedSpace(
-            &localNodeId,
-            &targetNodeId,
-            &chatId,
-            &targetNodeId,
-            joinedSpace,
-        );
-        let mut stream = tokio::time::timeout(
-            Duration::from_millis(500),
-            CoreLinkSharedClient::watch(
-                &localRouter,
-                CoreWatchRequest::new(
-                    "core-route-chat-state-local-source",
-                    CORE_INTERNAL_ROUTE_OBJECT_ID,
-                    "chatStateFlow",
-                    operit_link::toCoreValue(serde_json::json!({ "chatId": chatId.clone() }))
-                        .expect("chat StateFlow route args must encode"),
-                ),
-            ),
-        )
-        .await
-        .expect("routed chat StateFlow watch must open without a connected selected owner")
-        .expect("routed chat StateFlow watch must return a stream");
-        let event = receiveEvent(&mut stream).await;
-        assert_eq!(event.kind, CoreEventKind::Snapshot);
-        let state: ChatState =
-            operit_link::fromCoreValue(event.value).expect("chat StateFlow event must decode");
-        assert_eq!(state.currentChatId, chatId);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rust_internal_annotated_chat_messages_flow_routes_and_reopens_embedded_stream() {
-        let _globalGuard = routeTestGlobalLock().lock().await;
-        installTestRuntimeScheduler();
-        let localNodeId = "core-node-rust-wrapper-client".to_string();
-        let targetNodeId = "core-node-rust-wrapper-source".to_string();
-        let chatId = "chat-rust-wrapper-flow-a".to_string();
-        let router = testCoreNodeRouter(&localNodeId, &targetNodeId, &chatId);
-        let source = TestRealChatSpaceEndpoint::new();
-        let peerHandle = connectInMemoryPeerLinks(
-            localNodeId.clone(),
-            Arc::new(TestClientEndpoint),
-            targetNodeId.clone(),
-            source.clone(),
-        )
-        .expect("in-memory PeerLink must connect wrapper caller and real Space endpoint");
-        let _routeGuard = installTestCoreRouteRuntime(Arc::new(router));
-        let mut clientHolder = ChatRuntimeHolder::new(Arc::new(TestFileSystemHost));
-        let routedFlow = clientHolder
-            .getCore(ChatRuntimeSlot::MAIN)
-            .chatMessagesFlow(chatId.clone())
-            .await;
-        source
-            .publishChatMessageWithStream(
-                &chatId,
-                "chat-message-stream:rust-wrapper-route-test",
-                "hello through annotated Rust wrapper",
-            )
-            .await;
-        let messages = waitForRoutedChatMessages(&routedFlow).await;
-        let stream = messages
-            .iter()
-            .find_map(|message| message.contentStream.clone())
-            .expect("annotated routed message must carry an embedded content stream");
-        let localPool = Arc::new(CoreStreamPool::new());
-        let (_encoded, attachments) =
-            operit_link::withCoreStreamCaptureSync(|| operit_link::toCoreValue(stream.clone()));
-        assert_eq!(attachments.len(), 1);
-        localPool.adoptAll(attachments);
-        let mut openedStream = localPool
-            .openCoreStreamWatch(CoreWatchRequest::new(
-                "embedded-open-rust-wrapper-router-test",
-                CORE_STREAM_POOL_OBJECT_ID,
-                "openCoreStream",
-                stream.descriptor.args.clone(),
-            ))
-            .expect("annotated routed ChatMessage stream must reopen through CoreNodeRouter");
-        let chunk = receiveEvent(&mut openedStream).await;
-        assert_eq!(chunk.kind, CoreEventKind::Changed);
-        let event: MarkdownStreamEvent = operit_link::fromCoreValue(chunk.value)
-            .expect("annotated routed Markdown stream event must decode");
-        assert_eq!(event.chatId, chatId);
-        assert_eq!(event.eventType, "chunk");
-        assert_eq!(
-            event.value,
-            Some("hello through annotated Rust wrapper".to_string())
-        );
-        let completed = receiveEvent(&mut openedStream).await;
-        assert_eq!(completed.kind, CoreEventKind::Completed);
-        assert!(source.embeddedStreamOpened.load(Ordering::SeqCst));
-        peerHandle.close();
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rust_internal_annotated_chat_messages_flow_without_binding_opens_local_flow() {
         let _globalGuard = routeTestGlobalLock().lock().await;

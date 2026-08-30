@@ -1,10 +1,8 @@
 use crate::{CoreEventStream, CoreLinkError, CoreValue, CoreWatchRequest};
-use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
-use operit_host_api::HostRuntimeTaskSchedulerHost;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
@@ -36,7 +34,6 @@ pub struct CoreStreamAttachment {
 #[derive(Clone)]
 pub struct CoreStreamSource {
     opener: Arc<dyn Fn(CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> + Send + Sync>,
-    nextSegments: Arc<Mutex<VecDeque<Arc<CoreStreamSource>>>>,
 }
 
 impl CoreStreamSource {
@@ -49,82 +46,12 @@ impl CoreStreamSource {
     ) -> Self {
         Self {
             opener: Arc::new(opener),
-            nextSegments: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
     /// Opens one client-facing watch over the stable logical source.
     pub fn open(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        let firstSegment = (self.opener)(request.clone())?;
-        let (sender, receiver) = CoreEventStream::channel();
-        let source = self.clone();
-        HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(
-            defaultHostRuntimeTaskSchedulerHost().as_ref(),
-            "core-stream-source-pump",
-            Box::new(move || {
-                Box::pin(async move {
-                    source.pump(firstSegment, request, sender).await;
-                })
-            }),
-        )
-        .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        Ok(receiver)
-    }
-
-    /// Attaches one physical segment to the stable logical source.
-    pub fn attachNextSegment(&self, nextSegment: Arc<CoreStreamSource>) {
-        self.nextSegments
-            .lock()
-            .expect("core stream source mutex poisoned")
-            .push_back(nextSegment);
-    }
-
-    /// Takes the next queued physical segment from the logical source.
-    fn takeNextSegment(&self) -> Option<Arc<CoreStreamSource>> {
-        self.nextSegments
-            .lock()
-            .expect("core stream source mutex poisoned")
-            .pop_front()
-    }
-
-    /// Pumps physical segments while exposing one uninterrupted Link stream.
-    async fn pump(
-        &self,
-        mut segment: CoreEventStream,
-        request: CoreWatchRequest,
-        sender: tokio::sync::mpsc::UnboundedSender<crate::CoreEvent>,
-    ) {
-        loop {
-            while let Some(event) = segment.recv().await {
-                if event.kind != crate::CoreEventKind::Completed {
-                    if sender.send(event).is_err() {
-                        return;
-                    }
-                    continue;
-                }
-                if let Some(nextSegment) = self.takeNextSegment() {
-                    match (nextSegment.opener)(request.clone()) {
-                        Ok(nextStream) => {
-                            segment = nextStream;
-                            continue;
-                        }
-                        Err(_) => return,
-                    }
-                }
-                let _ = sender.send(event);
-                return;
-            }
-            if let Some(nextSegment) = self.takeNextSegment() {
-                match (nextSegment.opener)(request.clone()) {
-                    Ok(nextStream) => {
-                        segment = nextStream;
-                        continue;
-                    }
-                    Err(_) => return,
-                }
-            }
-            return;
-        }
+        (self.opener)(request)
     }
 }
 

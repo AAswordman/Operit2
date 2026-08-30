@@ -56,20 +56,35 @@ abstract class OperitRuntimeBridge {
             <String, _EmbeddedCoreStream<dynamic>>{});
     final cached = cache[streamId];
     if (cached != null) {
+      debugPrint(
+        'CoreStreamTrace dart.embedded.reuse streamId=$streamId '
+        'target=$targetObjectId property=$propertyName done=${cached.isDone}',
+      );
       return cached.stream as Stream<T>;
     }
 
-    final stream = _EmbeddedCoreStream<T>(
+    debugPrint(
+      'CoreStreamTrace dart.embedded.create streamId=$streamId '
+      'target=$targetObjectId property=$propertyName',
+    );
+    final embedded = _EmbeddedCoreStream<T>(
       streamId,
-      () => watchStream(
-        CoreWatchRequest(
-          requestId:
-              'embedded-core-stream-${DateTime.now().microsecondsSinceEpoch}',
-          targetObjectId: targetObjectId,
-          propertyName: propertyName,
-          args: args,
-        ),
-      ),
+      () {
+        final requestId =
+            'embedded-core-stream-${DateTime.now().microsecondsSinceEpoch}';
+        debugPrint(
+          'CoreStreamTrace dart.embedded.open streamId=$streamId '
+          'requestId=$requestId target=$targetObjectId property=$propertyName',
+        );
+        return watchStream(
+          CoreWatchRequest(
+            requestId: requestId,
+            targetObjectId: targetObjectId,
+            propertyName: propertyName,
+            args: args,
+          ),
+        );
+      },
       (event) {
         final valueBytes = event.valueBytes;
         if (valueBytes == null) {
@@ -83,8 +98,8 @@ abstract class OperitRuntimeBridge {
         );
       },
     );
-    cache[streamId] = stream;
-    return stream.stream;
+    cache[streamId] = embedded;
+    return embedded.stream;
   }
 
   Future<Object?> callApplication(
@@ -116,6 +131,10 @@ class _EmbeddedCoreStream<T> {
   StackTrace? _terminalStackTrace;
   var _started = false;
   var _done = false;
+  var _eventCount = 0;
+
+  /// Reports whether the physical watch backing this wrapper has finished.
+  bool get isDone => _done;
 
   /// Exposes one broadcast stream that preserves all events for late listeners.
   late final Stream<T> stream = Stream<T>.multi(_listen, isBroadcast: true);
@@ -123,6 +142,10 @@ class _EmbeddedCoreStream<T> {
   /// Attaches one listener and replays the stream's already received events.
   void _listen(MultiStreamController<T> controller) {
     if (_done) {
+      debugPrint(
+        'CoreStreamTrace dart.embedded.listen_done streamId=$_streamId '
+        'replay=${_replay.length}',
+      );
       _replayTo(controller);
       _finishListener(controller);
       return;
@@ -139,6 +162,10 @@ class _EmbeddedCoreStream<T> {
       return subscription.cancel();
     };
     _replayTo(controller);
+    debugPrint(
+      'CoreStreamTrace dart.embedded.listen streamId=$_streamId '
+      'replay=${_replay.length}',
+    );
     _start();
   }
 
@@ -168,6 +195,7 @@ class _EmbeddedCoreStream<T> {
       return;
     }
     try {
+      _eventCount += 1;
       final completeValueBytes = _valueDecoder.completeValueBytes(event);
       final completeEvent = CoreEvent.raw(
         requestId: event.requestId,
@@ -180,9 +208,20 @@ class _EmbeddedCoreStream<T> {
       final value = _decode(completeEvent);
       _replay.add(value);
       _events.add(value);
+      if (_shouldLogEmbeddedEvent(_eventCount)) {
+        debugPrint(
+          'CoreStreamTrace dart.embedded.event streamId=$_streamId '
+          'kind=${event.kind} count=$_eventCount replay=${_replay.length}',
+        );
+      }
     } catch (error, stackTrace) {
       _fail(error, stackTrace);
     }
+  }
+
+  /// Returns whether one embedded stream event should be logged.
+  bool _shouldLogEmbeddedEvent(int count) {
+    return count <= 5 || count % 256 == 0;
   }
 
   /// Replays values already received before a listener was attached.
@@ -207,6 +246,10 @@ class _EmbeddedCoreStream<T> {
       return;
     }
     _done = true;
+    debugPrint(
+      'CoreStreamTrace dart.embedded.done streamId=$_streamId '
+      'events=$_eventCount replay=${_replay.length}',
+    );
     unawaited(_events.close());
   }
 

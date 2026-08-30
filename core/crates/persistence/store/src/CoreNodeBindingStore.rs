@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use operit_host_api::RuntimeStorageHost;
 use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
@@ -25,7 +25,6 @@ static CORE_NODE_BINDING_SHARED_STATES: OnceLock<
 /// Holds one Binding cache shared by every store over the same storage host.
 struct CoreNodeBindingSharedState {
     records: Arc<Mutex<Option<BTreeMap<String, CoreNodeBindingRecord>>>>,
-    observers: Mutex<Vec<Weak<CoreNodeBindingChangeObserver>>>,
 }
 
 /// Identifies one process-local Binding cache by storage host and sync root.
@@ -75,62 +74,9 @@ fn coreNodeBindingSharedState(
     }
     let state = Arc::new(CoreNodeBindingSharedState {
         records: Arc::new(Mutex::new(None)),
-        observers: Mutex::new(Vec::new()),
     });
     states.insert(key, Arc::clone(&state));
     state
-}
-
-/// Describes one committed change to the Binding entity-state cache.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CoreNodeBindingChange {
-    Upsert(CoreNodeBindingRecord),
-    Delete(String),
-}
-
-/// Receives one committed Binding cache change.
-pub type CoreNodeBindingChangeObserver = dyn Fn(CoreNodeBindingChange) + Send + Sync;
-
-/// Publishes one committed Binding change to the shared host-scoped cache and observers.
-#[allow(non_snake_case)]
-fn notifyCoreNodeBindingChanged(
-    sharedState: &CoreNodeBindingSharedState,
-    change: CoreNodeBindingChange,
-) {
-    {
-        let mut cache = sharedState
-            .records
-            .lock()
-            .expect("CoreNode Binding cache mutex must not be poisoned");
-        if let Some(records) = cache.as_mut() {
-            match &change {
-                CoreNodeBindingChange::Upsert(binding) => {
-                    records.insert(binding.key.clone(), binding.clone());
-                }
-                CoreNodeBindingChange::Delete(key) => {
-                    records.remove(key);
-                }
-            }
-        }
-    }
-    let observers = {
-        let mut registered = sharedState
-            .observers
-            .lock()
-            .expect("CoreNode Binding observer mutex must not be poisoned");
-        let mut observers = Vec::with_capacity(registered.len());
-        registered.retain(|observer| match observer.upgrade() {
-            Some(observer) => {
-                observers.push(observer);
-                true
-            }
-            None => false,
-        });
-        observers
-    };
-    for observer in observers {
-        observer(change.clone());
-    }
 }
 
 /// Stores the CoreNode selected by one opaque Binding key.
@@ -223,21 +169,8 @@ impl CoreNodeBindingStore {
         validateBindingKey(key)?;
         self.binding(key)?;
         self.appendBindingOperation(key, "delete", serde_json::Value::Null)?;
-        notifyCoreNodeBindingChanged(
-            &self.sharedState,
-            CoreNodeBindingChange::Delete(key.to_string()),
-        );
+        self.removeCachedBinding(key)?;
         Ok(())
-    }
-
-    /// Registers one observer for committed Binding changes.
-    #[allow(non_snake_case)]
-    pub fn addChangeObserver(&self, observer: Arc<CoreNodeBindingChangeObserver>) {
-        self.sharedState
-            .observers
-            .lock()
-            .expect("CoreNode Binding observer mutex must not be poisoned")
-            .push(Arc::downgrade(&observer));
     }
 
     /// Atomically changes one Binding when the expected node remains selected.
@@ -272,138 +205,6 @@ impl CoreNodeBindingStore {
             nodeId: targetNodeId.to_string(),
             generation: current.generation + 1,
         })
-    }
-
-    /// Atomically changes one Binding while both its node and generation remain exact.
-    #[allow(non_snake_case)]
-    pub fn compareAndSetGeneration(
-        &self,
-        key: &str,
-        expectedNodeId: &str,
-        expectedGeneration: i64,
-        targetNodeId: &str,
-    ) -> Result<CoreNodeBindingCommit, String> {
-        let _lock = coreNodeBindingMutationLock()
-            .lock()
-            .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
-        validateBindingKey(key)?;
-        validateBindingNodeId(expectedNodeId)?;
-        validateBindingNodeId(targetNodeId)?;
-        if expectedGeneration <= 0 {
-            return Err(format!(
-                "Binding generation must be positive for {key}: {expectedGeneration}"
-            ));
-        }
-        let current = self.binding(key)?;
-        if current.nodeId != expectedNodeId || current.generation != expectedGeneration {
-            return Err(format!(
-                "Binding conflict for {key}: expected {expectedNodeId}@{expectedGeneration}, actual {}@{}",
-                current.nodeId, current.generation
-            ));
-        }
-        let generation = current
-            .generation
-            .checked_add(1)
-            .ok_or_else(|| format!("Binding generation overflow for {key}"))?;
-        self.appendBindingRecord(CoreNodeBindingRecord {
-            key: key.to_string(),
-            nodeId: targetNodeId.to_string(),
-            generation,
-        })
-    }
-
-    /// Commits or joins one exact Binding source transition under the mutation lock.
-    #[allow(non_snake_case)]
-    pub fn transitionGeneration(
-        &self,
-        key: &str,
-        sourceNodeId: &str,
-        sourceGeneration: i64,
-        targetNodeId: &str,
-    ) -> Result<CoreNodeBindingCommit, String> {
-        let _lock = coreNodeBindingMutationLock()
-            .lock()
-            .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
-        validateBindingKey(key)?;
-        validateBindingNodeId(sourceNodeId)?;
-        validateBindingNodeId(targetNodeId)?;
-        if sourceGeneration <= 0 {
-            return Err(format!(
-                "Binding generation must be positive for {key}: {sourceGeneration}"
-            ));
-        }
-        let targetGeneration = sourceGeneration
-            .checked_add(1)
-            .ok_or_else(|| format!("Binding generation overflow for {key}"))?;
-        let current = self.binding(key)?;
-        if current.nodeId == targetNodeId && current.generation == targetGeneration {
-            return Ok(CoreNodeBindingCommit {
-                binding: current,
-                operation: self.latestBindingOperation(key)?,
-            });
-        }
-        if current.nodeId != sourceNodeId || current.generation != sourceGeneration {
-            return Err(format!(
-                "Binding transition conflict for {key}: expected {sourceNodeId}@{sourceGeneration} or {targetNodeId}@{targetGeneration}, actual {}@{}",
-                current.nodeId, current.generation
-            ));
-        }
-        self.appendBindingRecord(CoreNodeBindingRecord {
-            key: key.to_string(),
-            nodeId: targetNodeId.to_string(),
-            generation: targetGeneration,
-        })
-    }
-
-    /// Moves every Binding outside the supplied node set onto the local CoreNode.
-    #[allow(non_snake_case)]
-    pub fn rebindOutsideNodesToLocal(
-        &self,
-        allowedNodeIds: &BTreeSet<String>,
-    ) -> Result<Vec<CoreNodeBindingCommit>, String> {
-        let _lock = coreNodeBindingMutationLock()
-            .lock()
-            .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
-        if !allowedNodeIds.contains(&self.localNodeId) {
-            return Err("Allowed Binding nodes must include the local CoreNode".to_string());
-        }
-        for nodeId in allowedNodeIds {
-            validateBindingNodeId(nodeId)?;
-        }
-
-        let mut latestOperations = BTreeMap::<String, SyncOperation>::new();
-        for operation in self.bindingOperations()? {
-            validateBindingOperation(&operation)?;
-            let replace = latestOperations
-                .get(&operation.entityId)
-                .map(|current| bindingOperationOrder(current) < bindingOperationOrder(&operation))
-                .unwrap_or(true);
-            if replace {
-                latestOperations.insert(operation.entityId.clone(), operation);
-            }
-        }
-
-        let mut commits = Vec::new();
-        for operation in latestOperations.into_values() {
-            if operation.operation != "upsert" {
-                continue;
-            }
-            let binding: CoreNodeBindingRecord = serde_json::from_value(operation.payload)
-                .map_err(|error| format!("Binding payload is invalid: {error}"))?;
-            if allowedNodeIds.contains(&binding.nodeId) {
-                continue;
-            }
-            let generation = binding
-                .generation
-                .checked_add(1)
-                .ok_or_else(|| format!("Binding generation overflow for {}", binding.key))?;
-            commits.push(self.appendBindingRecord(CoreNodeBindingRecord {
-                key: binding.key,
-                nodeId: self.localNodeId.clone(),
-                generation,
-            })?);
-        }
-        Ok(commits)
     }
 
     /// Applies one synchronized Binding operation without creating another local operation.
@@ -449,7 +250,7 @@ impl CoreNodeBindingStore {
                 .recordAppliedOperation(operation)
                 .map_err(|error| error.to_string())?;
         }
-        notifyBindingOperationChanged(&self.sharedState, operation)?;
+        self.applyOperationToCache(operation)?;
         Ok(())
     }
     /// Applies one directly transported Binding operation without advancing persistence clocks.
@@ -472,38 +273,8 @@ impl CoreNodeBindingStore {
         self.syncOperationStore
             .recordAppliedOperation(operation)
             .map_err(|error| error.to_string())?;
-        notifyBindingOperationChanged(&self.sharedState, operation)?;
+        self.applyOperationToCache(operation)?;
         Ok(())
-    }
-
-    /// Executes one local mutation while an exact Binding generation remains selected here.
-    #[allow(non_snake_case)]
-    pub fn withLocalBindingGeneration<T, F>(
-        &self,
-        key: &str,
-        generation: i64,
-        operation: F,
-    ) -> Result<T, String>
-    where
-        F: FnOnce() -> Result<T, String>,
-    {
-        let _lock = coreNodeBindingMutationLock()
-            .lock()
-            .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
-        let binding = self.binding(key)?;
-        if binding.nodeId != self.localNodeId {
-            return Err(format!(
-                "Binding target mismatch for {key}: expected {}, actual {}",
-                self.localNodeId, binding.nodeId
-            ));
-        }
-        if binding.generation != generation {
-            return Err(format!(
-                "Binding generation mismatch for {key}: expected {generation}, actual {}",
-                binding.generation
-            ));
-        }
-        operation()
     }
 
     /// Returns the record selected by the newest operation for one opaque key.
@@ -565,7 +336,7 @@ impl CoreNodeBindingStore {
             .map_err(|error| error.to_string())
     }
 
-    /// Appends one authoritative Binding entity-state operation and emits its change.
+    /// Appends one authoritative Binding entity-state operation and updates the local cache.
     fn appendBindingRecord(
         &self,
         binding: CoreNodeBindingRecord,
@@ -575,11 +346,63 @@ impl CoreNodeBindingStore {
             "upsert",
             serde_json::to_value(&binding).map_err(|error| error.to_string())?,
         )?;
-        notifyCoreNodeBindingChanged(
-            &self.sharedState,
-            CoreNodeBindingChange::Upsert(binding.clone()),
-        );
+        let mut cache = self
+            .sharedState
+            .records
+            .lock()
+            .map_err(|error| format!("CoreNode Binding cache mutex poisoned: {error}"))?;
+        if let Some(records) = cache.as_mut() {
+            records.insert(binding.key.clone(), binding.clone());
+        }
         Ok(CoreNodeBindingCommit { binding, operation })
+    }
+
+    /// Applies one accepted Binding operation to the process-local cache.
+    #[allow(non_snake_case)]
+    fn applyOperationToCache(&self, operation: &SyncOperation) -> Result<(), String> {
+        let binding = match operation.operation.as_str() {
+            "upsert" => Some(
+                serde_json::from_value::<CoreNodeBindingRecord>(operation.payload.clone())
+                    .map_err(|error| format!("Binding payload is invalid: {error}"))?,
+            ),
+            "delete" => None,
+            _ => {
+                return Err(format!(
+                    "Unsupported Binding operation: {}",
+                    operation.operation
+                ));
+            }
+        };
+        let mut cache = self
+            .sharedState
+            .records
+            .lock()
+            .map_err(|error| format!("CoreNode Binding cache mutex poisoned: {error}"))?;
+        if let Some(records) = cache.as_mut() {
+            match binding {
+                Some(binding) => {
+                    records.insert(binding.key.clone(), binding);
+                }
+                None => {
+                    records.remove(&operation.entityId);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes one Binding from the process-local cache when it is loaded.
+    #[allow(non_snake_case)]
+    fn removeCachedBinding(&self, key: &str) -> Result<(), String> {
+        let mut cache = self
+            .sharedState
+            .records
+            .lock()
+            .map_err(|error| format!("CoreNode Binding cache mutex poisoned: {error}"))?;
+        if let Some(records) = cache.as_mut() {
+            records.remove(key);
+        }
+        Ok(())
     }
 
     /// Appends one local Binding entity-state operation to the shared Space log.
@@ -603,29 +426,6 @@ impl CoreNodeBindingStore {
             )
             .map_err(|error| error.to_string())
     }
-}
-
-/// Converts one applied Binding operation into an incremental cache change.
-#[allow(non_snake_case)]
-fn notifyBindingOperationChanged(
-    sharedState: &CoreNodeBindingSharedState,
-    operation: &SyncOperation,
-) -> Result<(), String> {
-    let change = match operation.operation.as_str() {
-        "upsert" => CoreNodeBindingChange::Upsert(
-            serde_json::from_value(operation.payload.clone())
-                .map_err(|error| format!("Binding payload is invalid: {error}"))?,
-        ),
-        "delete" => CoreNodeBindingChange::Delete(operation.entityId.clone()),
-        _ => {
-            return Err(format!(
-                "Unsupported Binding operation: {}",
-                operation.operation
-            ))
-        }
-    };
-    notifyCoreNodeBindingChanged(sharedState, change);
-    Ok(())
 }
 
 /// Returns the deterministic conflict-resolution order for one Binding operation.

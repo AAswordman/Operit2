@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use operit_host_api::HostEnvironmentDescriptor;
-use operit_link::CoreHandoffRequest;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::ToolPrompt::SystemToolPromptCategory;
 use operit_plugin_sdk::javascript::JsExecutionProvider;
@@ -13,6 +12,10 @@ use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 
 /// Future returned by runtime support async boundaries.
 pub type ToolRuntimeSupportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+/// Handles one completed Core route change and its target-side continuation.
+pub type CoreRouteChangeHandler =
+    Arc<dyn Fn(String, String) -> Pin<Box<dyn Future<Output = Result<(), String>>>> + Send + Sync>;
 
 /// Runtime-owned character card tool-access result consumed by tools.
 #[derive(Clone, Debug, Default)]
@@ -178,13 +181,6 @@ pub trait CoreNodeToolRuntime: Send + Sync {
     /// Returns one consistent snapshot of current device reachability.
     #[allow(non_snake_case)]
     fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String>;
-
-    /// Executes one route-owned handoff at the current EnhanceAI execution boundary.
-    #[allow(non_snake_case)]
-    fn handoffCoreAtBoundary<'a>(
-        &'a self,
-        request: CoreHandoffRequest,
-    ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
 }
 
 /// Provides runtime-owned services that the tools crate must not own.
@@ -197,11 +193,16 @@ pub trait ToolRuntimeSupport: Send + Sync {
     #[allow(non_snake_case)]
     fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String>;
 
-    /// Executes one route-owned handoff at the current EnhanceAI execution boundary.
+    /// Installs the runtime-owned route change controller.
     #[allow(non_snake_case)]
-    fn handoffCoreAtBoundary<'a>(
+    fn bindCoreRouteChangeHandler(&self, handler: CoreRouteChangeHandler) -> Result<(), String>;
+
+    /// Requests a route change after the current AI round has been committed.
+    #[allow(non_snake_case)]
+    fn requestCoreRouteChange<'a>(
         &'a self,
-        request: CoreHandoffRequest,
+        chatId: String,
+        targetNodeId: String,
     ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
 
     /// Resolves role-card tool access for the active invocation context.

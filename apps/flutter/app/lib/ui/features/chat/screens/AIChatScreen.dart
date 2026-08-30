@@ -77,20 +77,14 @@ String _normalizedLineEndings(String value) {
 
 class AIChatScreen extends StatelessWidget {
   /// Creates the full host-owned AI chat screen.
-  const AIChatScreen({
-    super.key,
-    this.viewModel,
-  });
+  const AIChatScreen({super.key, this.viewModel});
 
   final ChatViewModel? viewModel;
 
   /// Builds the full chat surface owned by the main application host.
   @override
   Widget build(BuildContext context) {
-    return _AIChatSurface(
-      viewModel: viewModel,
-      embedded: false,
-    );
+    return _AIChatSurface(viewModel: viewModel, embedded: false);
   }
 }
 
@@ -104,19 +98,13 @@ class AIChatEmbed extends StatelessWidget {
   /// Builds the workspace-free chat control for the surrounding surface.
   @override
   Widget build(BuildContext context) {
-    return _AIChatSurface(
-      viewModel: viewModel,
-      embedded: true,
-    );
+    return _AIChatSurface(viewModel: viewModel, embedded: true);
   }
 }
 
 class _AIChatSurface extends StatefulWidget {
   /// Creates the shared implementation for a full chat screen or embedded chat.
-  const _AIChatSurface({
-    required this.viewModel,
-    required this.embedded,
-  });
+  const _AIChatSurface({required this.viewModel, required this.embedded});
 
   final ChatViewModel? viewModel;
   final bool embedded;
@@ -140,7 +128,7 @@ class _ChatContentData {
     required this.hasNewerDisplayHistory,
     required this.isLoadingDisplayWindow,
     required this.isMultiSelectMode,
-    required this.selectedMessageIndices,
+    required this.selectedMessageTimestamps,
     required this.currentCharacterCardAvatarUri,
     required this.isPreparingChatSwitch,
     required this.pendingQueueMessages,
@@ -159,7 +147,7 @@ class _ChatContentData {
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
   final bool isMultiSelectMode;
-  final Set<int> selectedMessageIndices;
+  final Set<int> selectedMessageTimestamps;
   final String? currentCharacterCardAvatarUri;
   final bool isPreparingChatSwitch;
   final List<PendingQueueMessageItem> pendingQueueMessages;
@@ -170,8 +158,7 @@ class _ChatContentData {
 }
 
 class _AIChatSurfaceState extends State<_AIChatSurface> {
-  late final ChatViewModel _viewModel =
-      widget.viewModel ?? ChatViewModel();
+  late final ChatViewModel _viewModel = widget.viewModel ?? ChatViewModel();
   final TextEditingController _messageController = TextEditingController();
   TextEditingValue _previousMessageInputValue = TextEditingValue.empty;
   final FocusNode _inputFocusNode = FocusNode();
@@ -191,6 +178,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   StreamSubscription<String?>? _currentChatIdSubscription;
   StreamSubscription<List<ChatUiMessage>>? _messagesSubscription;
   StreamSubscription<core_proxy.ChatState>? _chatStateSubscription;
+  String? _requestedChatFlowChatId;
+  int _chatFlowBindingGeneration = 0;
   StreamSubscription<String?>? _toastEventSubscription;
   TopBarController? _topBarController;
   MainLayoutController? _mainLayoutController;
@@ -208,7 +197,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   String? _toastMessage;
   ChatUiMessage? _replyToMessage;
   bool _isMultiSelectMode = false;
-  Set<int> _selectedMessageIndices = const <int>{};
+  Set<int> _selectedMessageTimestamps = const <int>{};
   bool _autoScrollToBottom = true;
   bool _hasOlderDisplayHistory = false;
   bool _hasNewerDisplayHistory = false;
@@ -869,21 +858,38 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Rebinds the two per-chat Core watches after the selected chat changes.
   void _bindChatFlows(String? chatId) {
-    _messagesSubscription?.cancel();
-    _chatStateSubscription?.cancel();
+    if (chatId == _requestedChatFlowChatId) {
+      return;
+    }
+    _requestedChatFlowChatId = chatId;
+    final generation = ++_chatFlowBindingGeneration;
+    unawaited(_rebindChatFlows(chatId, generation));
+  }
+
+  /// Cancels the previous chat watches before opening the requested pair.
+  Future<void> _rebindChatFlows(String? chatId, int generation) async {
+    final previousMessagesSubscription = _messagesSubscription;
+    final previousChatStateSubscription = _chatStateSubscription;
     _messagesSubscription = null;
     _chatStateSubscription = null;
+    await Future.wait(<Future<void>>[
+      if (previousMessagesSubscription != null)
+        previousMessagesSubscription.cancel(),
+      if (previousChatStateSubscription != null)
+        previousChatStateSubscription.cancel(),
+    ]);
+    if (!mounted || generation != _chatFlowBindingGeneration) {
+      return;
+    }
     if (chatId == null || chatId.isEmpty) {
       return;
     }
-    _messagesSubscription = _viewModel.watchMessages(chatId).listen(
-      _applyMessages,
-      onError: _handleChatFlowError,
-    );
-    _chatStateSubscription = _viewModel.watchChatState(chatId).listen(
-      _applyChatState,
-      onError: _handleChatFlowError,
-    );
+    _messagesSubscription = _viewModel
+        .watchMessages(chatId)
+        .listen(_applyMessages, onError: _handleChatFlowError);
+    _chatStateSubscription = _viewModel
+        .watchChatState(chatId)
+        .listen(_applyChatState, onError: _handleChatFlowError);
   }
 
   /// Applies a message-window change without changing chat execution state.
@@ -895,14 +901,17 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _messages
       ..clear()
       ..addAll(messages);
-    if (_selectedMessageIndices.isNotEmpty) {
-      _selectedMessageIndices = _selectedMessageIndices.where((index) {
-        if (index < 0 || index >= messages.length) {
-          return false;
-        }
-        final sender = messages[index].sender;
-        return sender == 'user' || sender == 'ai';
-      }).toSet();
+    if (_selectedMessageTimestamps.isNotEmpty) {
+      final selectableTimestamps = messages
+          .where((message) {
+            final sender = message.sender;
+            return sender == 'user' || sender == 'ai';
+          })
+          .map((message) => message.timestamp)
+          .toSet();
+      _selectedMessageTimestamps = _selectedMessageTimestamps
+          .where(selectableTimestamps.contains)
+          .toSet();
     }
     _publishChatContentData();
     _scheduleScrollToBottom();
@@ -931,7 +940,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _loading = true;
       _isPreparingChatSwitch = true;
       _isMultiSelectMode = false;
-      _selectedMessageIndices = const <int>{};
+      _selectedMessageTimestamps = const <int>{};
     });
   }
 
@@ -947,7 +956,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _saveCurrentInputDraft();
       _currentChatId = state.currentChatId;
       _isMultiSelectMode = false;
-      _selectedMessageIndices = const <int>{};
+      _selectedMessageTimestamps = const <int>{};
       _restoreInputDraftForChat(state.currentChatId);
     }
     _errorMessage = null;
@@ -1264,27 +1273,52 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     await _viewModel.setMessageFavorite(timestamp, isFavorite);
   }
 
-  Future<void> _deleteMessage(int index) async {
-    await _viewModel.deleteMessage(index);
+  /// Returns the active chat identifier for a message action.
+  String? _activeChatIdForMessageAction() {
+    final chatId = _currentChatId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return null;
+    }
+    return chatId;
   }
 
-  Future<bool> _deleteMessagesFrom(int index) async {
-    return _viewModel.deleteMessagesFrom(index);
+  /// Deletes one message identified by its stable timestamp.
+  Future<void> _deleteMessage(int messageTimestamp) async {
+    final chatId = _activeChatIdForMessageAction();
+    if (chatId == null) {
+      return;
+    }
+    await _viewModel.deleteMessage(chatId, messageTimestamp);
+  }
+
+  /// Deletes the selected message and all following messages in one chat.
+  Future<bool> _deleteMessagesFrom(int messageTimestamp) async {
+    final chatId = _activeChatIdForMessageAction();
+    if (chatId == null) {
+      return false;
+    }
+    return _viewModel.deleteMessagesFrom(chatId, messageTimestamp);
   }
 
   Future<void> _deleteMessageVariant(int timestamp, int variantIndex) async {
     await _viewModel.deleteMessageVariant(timestamp, variantIndex);
   }
 
-  void _requestRollbackToMessage(int index) {
-    if (index < 0 || index >= _messages.length) {
+  /// Requests a workspace rollback anchored to a message timestamp.
+  void _requestRollbackToMessage(int messageTimestamp) {
+    final chatId = _activeChatIdForMessageAction();
+    if (chatId == null) {
       return;
     }
     _showWorkspaceChangeConfirm(
       mode: WorkspaceChangeConfirmMode.rollback,
-      index: index,
+      chatId: chatId,
+      messageTimestamp: messageTimestamp,
       onConfirm: () async {
-        final draftText = await _viewModel.rollbackToMessage(index);
+        final draftText = await _viewModel.rollbackToMessage(
+          chatId,
+          messageTimestamp,
+        );
         if (draftText != null && mounted) {
           _messageController.value = TextEditingValue(
             text: draftText,
@@ -1296,7 +1330,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     );
   }
 
-  void _selectMessageToEdit(int index, ChatUiMessage message) {
+  /// Opens the editor for a message identified by its timestamp.
+  void _selectMessageToEdit(ChatUiMessage message) {
+    final chatId = _activeChatIdForMessageAction();
+    if (chatId == null) {
+      return;
+    }
     showDialog<void>(
       context: context,
       builder: (context) {
@@ -1304,20 +1343,29 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           initialText: message.editableText,
           showResendButton: message.sender == 'user',
           onSave: (content) async {
-            await _viewModel.updateMessage(index, content);
+            await _viewModel.updateMessage(chatId, message.timestamp, content);
           },
           onResend: (content) async {
             if (_currentWorkspacePath != null &&
                 _currentWorkspacePath!.trim().isNotEmpty) {
               await _showWorkspaceChangeConfirm(
                 mode: WorkspaceChangeConfirmMode.editAndResend,
-                index: index,
+                chatId: chatId,
+                messageTimestamp: message.timestamp,
                 onConfirm: () async {
-                  await _viewModel.rewindAndResendMessage(index, content);
+                  await _viewModel.rewindAndResendMessage(
+                    chatId,
+                    message.timestamp,
+                    content,
+                  );
                 },
               );
             } else {
-              await _viewModel.rewindAndResendMessage(index, content);
+              await _viewModel.rewindAndResendMessage(
+                chatId,
+                message.timestamp,
+                content,
+              );
             }
           },
         );
@@ -1327,10 +1375,14 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   Future<void> _showWorkspaceChangeConfirm({
     required WorkspaceChangeConfirmMode mode,
-    required int index,
+    required String chatId,
+    required int messageTimestamp,
     required Future<void> Function() onConfirm,
   }) async {
-    final changes = await _viewModel.previewWorkspaceChangesForMessage(index);
+    final changes = await _viewModel.previewWorkspaceChangesForMessage(
+      chatId,
+      messageTimestamp,
+    );
     if (!mounted) {
       return;
     }
@@ -1346,8 +1398,13 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     );
   }
 
-  Future<void> _regenerateMessage(int index) async {
-    await _viewModel.regenerateSingleAiMessage(index);
+  /// Regenerates one AI message identified by its timestamp.
+  Future<void> _regenerateMessage(int messageTimestamp) async {
+    final chatId = _activeChatIdForMessageAction();
+    if (chatId == null) {
+      return;
+    }
+    await _viewModel.regenerateSingleAiMessage(chatId, messageTimestamp);
   }
 
   void _insertSummary(ChatUiMessage message) {
@@ -1373,56 +1430,63 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _inputFocusNode.requestFocus();
   }
 
-  void _toggleMultiSelectMode(int index) {
+  /// Starts multi-select mode with one message timestamp selected.
+  void _toggleMultiSelectMode(int messageTimestamp) {
     _mutateChatContentData(() {
       _isMultiSelectMode = true;
-      _selectedMessageIndices = <int>{index};
+      _selectedMessageTimestamps = <int>{messageTimestamp};
     });
   }
 
-  void _toggleMessageSelection(int index) {
+  /// Toggles one message timestamp in the current selection.
+  void _toggleMessageSelection(int messageTimestamp) {
     _mutateChatContentData(() {
-      final next = Set<int>.of(_selectedMessageIndices);
-      if (next.contains(index)) {
-        next.remove(index);
+      final next = Set<int>.of(_selectedMessageTimestamps);
+      if (next.contains(messageTimestamp)) {
+        next.remove(messageTimestamp);
       } else {
-        next.add(index);
+        next.add(messageTimestamp);
       }
-      _selectedMessageIndices = next;
+      _selectedMessageTimestamps = next;
     });
   }
 
   void _exitMultiSelectMode() {
     _mutateChatContentData(() {
       _isMultiSelectMode = false;
-      _selectedMessageIndices = const <int>{};
+      _selectedMessageTimestamps = const <int>{};
     });
   }
 
   void _clearMessageSelection() {
     _mutateChatContentData(() {
-      _selectedMessageIndices = const <int>{};
+      _selectedMessageTimestamps = const <int>{};
     });
   }
 
   void _selectAllMessages() {
     _mutateChatContentData(() {
       _isMultiSelectMode = true;
-      _selectedMessageIndices = Set<int>.from(
-        List<int>.generate(_messages.length, (index) => index).where((index) {
-          final sender = _messages[index].sender;
-          return sender == 'user' || sender == 'ai';
-        }),
-      );
+      _selectedMessageTimestamps = _messages
+          .where((message) {
+            final sender = message.sender;
+            return sender == 'user' || sender == 'ai';
+          })
+          .map((message) => message.timestamp)
+          .toSet();
     });
   }
 
   Future<void> _deleteSelectedMessages() async {
-    final indices = Set<int>.of(_selectedMessageIndices);
-    if (indices.isEmpty) {
+    final messageTimestamps = Set<int>.of(_selectedMessageTimestamps);
+    if (messageTimestamps.isEmpty) {
       return;
     }
-    await _viewModel.deleteMessages(indices);
+    final chatId = _activeChatIdForMessageAction();
+    if (chatId == null) {
+      return;
+    }
+    await _viewModel.deleteMessages(chatId, messageTimestamps);
     _exitMultiSelectMode();
   }
 
@@ -1584,7 +1648,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           onDeleteSelectedMessages: _deleteSelectedMessages,
           onRefreshRequested: _viewModel.showLatestMessagesForCurrentChat,
           isMultiSelectMode: data.isMultiSelectMode,
-          selectedMessageIndices: data.selectedMessageIndices,
+          selectedMessageTimestamps: data.selectedMessageTimestamps,
           isPreparingChatSwitch: data.isPreparingChatSwitch,
           isSpeechRecording: data.isSpeechRecording,
           isSpeechTranscribing: data.isSpeechTranscribing,
@@ -1748,7 +1812,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       hasNewerDisplayHistory: _hasNewerDisplayHistory,
       isLoadingDisplayWindow: _isLoadingDisplayWindow,
       isMultiSelectMode: _isMultiSelectMode,
-      selectedMessageIndices: _selectedMessageIndices,
+      selectedMessageTimestamps: _selectedMessageTimestamps,
       currentCharacterCardAvatarUri: _currentCharacterCardAvatarUri,
       isPreparingChatSwitch: _isPreparingChatSwitch,
       pendingQueueMessages: List<PendingQueueMessageItem>.unmodifiable(

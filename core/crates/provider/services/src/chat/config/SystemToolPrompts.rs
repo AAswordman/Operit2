@@ -902,7 +902,7 @@ fn basic_tools_en() -> SystemToolPromptCategory {
             ),
             tool(
                 "switch_core",
-                "Continue this chat on another currently reachable device in the current device space.",
+                "Emit a target-device marker for another currently reachable device. This tool does not switch the runtime itself.",
                 vec![param(
                     "node_id",
                     "string",
@@ -942,7 +942,7 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
             ),
             tool(
                 "switch_core",
-                "在当前设备空间内另一台当前可达的设备上继续这个聊天。",
+                "为当前设备空间内另一台当前可达的设备输出目标标记；此工具本身不会切换运行时。",
                 vec![param("node_id", "string", "目标设备的精确 ID", true, None)],
             ),
         ],

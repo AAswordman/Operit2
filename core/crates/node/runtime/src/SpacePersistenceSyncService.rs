@@ -275,11 +275,49 @@ impl SpacePersistenceSyncService {
         ensureRemoteIdentity(&record, &info.coreDeviceId)?;
         let localNodeId = self.state.nodeRouter.localNodeId();
         self.ensurePeerLink(&localNodeId, &record).await?;
+        if !self.exchangePairedDeviceSpaceProjection(&record).await? {
+            return Ok(());
+        }
+        self.synchronizeNodeOperations(&record.coreDeviceId, limit, bootstrap)
+            .await
+    }
 
+    /// Exchanges persisted operations with one reachable Space member selected by node id.
+    #[allow(non_snake_case)]
+    pub(crate) async fn synchronizeReachablePeer(
+        &self,
+        targetNodeId: String,
+        limit: usize,
+        bootstrap: bool,
+    ) -> Result<(), String> {
+        if limit == 0 {
+            return Err("sync limit must be greater than 0".to_string());
+        }
+        if targetNodeId == self.state.nodeRouter.localNodeId() {
+            return Ok(());
+        }
+        if !self.state.nodeRouter.nodeIsReachable(&targetNodeId)? {
+            return Err(format!(
+                "synchronization target is not reachable in the current device space: {targetNodeId}"
+            ));
+        }
+        self.validateReachableDeviceSpace(&targetNodeId).await?;
+        self.synchronizeNodeOperations(&targetNodeId, limit, bootstrap)
+            .await
+    }
+
+    /// Exchanges persistent operations with one already reachable CoreNode.
+    #[allow(non_snake_case)]
+    async fn synchronizeNodeOperations(
+        &self,
+        targetNodeId: &str,
+        limit: usize,
+        bootstrap: bool,
+    ) -> Result<(), String> {
         let localVersion: String = self.callLocal("coreVersion", Value::Null).await?;
         let remoteVersion: String = callRemote(
             &self.state.nodeRouter,
-            &record.coreDeviceId,
+            targetNodeId,
             "coreVersion",
             Value::Null,
         )
@@ -288,10 +326,6 @@ impl SpacePersistenceSyncService {
             return Err(format!(
                 "core version mismatch: local={localVersion}, remote={remoteVersion}. sync blocked"
             ));
-        }
-
-        if !self.exchangeDeviceSpaceProjection(&record).await? {
-            return Ok(());
         }
 
         if bootstrap {
@@ -312,7 +346,7 @@ impl SpacePersistenceSyncService {
             let localClock: Value = self.callLocal("syncClock", Value::Null).await?;
             let remoteClock: Value = callRemote(
                 &self.state.nodeRouter,
-                &record.coreDeviceId,
+                targetNodeId,
                 "syncClock",
                 Value::Null,
             )
@@ -329,7 +363,7 @@ impl SpacePersistenceSyncService {
                 .await?;
             let remoteOperations: Value = callRemote(
                 &self.state.nodeRouter,
-                &record.coreDeviceId,
+                targetNodeId,
                 "syncOperationsSince",
                 json!({
                     "clock": localClock,
@@ -343,7 +377,7 @@ impl SpacePersistenceSyncService {
                 if operations.is_empty() {
                     break;
                 }
-                self.synchronizeRequiredBlobs(&record.coreDeviceId, &operations)
+                self.synchronizeRequiredBlobs(targetNodeId, &operations)
                     .await?;
                 let _: Value = self
                     .callLocal(
@@ -365,11 +399,11 @@ impl SpacePersistenceSyncService {
             if operations.is_empty() {
                 break;
             }
-            self.synchronizeRequiredBlobs(&record.coreDeviceId, &operations)
+            self.synchronizeRequiredBlobs(targetNodeId, &operations)
                 .await?;
             let _: Value = callRemote(
                 &self.state.nodeRouter,
-                &record.coreDeviceId,
+                targetNodeId,
                 "syncApplyOperations",
                 json!({ "operations": operations.clone() }),
             )
@@ -386,7 +420,7 @@ impl SpacePersistenceSyncService {
 
     /// Exchanges authenticated Device Space projections and reports whether business sync is allowed.
     #[allow(non_snake_case)]
-    async fn exchangeDeviceSpaceProjection(
+    async fn exchangePairedDeviceSpaceProjection(
         &self,
         record: &PairedRemoteSessionRecord,
     ) -> Result<bool, String> {
@@ -431,6 +465,47 @@ impl SpacePersistenceSyncService {
         )
         .await?;
         Ok(currentLocalSpace.spaceId == currentRemoteSpace.spaceId)
+    }
+
+    /// Validates that one reachable CoreNode belongs to the same synchronized Device Space.
+    #[allow(non_snake_case)]
+    async fn validateReachableDeviceSpace(&self, targetNodeId: &str) -> Result<(), String> {
+        let localSpace = self.state.spaceStore.initialize()?;
+        let remoteSpace: CoreSpace = callRemoteService(
+            &self.state.nodeRouter,
+            targetNodeId,
+            "server.runtimeRemoteLinkService",
+            "deviceSpace",
+            Value::Null,
+        )
+        .await?;
+        if !remoteSpace
+            .members
+            .iter()
+            .any(|member| member == targetNodeId)
+        {
+            return Err(
+                "route synchronization target is not present in its announced device space"
+                    .to_string(),
+            );
+        }
+        if !remoteSpace
+            .members
+            .iter()
+            .any(|member| member == &self.state.nodeRouter.localNodeId())
+        {
+            return Err(
+                "route synchronization source is not present in the target device space"
+                    .to_string(),
+            );
+        }
+        if localSpace.spaceId != remoteSpace.spaceId {
+            return Err(format!(
+                "route synchronization space mismatch: local={}, target={}",
+                localSpace.spaceId, remoteSpace.spaceId
+            ));
+        }
+        Ok(())
     }
 
     /// Transfers every content-addressed blob required by a synchronization page.

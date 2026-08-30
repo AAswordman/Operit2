@@ -77,6 +77,39 @@ void main() {
       expect(proxy.embeddedWatchOpenCount, 1);
     },
   );
+
+  test(
+    'completed embedded stream descriptor preserves wrapper identity',
+    () async {
+      final proxy = _GeneratedFlowCoreProxy();
+      final bridge = ProxyCoreRuntimeBridge(coreProxy: proxy);
+      final firstStream = bridge.openEmbeddedCoreStream<MarkdownStreamEvent>(
+        'stream-ai',
+        64,
+        'openCoreStream',
+        <String, Object?>{'streamId': 'stream-ai'},
+        MarkdownStreamEvent.fromMessagePack,
+      );
+
+      expect(await firstStream.map((event) => event.value).toList(), <String?>[
+        'hello',
+      ]);
+
+      final secondStream = bridge.openEmbeddedCoreStream<MarkdownStreamEvent>(
+        'stream-ai',
+        64,
+        'openCoreStream',
+        <String, Object?>{'streamId': 'stream-ai'},
+        MarkdownStreamEvent.fromMessagePack,
+      );
+
+      expect(identical(firstStream, secondStream), isTrue);
+      expect(await secondStream.map((event) => event.value).toList(), <String?>[
+        'hello',
+      ]);
+      expect(proxy.embeddedWatchOpenCount, 1);
+    },
+  );
 }
 
 /// Records the values a generated Core client submits to its Link bridge.

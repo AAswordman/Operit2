@@ -493,7 +493,14 @@ fn render_xml_block(
             render_media_link_xml(content, lines)
         }
         Some("error") => render_error_xml(content, lines, text),
-        Some("think") | Some("thinking") => render_named_xml_body("thinking", content, lines),
+        Some("think") | Some("thinking") => {
+            let tag_name = raw_tag
+                .as_deref()
+                .unwrap_or(tag.as_deref().unwrap_or("thinking"));
+            if tag_body(content, tag_name).is_none() {
+                render_named_xml_body("thinking", content, lines);
+            }
+        }
         Some("status") => render_status_xml(content, lines),
         Some("meta") => {}
         Some(name) => render_named_xml_body(name, content, lines),
@@ -541,6 +548,7 @@ pub(super) fn render_tool_call_part(
 ) -> Vec<Line<'static>> {
     let is_strict_proxy = name == "package_proxy" || name == "proxy";
     let (display_name, display_params) = normalize_tool_display_for_strict_proxy(name, params);
+    let display_name = display_name.trim().to_string();
     let summary = render_tool_param_summary(&display_params, if is_strict_proxy { "" } else { "" });
     let leading_symbol = tool_leading_symbol(&display_name);
     let name_width = display_width(&display_name);
@@ -687,6 +695,8 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
         | "create_new_chat"
         | "list_chats"
         | "agent_status"
+        | "list_core_nodes"
+        | "switch_core"
         | "switch_chat"
         | "update_chat_title"
         | "delete_chat"
@@ -1311,4 +1321,25 @@ fn strip_inline_latex_delimiters(content: &str) -> String {
         return content[2..content.len().saturating_sub(2)].to_string();
     }
     content.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_tool_call_part;
+
+    /// Verifies that a generated switch_core tool card renders successfully.
+    #[test]
+    fn renders_switch_core_tool_call() {
+        let params = vec![("node_id".to_string(), "core-test".to_string())];
+        let lines = render_tool_call_part("switch_core", &params, 80);
+        assert_eq!(lines.len(), 1);
+    }
+
+    /// Verifies that transport whitespace does not change the generated tool classification.
+    #[test]
+    fn trims_switch_core_tool_name_before_classification() {
+        let params = vec![("node_id".to_string(), "core-test".to_string())];
+        let lines = render_tool_call_part("\n switch_core \r\n", &params, 80);
+        assert_eq!(lines.len(), 1);
+    }
 }

@@ -38,6 +38,12 @@ impl CoreStreamPool {
 
     /// Adopts every source captured while Core values were serialized.
     pub fn adoptAll(&self, attachments: Vec<operit_link::CoreStreamAttachment>) {
+        if !attachments.is_empty() {
+            AppLogger::i(
+                "CoreRouteStream",
+                &format!("pool.adopt_all count={}", attachments.len()),
+            );
+        }
         for attachment in attachments {
             self.adopt(attachment);
         }
@@ -53,6 +59,13 @@ impl CoreStreamPool {
         }
         let mut args = object_args(request.args.clone())?;
         let streamId: String = decode_core_arg(&mut args, "streamId")?;
+        AppLogger::i(
+            "CoreRouteStream",
+            &format!(
+                "pool.open requestId={} property={} streamId={}",
+                request.requestId.0, request.propertyName, streamId
+            ),
+        );
         let source = self
             .sources
             .lock()
@@ -69,6 +82,13 @@ impl CoreStreamPool {
                 );
                 CoreLinkError::watchNotFound(&request.registryKey())
             })?;
+        AppLogger::i(
+            "CoreRouteStream",
+            &format!(
+                "pool.open.ready requestId={} property={} streamId={}",
+                request.requestId.0, request.propertyName, streamId
+            ),
+        );
         source.open(request)
     }
 
@@ -79,10 +99,20 @@ impl CoreStreamPool {
             .lock()
             .expect("core stream pool mutex poisoned");
         if let Some(existing) = sources.get(&attachment.streamId) {
-            if !Arc::ptr_eq(existing, &attachment.source) {
-                existing.attachNextSegment(attachment.source);
-            }
+            let relation = if Arc::ptr_eq(existing, &attachment.source) {
+                "same"
+            } else {
+                "duplicate"
+            };
+            AppLogger::i(
+                "CoreRouteStream",
+                &format!("pool.adopt.{relation} streamId={}", attachment.streamId),
+            );
         } else {
+            AppLogger::i(
+                "CoreRouteStream",
+                &format!("pool.adopt.insert streamId={}", attachment.streamId),
+            );
             sources.insert(attachment.streamId, attachment.source);
         }
     }
@@ -279,9 +309,26 @@ pub async fn core_route_call_response(
     method_name: &str,
     args: CoreValue,
 ) -> CoreCallResponse {
-    runtime
-        .call(core_route_call_request(method_name, args))
-        .await
+    let request = core_route_call_request(method_name, args);
+    let requestId = request.requestId.0.clone();
+    AppLogger::i(
+        "CoreRouteTrace",
+        &format!(
+            "wrapper.call requestId={} method={}",
+            requestId, method_name
+        ),
+    );
+    let response = runtime.call(request).await;
+    AppLogger::i(
+        "CoreRouteTrace",
+        &format!(
+            "wrapper.call.result requestId={} method={} success={}",
+            requestId,
+            method_name,
+            response.result.is_ok()
+        ),
+    );
+    response
 }
 
 /// Decodes one Core call response into the generated caller return type.
@@ -458,6 +505,21 @@ where
             "Core watch stream completed before its snapshot",
         )
     })?;
+    AppLogger::i(
+        "CoreRouteStream",
+        &format!(
+            "state_flow.first requestId={} targetObjectId={} property={} kind={:?} value={}",
+            first
+                .requestId
+                .as_ref()
+                .map(|requestId| requestId.0.as_str())
+                .unwrap_or("<none>"),
+            first.targetObjectId,
+            first.propertyName,
+            first.kind,
+            core_value_shape(&first.value)
+        ),
+    );
     if first.kind == CoreEventKind::Completed {
         return Err(CoreLinkError::new(
             "WATCH_STREAM_COMPLETED",
@@ -481,8 +543,30 @@ where
             Box::new(move || {
                 Box::pin(async move {
                     let mut previous_value = Some(initial_value);
+                    let mut event_count = 0_u64;
                     while let Some(event) = stream.recv().await {
-                        if event.kind == CoreEventKind::Completed {
+                        event_count += 1;
+                        let completed = event.kind == CoreEventKind::Completed;
+                        if completed || should_log_core_route_event_count(event_count) {
+                            AppLogger::i(
+                                "CoreRouteStream",
+                                &format!(
+                                    "state_flow.event requestId={} targetObjectId={} property={} kind={:?} value={} count={} summary={}",
+                                    event
+                                        .requestId
+                                        .as_ref()
+                                        .map(|requestId| requestId.0.as_str())
+                                        .unwrap_or("<none>"),
+                                    event.targetObjectId,
+                                    event.propertyName,
+                                    event.kind,
+                                    core_value_shape(&event.value),
+                                    event_count,
+                                    core_value_trace_summary(&event.value)
+                                ),
+                            );
+                        }
+                        if completed {
                             break;
                         }
                         let value = if event.kind == CoreEventKind::Delta {
@@ -515,14 +599,24 @@ pub async fn core_route_state_flow<T>(
 where
     T: DeserializeOwned + Clone + PartialEq + Send + 'static,
 {
+    AppLogger::i(
+        "CoreRouteStream",
+        &format!("wrapper.watch method={}", method_name),
+    );
     let decoder = core_route_state_flow_value_decoder::<T>(
         runtime.clone(),
         method_name.to_string(),
         args.clone(),
     );
-    let stream = runtime
-        .watch(core_route_watch_request(method_name, args))
-        .await?;
+    let request = core_route_watch_request(method_name, args);
+    AppLogger::i(
+        "CoreRouteStream",
+        &format!(
+            "wrapper.watch.open requestId={} method={}",
+            request.requestId.0, method_name
+        ),
+    );
+    let stream = runtime.watch(request).await?;
     core_state_flow_from_stream_with_decoder(stream, decoder).await
 }
 
@@ -536,6 +630,10 @@ pub async fn core_route_state_flow_with_local_source<T>(
 where
     T: Serialize + DeserializeOwned + Clone + PartialEq + Send + 'static,
 {
+    AppLogger::i(
+        "CoreRouteStream",
+        &format!("wrapper.watch.local_source method={}", method_name),
+    );
     let request = core_route_watch_request(method_name, args.clone());
     let sources = Arc::new(StdMutex::new(
         HashMap::<String, Arc<CoreStreamSource>>::new(),
@@ -550,6 +648,13 @@ where
         method_name.to_string(),
         args,
         sources,
+    );
+    AppLogger::i(
+        "CoreRouteStream",
+        &format!(
+            "wrapper.watch.local_source.open requestId={} method={}",
+            request.requestId.0, method_name
+        ),
     );
     let stream = runtime.watchWithLocalSource(request, local_stream).await?;
     core_state_flow_from_stream_with_decoder(stream, decoder).await
@@ -605,15 +710,34 @@ fn adopt_core_stream_attachments(
     sources: Arc<StdMutex<HashMap<String, Arc<CoreStreamSource>>>>,
     attachments: Vec<CoreStreamAttachment>,
 ) {
+    if !attachments.is_empty() {
+        AppLogger::i(
+            "CoreRouteStream",
+            &format!("route.attachments.adopt count={}", attachments.len()),
+        );
+    }
     let mut sources = sources
         .lock()
         .expect("routed core stream source registry mutex poisoned");
     for attachment in attachments {
         if let Some(existing) = sources.get(&attachment.streamId) {
-            if !Arc::ptr_eq(existing, &attachment.source) {
-                existing.attachNextSegment(attachment.source);
-            }
+            let relation = if Arc::ptr_eq(existing, &attachment.source) {
+                "same"
+            } else {
+                "duplicate"
+            };
+            AppLogger::i(
+                "CoreRouteStream",
+                &format!(
+                    "route.attachments.{relation} streamId={}",
+                    attachment.streamId
+                ),
+            );
         } else {
+            AppLogger::i(
+                "CoreRouteStream",
+                &format!("route.attachments.insert streamId={}", attachment.streamId),
+            );
             sources.insert(attachment.streamId, attachment.source);
         }
     }
@@ -630,14 +754,35 @@ fn routed_core_stream_source_for_descriptor(
     if descriptor.targetObjectId != CORE_STREAM_POOL_OBJECT_ID
         || descriptor.propertyName != "openCoreStream"
     {
+        AppLogger::i(
+            "CoreRouteStream",
+            &format!(
+                "route.descriptor.skip streamId={} targetObjectId={} property={}",
+                descriptor.streamId, descriptor.targetObjectId, descriptor.propertyName
+            ),
+        );
         return None;
     }
     let mut sources = sources
         .lock()
         .expect("routed core stream source registry mutex poisoned");
     if let Some(source) = sources.get(&descriptor.streamId) {
+        AppLogger::i(
+            "CoreRouteStream",
+            &format!(
+                "route.descriptor.existing streamId={} sourceMethod={}",
+                descriptor.streamId, source_method
+            ),
+        );
         return Some(source.clone());
     }
+    AppLogger::i(
+        "CoreRouteStream",
+        &format!(
+            "route.descriptor.create streamId={} sourceMethod={}",
+            descriptor.streamId, source_method
+        ),
+    );
     let source = Arc::new(core_route_embedded_stream_source(
         runtime,
         "watch",
@@ -657,6 +802,18 @@ fn core_route_embedded_stream_source(
 ) -> CoreStreamSource {
     CoreStreamSource::new(move |open_request| {
         let mut routed_open_request = open_request;
+        let streamId = core_stream_id_argument(&routed_open_request.args);
+        AppLogger::i(
+            "CoreRouteStream",
+            &format!(
+                "embedded.open.prepare requestId={} streamId={} sourceMode={} sourceMethod={} property={}",
+                routed_open_request.requestId.0,
+                streamId.as_deref().unwrap_or("<missing>"),
+                source_mode,
+                source_method,
+                routed_open_request.propertyName
+            ),
+        );
         routed_open_request.args = core_route_embedded_stream_open_args(
             routed_open_request.args,
             source_mode,
@@ -673,14 +830,61 @@ fn core_route_embedded_stream_source(
                         let request_id = routed_open_request.requestId.clone();
                         let target_object_id = routed_open_request.targetObjectId;
                         let property_name = routed_open_request.propertyName.clone();
+                        let stream_id = core_stream_id_argument(&routed_open_request.args)
+                            .unwrap_or_else(|| "<missing>".to_string());
+                        AppLogger::i(
+                            "CoreRouteStream",
+                            &format!(
+                                "embedded.watch.start requestId={} streamId={} property={}",
+                                request_id.0, stream_id, property_name
+                            ),
+                        );
                         match runtime.watch(routed_open_request).await {
                             Ok(mut stream) => {
+                                let mut event_count = 0_u64;
+                                AppLogger::i(
+                                    "CoreRouteStream",
+                                    &format!(
+                                        "embedded.watch.opened requestId={} streamId={} property={}",
+                                        request_id.0, stream_id, property_name
+                                    ),
+                                );
                                 while let Some(event) = stream.recv().await {
+                                    event_count += 1;
                                     let completed = event.kind == CoreEventKind::Completed;
+                                    if completed || should_log_core_route_event_count(event_count) {
+                                        AppLogger::i(
+                                            "CoreRouteStream",
+                                            &format!(
+                                                "embedded.watch.event requestId={} streamId={} eventProperty={} kind={:?} value={} count={} summary={}",
+                                                request_id.0,
+                                                stream_id,
+                                                event.propertyName,
+                                                event.kind,
+                                                core_value_shape(&event.value),
+                                                event_count,
+                                                core_value_trace_summary(&event.value)
+                                            ),
+                                        );
+                                    }
                                     if sender.send(event).is_err() {
+                                        AppLogger::i(
+                                            "CoreRouteStream",
+                                            &format!(
+                                                "embedded.watch.receiver_closed requestId={} streamId={}",
+                                                request_id.0, stream_id
+                                            ),
+                                        );
                                         break;
                                     }
                                     if completed {
+                                        AppLogger::i(
+                                            "CoreRouteStream",
+                                            &format!(
+                                                "embedded.watch.completed requestId={} streamId={} events={}",
+                                                request_id.0, stream_id, event_count
+                                            ),
+                                        );
                                         break;
                                     }
                                 }
@@ -689,8 +893,8 @@ fn core_route_embedded_stream_source(
                                 operit_util::AppLogger::AppLogger::e(
                                     "CoreRouteStream",
                                     &format!(
-                                        "embedded_stream_open_failed requestId={} property={} error={}",
-                                        request_id.0, property_name, error
+                                        "embedded_stream_open_failed requestId={} streamId={} property={} code={} error={}",
+                                        request_id.0, stream_id, property_name, error.code, error
                                     ),
                                 );
                                 let _ = sender.send(CoreEvent {
@@ -736,6 +940,114 @@ fn core_route_embedded_stream_open_args(
         source_args,
     );
     Ok(CoreValue::Map(arguments))
+}
+
+/// Returns the coarse shape of one Core value for protocol trace logs.
+fn core_value_shape(value: &CoreValue) -> &'static str {
+    match value {
+        CoreValue::Null => "null",
+        CoreValue::Bool(_) => "bool",
+        CoreValue::Signed(_) => "signed",
+        CoreValue::Unsigned(_) => "unsigned",
+        CoreValue::Float(_) => "float",
+        CoreValue::String(_) => "string",
+        CoreValue::Bytes(_) => "bytes",
+        CoreValue::List(_) => "list",
+        CoreValue::Map(_) => "map",
+    }
+}
+
+/// Builds one compact Core value summary for route diagnostics.
+fn core_value_trace_summary(value: &CoreValue) -> String {
+    match value {
+        CoreValue::Null => "null".to_string(),
+        CoreValue::Bool(value) => format!("bool={value}"),
+        CoreValue::Signed(value) => format!("signed={value}"),
+        CoreValue::Unsigned(value) => format!("unsigned={value}"),
+        CoreValue::Float(value) => format!("float={value}"),
+        CoreValue::String(value) => format!("stringLen={}", value.chars().count()),
+        CoreValue::Bytes(value) => format!("bytesLen={}", value.len()),
+        CoreValue::List(values) => format!(
+            "listLen={} last={}",
+            values.len(),
+            values
+                .last()
+                .map(core_value_trace_summary)
+                .unwrap_or_else(|| "none".to_string())
+        ),
+        CoreValue::Map(values) => {
+            if let Some(event_type) = values.get("eventType") {
+                let value_len = values.get("value").map(core_value_shape).unwrap_or("none");
+                let id = values
+                    .get("id")
+                    .map(core_value_trace_field)
+                    .unwrap_or_else(|| "none".to_string());
+                let block_id = values
+                    .get("blockId")
+                    .map(core_value_trace_field)
+                    .unwrap_or_else(|| "none".to_string());
+                let inline_id = values
+                    .get("inlineId")
+                    .map(core_value_trace_field)
+                    .unwrap_or_else(|| "none".to_string());
+                let parent_block_id = values
+                    .get("parentBlockId")
+                    .map(core_value_trace_field)
+                    .unwrap_or_else(|| "none".to_string());
+                let node_type = values
+                    .get("nodeType")
+                    .map(core_value_trace_field)
+                    .unwrap_or_else(|| "none".to_string());
+                let header_level = values
+                    .get("headerLevel")
+                    .map(core_value_trace_field)
+                    .unwrap_or_else(|| "none".to_string());
+                return format!(
+                    "markdown eventType={} value={} id={} blockId={} inlineId={} parentBlockId={} nodeType={} headerLevel={}",
+                    core_value_trace_field(event_type),
+                    value_len,
+                    id,
+                    block_id,
+                    inline_id,
+                    parent_block_id,
+                    node_type,
+                    header_level
+                );
+            }
+            format!("mapKeys={}", values.len())
+        }
+    }
+}
+
+/// Reads one Core value as a compact trace field string.
+fn core_value_trace_field(value: &CoreValue) -> String {
+    match value {
+        CoreValue::Null => "null".to_string(),
+        CoreValue::Bool(value) => value.to_string(),
+        CoreValue::Signed(value) => value.to_string(),
+        CoreValue::Unsigned(value) => value.to_string(),
+        CoreValue::Float(value) => value.to_string(),
+        CoreValue::String(value) => value.clone(),
+        CoreValue::Bytes(value) => format!("bytesLen={}", value.len()),
+        CoreValue::List(values) => format!("listLen={}", values.len()),
+        CoreValue::Map(values) => format!("mapKeys={}", values.len()),
+    }
+}
+
+/// Returns whether one routed stream event count should be logged.
+fn should_log_core_route_event_count(count: u64) -> bool {
+    count <= 5 || count % 256 == 0
+}
+
+/// Reads the embedded stream identifier from a Link argument map for logs.
+fn core_stream_id_argument(args: &CoreValue) -> Option<String> {
+    match args {
+        CoreValue::Map(arguments) => match arguments.get("streamId") {
+            Some(CoreValue::String(value)) => Some(value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Forwards one Core event stream through an unbounded sender on the host scheduler.
@@ -1097,5 +1409,90 @@ mod tests {
         assert_eq!(changed.kind, CoreEventKind::Changed);
         assert_eq!(changed.value, CoreValue::String("route-chunk".to_string()));
         assert!(runtime.openedEmbeddedStream.load(Ordering::Acquire));
+    }
+
+    /// Verifies duplicate attachments do not reopen one logical stream.
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_pool_keeps_one_source_for_duplicate_logical_stream_id() {
+        let streamId = "duplicate-logical-stream".to_string();
+        let firstSource = Arc::new(CoreStreamSource::new(|request| {
+            let (sender, receiver) = core_event_stream_channel();
+            sender
+                .send(CoreEvent {
+                    requestId: Some(request.requestId.clone()),
+                    targetObjectId: request.targetObjectId,
+                    propertyName: request.propertyName.clone(),
+                    kind: CoreEventKind::Changed,
+                    value: CoreValue::String("first-source".to_string()),
+                })
+                .expect("test stream receiver must be open");
+            sender
+                .send(CoreEvent {
+                    requestId: Some(request.requestId),
+                    targetObjectId: request.targetObjectId,
+                    propertyName: request.propertyName,
+                    kind: CoreEventKind::Completed,
+                    value: CoreValue::Null,
+                })
+                .expect("test stream receiver must be open");
+            Ok(receiver)
+        }));
+        let secondSource = Arc::new(CoreStreamSource::new(|request| {
+            let (sender, receiver) = core_event_stream_channel();
+            sender
+                .send(CoreEvent {
+                    requestId: Some(request.requestId.clone()),
+                    targetObjectId: request.targetObjectId,
+                    propertyName: request.propertyName.clone(),
+                    kind: CoreEventKind::Changed,
+                    value: CoreValue::String("second-source".to_string()),
+                })
+                .expect("test stream receiver must be open");
+            sender
+                .send(CoreEvent {
+                    requestId: Some(request.requestId),
+                    targetObjectId: request.targetObjectId,
+                    propertyName: request.propertyName,
+                    kind: CoreEventKind::Completed,
+                    value: CoreValue::Null,
+                })
+                .expect("test stream receiver must be open");
+            Ok(receiver)
+        }));
+        let streamPool = Arc::new(CoreStreamPool::new());
+        streamPool.adoptAll(vec![
+            CoreStreamAttachment {
+                streamId: streamId.clone(),
+                source: firstSource,
+            },
+            CoreStreamAttachment {
+                streamId: streamId.clone(),
+                source: secondSource,
+            },
+        ]);
+
+        let mut stream = streamPool
+            .openCoreStreamWatch(CoreWatchRequest::new(
+                "duplicate-logical-open",
+                CORE_STREAM_POOL_OBJECT_ID,
+                "openCoreStream",
+                CoreValue::Map(BTreeMap::from([(
+                    "streamId".to_string(),
+                    CoreValue::String(streamId),
+                )])),
+            ))
+            .expect("duplicate logical stream must open");
+
+        let first = stream
+            .recv()
+            .await
+            .expect("duplicate logical stream must emit first event");
+        assert_eq!(first.value, CoreValue::String("first-source".to_string()));
+        let completed = stream
+            .recv()
+            .await
+            .expect("duplicate logical stream must complete");
+        assert_eq!(completed.kind, CoreEventKind::Completed);
+        assert!(stream.recv().await.is_none());
     }
 }

@@ -125,6 +125,11 @@ impl CoreApplication {
             nodeRouter.clone(),
             accessStore.clone(),
         );
+        let routeChangeServices = accessServices.clone();
+        localClient.bindCoreRouteChangeHandler(Arc::new(move |chatId, targetNodeId| {
+            let services = routeChangeServices.clone();
+            Box::pin(async move { services.requestChangeRoute(chatId, targetNodeId).await })
+        }))?;
         accessServices.startSpaceSync()?;
         Ok(Self {
             localClient,

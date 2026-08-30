@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -24,20 +24,25 @@ use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
+use operit_model::MessagePart::MessagePart;
+use operit_model::MessagePartCodec::AssistantMarkupStreamState;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_runtime::services::ChatServiceCore::ChatState;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
+use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStage, FullUpdateTarget, ReleaseInfo,
 };
+use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 
 use super::approval::TuiApprovalBridge;
 use super::config;
 use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
 use super::i18n::{TuiLanguage, TuiText};
-use super::link_proxy_rs::TuiCore;
+use super::link_proxy_rs::{TuiContentStreamEventInfo, TuiCore};
 use super::pending_queue::PendingQueueMessage;
 use super::selection::{
     mouse_drag_transcript_position, mouse_transcript_position, TranscriptCopyLine,
@@ -58,9 +63,9 @@ pub(super) struct OperitTui {
     pub(super) initial_shell_args: ShellArgs,
     pub(super) current_chat_id_cache: Option<String>,
     pub(super) current_messages_cache: Vec<ChatMessage>,
+    content_stream_states: BTreeMap<String, TuiMessageContentStreamState>,
     pub(super) current_chat_is_loading_cache: bool,
     pub(super) current_chat_input_processing_state_cache: InputProcessingState,
-    pub(super) active_streaming_chat_ids_cache: HashSet<String>,
     pub(super) current_window_size_cache: i64,
     pub(super) chats: Vec<ChatListItem>,
     pub(super) selected_chat_index: usize,
@@ -119,6 +124,60 @@ pub(super) struct OperitTui {
     pub(super) show_config_popup: bool,
     pub(super) config_ui: ConfigUi,
     pub(super) should_quit: bool,
+}
+
+struct TuiMessageContentStreamState {
+    revisionTracker: TextStreamRevisionTracker,
+    partStream: AssistantMarkupStreamState,
+}
+
+impl TuiMessageContentStreamState {
+    /// Creates an empty semantic projection for one embedded AI content stream.
+    fn new() -> Self {
+        Self {
+            revisionTracker: TextStreamRevisionTracker::new(""),
+            partStream: AssistantMarkupStreamState::new(),
+        }
+    }
+
+    /// Starts a self-contained stream snapshot.
+    fn reset(&mut self) {
+        self.revisionTracker.replace("");
+        self.partStream = AssistantMarkupStreamState::new();
+    }
+
+    /// Appends one raw provider chunk and updates semantic message parts.
+    fn pushChunk(&mut self, chunk: &str) -> Result<Vec<MessagePart>, String> {
+        self.revisionTracker.append(chunk);
+        self.partStream.push(chunk)?;
+        Ok(self.partStream.parts().to_vec())
+    }
+
+    /// Records a named text revision point.
+    fn savepoint(&mut self, id: &str) {
+        self.revisionTracker.savepoint(id);
+    }
+
+    /// Restores a named revision point and rebuilds semantic message parts.
+    fn rollback(&mut self, id: &str) -> Result<Vec<MessagePart>, String> {
+        let content = self
+            .revisionTracker
+            .rollback(id)
+            .ok_or_else(|| format!("TUI content stream rollback point is missing: {id}"))?
+            .to_string();
+        self.partStream.resetToSnapshot(&content)?;
+        Ok(self.partStream.parts().to_vec())
+    }
+
+    /// Finalizes semantic message parts after the embedded stream completes.
+    fn finish(&mut self) -> Result<Vec<MessagePart>, String> {
+        self.partStream.finish()
+    }
+
+    /// Returns the current semantic message parts without mutating stream state.
+    fn currentParts(&self) -> Vec<MessagePart> {
+        self.partStream.parts().to_vec()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -263,21 +322,14 @@ impl OperitTui {
             .chatMessagesFlowSnapshot(active_chat_id.clone())
             .await
             .map_err(|error| error.to_string())?;
-        let current_chat_is_loading_cache = core
+        let current_chat_state_cache = core
             .chat_runtime_holder_main()
-            .currentChatIsLoading()
+            .chatStateFlowSnapshot(active_chat_id.clone())
             .await
             .map_err(|error| error.to_string())?;
-        let current_chat_input_processing_state_cache = core
-            .chat_runtime_holder_main()
-            .currentChatInputProcessingState()
-            .await
-            .map_err(|error| error.to_string())?;
-        let active_streaming_chat_ids_cache = core
-            .chat_runtime_holder_main()
-            .activeStreamingChatIdsFlowSnapshot()
-            .await
-            .map_err(|error| error.to_string())?;
+        let current_chat_is_loading_cache = current_chat_state_cache.isLoading;
+        let current_chat_input_processing_state_cache =
+            current_chat_state_cache.inputProcessingState.clone();
         let current_window_size_cache = core
             .chat_runtime_holder_main()
             .currentWindowSizeFlowSnapshot()
@@ -286,7 +338,13 @@ impl OperitTui {
         core.watchMainChatGeneratedStateFlows()
             .await
             .map_err(|error| error.to_string())?;
+        core.watchMainChatStateFlow(active_chat_id.clone())
+            .await
+            .map_err(|error| error.to_string())?;
         core.watchMainChatMessagesFlow(active_chat_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        core.syncMainChatContentStreams(&current_messages_cache)
             .await
             .map_err(|error| error.to_string())?;
         Ok(Self {
@@ -294,9 +352,9 @@ impl OperitTui {
             initial_shell_args,
             current_chat_id_cache: current_chat_id_cache.clone(),
             current_messages_cache,
+            content_stream_states: BTreeMap::new(),
             current_chat_is_loading_cache,
             current_chat_input_processing_state_cache,
-            active_streaming_chat_ids_cache,
             current_window_size_cache,
             chats,
             selected_chat_index,
@@ -1865,24 +1923,7 @@ impl OperitTui {
             .await
             .map_err(|error| error.to_string())?;
         self.refresh_current_messages_for_cached_chat().await?;
-        self.current_chat_is_loading_cache = self
-            .core
-            .chat_runtime_holder_main()
-            .currentChatIsLoading()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.current_chat_input_processing_state_cache = self
-            .core
-            .chat_runtime_holder_main()
-            .currentChatInputProcessingState()
-            .await
-            .map_err(|error| error.to_string())?;
-        self.active_streaming_chat_ids_cache = self
-            .core
-            .chat_runtime_holder_main()
-            .activeStreamingChatIdsFlowSnapshot()
-            .await
-            .map_err(|error| error.to_string())?;
+        self.refresh_current_chat_state_for_cached_chat().await?;
         self.current_window_size_cache = self
             .core
             .chat_runtime_holder_main()
@@ -1892,11 +1933,34 @@ impl OperitTui {
         Ok(())
     }
 
+    /// Refreshes the current chat state cache and its chat-scoped watch.
+    async fn refresh_current_chat_state_for_cached_chat(&mut self) -> Result<(), String> {
+        let Some(chat_id) = self.current_chat_id_cache.clone() else {
+            self.core.clearMainChatStateWatch();
+            self.current_chat_is_loading_cache = false;
+            self.current_chat_input_processing_state_cache = InputProcessingState::Idle;
+            return Ok(());
+        };
+        self.core
+            .watchMainChatStateFlow(chat_id.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        let state = self
+            .core
+            .chat_runtime_holder_main()
+            .chatStateFlowSnapshot(chat_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.apply_chat_state(state);
+        Ok(())
+    }
+
     /// Refreshes the current message cache and its chat-scoped watch.
     async fn refresh_current_messages_for_cached_chat(&mut self) -> Result<(), String> {
         let Some(chat_id) = self.current_chat_id_cache.clone() else {
             self.core.clearMainChatMessagesWatch();
             self.current_messages_cache.clear();
+            self.content_stream_states.clear();
             return Ok(());
         };
         self.core
@@ -1909,6 +1973,8 @@ impl OperitTui {
             .chatMessagesFlowSnapshot(chat_id)
             .await
             .map_err(|error| error.to_string())?;
+        self.apply_existing_content_stream_parts_to_cache();
+        self.sync_content_stream_watches().await?;
         Ok(())
     }
 
@@ -1917,6 +1983,7 @@ impl OperitTui {
         self.apply_startup_install_events();
         self.apply_full_update_download_events();
         let mut should_refresh_messages = false;
+        let mut should_sync_content_streams = false;
         for event in self.core.drainEvents() {
             match event.propertyName.as_str() {
                 "currentChatIdFlow" => {
@@ -1933,6 +2000,15 @@ impl OperitTui {
                             operit_link::fromCoreValue::<Vec<ChatMessage>>(event.value)
                         {
                             self.current_messages_cache = value;
+                            self.apply_existing_content_stream_parts_to_cache();
+                            should_sync_content_streams = true;
+                        }
+                    }
+                }
+                "chatStateFlow" => {
+                    if self.core.isActiveMainChatStateEvent(&event) {
+                        if let Ok(value) = operit_link::fromCoreValue::<ChatState>(event.value) {
+                            self.apply_chat_state(value);
                         }
                     }
                 }
@@ -1944,36 +2020,118 @@ impl OperitTui {
                         }
                     }
                 }
-                "activeStreamingChatIdsFlow" => {
-                    if let Ok(value) = operit_link::fromCoreValue::<HashSet<String>>(event.value) {
-                        self.active_streaming_chat_ids_cache = value;
-                        self.update_current_chat_loading_from_streaming_ids();
-                    }
-                }
-                "inputProcessingStateByChatIdFlow" => {
-                    if let Ok(value) = operit_link::fromCoreValue::<
-                        HashMap<String, InputProcessingState>,
-                    >(event.value)
-                    {
-                        self.current_chat_input_processing_state_cache =
-                            current_input_processing_state_from_map(
-                                &value,
-                                self.current_chat_id_cache.as_ref(),
-                            );
-                    }
-                }
                 "currentWindowSizeFlow" => {
                     if let Ok(value) = operit_link::fromCoreValue::<i64>(event.value) {
                         self.current_window_size_cache = value;
                     }
                 }
-                _ => {}
+                _ => {
+                    if let Some(info) = self.core.mainChatContentStreamEventInfo(&event) {
+                        self.apply_content_stream_event(info, event)?;
+                    }
+                }
             }
         }
         if should_refresh_messages {
             self.refresh_current_messages_for_cached_chat().await?;
+            should_sync_content_streams = false;
+        }
+        if should_sync_content_streams {
+            self.sync_content_stream_watches().await?;
         }
         Ok(())
+    }
+
+    /// Synchronizes active embedded content streams with the current TUI message cache.
+    async fn sync_content_stream_watches(&mut self) -> Result<(), String> {
+        self.core
+            .syncMainChatContentStreams(&self.current_messages_cache)
+            .await
+            .map_err(|error| error.to_string())?;
+        let activeStreamIds = self.core.activeMainChatContentStreamIds();
+        self.content_stream_states
+            .retain(|streamId, _| activeStreamIds.contains(streamId));
+        self.apply_existing_content_stream_parts_to_cache();
+        Ok(())
+    }
+
+    /// Applies one embedded Markdown stream event to the matching cached chat message.
+    fn apply_content_stream_event(
+        &mut self,
+        info: TuiContentStreamEventInfo,
+        event: operit_link::CoreEvent,
+    ) -> Result<(), String> {
+        let markdown: MarkdownStreamEvent =
+            operit_link::fromCoreValue(event.value).map_err(|error| error.to_string())?;
+        let state = self
+            .content_stream_states
+            .entry(info.streamId)
+            .or_insert_with(TuiMessageContentStreamState::new);
+        let parts = match markdown.eventType.as_str() {
+            "reset" => {
+                state.reset();
+                None
+            }
+            "chunk" => {
+                let chunk = markdown
+                    .value
+                    .ok_or_else(|| "TUI content stream chunk event is missing value".to_string())?;
+                Some(state.pushChunk(&chunk)?)
+            }
+            "savepoint" => {
+                let id = markdown.id.ok_or_else(|| {
+                    "TUI content stream savepoint event is missing id".to_string()
+                })?;
+                state.savepoint(&id);
+                None
+            }
+            "rollback" => {
+                let id = markdown
+                    .id
+                    .ok_or_else(|| "TUI content stream rollback event is missing id".to_string())?;
+                Some(state.rollback(&id)?)
+            }
+            "completed" => Some(state.finish()?),
+            _ => None,
+        };
+        if let Some(parts) = parts {
+            self.update_cached_content_stream_message(info.messageTimestamp, parts);
+        }
+        Ok(())
+    }
+
+    /// Restores active embedded stream projections after message Flow snapshots arrive.
+    fn apply_existing_content_stream_parts_to_cache(&mut self) {
+        for message in &mut self.current_messages_cache {
+            let Some(stream) = message.contentStream.as_ref() else {
+                continue;
+            };
+            let Some(state) = self.content_stream_states.get(&stream.descriptor.streamId) else {
+                continue;
+            };
+            message.parts = state.currentParts();
+        }
+    }
+
+    /// Replaces the semantic parts for one cached message updated by an embedded stream.
+    fn update_cached_content_stream_message(
+        &mut self,
+        messageTimestamp: i64,
+        parts: Vec<MessagePart>,
+    ) {
+        if let Some(message) = self
+            .current_messages_cache
+            .iter_mut()
+            .find(|message| message.timestamp == messageTimestamp)
+        {
+            message.parts = parts;
+        }
+    }
+
+    /// Applies routed runtime state for the selected chat.
+    fn apply_chat_state(&mut self, state: ChatState) {
+        self.current_chat_is_loading_cache = state.isLoading;
+        self.current_chat_input_processing_state_cache = state.inputProcessingState;
     }
 
     fn apply_startup_install_events(&mut self) {
@@ -2116,15 +2274,6 @@ impl OperitTui {
         self.current_chat_is_loading_cache
     }
 
-    /// Updates the selected chat loading state from the active streaming chat identifiers.
-    fn update_current_chat_loading_from_streaming_ids(&mut self) {
-        self.current_chat_is_loading_cache = self
-            .current_chat_id_cache
-            .as_ref()
-            .map(|chat_id| self.active_streaming_chat_ids_cache.contains(chat_id))
-            .unwrap_or(false);
-    }
-
     pub(super) fn current_chat_input_processing_state(&mut self) -> InputProcessingState {
         self.current_chat_input_processing_state_cache.clone()
     }
@@ -2153,6 +2302,16 @@ impl OperitTui {
                     self.awaiting_runtime_loading = false;
                     self.last_current_chat_loading = false;
                     self.set_runtime_status_message(message.clone(), &state, is_loading);
+                }
+                InputProcessingState::Idle | InputProcessingState::Completed => {
+                    self.awaiting_runtime_loading = false;
+                    self.last_current_chat_loading = false;
+                    self.follow_transcript = true;
+                    self.refresh_chats().await;
+                    match self.current_chat_model_status_label().await {
+                        Ok(label) => self.set_status_message(label),
+                        Err(error) => self.set_status_message(error),
+                    }
                 }
                 _ => {
                     self.follow_transcript = true;
@@ -2552,21 +2711,83 @@ fn strip_attachment_tokens(
     message.trim().to_string()
 }
 
-fn current_input_processing_state_from_map(
-    value: &HashMap<String, InputProcessingState>,
-    chat_id: Option<&String>,
-) -> InputProcessingState {
-    chat_id
-        .and_then(|chat_id| value.get(chat_id))
-        .or_else(|| value.get("__DEFAULT_CHAT__"))
-        .cloned()
-        .unwrap_or(InputProcessingState::Idle)
-}
-
 fn format_context_length(value: f32) -> String {
     if value.fract() == 0.0 {
         format!("{}", value as i32)
     } else {
         format!("{value:.1}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_model::MessagePart::MessagePartKind;
+    use operit_model::MessagePartCodec::MessagePartCodec;
+
+    /// Verifies TUI embedded stream projection preserves split tool markup.
+    #[test]
+    fn tui_content_stream_state_projects_split_tool_markup() {
+        let mut state = TuiMessageContentStreamState::new();
+
+        state
+            .pushChunk("before <tool name=\"switch_core\" call_id=\"part-1\"><param name=\"node_id\">core-a")
+            .expect("first embedded stream chunk must project");
+        let parts = state
+            .pushChunk("</param></tool> after")
+            .expect("second embedded stream chunk must project");
+
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[0].content, "before ");
+        assert_eq!(parts[1].kind, MessagePartKind::ToolCall);
+        assert_eq!(parts[1].toolName.as_deref(), Some("switch_core"));
+        assert_eq!(
+            parts[1].attributes.get("node_id").map(String::as_str),
+            Some("core-a")
+        );
+        assert_eq!(parts[2].kind, MessagePartKind::Markdown);
+        assert_eq!(parts[2].content, " after");
+    }
+
+    /// Verifies TUI embedded stream projection can restore a provider revision.
+    #[test]
+    fn tui_content_stream_state_projects_revision_rollback() {
+        let mut state = TuiMessageContentStreamState::new();
+
+        state
+            .pushChunk("stable ")
+            .expect("initial embedded stream chunk must project");
+        state.savepoint("retry");
+        state
+            .pushChunk("discarded")
+            .expect("discarded embedded stream chunk must project");
+        let parts = state
+            .rollback("retry")
+            .expect("embedded stream rollback must project");
+        assert_eq!(MessagePartCodec::visibleText(&parts), "stable ");
+
+        let parts = state
+            .pushChunk("final")
+            .expect("final embedded stream chunk must project");
+        assert_eq!(MessagePartCodec::visibleText(&parts), "stable final");
+    }
+
+    /// Verifies TUI embedded stream projection keeps thinking content out of visible text.
+    #[test]
+    fn tui_content_stream_state_hides_thinking_markup() {
+        let mut state = TuiMessageContentStreamState::new();
+
+        state
+            .pushChunk("<think>internal")
+            .expect("thinking opening chunk must project");
+        let parts = state
+            .pushChunk("</think>visible")
+            .expect("thinking closing chunk must project");
+
+        assert!(parts
+            .iter()
+            .any(|part| part.kind == MessagePartKind::Thinking));
+        assert_eq!(MessagePartCodec::visibleText(&parts), "visible");
     }
 }

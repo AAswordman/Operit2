@@ -48,7 +48,7 @@
   完整权限
     只读 = readOnly + sandbox on
     工作区读写 = workspaceWrite + sandbox on
-    完整权限 = workspaceWrite + sandbox off
+    完整权限 = Full + sandbox off
 
 应用内沙盒
   未启用
@@ -125,7 +125,7 @@ workspaceWrite
   如果 ToolEffect.WRITE 需要逃逸应用内沙盒，则询问用户。
 
 full
-  文件工具可以读写当前 workspace。
+  文件工具可以读写 Host Authorization 允许的 VFS 路径。
   不启用应用内沙盒。
   内置工具调用不询问。
   PackageTool 调用仍询问。
@@ -346,8 +346,9 @@ host bridge boundary
    已落地：
      StandardFileSystemTools 从 AITool 参数取 path。
      VisualFileSystem.resolvePath 使用 PathMapper 解析 VFS path。
-     AIToolHandler 在执行前读取当前 workspacePath，用 PathMapper.resolve 解析 workspace 和目标 path。
-     文件读写在调用 Host FileSystemHost 前完成当前 workspace 边界检查。
+     AIToolHandler 在 ReadOnly / WorkspaceWrite 模式下读取当前 workspacePath，用 PathMapper.resolve 解析 workspace 和目标 path。
+     ReadOnly / WorkspaceWrite 的文件读写在调用 Host FileSystemHost 前完成当前 workspace 边界检查。
+     Full 的文件读写通过 VFS 解析后交给 Host FileSystemHost。
      list/read/fileExists/fileInfo/find/grep 属于 ToolEffect.READ。
      write/writeBinary/delete/move/copy/mkdir/download/apply/create 属于 ToolEffect.WRITE。
      读写检查基于 PathMapper.relativePath 的结构化 VFS 归属，不基于字符串包含。
@@ -361,8 +362,8 @@ request/session
   -> ToolExecutionManager passes parsed tool invocation
   -> AIToolHandler resolves executor and reads accessSpec(tool)
   -> AI capability guard checks READ / WRITE mode
-  -> file boundary resolves workspace root and target path through PathMapper
-  -> PathMapper.relativePath confirms the target stays inside the active workspace
+  -> ReadOnly / WorkspaceWrite file boundary resolves workspace root and target path through PathMapper
+  -> ReadOnly / WorkspaceWrite PathMapper.relativePath confirms the target stays inside the active workspace
   -> Host FileSystemHost executes
 ```
 
@@ -372,16 +373,20 @@ request/session
 
 文件边界判定直接使用 `ToolEffect.READ / ToolEffect.WRITE`，不再定义第二套 `WorkspaceOperation`。
 
-当前实现由 `AIToolHandler` 在执行前读取 `workspacePath`，分别用 `PathMapper.resolve` 解析当前 workspace root 和目标 path，再用 `PathMapper.relativePath` 判定目标是否落在当前 workspace 内：
+当前实现由 `AIToolHandler` 根据 `AiPermissionMode` 处理文件边界。ReadOnly / WorkspaceWrite 在执行前读取 `workspacePath`，分别用 `PathMapper.resolve` 解析当前 workspace root 和目标 path，再用 `PathMapper.relativePath` 判定目标是否落在当前 workspace 内：
 
 ```text
 ToolEffect.READ
   要求 path 位于当前 workspacePath 内。
-  AiPermissionMode 可以是 ReadOnly、WorkspaceWrite 或 Full。
+  AiPermissionMode 可以是 ReadOnly 或 WorkspaceWrite。
 
 ToolEffect.WRITE
   要求 path 位于当前 workspacePath 内。
-  AiPermissionMode 必须是 WorkspaceWrite 或 Full。
+  AiPermissionMode 必须是 WorkspaceWrite。
+
+Full
+  不读取 workspacePath。
+  path 交给 VFS 解析和 Host Authorization。
 ```
 
 虚拟目录按当前 workspace 展示：
@@ -403,7 +408,8 @@ ToolEffect.WRITE
 move / copy
   source 需要 Read。
   destination 需要 Write。
-  source 和 destination 都必须位于当前 workspacePath 内。
+  ReadOnly / WorkspaceWrite 下 source 和 destination 都必须位于当前 workspacePath 内。
+  Full 下 source 和 destination 交给 VFS 解析和 Host Authorization。
 ```
 
 不做字符串命令审查，不通过反复匹配路径片段判断归属。路径归属只来自 `PathMapper.resolve` 和 `PathMapper.relativePath` 的结构化路径结果。
@@ -689,7 +695,7 @@ AI calls packageName:toolName
 
 `workspaceWrite` 只能写入当前 workspace。它不允许借助 host 的管理员/root 能力写 workspace 外部路径。
 
-`full` 不是提权。`full` 表示 workspaceWrite + sandbox off。Host 进程没有的系统能力，runtime、工具、远程客户端都拿不到。
+`full` 不是提权。`full` 表示 Full + sandbox off。Host 进程没有的系统能力，runtime、工具、远程客户端都拿不到。
 
 不要把 ToolPkg 容器、PackageTool 脚本内部 API 或 Host bridge 当成用户批准对象。用户批准的是 AI 发起的具体工具调用：内置工具名，或包工具名 `packageName:toolName`。`Tools.Files.write`、`Tools.Net.*`、未来的进程能力，都应该表现为插件程序运行时拿到的普通 API。文件、终端、网络等 Host bridge 边界只负责 AI 能力限制、工具能力声明和系统边界检查。
 
@@ -1057,7 +1063,7 @@ workspace boundary 执行检查
 Host Authorization != 可绕过的产品策略
 Host Authorization != AI Capability Limit
 AI Capability Limit == AiPermissionMode
-完整权限 == workspaceWrite + sandbox off
+完整权限 == Full + sandbox off
 workspaceWrite != VM sandbox
 full != root/admin bypass
 remote pairing != user management

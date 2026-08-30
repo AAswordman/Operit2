@@ -25,7 +25,6 @@ const PACKAGE_CALLER_CARD_ID_PARAM: &str = "__operit_package_caller_card_id";
 
 thread_local! {
     static TOOL_RUNTIME_CONTEXT: RefCell<Option<ToolRuntimeContext>> = RefCell::new(None);
-    static PENDING_CORE_SWITCH: RefCell<Option<CoreSwitchIntent>> = RefCell::new(None);
 }
 
 /// Selects the tool surface available to a model response.
@@ -44,20 +43,6 @@ pub struct ToolRuntimeContext {
     pub callerCardId: Option<String>,
     pub workspacePath: Option<String>,
     pub toolExposureMode: ToolExposureMode,
-}
-
-/// Records the Core selected for the next EnhanceAI execution boundary.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CoreSwitchIntent {
-    pub targetNodeId: String,
-}
-
-/// Controls whether the provider may start another model round after a tool batch.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ToolBatchControl {
-    Continue,
-    StopExecution,
-    Handoff(CoreSwitchIntent),
 }
 
 /// Name-value parameter parsed from a model tool invocation.
@@ -82,6 +67,12 @@ pub struct ToolInvocation {
     pub responseLocation: (usize, usize),
 }
 
+/// Captures a completed request to move one chat to another CoreNode.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteChangeIntent {
+    pub targetNodeId: String,
+}
+
 /// Resolved executable tool target and the name shown in tool results.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ResolvedToolTarget {
@@ -96,18 +87,6 @@ impl ToolExecutionManager {
     /// Returns the runtime context for the currently executing tool batch.
     pub fn currentToolRuntimeContext() -> Option<ToolRuntimeContext> {
         TOOL_RUNTIME_CONTEXT.with(|value| value.borrow().clone())
-    }
-
-    /// Records a Core target without performing route work during tool execution.
-    #[allow(non_snake_case)]
-    pub fn stageCoreSwitch(targetNodeId: String) -> Result<(), String> {
-        if targetNodeId.trim().is_empty() {
-            return Err("switch_core target node id must not be empty".to_string());
-        }
-        PENDING_CORE_SWITCH.with(|value| {
-            *value.borrow_mut() = Some(CoreSwitchIntent { targetNodeId });
-        });
-        Ok(())
     }
 
     /// Extracts XML-like tool invocations from an assistant response.
@@ -220,7 +199,7 @@ impl ToolExecutionManager {
         (true, None)
     }
 
-    /// Executes a batch and returns emitted markup, results, and provider execution control.
+    /// Executes a batch and returns emitted markup and results.
     pub async fn executeInvocations(
         invocations: &[ToolInvocation],
         toolHandler: &mut AIToolHandler,
@@ -230,11 +209,10 @@ impl ToolExecutionManager {
         callerCardId: Option<String>,
         workspacePath: Option<String>,
         toolExposureMode: ToolExposureMode,
-    ) -> (Vec<String>, Vec<ToolResult>, ToolBatchControl) {
+    ) -> (Vec<String>, Vec<ToolResult>, Option<RouteChangeIntent>) {
         let mut emitted = Vec::new();
         let mut results = Vec::new();
-        let mut batchControl = ToolBatchControl::Continue;
-        let previousCoreSwitch = PENDING_CORE_SWITCH.with(|value| value.replace(None));
+        let mut routeChangeIntent = None;
         let requestedToolNames = invocations
             .iter()
             .map(|invocation| invocation.tool.name.clone())
@@ -286,7 +264,7 @@ impl ToolExecutionManager {
             })
             .collect::<Vec<_>>();
 
-        for invocation in injectedInvocations {
+        for invocation in injectedInvocations.iter().cloned() {
             let displayToolName = Self::resolveDisplayToolName(&invocation.tool);
             AppLogger::d(
                 TAG,
@@ -463,6 +441,9 @@ impl ToolExecutionManager {
                     result: stringResultData(combinedResultString),
                     error: last.error.clone(),
                 };
+                if let Some(intent) = Self::routeChangeIntentForResult(&invocation.tool, last) {
+                    routeChangeIntent = Some(intent);
+                }
                 toolHandler.notifyToolExecutionResult(&invocation.tool, &finalResult);
                 AppLogger::d(
                     TAG,
@@ -475,26 +456,13 @@ impl ToolExecutionManager {
                     ),
                 );
                 results.push(finalResult);
-                if last.success
-                    && Self::resolveToolTarget(&invocation.tool).tool.name
-                        == BuiltinToolName::SwitchCore.as_str()
-                {
-                    batchControl = ToolBatchControl::StopExecution;
-                }
             }
             toolHandler.notifyToolExecutionFinished(&invocation.tool);
-            if batchControl == ToolBatchControl::StopExecution {
-                break;
-            }
         }
 
         TOOL_RUNTIME_CONTEXT.with(|value| {
             *value.borrow_mut() = previousRuntimeContext;
         });
-        let coreSwitchIntent = PENDING_CORE_SWITCH.with(|value| value.replace(previousCoreSwitch));
-        if let Some(coreSwitchIntent) = coreSwitchIntent {
-            batchControl = ToolBatchControl::Handoff(coreSwitchIntent);
-        }
         let emittedChars = emitted.iter().map(|content| content.len()).sum::<usize>();
         AppLogger::d(
             TAG,
@@ -506,11 +474,22 @@ impl ToolExecutionManager {
                 results.len()
             ),
         );
-        (emitted, results, batchControl)
+        (emitted, results, routeChangeIntent)
     }
 
     fn ensureEndsWithNewline(content: &str) -> String {
         ensureEndsWithNewline(content)
+    }
+
+    /// Builds a route-change intent from the successful switch_core tool result.
+    #[allow(non_snake_case)]
+    fn routeChangeIntentForResult(tool: &AITool, result: &ToolResult) -> Option<RouteChangeIntent> {
+        if tool.name.trim() != "switch_core" || !result.success {
+            return None;
+        }
+        Some(RouteChangeIntent {
+            targetNodeId: result.result.toString().trim().to_string(),
+        })
     }
 
     /// Returns the concrete target carried by a proxy tool invocation.
@@ -840,6 +819,30 @@ pub struct ToolAccessSpec {
 pub struct ToolValidationResult {
     pub valid: bool,
     pub errorMessage: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn route_change_intent_uses_switch_core_result_text() {
+        let tool = AITool {
+            name: " switch_core ".to_string(),
+            parameters: Vec::new(),
+        };
+        let result = ToolResult {
+            toolName: "switch_core".to_string(),
+            success: true,
+            result: stringResultData(" core-target-1 \n"),
+            error: None,
+        };
+
+        let intent = ToolExecutionManager::routeChangeIntentForResult(&tool, &result)
+            .expect("switch_core success must produce route intent");
+
+        assert_eq!(intent.targetNodeId, "core-target-1");
+    }
 }
 
 fn ensureEndsWithNewline(content: &str) -> String {

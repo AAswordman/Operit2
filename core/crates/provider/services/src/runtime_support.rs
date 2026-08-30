@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use operit_link::CoreHandoffRequest;
 use operit_model::CharacterCard::CharacterCard;
 use operit_model::FunctionType::FunctionType;
 use operit_model::MemorySearchConfig::MemorySearchConfig;
@@ -51,13 +50,6 @@ pub struct ProviderCharacterPromptContext {
 
 /// Supplies runtime-owned data and plugin operations to provider code.
 pub trait ProviderRuntimeSupport: Send + Sync {
-    /// Executes one route-owned Core handoff at an EnhanceAI boundary.
-    #[allow(non_snake_case)]
-    fn handoffCoreAtBoundary<'a>(
-        &'a self,
-        request: CoreHandoffRequest,
-    ) -> ProviderRuntimeSupportFuture<'a, Result<(), String>>;
-
     /// Returns the root directory used by provider runtime data.
     fn dataDir(&self) -> Result<PathBuf, String>;
 

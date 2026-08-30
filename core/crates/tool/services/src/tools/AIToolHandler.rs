@@ -685,7 +685,7 @@ impl AIToolHandler {
             });
         }
 
-        if let Err(error) = self.checkWorkspaceBoundary(tool, &accessSpec) {
+        if let Err(error) = Self::checkWorkspaceBoundary(&mode, tool, &accessSpec) {
             return Err(ToolResult {
                 toolName: tool.name.clone(),
                 success: false,
@@ -764,26 +764,30 @@ impl AIToolHandler {
         Ok(accessSpec)
     }
 
+    /// Checks workspace membership for file-bound tools in workspace-scoped modes.
     fn checkWorkspaceBoundary(
-        &self,
+        mode: &AiPermissionMode,
         tool: &AITool,
         accessSpec: &ToolAccessSpec,
     ) -> Result<(), String> {
+        if *mode == AiPermissionMode::Full {
+            return Ok(());
+        }
         match &accessSpec.boundary {
             ToolBoundary::None => Ok(()),
-            ToolBoundary::FilePath { effect } => self.checkWorkspacePath(tool, "path", *effect),
+            ToolBoundary::FilePath { effect } => Self::checkWorkspacePath(tool, "path", *effect),
             ToolBoundary::FilePair {
                 source,
                 destination,
             } => {
-                self.checkWorkspacePath(tool, "source", *source)?;
-                self.checkWorkspacePath(tool, "destination", *destination)
+                Self::checkWorkspacePath(tool, "source", *source)?;
+                Self::checkWorkspacePath(tool, "destination", *destination)
             }
         }
     }
 
+    /// Checks that one file parameter stays inside the current workspace.
     fn checkWorkspacePath(
-        &self,
         tool: &AITool,
         parameterName: &str,
         effect: ToolEffect,
@@ -807,7 +811,6 @@ impl AIToolHandler {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "File tool execution requires a current workspace".to_string())?;
 
-        let context = self.getContext();
         let paths = RuntimeStorePaths::default();
         let mapper = PathMapper::new(paths.runtime_dir().to_path_buf(), paths.workspace_dir());
         let resolvedWorkspace = mapper.resolve(workspacePath)?;
@@ -1513,5 +1516,56 @@ impl ToolExecutor for FnToolExecutor {
 
     fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
         vec![(self.invoke)(tool)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a file-path access declaration for workspace boundary tests.
+    fn filePathAccessSpec(effect: ToolEffect) -> ToolAccessSpec {
+        ToolAccessSpec {
+            effect,
+            boundary: ToolBoundary::FilePath { effect },
+        }
+    }
+
+    /// Builds a file tool invocation with one VFS path parameter.
+    fn pathTool(path: &str) -> AITool {
+        AITool {
+            name: "list_files".to_string(),
+            parameters: vec![ToolParameter {
+                name: "path".to_string(),
+                value: path.to_string(),
+            }],
+        }
+    }
+
+    /// Confirms Full mode does not require a runtime workspace for file paths.
+    #[test]
+    fn fullModeDoesNotRequireRuntimeWorkspaceForFilePaths() {
+        let result = AIToolHandler::checkWorkspaceBoundary(
+            &AiPermissionMode::Full,
+            &pathTool("/mnt/android/sdcard"),
+            &filePathAccessSpec(ToolEffect::READ),
+        );
+
+        assert_eq!(result, Ok(()));
+    }
+
+    /// Confirms WorkspaceWrite still needs the runtime workspace context.
+    #[test]
+    fn workspaceWriteRequiresRuntimeWorkspaceForFilePaths() {
+        let result = AIToolHandler::checkWorkspaceBoundary(
+            &AiPermissionMode::WorkspaceWrite,
+            &pathTool("/mnt/android/sdcard"),
+            &filePathAccessSpec(ToolEffect::READ),
+        );
+
+        assert_eq!(
+            result,
+            Err("File tool execution requires tool runtime context".to_string())
+        );
     }
 }

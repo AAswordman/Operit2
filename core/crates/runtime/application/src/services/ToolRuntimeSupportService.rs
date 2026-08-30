@@ -2,7 +2,6 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use operit_host_api::HostEnvironmentDescriptor;
-use operit_link::CoreHandoffRequest;
 use operit_model::FunctionType::FunctionType;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::ToolPrompt::{SystemToolPromptCategory, ToolParameterSchema, ToolPrompt};
@@ -14,11 +13,12 @@ use operit_providers::chat::enhance::FileBindingService::{
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
-    CachedMcpToolInfo, CoreNodeToolRuntime, ResolvedCharacterCardToolAccess,
-    RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo, RuntimeCharacterMemoryBinding,
-    RuntimeChatSendRequest, RuntimeChatSlot, RuntimeCoreNodeRouteState, RuntimePluginAsset,
-    RuntimeSkillCatalogEntry, RuntimeStructuredEditAction, RuntimeStructuredEditOperation,
-    ToolRuntimeSupport, ToolRuntimeSupportFuture,
+    CachedMcpToolInfo, CoreNodeToolRuntime, CoreRouteChangeHandler,
+    ResolvedCharacterCardToolAccess, RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo,
+    RuntimeCharacterMemoryBinding, RuntimeChatSendRequest, RuntimeChatSlot,
+    RuntimeCoreNodeRouteState, RuntimePluginAsset, RuntimeSkillCatalogEntry,
+    RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
+    ToolRuntimeSupportFuture,
 };
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
@@ -51,6 +51,7 @@ impl ToolRuntimeSupportService {
             chatRuntimeHolder,
             runtimeBindings: OnceLock::new(),
             coreNodeToolRuntime: RwLock::new(None),
+            coreRouteChangeHandler: RwLock::new(None),
         })
     }
 }
@@ -67,6 +68,7 @@ pub struct RuntimeToolSupport {
     chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
     runtimeBindings: OnceLock<RuntimeToolBindings>,
     coreNodeToolRuntime: RwLock<Option<Arc<dyn CoreNodeToolRuntime>>>,
+    coreRouteChangeHandler: RwLock<Option<CoreRouteChangeHandler>>,
 }
 
 impl RuntimeToolSupport {
@@ -116,21 +118,36 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         runtime.coreNodeRouteState()
     }
 
-    /// Executes one route-owned handoff at the EnhanceAI execution boundary.
+    /// Installs the route change controller supplied by the owning Core application.
     #[allow(non_snake_case)]
-    fn handoffCoreAtBoundary<'a>(
+    fn bindCoreRouteChangeHandler(&self, handler: CoreRouteChangeHandler) -> Result<(), String> {
+        let mut current = self
+            .coreRouteChangeHandler
+            .write()
+            .map_err(|error| format!("Core route change handler lock poisoned: {error}"))?;
+        if current.is_some() {
+            return Err("Core route change handler is already bound".to_string());
+        }
+        *current = Some(handler);
+        Ok(())
+    }
+
+    /// Requests a route change through the installed Core application controller.
+    #[allow(non_snake_case)]
+    fn requestCoreRouteChange<'a>(
         &'a self,
-        request: CoreHandoffRequest,
+        chatId: String,
+        targetNodeId: String,
     ) -> ToolRuntimeSupportFuture<'a, Result<(), String>> {
-        let runtime = self
-            .coreNodeToolRuntime
+        let handler = self
+            .coreRouteChangeHandler
             .read()
-            .map(|value| value.clone())
-            .map_err(|error| format!("CoreNode tool runtime lock poisoned: {error}"));
+            .expect("Core route change handler lock must not be poisoned")
+            .clone();
         Box::pin(async move {
-            let runtime =
-                runtime?.ok_or_else(|| "CoreNode routing is not initialized".to_string())?;
-            runtime.handoffCoreAtBoundary(request).await
+            let handler =
+                handler.ok_or_else(|| "Core route change handler is not bound".to_string())?;
+            handler(chatId, targetNodeId).await
         })
     }
 
