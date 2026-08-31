@@ -550,6 +550,7 @@ fn appleOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
         title: "通知".to_string(),
         description: "允许 Operit 在 AI 回复完成或工具等待批准时发送系统通知。".to_string(),
         capabilityIds: vec!["system.notifications.send".to_string()],
+        isRequired: true,
         status: HostRequirementStatus::Missing,
         action: HostRequirementAction::RuntimePermission,
     }]
