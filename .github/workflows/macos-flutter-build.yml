@@ -110,8 +110,8 @@ jobs:
 
       - name: Generate Dart proxy artifacts
         run: |
-          cargo clean --manifest-path core/crates/operit-core-proxy/Cargo.toml -p operit-core-proxy
-          cargo check --manifest-path core/crates/operit-core-proxy/Cargo.toml --quiet
+          cargo clean --manifest-path core/crates/proxy/local/Cargo.toml -p operit-proxy-local
+          cargo check --manifest-path core/crates/proxy/local/Cargo.toml --quiet
           test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyClients.g.dart
           test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyModels.g.dart
 
