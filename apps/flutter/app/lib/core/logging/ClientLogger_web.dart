@@ -38,6 +38,7 @@ Future<void> clear() async {
 void write(
   ClientLogLevel level,
   String message, {
+  bool writeToConsole = true,
   Object? error,
   StackTrace? stackTrace,
 }) {
@@ -53,16 +54,18 @@ void write(
       ..write(stackTrace);
   }
   final text = buffer.toString();
-  switch (level) {
-    case ClientLogLevel.error:
-    case ClientLogLevel.assert_:
-      html.window.console.error(text);
-    case ClientLogLevel.warn:
-      html.window.console.warn(text);
-    case ClientLogLevel.verbose:
-    case ClientLogLevel.debug:
-    case ClientLogLevel.info:
-      html.window.console.log(text);
+  if (writeToConsole) {
+    switch (level) {
+      case ClientLogLevel.error:
+      case ClientLogLevel.assert_:
+        html.window.console.error(text);
+      case ClientLogLevel.warn:
+        html.window.console.warn(text);
+      case ClientLogLevel.verbose:
+      case ClientLogLevel.debug:
+      case ClientLogLevel.info:
+        html.window.console.log(text);
+    }
   }
   final current = html.window.localStorage[_logStorageKey] ?? '';
   final next = current.isEmpty ? text : '$current\n$text';

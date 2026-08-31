@@ -38,7 +38,7 @@ use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
-use operit_tools::runtime_support::ToolRuntimeSupport;
+use operit_tools::runtime_support::{CoreRouteResumeContext, ToolRuntimeSupport};
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, ToolExposureMode as ResolvedToolExposureMode,
 };
@@ -1018,10 +1018,11 @@ impl EnhancedAIService {
         &self,
         chatId: String,
         targetNodeId: String,
+        resumeContext: CoreRouteResumeContext,
     ) -> Result<(), String> {
         self.tool_handler
             .runtimeSupport()
-            .requestCoreRouteChange(chatId, targetNodeId)
+            .requestCoreRouteChange(chatId, targetNodeId, resumeContext)
             .await
     }
 
@@ -1111,7 +1112,11 @@ impl EnhancedAIService {
         options: SendMessageOptions,
         runtime: SendMessageRuntime,
     ) -> Result<SharedAiResponseStream, AiServiceError> {
-        AppLogger::i("CoreSend", "provider response task schedule start");
+        operit_util::AppLogger::AppLogger::v_with_level(
+            "CoreSend",
+            "provider response task schedule start",
+            operit_util::AppLogger::VERBOSE_LEVEL_5,
+        );
         let responseStream = SharedAiResponseStream::new_ordered(
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
@@ -1123,7 +1128,11 @@ impl EnhancedAIService {
                 "enhanced-ai-response",
                 Box::new(move || {
                     Box::pin(async move {
-                        AppLogger::i("CoreSend", "provider response task entered");
+                        operit_util::AppLogger::AppLogger::v_with_level(
+                            "CoreSend",
+                            "provider response task entered",
+                            operit_util::AppLogger::VERBOSE_LEVEL_5,
+                        );
                         let result = service
                             .executeSendMessageWithRuntime(options, runtime, producerStream.clone())
                             .await;
@@ -1134,12 +1143,20 @@ impl EnhancedAIService {
                                 .setInputProcessingState(InputProcessingState::Error { message });
                         }
                         producerStream.close();
-                        AppLogger::i("CoreSend", "provider response task closed output streams");
+                        operit_util::AppLogger::AppLogger::v_with_level(
+                            "CoreSend",
+                            "provider response task closed output streams",
+                            operit_util::AppLogger::VERBOSE_LEVEL_5,
+                        );
                     })
                 }),
             )
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        AppLogger::i("CoreSend", "provider response task scheduled");
+        operit_util::AppLogger::AppLogger::v_with_level(
+            "CoreSend",
+            "provider response task scheduled",
+            operit_util::AppLogger::VERBOSE_LEVEL_5,
+        );
         Ok(responseStream)
     }
 
@@ -1180,7 +1197,7 @@ impl EnhancedAIService {
         let onNonFatalError = options.onNonFatalError;
         let onTokenLimitExceeded = options.onTokenLimitExceeded;
         let onToolInvocation = options.onToolInvocation;
-        AppLogger::d(
+        AppLogger::i(
             TAG,
             &format!(
                 "sendMessage调用开始: 功能类型={}, 提示词类型={}",
@@ -1431,7 +1448,7 @@ impl EnhancedAIService {
             let service = serviceForFunction.lock().await;
             service.provider_model()
         };
-        AppLogger::d(
+        AppLogger::i(
             TAG,
             &format!(
                 "provider send_message begin chatId={} providerModel={}",
@@ -1495,9 +1512,10 @@ impl EnhancedAIService {
         let mut lastLogTime = runtimeSupport.messageTimingNow().startedAtMs;
         let mut responseRevisions = TextStreamRevisionTracker::new("");
         let activeExecutionState = self.shared_state.clone();
-        AppLogger::i(
+        operit_util::AppLogger::AppLogger::v_with_level(
             "CoreSend",
             &format!("provider stream collect enter chatId={}", logChatId),
+            operit_util::AppLogger::VERBOSE_LEVEL_5,
         );
         provider_stream
             .collect_ordered(&mut |item| match item {
@@ -1587,7 +1605,7 @@ impl EnhancedAIService {
                 service.output_token_count(),
             )
         };
-        AppLogger::d(
+        AppLogger::i(
             TAG,
             &format!(
                 "provider send_message end chatId={} providerModel={} inputTokens={} outputTokens={} cachedInputTokens={} chunkCount={} totalChars={}",

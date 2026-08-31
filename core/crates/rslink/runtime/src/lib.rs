@@ -12,7 +12,7 @@ use operit_link::{
 use operit_store::PreferencesDataStore::{Flow, FlowCancellation, StateFlow};
 use operit_util::stream::ReverseStream::{ReverseStream, ReverseStreamSender};
 use operit_util::stream::Stream::Stream;
-use operit_util::AppLogger::AppLogger;
+use operit_util::AppLogger::{AppLogger, VERBOSE_LEVEL_5, VERBOSE_LEVEL_6};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -38,12 +38,6 @@ impl CoreStreamPool {
 
     /// Adopts every source captured while Core values were serialized.
     pub fn adoptAll(&self, attachments: Vec<operit_link::CoreStreamAttachment>) {
-        if !attachments.is_empty() {
-            AppLogger::i(
-                "CoreRouteStream",
-                &format!("pool.adopt_all count={}", attachments.len()),
-            );
-        }
         for attachment in attachments {
             self.adopt(attachment);
         }
@@ -99,15 +93,12 @@ impl CoreStreamPool {
             .lock()
             .expect("core stream pool mutex poisoned");
         if let Some(existing) = sources.get(&attachment.streamId) {
-            let relation = if Arc::ptr_eq(existing, &attachment.source) {
-                "same"
-            } else {
-                "duplicate"
-            };
-            AppLogger::i(
-                "CoreRouteStream",
-                &format!("pool.adopt.{relation} streamId={}", attachment.streamId),
-            );
+            if !Arc::ptr_eq(existing, &attachment.source) {
+                AppLogger::i(
+                    "CoreRouteStream",
+                    &format!("pool.adopt.duplicate streamId={}", attachment.streamId),
+                );
+            }
         } else {
             AppLogger::i(
                 "CoreRouteStream",
@@ -311,7 +302,7 @@ pub async fn core_route_call_response(
 ) -> CoreCallResponse {
     let request = core_route_call_request(method_name, args);
     let requestId = request.requestId.0.clone();
-    AppLogger::i(
+    AppLogger::trace(
         "CoreRouteTrace",
         &format!(
             "wrapper.call requestId={} method={}",
@@ -319,7 +310,7 @@ pub async fn core_route_call_response(
         ),
     );
     let response = runtime.call(request).await;
-    AppLogger::i(
+    AppLogger::trace(
         "CoreRouteTrace",
         &format!(
             "wrapper.call.result requestId={} method={} success={}",
@@ -508,7 +499,7 @@ where
     AppLogger::i(
         "CoreRouteStream",
         &format!(
-            "state_flow.first requestId={} targetObjectId={} property={} kind={:?} value={}",
+            "state_flow.first requestId={} targetObjectId={} property={} kind={:?} value={} summary={}",
             first
                 .requestId
                 .as_ref()
@@ -517,7 +508,8 @@ where
             first.targetObjectId,
             first.propertyName,
             first.kind,
-            core_value_shape(&first.value)
+            core_value_shape(&first.value),
+            core_value_trace_summary(&first.value)
         ),
     );
     if first.kind == CoreEventKind::Completed {
@@ -547,25 +539,24 @@ where
                     while let Some(event) = stream.recv().await {
                         event_count += 1;
                         let completed = event.kind == CoreEventKind::Completed;
-                        if completed || should_log_core_route_event_count(event_count) {
-                            AppLogger::i(
-                                "CoreRouteStream",
-                                &format!(
-                                    "state_flow.event requestId={} targetObjectId={} property={} kind={:?} value={} count={} summary={}",
-                                    event
-                                        .requestId
-                                        .as_ref()
-                                        .map(|requestId| requestId.0.as_str())
-                                        .unwrap_or("<none>"),
-                                    event.targetObjectId,
-                                    event.propertyName,
-                                    event.kind,
-                                    core_value_shape(&event.value),
-                                    event_count,
-                                    core_value_trace_summary(&event.value)
-                                ),
-                            );
-                        }
+                        AppLogger::v_with_level(
+                            "CoreRouteStream",
+                            &format!(
+                                "state_flow.event requestId={} targetObjectId={} property={} kind={:?} value={} count={} summary={}",
+                                event
+                                    .requestId
+                                    .as_ref()
+                                    .map(|requestId| requestId.0.as_str())
+                                    .unwrap_or("<none>"),
+                                event.targetObjectId,
+                                event.propertyName,
+                                event.kind,
+                                core_value_shape(&event.value),
+                                event_count,
+                                core_value_trace_summary(&event.value)
+                            ),
+                            VERBOSE_LEVEL_6,
+                        );
                         if completed {
                             break;
                         }
@@ -842,31 +833,31 @@ fn core_route_embedded_stream_source(
                         match runtime.watch(routed_open_request).await {
                             Ok(mut stream) => {
                                 let mut event_count = 0_u64;
-                                AppLogger::i(
+                                AppLogger::v_with_level(
                                     "CoreRouteStream",
                                     &format!(
                                         "embedded.watch.opened requestId={} streamId={} property={}",
                                         request_id.0, stream_id, property_name
                                     ),
+                                    VERBOSE_LEVEL_5,
                                 );
                                 while let Some(event) = stream.recv().await {
                                     event_count += 1;
                                     let completed = event.kind == CoreEventKind::Completed;
-                                    if completed || should_log_core_route_event_count(event_count) {
-                                        AppLogger::i(
-                                            "CoreRouteStream",
-                                            &format!(
-                                                "embedded.watch.event requestId={} streamId={} eventProperty={} kind={:?} value={} count={} summary={}",
-                                                request_id.0,
-                                                stream_id,
-                                                event.propertyName,
-                                                event.kind,
-                                                core_value_shape(&event.value),
-                                                event_count,
-                                                core_value_trace_summary(&event.value)
-                                            ),
-                                        );
-                                    }
+                                    AppLogger::v_with_level(
+                                        "CoreRouteStream",
+                                        &format!(
+                                            "embedded.watch.event requestId={} streamId={} eventProperty={} kind={:?} value={} count={} summary={}",
+                                            request_id.0,
+                                            stream_id,
+                                            event.propertyName,
+                                            event.kind,
+                                            core_value_shape(&event.value),
+                                            event_count,
+                                            core_value_trace_summary(&event.value)
+                                        ),
+                                        VERBOSE_LEVEL_6,
+                                    );
                                     if sender.send(event).is_err() {
                                         AppLogger::i(
                                             "CoreRouteStream",
@@ -967,14 +958,51 @@ fn core_value_trace_summary(value: &CoreValue) -> String {
         CoreValue::Float(value) => format!("float={value}"),
         CoreValue::String(value) => format!("stringLen={}", value.chars().count()),
         CoreValue::Bytes(value) => format!("bytesLen={}", value.len()),
-        CoreValue::List(values) => format!(
-            "listLen={} last={}",
-            values.len(),
-            values
-                .last()
-                .map(core_value_trace_summary)
-                .unwrap_or_else(|| "none".to_string())
-        ),
+        CoreValue::List(values) => {
+            let last = values.last();
+            let lastTimestamp = last.and_then(|value| match value {
+                CoreValue::Map(fields) => {
+                    fields
+                        .get("timestamp")
+                        .and_then(|timestamp| match timestamp {
+                            CoreValue::Signed(value) => Some(value.to_string()),
+                            CoreValue::Unsigned(value) => Some(value.to_string()),
+                            _ => None,
+                        })
+                }
+                _ => None,
+            });
+            let lastSender = last.and_then(|value| match value {
+                CoreValue::Map(fields) => fields.get("sender").and_then(|sender| match sender {
+                    CoreValue::String(value) => Some(value.as_str()),
+                    _ => None,
+                }),
+                _ => None,
+            });
+            match (lastTimestamp, lastSender) {
+                (Some(timestamp), Some(sender)) => format!(
+                    "listLen={} lastTimestamp={} lastSender={} last={}",
+                    values.len(),
+                    timestamp,
+                    sender,
+                    last.map(core_value_trace_summary)
+                        .unwrap_or_else(|| "none".to_string())
+                ),
+                (Some(timestamp), None) => format!(
+                    "listLen={} lastTimestamp={} last={}",
+                    values.len(),
+                    timestamp,
+                    last.map(core_value_trace_summary)
+                        .unwrap_or_else(|| "none".to_string())
+                ),
+                _ => format!(
+                    "listLen={} last={}",
+                    values.len(),
+                    last.map(core_value_trace_summary)
+                        .unwrap_or_else(|| "none".to_string())
+                ),
+            }
+        }
         CoreValue::Map(values) => {
             if let Some(event_type) = values.get("eventType") {
                 let value_len = values.get("value").map(core_value_shape).unwrap_or("none");
@@ -1032,11 +1060,6 @@ fn core_value_trace_field(value: &CoreValue) -> String {
         CoreValue::List(values) => format!("listLen={}", values.len()),
         CoreValue::Map(values) => format!("mapKeys={}", values.len()),
     }
-}
-
-/// Returns whether one routed stream event count should be logged.
-fn should_log_core_route_event_count(count: u64) -> bool {
-    count <= 5 || count % 256 == 0
 }
 
 /// Reads the embedded stream identifier from a Link argument map for logs.

@@ -5,8 +5,13 @@ import 'ClientLogger_io.dart'
     as platform;
 import 'ClientLogLevel.dart';
 
+export 'ClientLogLevel.dart';
+
 class ClientLogger {
   const ClientLogger._();
+
+  static ClientLogLevel _consoleMinimumLevel = ClientLogLevel.info;
+  static VerboseLevel _consoleMaximumVerboseLevel = VerboseLevel.level6;
 
   /// Initializes the client logger backend and records the active sink path.
   static Future<void> initialize() {
@@ -38,6 +43,23 @@ class ClientLogger {
     return platform.lastWriteError();
   }
 
+  /// Sets the minimum severity emitted to the live console.
+  static void setConsoleMinimumLevel(ClientLogLevel level) {
+    _consoleMinimumLevel = level;
+  }
+
+  /// Returns the minimum severity emitted to the live console.
+  static ClientLogLevel get consoleMinimumLevel => _consoleMinimumLevel;
+
+  /// Sets the maximum Verbose detail level emitted to the live console.
+  static void setConsoleMaximumVerboseLevel(VerboseLevel level) {
+    _consoleMaximumVerboseLevel = level;
+  }
+
+  /// Returns the maximum Verbose detail level emitted to the live console.
+  static VerboseLevel get consoleMaximumVerboseLevel =>
+      _consoleMaximumVerboseLevel;
+
   /// Clears all persisted client log text.
   static Future<void> clear() {
     return platform.clear();
@@ -46,6 +68,7 @@ class ClientLogger {
   /// Writes a verbose client log entry.
   static void v(
     String message, {
+    VerboseLevel verboseLevel = VerboseLevel.level1,
     String tag = 'Client',
     Object? error,
     StackTrace? stackTrace,
@@ -53,6 +76,7 @@ class ClientLogger {
     write(
       ClientLogLevel.verbose,
       message,
+      verboseLevel: verboseLevel,
       tag: tag,
       error: error,
       stackTrace: stackTrace,
@@ -143,33 +167,53 @@ class ClientLogger {
   static void write(
     ClientLogLevel level,
     String message, {
+    VerboseLevel? verboseLevel,
     String tag = 'Client',
     Object? error,
     StackTrace? stackTrace,
   }) {
     final text = formatEntry(
       level: level,
+      verboseLevel: verboseLevel,
       tag: tag,
       message: message,
       error: error,
       stackTrace: stackTrace,
     );
-    platform.write(level, text);
-    if (!platform.writesToConsole()) {
+    final writeToConsole = _shouldWriteToConsole(level, verboseLevel);
+    platform.write(level, text, writeToConsole: writeToConsole);
+    if (!platform.writesToConsole() && writeToConsole) {
       _writeConsoleText(text);
     }
+  }
+
+  /// Returns whether a client log entry belongs on the live console.
+  static bool _shouldWriteToConsole(
+    ClientLogLevel level,
+    VerboseLevel? verboseLevel,
+  ) {
+    if (level.value < _consoleMinimumLevel.value) {
+      return false;
+    }
+    if (level != ClientLogLevel.verbose) {
+      return true;
+    }
+    return verboseLevel != null &&
+        verboseLevel.value <= _consoleMaximumVerboseLevel.value;
   }
 
   /// Formats one complete client log entry with every line tagged.
   static String formatEntry({
     required ClientLogLevel level,
+    VerboseLevel? verboseLevel,
     required String tag,
     required String message,
     Object? error,
     StackTrace? stackTrace,
   }) {
     final timestamp = _consoleTimestamp(DateTime.now());
-    final prefix = '$timestamp ${level.code}/$tag: ';
+    final levelCode = _formatLevelCode(level, verboseLevel);
+    final prefix = '$timestamp $levelCode/$tag: ';
     final lines = <String>[
       ..._prefixPayloadLines(prefix, message),
       if (error != null) ..._prefixPayloadLines(prefix, 'error=$error'),
@@ -177,6 +221,17 @@ class ClientLogger {
         ..._prefixPayloadLines(prefix, 'stackTrace=$stackTrace'),
     ];
     return lines.join('\n');
+  }
+
+  /// Formats a severity code with the Verbose detail level when present.
+  static String _formatLevelCode(
+    ClientLogLevel level,
+    VerboseLevel? verboseLevel,
+  ) {
+    if (level == ClientLogLevel.verbose && verboseLevel != null) {
+      return '${level.code}${verboseLevel.value}';
+    }
+    return level.code;
   }
 
   /// Writes one formatted log entry to stdout for live desktop debugging.

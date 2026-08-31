@@ -4,7 +4,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use operit_host_api::HostEnvironmentDescriptor;
+use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::ToolPrompt::SystemToolPromptCategory;
 use operit_plugin_sdk::javascript::JsExecutionProvider;
 
@@ -13,9 +15,36 @@ use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 /// Future returned by runtime support async boundaries.
 pub type ToolRuntimeSupportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
+/// Carries the exact AI turn state required to continue after a Core route change.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[allow(non_snake_case)]
+pub struct CoreRouteResumeContext {
+    pub runtimeChatHistory: Vec<ChatMessage>,
+    pub workspacePath: Option<String>,
+    pub promptFunctionType: PromptFunctionType,
+    pub enableThinking: bool,
+    pub enableMemoryAutoUpdate: bool,
+    pub roleCardId: String,
+    pub roleName: String,
+    pub groupOrchestrationMode: bool,
+    pub groupParticipantNamesText: Option<String>,
+    pub proxySenderName: Option<String>,
+    pub notifyReplyOverride: Option<bool>,
+    pub chatProviderIdOverride: Option<String>,
+    pub chatModelIdOverride: Option<String>,
+    pub turnOptions: ChatTurnOptions,
+}
+
 /// Handles one completed Core route change and its target-side continuation.
-pub type CoreRouteChangeHandler =
-    Arc<dyn Fn(String, String) -> Pin<Box<dyn Future<Output = Result<(), String>>>> + Send + Sync>;
+pub type CoreRouteChangeHandler = Arc<
+    dyn Fn(
+            String,
+            String,
+            CoreRouteResumeContext,
+        ) -> Pin<Box<dyn Future<Output = Result<(), String>>>>
+        + Send
+        + Sync,
+>;
 
 /// Runtime-owned character card tool-access result consumed by tools.
 #[derive(Clone, Debug, Default)]
@@ -203,6 +232,7 @@ pub trait ToolRuntimeSupport: Send + Sync {
         &'a self,
         chatId: String,
         targetNodeId: String,
+        resumeContext: CoreRouteResumeContext,
     ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
 
     /// Resolves role-card tool access for the active invocation context.

@@ -32,9 +32,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       <String, _PairedRemoteProbeState>{};
   Map<String, generated.RuntimePairedDevice> _pairedDevices =
       <String, generated.RuntimePairedDevice>{};
-  final Set<String> _removedSpacePrompted = <String>{};
-  final Set<String> _invalidPairingPrompted = <String>{};
-  int _pairedRemoteProbeGeneration = 0;
   StreamSubscription<Map<String, generated.RuntimePairedDevice>>?
   _pairedDevicesSubscription;
   StreamSubscription<Map<String, generated.RuntimePairedDeviceStatus>>?
@@ -70,7 +67,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     _pairedDevicesSubscription = _clients.server.runtimeRemoteLinkService
         .pairedDevicesFlow()
         .listen(
-          (devices) => unawaited(_applyPairedDevices(devices)),
+          _applyPairedDevices,
           onError: (Object error, StackTrace stackTrace) {
             if (!mounted) {
               return;
@@ -189,12 +186,9 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     return _clients.server.runtimeRemoteLinkService.deviceSpaceTopology();
   }
 
-  /// Applies one paired-device snapshot and refreshes direct connection states.
-  Future<void> _applyPairedDevices(
-    Map<String, generated.RuntimePairedDevice> devices,
-  ) async {
-    final generation = ++_pairedRemoteProbeGeneration;
-    if (!mounted || generation != _pairedRemoteProbeGeneration) {
+  /// Applies one paired-device snapshot without network probing.
+  void _applyPairedDevices(Map<String, generated.RuntimePairedDevice> devices) {
+    if (!mounted) {
       return;
     }
     setState(() {
@@ -205,101 +199,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
               _pairedRemoteStates[deviceId] ?? _PairedRemoteProbeState.checking,
       };
     });
-    final results = await Future.wait(
-      devices.keys.map((deviceId) async {
-        final state = await _probePairedDevice(deviceId);
-        return MapEntry(deviceId, state);
-      }),
-    );
-    if (!mounted || generation != _pairedRemoteProbeGeneration) {
-      return;
-    }
-    setState(() {
-      final nextStates = Map<String, _PairedRemoteProbeState>.from(
-        _pairedRemoteStates,
-      );
-      for (final entry in results) {
-        final currentState = nextStates[entry.key];
-        if (entry.value == _PairedRemoteProbeState.error &&
-            currentState != null &&
-            currentState != _PairedRemoteProbeState.checking &&
-            currentState != _PairedRemoteProbeState.error) {
-          continue;
-        }
-        nextStates[entry.key] = entry.value;
-      }
-      _pairedRemoteStates = nextStates;
-    });
-    final removedDeviceIds = results
-        .where(
-          (entry) => entry.value == _PairedRemoteProbeState.removedFromSpace,
-        )
-        .map((entry) => entry.key)
-        .toSet();
-    _removedSpacePrompted.removeWhere(
-      (deviceId) => !removedDeviceIds.contains(deviceId),
-    );
-    final newlyRemovedDeviceId = removedDeviceIds
-        .where((deviceId) => !_removedSpacePrompted.contains(deviceId))
-        .firstOrNull;
-    if (newlyRemovedDeviceId != null) {
-      _removedSpacePrompted.add(newlyRemovedDeviceId);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          unawaited(_handleRemovedFromSpace());
-        }
-      });
-    }
-    final invalidDeviceIds = results
-        .where((entry) => entry.value == _PairedRemoteProbeState.invalid)
-        .map((entry) => entry.key)
-        .toSet();
-    _invalidPairingPrompted.removeWhere(
-      (deviceId) => !invalidDeviceIds.contains(deviceId),
-    );
-    final newlyInvalidDeviceId = invalidDeviceIds
-        .where((deviceId) => !_invalidPairingPrompted.contains(deviceId))
-        .firstOrNull;
-    if (newlyInvalidDeviceId != null) {
-      _invalidPairingPrompted.add(newlyInvalidDeviceId);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          unawaited(_handleInvalidPairing(newlyInvalidDeviceId));
-        }
-      });
-    }
-  }
-
-  /// Reads the active direct-connection state for one paired device.
-  Future<_PairedRemoteProbeState> _probePairedDevice(String deviceId) async {
-    try {
-      final status = await _clients.server.runtimeRemoteLinkService
-          .pairedDeviceStatus(deviceId: deviceId);
-      return _pairedRemoteStateFromStatus(status);
-    } catch (_) {
-      return _PairedRemoteProbeState.error;
-    }
-  }
-
-  /// Informs the user that the remote device has revoked this pairing.
-  Future<void> _handleInvalidPairing(String deviceId) async {
-    if (!mounted || !_pairedDevices.containsKey(deviceId)) {
-      return;
-    }
-    final l10n = AppLocalizations.of(context)!;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.settingsRuntimePairingRevokedTitle),
-        content: Text(l10n.settingsRuntimePairingRevokedMessage),
-        actions: <Widget>[
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(l10n.settingsRuntimePairingRevokedConfirm),
-          ),
-        ],
-      ),
-    );
   }
 
   /// Removes every local pairing record associated with one device.
@@ -785,7 +684,7 @@ class _CurrentDeviceSpaceLine extends StatelessWidget {
   }
 }
 
-class _DeviceSpaceTopologyDialog extends StatelessWidget {
+class _DeviceSpaceTopologyDialog extends StatefulWidget {
   const _DeviceSpaceTopologyDialog({
     required this.spaceName,
     required this.topology,
@@ -817,6 +716,28 @@ class _DeviceSpaceTopologyDialog extends StatelessWidget {
     );
   }
 
+  /// Creates state that keeps the visible topology synchronized.
+  @override
+  State<_DeviceSpaceTopologyDialog> createState() =>
+      _DeviceSpaceTopologyDialogState();
+}
+
+class _DeviceSpaceTopologyDialogState
+    extends State<_DeviceSpaceTopologyDialog> {
+  late generated.RuntimeDeviceSpaceTopology _topology;
+
+  /// Initializes the dialog with the topology loaded before opening.
+  @override
+  void initState() {
+    super.initState();
+    _topology = widget.topology;
+  }
+
+  /// Applies a refreshed topology to every visible dialog section.
+  void _applyTopology(generated.RuntimeDeviceSpaceTopology topology) {
+    setState(() => _topology = topology);
+  }
+
   /// Builds the topology header, graph, and connection summary.
   @override
   Widget build(BuildContext context) {
@@ -841,7 +762,9 @@ class _DeviceSpaceTopologyDialog extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          l10n.settingsRuntimeSpaceTopologyTitle(spaceName),
+                          l10n.settingsRuntimeSpaceTopologyTitle(
+                            widget.spaceName,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.titleMedium
@@ -850,8 +773,8 @@ class _DeviceSpaceTopologyDialog extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           l10n.settingsRuntimeSpaceTopologySummary(
-                            topology.devices.length,
-                            topology.connections.length,
+                            _topology.devices.length,
+                            _topology.connections.length,
                           ),
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: colorScheme.onSurfaceVariant),
@@ -874,8 +797,9 @@ class _DeviceSpaceTopologyDialog extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
                 child: _DeviceSpaceTopologyGraph(
-                  topology: topology,
-                  onDisconnectDevice: onDisconnectDevice,
+                  topology: _topology,
+                  onDisconnectDevice: widget.onDisconnectDevice,
+                  onTopologyChanged: _applyTopology,
                 ),
               ),
             ),
@@ -890,11 +814,13 @@ class _DeviceSpaceTopologyGraph extends StatefulWidget {
   const _DeviceSpaceTopologyGraph({
     required this.topology,
     required this.onDisconnectDevice,
+    required this.onTopologyChanged,
   });
 
   final generated.RuntimeDeviceSpaceTopology topology;
   final Future<generated.RuntimeDeviceSpaceTopology> Function(String deviceId)
   onDisconnectDevice;
+  final ValueChanged<generated.RuntimeDeviceSpaceTopology> onTopologyChanged;
 
   /// Creates the state that handles edge selection without rebuilding the dialog.
   @override
@@ -903,17 +829,10 @@ class _DeviceSpaceTopologyGraph extends StatefulWidget {
 }
 
 class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
-  late generated.RuntimeDeviceSpaceTopology _topology;
-
-  @override
-  void initState() {
-    super.initState();
-    _topology = widget.topology;
-  }
-
   /// Builds a pannable and zoomable canvas for the complete device graph.
   @override
   Widget build(BuildContext context) {
+    final topology = widget.topology;
     return LayoutBuilder(
       builder: (context, constraints) {
         final viewportWidth = constraints.maxWidth;
@@ -921,17 +840,17 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
         const nodeSize = Size(148, 112);
         final canvasSize = _topologyCanvasSize(
           viewportWidth,
-          _topology.devices.length,
+          topology.devices.length,
           nodeSize,
         );
         final centers = _deviceCenters(
           canvasSize,
-          _topology.devices.length,
+          topology.devices.length,
           nodeSize,
         );
         final centerByDeviceId = <String, Offset>{
-          for (var index = 0; index < _topology.devices.length; index++)
-            _topology.devices[index].deviceId: centers[index],
+          for (var index = 0; index < topology.devices.length; index++)
+            topology.devices[index].deviceId: centers[index],
         };
         final colorScheme = Theme.of(context).colorScheme;
         return SizedBox(
@@ -958,7 +877,7 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
                         final connection = _connectionAtPoint(
                           details.localPosition,
                           centerByDeviceId,
-                          _topology.connections,
+                          topology.connections,
                           nodeSize,
                         );
                         if (connection != null) {
@@ -968,7 +887,7 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
                       child: CustomPaint(
                         painter: _DeviceSpaceTopologyPainter(
                           centers: centerByDeviceId,
-                          connections: _topology.connections,
+                          connections: topology.connections,
                           nodeSize: nodeSize,
                           onlineColor: colorScheme.outline,
                           offlineColor: colorScheme.error,
@@ -978,17 +897,17 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
                       ),
                     ),
                   ),
-                  for (var index = 0; index < _topology.devices.length; index++)
+                  for (var index = 0; index < topology.devices.length; index++)
                     Positioned(
                       left: centers[index].dx - nodeSize.width / 2,
                       top: centers[index].dy - nodeSize.height / 2,
                       width: nodeSize.width,
                       height: nodeSize.height,
                       child: _DeviceSpaceTopologyNode(
-                        device: _topology.devices[index],
+                        device: topology.devices[index],
                         current:
-                            _topology.devices[index].deviceId ==
-                            _topology.currentDeviceId,
+                            topology.devices[index].deviceId ==
+                            topology.currentDeviceId,
                       ),
                     ),
                 ],
@@ -1007,12 +926,13 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
     if (!mounted) {
       return;
     }
+    final topology = widget.topology;
     final devicesById = <String, generated.RuntimeDeviceSpaceDevice>{
-      for (final device in _topology.devices) device.deviceId: device,
+      for (final device in topology.devices) device.deviceId: device,
     };
     final first = devicesById[connection.firstDeviceId]!;
     final second = devicesById[connection.secondDeviceId]!;
-    final currentDeviceId = _topology.currentDeviceId;
+    final currentDeviceId = topology.currentDeviceId;
     final target = connection.firstDeviceId == currentDeviceId
         ? second
         : connection.secondDeviceId == currentDeviceId
@@ -1118,7 +1038,7 @@ class _DeviceSpaceTopologyGraphState extends State<_DeviceSpaceTopologyGraph> {
       if (!mounted) {
         return;
       }
-      setState(() => _topology = refreshedTopology);
+      widget.onTopologyChanged(refreshedTopology);
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) {

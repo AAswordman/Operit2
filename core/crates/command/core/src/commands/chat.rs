@@ -197,7 +197,9 @@ fn rollback_chat(
         Ok::<_, String>((chatId, rolledBack))
     })?;
     if rolledBack.is_some() {
-        output.push_stdout_line(format!("rolled back to message: {chatId}\t{messageTimestamp}"));
+        output.push_stdout_line(format!(
+            "rolled back to message: {chatId}\t{messageTimestamp}"
+        ));
     } else {
         output.push_stdout_line("rollback skipped: message must exist and be a user message");
     }

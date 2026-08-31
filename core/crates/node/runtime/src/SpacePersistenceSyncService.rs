@@ -14,7 +14,7 @@ use operit_store::SyncOperationStore::{
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -31,7 +31,7 @@ const SYNC_DOMAINS: [&str; 5] = [
     "objectbox",
     "runtime_file",
 ];
-const SPACE_SYNC_PREPARATION_DELAY_MS: u64 = 1_000;
+const SPACE_SYNC_PREPARATION_DELAY_MS: u64 = 0;
 const SYNC_BLOB_CHUNK_BYTES: i64 = 64 * 1024;
 
 static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Arc<SpacePersistenceSyncState>>>> =
@@ -44,6 +44,7 @@ struct SpacePersistenceSyncState {
     linkAccessStore: LinkAccessStore,
     spaceStore: CoreSpaceStore,
     synchronizationScheduled: AtomicBool,
+    active: AtomicBool,
     #[cfg(not(target_arch = "wasm32"))]
     discoveryAnnouncementsStarted: AtomicBool,
     mutationSubscription: Mutex<Option<SyncMutationSubscription>>,
@@ -78,6 +79,7 @@ impl SpacePersistenceSyncService {
                 linkAccessStore,
                 spaceStore,
                 synchronizationScheduled: AtomicBool::new(false),
+                active: AtomicBool::new(false),
                 #[cfg(not(target_arch = "wasm32"))]
                 discoveryAnnouncementsStarted: AtomicBool::new(false),
                 mutationSubscription: Mutex::new(None),
@@ -96,6 +98,7 @@ impl SpacePersistenceSyncService {
             if services.contains_key(&localNodeId) {
                 return Ok(());
             }
+            self.state.active.store(true, Ordering::Release);
             services.insert(localNodeId.clone(), self.state.clone());
         }
 
@@ -120,7 +123,10 @@ impl SpacePersistenceSyncService {
             Some(subscription);
 
         #[cfg(not(target_arch = "wasm32"))]
-        self.startDiscoveryAnnouncementWatcher()?;
+        if let Err(error) = self.startDiscoveryAnnouncementWatcher() {
+            let _ = self.stop();
+            return Err(error);
+        }
 
         if let Err(error) = self.scheduleSynchronization() {
             self.state
@@ -133,6 +139,27 @@ impl SpacePersistenceSyncService {
                 .map_err(|lockError| format!("Space sync registry lock poisoned: {lockError}"))?
                 .remove(&localNodeId);
             return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Stops this CoreNode's persistence synchronizer and detaches its mutation listener.
+    pub fn stop(&self) -> Result<(), String> {
+        self.state.active.store(false, Ordering::Release);
+        self.state
+            .mutationSubscription
+            .lock()
+            .map_err(|error| format!("Space sync subscription lock poisoned: {error}"))?
+            .take();
+        let localNodeId = self.state.nodeRouter.localNodeId();
+        let mut services = persistenceServices()
+            .lock()
+            .map_err(|error| format!("Space sync registry lock poisoned: {error}"))?;
+        if services
+            .get(&localNodeId)
+            .is_some_and(|state| Arc::ptr_eq(state, &self.state))
+        {
+            services.remove(&localNodeId);
         }
         Ok(())
     }
@@ -351,6 +378,15 @@ impl SpacePersistenceSyncService {
                 Value::Null,
             )
             .await?;
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreSyncTrace",
+                &format!(
+                    "sync_exchange.clocks target={} local={} remote={}",
+                    targetNodeId,
+                    summarizeSyncClock(&localClock),
+                    summarizeSyncClock(&remoteClock)
+                ),
+            );
             let localOperations: Value = self
                 .callLocal(
                     "syncOperationsSince",
@@ -397,8 +433,23 @@ impl SpacePersistenceSyncService {
             }
             let operations = mergeSyncOperations(localOperations, remoteOperations)?;
             if operations.is_empty() {
+                operit_util::AppLogger::AppLogger::trace(
+                    "CoreSyncTrace",
+                    &format!(
+                        "sync_exchange.idle target={} reason=clocks_equal",
+                        targetNodeId
+                    ),
+                );
                 break;
             }
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreSyncTrace",
+                &format!(
+                    "sync_exchange.batch target={} {}",
+                    targetNodeId,
+                    summarizeSyncOperations(&operations)
+                ),
+            );
             self.synchronizeRequiredBlobs(targetNodeId, &operations)
                 .await?;
             let _: Value = callRemote(
@@ -409,8 +460,19 @@ impl SpacePersistenceSyncService {
             )
             .await?;
             let _: Value = self
-                .callLocal("syncApplyOperations", json!({ "operations": operations }))
+                .callLocal(
+                    "syncApplyOperations",
+                    json!({ "operations": operations.clone() }),
+                )
                 .await?;
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreSyncTrace",
+                &format!(
+                    "sync_exchange.batch_applied target={} {}",
+                    targetNodeId,
+                    summarizeSyncOperations(&operations)
+                ),
+            );
             if operations.len() < limit {
                 break;
             }
@@ -655,21 +717,67 @@ impl SpacePersistenceSyncService {
             "core-node-space-persistence-sync",
             Box::new(move || {
                 Box::pin(async move {
+                    if !service.state.active.load(Ordering::Acquire) {
+                        service
+                            .state
+                            .synchronizationScheduled
+                            .store(false, Ordering::Release);
+                        return;
+                    }
                     let _ = defaultHostRuntimeTaskSchedulerHost()
                         .waitForHostRuntimeDelay(SPACE_SYNC_PREPARATION_DELAY_MS)
                         .await;
+                    if !service.state.active.load(Ordering::Acquire) {
+                        service
+                            .state
+                            .synchronizationScheduled
+                            .store(false, Ordering::Release);
+                        return;
+                    }
                     let synchronizedRevision = syncMutationRevision();
-                    if let Err(error) = service.synchronizeOnce().await {
-                        operit_util::AppLogger::AppLogger::w(
-                            "SpacePersistenceSyncService",
-                            &format!("Space persistence sync failed: {error}"),
-                        );
+                    let syncStartedAt = currentTimeMillis();
+                    let localNodeId = service.state.nodeRouter.localNodeId();
+                    operit_util::AppLogger::AppLogger::v_with_level(
+                        "SpacePersistenceSyncService",
+                        &format!(
+                            "sync_cycle.start local={} revision={}",
+                            localNodeId, synchronizedRevision
+                        ),
+                        operit_util::AppLogger::VERBOSE_LEVEL_1,
+                    );
+                    match service.synchronizeOnce().await {
+                        Ok(()) => {
+                            operit_util::AppLogger::AppLogger::v_with_level(
+                                "SpacePersistenceSyncService",
+                                &format!(
+                                    "sync_cycle.done local={} revision={} elapsedMs={}",
+                                    localNodeId,
+                                    synchronizedRevision,
+                                    currentTimeMillis() - syncStartedAt
+                                ),
+                                operit_util::AppLogger::VERBOSE_LEVEL_1,
+                            );
+                        }
+                        Err(error) => {
+                            operit_util::AppLogger::AppLogger::w(
+                                "SpacePersistenceSyncService",
+                                &format!(
+                                    "sync_cycle.failed local={} revision={} elapsedMs={} error={}",
+                                    localNodeId,
+                                    synchronizedRevision,
+                                    currentTimeMillis() - syncStartedAt,
+                                    error
+                                ),
+                            );
+                        }
                     }
                     service
                         .state
                         .synchronizationScheduled
                         .store(false, Ordering::Release);
-                    if syncMutationRevision() != synchronizedRevision {
+                    if service.state.active.load(Ordering::Acquire)
+                        && syncMutationRevision() != synchronizedRevision
+                    {
                         if let Err(error) = service.scheduleSynchronization() {
                             operit_util::AppLogger::AppLogger::e(
                                 "SpacePersistenceSyncService",
@@ -684,6 +792,7 @@ impl SpacePersistenceSyncService {
             self.state
                 .synchronizationScheduled
                 .store(false, Ordering::Release);
+            self.state.active.store(false, Ordering::Release);
             return Err(error.to_string());
         }
         Ok(())
@@ -995,4 +1104,69 @@ fn mergeSyncOperations(left: Value, right: Value) -> Result<Vec<Value>, String> 
 /// Decodes one runtime sync operation page into its ordered operation array.
 fn syncOperations(value: Value) -> Result<Vec<Value>, String> {
     serde_json::from_value(value).map_err(|error| format!("invalid sync operations: {error}"))
+}
+
+/// Summarizes one synchronization clock without logging the complete vector.
+#[allow(non_snake_case)]
+fn summarizeSyncClock(value: &Value) -> String {
+    value
+        .get("sequences")
+        .and_then(Value::as_object)
+        .map(|sequences| {
+            let mut entries = sequences
+                .iter()
+                .filter_map(|(device, sequence)| {
+                    sequence
+                        .as_i64()
+                        .map(|sequence| format!("{device}:{sequence}"))
+                })
+                .collect::<Vec<_>>();
+            entries.sort();
+            entries.join(",")
+        })
+        .unwrap_or_else(|| "none".to_string())
+}
+
+/// Summarizes synchronization operations by domain and addressed chat entities.
+#[allow(non_snake_case)]
+fn summarizeSyncOperations(operations: &[Value]) -> String {
+    let mut domainCounts = BTreeMap::<String, usize>::new();
+    let mut chatEntities = BTreeSet::new();
+    let mut createdAt = Vec::new();
+    let mut operationIds = Vec::new();
+    for value in operations {
+        let Ok(operation) = serde_json::from_value::<SyncOperation>(value.clone()) else {
+            continue;
+        };
+        *domainCounts.entry(operation.domain.clone()).or_default() += 1;
+        if operation.domain == "chat" {
+            chatEntities.insert(format!("{}/{}", operation.entityType, operation.entityId));
+        }
+        createdAt.push(operation.createdAt);
+        operationIds.push(operation.opId);
+    }
+    createdAt.sort();
+    operationIds.sort();
+    let domains = domainCounts
+        .into_iter()
+        .map(|(domain, count)| format!("{domain}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "count={} domains={} chatEntities={} createdAt={}..{} opIds={}",
+        operations.len(),
+        if domains.is_empty() { "none" } else { &domains },
+        if chatEntities.is_empty() {
+            "none".to_string()
+        } else {
+            chatEntities.into_iter().collect::<Vec<_>>().join(",")
+        },
+        createdAt.first().copied().unwrap_or_default(),
+        createdAt.last().copied().unwrap_or_default(),
+        if operationIds.is_empty() {
+            "none".to_string()
+        } else {
+            operationIds.join(",")
+        }
+    )
 }

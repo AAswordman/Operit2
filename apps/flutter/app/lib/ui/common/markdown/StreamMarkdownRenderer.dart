@@ -84,7 +84,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     super.initState();
     _rendererId = _computeRendererId();
     _rendererState = widget.state ?? StreamMarkdownRendererState();
-    _startCurrentContent(reason: 'init');
+    _startCurrentContent();
   }
 
   @override
@@ -109,19 +109,17 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         if (streamChanged) 'stream',
         if (staticContentChanged) 'staticContent',
       ].join(',');
-      if (_shouldLogMarkdownLifecycle(widget.contentStream, reasons)) {
-        _logRendererTrace(
-          'restart_request reason=$reasons '
-          'oldRendererId=$_rendererId newRendererId=$nextRendererId '
-          'oldStream=${_streamTraceId(oldWidget.contentStream)} '
-          'newStream=${_streamTraceId(widget.contentStream)} '
-          'chars=${_rendererState.collectedContent.length} '
-          'nodes=${_rendererState.renderNodes.length} '
-          'done=$_streamDone',
-        );
-      }
+      _logRendererTrace(
+        'restart_request reason=$reasons '
+        'oldRendererId=$_rendererId newRendererId=$nextRendererId '
+        'oldStream=${_streamTraceId(oldWidget.contentStream)} '
+        'newStream=${_streamTraceId(widget.contentStream)} '
+        'chars=${_rendererState.collectedContent.length} '
+        'nodes=${_rendererState.renderNodes.length} '
+        'done=$_streamDone',
+      );
       _rendererId = nextRendererId;
-      _startCurrentContent(reason: reasons);
+      _startCurrentContent();
     } else if (oldWidget.onContentReady != widget.onContentReady &&
         widget.contentStream == null &&
         _rendererState.streamParsingCompletedSuccessfully) {
@@ -142,7 +140,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   }
 
   /// Starts rendering the current static content or live content stream.
-  void _startCurrentContent({required String reason}) {
+  void _startCurrentContent() {
     final generation = ++_startGeneration;
     _subscription?.cancel();
     _renderTimer?.cancel();
@@ -152,17 +150,10 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _streamDoneNotified = false;
 
     final stream = widget.contentStream;
-    final shouldTrace = _shouldLogMarkdownLifecycle(stream, reason);
     if (stream == null &&
         _rendererState.streamParsingCompletedSuccessfully &&
         _rendererState.collectedContent.toString() == widget.content &&
         _rendererState.renderNodes.isNotEmpty) {
-      if (shouldTrace) {
-        _logRendererTrace(
-          'static_reuse reason=$reason rendererId=$_rendererId '
-          'chars=${widget.content.length} nodes=${_rendererState.renderNodes.length}',
-        );
-      }
       _rendererState.xmlNodeStreams.clear();
       _rendererState.xmlMarkdownEventStreams.clear();
       _streamDone = true;
@@ -170,26 +161,11 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       return;
     }
 
-    if (shouldTrace) {
-      _logRendererTrace(
-        'reset reason=$reason rendererId=$_rendererId '
-        'stream=${_streamTraceId(stream)} '
-        'previousChars=${_rendererState.collectedContent.length} '
-        'previousNodes=${_rendererState.renderNodes.length} '
-        'wasDone=$_streamDone',
-      );
-    }
     _streamDone = stream == null;
     _rendererState.reset();
     if (stream == null) {
       final cachedNodes = _staticMarkdownNodeCache.get(widget.content);
       if (cachedNodes != null) {
-        if (shouldTrace) {
-          _logRendererTrace(
-            'static_cache_hit rendererId=$_rendererId '
-            'chars=${widget.content.length} nodes=${cachedNodes.length}',
-          );
-        }
         _streamDone = true;
         _rendererState.collectedContent.write(widget.content);
         _rendererState.streamParsingCompletedSuccessfully = true;
@@ -256,14 +232,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _subscription = stream.listen(
       (event) {
         _streamEventCount += 1;
-        if (_shouldLogRenderStreamEvent(_streamEventCount)) {
-          _logRendererTrace(
-            'event rendererId=$_rendererId stream=${_streamTraceId(stream)} '
-            'count=$_streamEventCount type=${event.runtimeType} '
-            'chars=${_rendererState.collectedContent.length} '
-            'nodes=${_rendererState.renderNodes.length}',
-          );
-        }
         _applyMarkdownEvent(event);
         _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
       },
@@ -304,11 +272,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   /// Returns a stable short label for one Dart stream object in logs.
   String _streamTraceId(Stream<Object>? stream) {
     return stream == null ? 'none' : identityHashCode(stream).toString();
-  }
-
-  /// Returns whether one render stream event should be logged.
-  bool _shouldLogRenderStreamEvent(int count) {
-    return count <= 5 || count % 256 == 0;
   }
 
   /// Emits one Markdown renderer lifecycle log entry.
@@ -352,34 +315,12 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 
   void _applyMarkdownEvent(Object event) {
     final normalized = _NormalizedMarkdownEvent.from(event);
-    final traceEvent = _shouldLogMarkdownEventDetail(
-      normalized,
-      _streamEventCount,
-    );
-    if (traceEvent) {
-      _logRendererTrace(
-        'apply.begin rendererId=$_rendererId '
-        'stream=${_streamTraceId(widget.contentStream)} '
-        'count=$_streamEventCount ${normalized.traceSummary()} '
-        'beforeChars=${_rendererState.collectedContent.length} '
-        'beforeNodes=${_rendererState.renderNodes.length} done=$_streamDone',
-      );
-    }
     final parentBlockId = normalized.parentBlockId;
     if (parentBlockId != null) {
       _rendererState.eventBuilder.appendXmlMarkdownEvent(
         parentBlockId: parentBlockId,
         event: normalized.asLocalEvent(),
       );
-      if (traceEvent) {
-        _logRendererTrace(
-          'apply.end rendererId=$_rendererId '
-          'stream=${_streamTraceId(widget.contentStream)} '
-          'count=$_streamEventCount ${normalized.traceSummary()} '
-          'afterChars=${_rendererState.collectedContent.length} '
-          'afterNodes=${_rendererState.renderNodes.length} done=$_streamDone',
-        );
-      }
       return;
     }
     switch (normalized.type) {
@@ -466,15 +407,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       default:
         throw StateError('Unknown markdown event type ${normalized.type}');
     }
-    if (traceEvent) {
-      _logRendererTrace(
-        'apply.end rendererId=$_rendererId '
-        'stream=${_streamTraceId(widget.contentStream)} '
-        'count=$_streamEventCount ${normalized.traceSummary()} '
-        'afterChars=${_rendererState.collectedContent.length} '
-        'afterNodes=${_rendererState.renderNodes.length} done=$_streamDone',
-      );
-    }
   }
 
   void _scheduleNodeFadeIn(List<String> nodeKeys) {
@@ -528,27 +460,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       return content;
     }
     return SelectionArea(child: content);
-  }
-}
-
-/// Returns whether a lifecycle transition is useful enough to print.
-bool _shouldLogMarkdownLifecycle(Stream<Object>? stream, String reason) {
-  return stream != null || reason != 'init';
-}
-
-/// Returns whether a normalized Markdown event should print detailed state.
-bool _shouldLogMarkdownEventDetail(
-  _NormalizedMarkdownEvent event,
-  int eventCount,
-) {
-  switch (event.type) {
-    case 'reset':
-    case 'completed':
-    case 'savepoint':
-    case 'rollback':
-      return true;
-    default:
-      return eventCount > 0 && (eventCount <= 5 || eventCount % 256 == 0);
   }
 }
 
@@ -633,15 +544,6 @@ class _NormalizedMarkdownEvent {
       nodeType: nodeType,
       headerLevel: headerLevel,
     );
-  }
-
-  /// Returns a compact protocol-level description for render diagnostics.
-  String traceSummary() {
-    return 'eventType=$type valueLen=${value?.length ?? 0} '
-        'id=${id ?? 'none'} blockId=${blockId ?? 'none'} '
-        'inlineId=${inlineId ?? 'none'} '
-        'parentBlockId=${parentBlockId ?? 'none'} '
-        'nodeType=${nodeType ?? 'none'} headerLevel=${headerLevel ?? 'none'}';
   }
 
   final String type;

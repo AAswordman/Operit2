@@ -9,6 +9,7 @@ use operit_link::{
 };
 use operit_model::ChatMessage::ChatMessage;
 use operit_proxy_local::{GeneratedCoreProxy, LocalCoreProxy};
+use operit_util::AppLogger::AppLogger;
 
 pub(super) struct TuiCore {
     proxy: GeneratedCoreProxy<SharedLocalCore>,
@@ -84,6 +85,13 @@ impl TuiCore {
             "tui-main-chat-messages-{}",
             self.messageWatchGeneration
         ));
+        AppLogger::trace(
+            "TuiStreamTrace",
+            &format!(
+                "messages_watch.open requestId={} chatId={}",
+                requestId.0, chatId
+            ),
+        );
         let mut chatProxy = self.proxy.chat_runtime_holder_main();
         let targetObjectId = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
             .ok_or_else(|| CoreLinkError::internal("chat runtime object id is not generated"))?;
@@ -104,13 +112,32 @@ impl TuiCore {
             .await?;
         let sender = self.eventSender.clone();
         let eventRequestId = requestId.clone();
+        let eventChatId = chatId.clone();
         self.messageWatchChatId = Some(chatId);
         self.messageWatchRequestId = Some(requestId);
         self.messageWatchTask = Some(tokio::spawn(async move {
+            let mut eventCount = 0_u64;
             while let Some(mut event) = stream.recv().await {
+                eventCount += 1;
+                if eventCount <= 3 || event.kind == operit_link::CoreEventKind::Completed {
+                    AppLogger::trace(
+                        "TuiStreamTrace",
+                        &format!(
+                            "messages_watch.event requestId={} chatId={} count={} kind={:?}",
+                            eventRequestId.0, eventChatId, eventCount, event.kind
+                        ),
+                    );
+                }
                 event.requestId = Some(eventRequestId.clone());
                 let _ = sender.send(event);
             }
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "messages_watch.closed requestId={} chatId={} events={}",
+                    eventRequestId.0, eventChatId, eventCount
+                ),
+            );
         }));
         Ok(())
     }
@@ -143,8 +170,30 @@ impl TuiCore {
             .filter(|streamId| !activeStreamIds.contains(*streamId))
             .cloned()
             .collect::<Vec<_>>();
+        if !staleStreamIds.is_empty() || !activeStreamIds.is_empty() {
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "content_watches.sync messages={} active={} stale={}",
+                    messages.len(),
+                    activeStreamIds
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    staleStreamIds.join(",")
+                ),
+            );
+        }
         for streamId in staleStreamIds {
             if let Some(watch) = self.contentStreamWatches.remove(&streamId) {
+                AppLogger::trace(
+                    "TuiStreamTrace",
+                    &format!(
+                        "content_watch.abort streamId={} requestId={} messageTimestamp={}",
+                        watch.streamId, watch.requestId.0, watch.messageTimestamp
+                    ),
+                );
                 watch.task.abort();
             }
         }
@@ -172,6 +221,13 @@ impl TuiCore {
             "tui-main-content-stream-{}",
             self.contentStreamGeneration
         ));
+        AppLogger::trace(
+            "TuiStreamTrace",
+            &format!(
+                "content_watch.open streamId={} requestId={} messageTimestamp={}",
+                streamId, requestId.0, messageTimestamp
+            ),
+        );
         let mut chatProxy = self.proxy.chat_runtime_holder_main();
         let mut stream = chatProxy
             .generatedClientMut()
@@ -184,11 +240,34 @@ impl TuiCore {
             .await?;
         let sender = self.eventSender.clone();
         let eventRequestId = requestId.clone();
+        let eventStreamId = streamId.clone();
         let task = tokio::spawn(async move {
+            let mut eventCount = 0_u64;
             while let Some(mut event) = stream.recv().await {
+                eventCount += 1;
+                if eventCount <= 3 || event.kind == operit_link::CoreEventKind::Completed {
+                    AppLogger::trace(
+                        "TuiStreamTrace",
+                        &format!(
+                            "content_watch.event streamId={} requestId={} count={} kind={:?} property={}",
+                            eventStreamId,
+                            eventRequestId.0,
+                            eventCount,
+                            event.kind,
+                            event.propertyName
+                        ),
+                    );
+                }
                 event.requestId = Some(eventRequestId.clone());
                 let _ = sender.send(event);
             }
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "content_watch.closed streamId={} requestId={} events={}",
+                    eventStreamId, eventRequestId.0, eventCount
+                ),
+            );
         });
         self.contentStreamWatches.insert(
             streamId.clone(),
@@ -215,6 +294,13 @@ impl TuiCore {
         self.stateWatchGeneration += 1;
         let requestId =
             CoreRequestId::new(format!("tui-main-chat-state-{}", self.stateWatchGeneration));
+        AppLogger::trace(
+            "TuiStreamTrace",
+            &format!(
+                "state_watch.open requestId={} chatId={}",
+                requestId.0, chatId
+            ),
+        );
         let mut chatProxy = self.proxy.chat_runtime_holder_main();
         let targetObjectId = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
             .ok_or_else(|| CoreLinkError::internal("chat runtime object id is not generated"))?;
@@ -235,13 +321,32 @@ impl TuiCore {
             .await?;
         let sender = self.eventSender.clone();
         let eventRequestId = requestId.clone();
+        let eventChatId = chatId.clone();
         self.stateWatchChatId = Some(chatId);
         self.stateWatchRequestId = Some(requestId);
         self.stateWatchTask = Some(tokio::spawn(async move {
+            let mut eventCount = 0_u64;
             while let Some(mut event) = stream.recv().await {
+                eventCount += 1;
+                if eventCount <= 3 || event.kind == operit_link::CoreEventKind::Completed {
+                    AppLogger::trace(
+                        "TuiStreamTrace",
+                        &format!(
+                            "state_watch.event requestId={} chatId={} count={} kind={:?}",
+                            eventRequestId.0, eventChatId, eventCount, event.kind
+                        ),
+                    );
+                }
                 event.requestId = Some(eventRequestId.clone());
                 let _ = sender.send(event);
             }
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "state_watch.closed requestId={} chatId={} events={}",
+                    eventRequestId.0, eventChatId, eventCount
+                ),
+            );
         }));
         Ok(())
     }
@@ -250,6 +355,16 @@ impl TuiCore {
     /// Stops the active main chat state watch.
     pub(super) fn clearMainChatStateWatch(&mut self) {
         if let Some(task) = self.stateWatchTask.take() {
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "state_watch.abort requestId={}",
+                    self.stateWatchRequestId
+                        .as_ref()
+                        .map(|requestId| requestId.0.as_str())
+                        .unwrap_or("<none>")
+                ),
+            );
             task.abort();
         }
         self.stateWatchChatId = None;
@@ -267,6 +382,16 @@ impl TuiCore {
     /// Stops the active main chat message watch.
     pub(super) fn clearMainChatMessagesWatch(&mut self) {
         if let Some(task) = self.messageWatchTask.take() {
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "messages_watch.abort requestId={}",
+                    self.messageWatchRequestId
+                        .as_ref()
+                        .map(|requestId| requestId.0.as_str())
+                        .unwrap_or("<none>")
+                ),
+            );
             task.abort();
         }
         self.messageWatchChatId = None;
@@ -278,6 +403,13 @@ impl TuiCore {
     /// Stops every embedded content stream watch owned by the active main chat.
     pub(super) fn clearMainChatContentStreams(&mut self) {
         for (_, watch) in std::mem::take(&mut self.contentStreamWatches) {
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "content_watch.abort streamId={} requestId={} messageTimestamp={}",
+                    watch.streamId, watch.requestId.0, watch.messageTimestamp
+                ),
+            );
             watch.task.abort();
         }
     }

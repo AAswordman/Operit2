@@ -109,16 +109,6 @@ impl ToolPkgChatInputHookBridge {
         }
 
         let mut current = context;
-        ChainLogger::info(
-            PLUGIN_CHAIN,
-            "plugin.toolpkg.chat_input.scan",
-            &[
-                ("event", current.eventName.clone()),
-                ("chatId", current.chatId.clone()),
-                ("hookCount", activeHooks.len().to_string()),
-                ("textChars", ChainLogger::lenField(&current.text)),
-            ],
-        );
         let manager = runtime.package_manager();
         let budget = ToolPkgPreHookTimeout::fromPreferences();
         let mut timedOut = false;

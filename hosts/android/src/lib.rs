@@ -16,6 +16,8 @@ mod filesystem;
 mod http;
 #[cfg(target_os = "android")]
 mod local_inference;
+#[cfg(target_os = "android")]
+mod logging;
 mod managed_runtime;
 mod runtime_common;
 #[cfg(target_os = "android")]
@@ -35,6 +37,8 @@ pub use filesystem::AndroidFileSystemHost;
 pub use http::AndroidHttpHost;
 #[cfg(target_os = "android")]
 pub use local_inference::AndroidLocalInferenceHost;
+#[cfg(target_os = "android")]
+pub use logging::installAndroidLogSink;
 pub use managed_runtime::AndroidManagedRuntimeHost;
 pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as AndroidHostJavaScriptRuntimeHost;
 pub use operit_host_native_common::NativeHostRuntimeTaskSchedulerHost as AndroidHostRuntimeTaskSchedulerHost;
@@ -58,6 +62,7 @@ pub fn createRuntimeHostManager(
     workspaceRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
 ) -> HostManager {
+    installAndroidLogSink();
     let runtimeStorageWriteHost =
         Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
             runtimeRoot.clone(),

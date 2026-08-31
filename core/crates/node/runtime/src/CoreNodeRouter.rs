@@ -19,6 +19,7 @@ use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
 use operit_tools::runtime_support::{
     CoreNodeToolRuntime, RuntimeCoreNodeRouteState, RuntimeCoreNodeStatus,
 };
+use operit_util::AppLogger::{AppLogger, VERBOSE_LEVEL_5, VERBOSE_LEVEL_6};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -339,7 +340,7 @@ impl CoreNodeRouter {
         let reachable = self
             .nodeIsReachable(&targetNodeId)
             .map_err(CoreLinkError::internal)?;
-        operit_util::AppLogger::AppLogger::i(
+        operit_util::AppLogger::AppLogger::trace(
             "CoreNodeRouteTrace",
             &format!(
                 "binding_target_resolve key={} local={} selected={} reachable={}",
@@ -454,19 +455,6 @@ impl CoreNodeRouter {
             previousNodeId,
             excludedPeerNodeIds,
         )?;
-        operit_util::AppLogger::AppLogger::i(
-            "CoreNodeRouteTrace",
-            &format!(
-                "route_hop_resolve source={} target={} previous={:?} ttl={} next={} excluded={:?} kind={:?}",
-                self.localNodeId,
-                request.targetNodeId,
-                previousNodeId,
-                request.ttl,
-                nextNodeId,
-                excludedPeerNodeIds,
-                request.routeKind
-            ),
-        );
         if previousNodeId == Some(nextNodeId.as_str()) {
             return Err(CoreLinkError::new(
                 "CORE_NODE_ROUTE_LOOP",
@@ -500,12 +488,13 @@ impl CoreNodeRouter {
             .reachableNextHopThroughPeers(targetNodeId.clone(), peers)
             .map_err(CoreLinkError::internal)?;
         if nextHop.is_none() {
-            operit_util::AppLogger::AppLogger::w(
+            AppLogger::v_with_level(
                 "CoreNodeRouter",
                 &format!(
                     "no active route source={} target={} previous={:?} peers={:?}",
                     self.localNodeId, targetNodeId, previousNodeId, activePeers
                 ),
+                VERBOSE_LEVEL_6,
             );
         }
         nextHop.ok_or_else(|| {
@@ -752,7 +741,7 @@ impl CoreNodeRouter {
         let sourceArgs = embeddedStreamSourceArgs(&request)?;
         let route = embeddedStreamSourceRoute(&request)?;
         let bindingKey = route.bindingKey(sourceArgs)?;
-        operit_util::AppLogger::AppLogger::i(
+        operit_util::AppLogger::AppLogger::trace(
             "CoreNodeRouteTrace",
             &format!(
                 "embedded_route_resolve requestId={} streamId={} sourceMode={} sourceMethod={} routeId={} routeMethod={} key={} local={}",
@@ -772,7 +761,7 @@ impl CoreNodeRouter {
                 key: bindingKey.clone(),
             })
             .await?;
-        operit_util::AppLogger::AppLogger::i(
+        operit_util::AppLogger::AppLogger::trace(
             "CoreNodeRouteTrace",
             &format!(
                 "embedded_route_target requestId={} streamId={} routeMethod={} local={} target={}",
@@ -917,7 +906,7 @@ impl CoreNodeRouter {
     ) -> Result<CoreEventStream, CoreLinkError> {
         if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
             if targetNodeId == self.localNodeId {
-                operit_util::AppLogger::AppLogger::i(
+                operit_util::AppLogger::AppLogger::trace(
                     "CoreNodeRouteTrace",
                     &format!(
                         "binding_watch_open_local_embedded_stream requestId={} property={} local={}",
@@ -926,7 +915,7 @@ impl CoreNodeRouter {
                 );
                 return self.localCore.watchSpace(request).await;
             }
-            operit_util::AppLogger::AppLogger::i(
+            operit_util::AppLogger::AppLogger::trace(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_watch_open_remote_embedded_stream requestId={} property={} local={} target={}",
@@ -937,7 +926,7 @@ impl CoreNodeRouter {
         }
         if crate::generated_space_watch_route(&request).is_some() {
             if targetNodeId == self.localNodeId {
-                operit_util::AppLogger::AppLogger::i(
+                operit_util::AppLogger::AppLogger::trace(
                     "CoreNodeRouteTrace",
                     &format!(
                         "binding_watch_open_local_space requestId={} property={} local={}",
@@ -946,12 +935,13 @@ impl CoreNodeRouter {
                 );
                 return self.localCore.watchSpace(request).await;
             }
-            operit_util::AppLogger::AppLogger::i(
+            AppLogger::v_with_level(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_watch_open_remote_space requestId={} property={} local={} target={}",
                     request.requestId.0, request.propertyName, self.localNodeId, targetNodeId
                 ),
+                VERBOSE_LEVEL_5,
             );
             return self.watchNodeSpace(targetNodeId, request).await;
         }
@@ -1028,7 +1018,7 @@ impl CoreNodeRouter {
             if binding.nodeId != self.localNodeId {
                 initialLocalStream = None;
             }
-            operit_util::AppLogger::AppLogger::i(
+            AppLogger::v_with_level(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_flow_segment_open requestId={} property={} key={} segment={} owner={} generation={} localSource={}",
@@ -1040,6 +1030,7 @@ impl CoreNodeRouter {
                     binding.generation,
                     useInitialLocalStream
                 ),
+                VERBOSE_LEVEL_5,
             );
             let mut stream = if useInitialLocalStream {
                 initialLocalStream
@@ -1052,7 +1043,7 @@ impl CoreNodeRouter {
                 {
                     Ok(stream) => stream,
                     Err(error) => {
-                        operit_util::AppLogger::AppLogger::w(
+                        AppLogger::v_with_level(
                             "CoreNodeRouteTrace",
                             &format!(
                                 "binding_flow_segment_open_failed requestId={} property={} key={} owner={} generation={} error={}",
@@ -1063,6 +1054,7 @@ impl CoreNodeRouter {
                                 binding.generation,
                                 error
                             ),
+                            VERBOSE_LEVEL_6,
                         );
                         if self
                             .waitForBindingFlowRetryOrCancel(&mut cancelReceiver)
@@ -1079,18 +1071,11 @@ impl CoreNodeRouter {
                 tokio::select! {
                     biased;
                     _ = &mut cancelReceiver => {
-                        operit_util::AppLogger::AppLogger::i(
-                            "CoreNodeRouteTrace",
-                            &format!(
-                                "binding_flow_cancelled requestId={} property={} key={} segment={}",
-                                requestId, propertyName, bindingKey, segmentCount
-                            ),
-                        );
                         break 'outer;
                     }
                     maybeEvent = stream.recv() => {
                         let Some(event) = maybeEvent else {
-                            operit_util::AppLogger::AppLogger::w(
+                            AppLogger::v_with_level(
                                 "CoreNodeRouteTrace",
                                 &format!(
                                     "binding_flow_segment_closed requestId={} property={} key={} segment={} owner={} generation={}",
@@ -1101,26 +1086,18 @@ impl CoreNodeRouter {
                                     binding.nodeId,
                                     binding.generation
                                 ),
+                                VERBOSE_LEVEL_5,
                             );
                             break;
                         };
                         if event.kind == CoreEventKind::Completed {
-                            operit_util::AppLogger::AppLogger::i(
-                                "CoreNodeRouteTrace",
-                                &format!(
-                                    "binding_flow_segment_completed requestId={} property={} key={} segment={} owner={} generation={}",
-                                    requestId,
-                                    propertyName,
-                                    bindingKey,
-                                    segmentCount,
-                                    binding.nodeId,
-                                    binding.generation
-                                ),
-                            );
                             break;
                         }
+                        if segmentCount > 1 && event.kind == CoreEventKind::Snapshot {
+                            continue;
+                        }
                         if !self.bindingStillCurrent(&bindingKey, &binding) {
-                            operit_util::AppLogger::AppLogger::i(
+                            AppLogger::v_with_level(
                                 "CoreNodeRouteTrace",
                                 &format!(
                                     "binding_flow_stale_event requestId={} property={} key={} segment={} owner={} generation={} kind={:?}",
@@ -1132,10 +1109,36 @@ impl CoreNodeRouter {
                                     binding.generation,
                                     event.kind
                                 ),
+                                VERBOSE_LEVEL_5,
                             );
                             break;
                         }
+                        AppLogger::v_with_level(
+                            "CoreNodeRouteTrace",
+                            &format!(
+                                "binding_flow.forwarded requestId={} property={} key={} segment={} owner={} generation={} kind={:?}",
+                                requestId,
+                                propertyName,
+                                bindingKey,
+                                segmentCount,
+                                binding.nodeId,
+                                binding.generation,
+                                event.kind
+                            ),
+                            VERBOSE_LEVEL_6,
+                        );
                         if sender.send(event).is_err() {
+                            AppLogger::v_with_level(
+                                "CoreNodeRouteTrace",
+                                &format!(
+                                    "binding_flow.receiver_closed requestId={} property={} key={} segment={}",
+                                    requestId,
+                                    propertyName,
+                                    bindingKey,
+                                    segmentCount
+                                ),
+                                VERBOSE_LEVEL_5,
+                            );
                             break 'outer;
                         }
                     }
@@ -1143,7 +1146,7 @@ impl CoreNodeRouter {
                         .waitForHostRuntimeDelay(ROUTED_BINDING_WATCH_RECHECK_DELAY_MS) => {
                         let _ = delayResult;
                         if !self.bindingStillCurrent(&bindingKey, &binding) {
-                            operit_util::AppLogger::AppLogger::i(
+                            AppLogger::v_with_level(
                                 "CoreNodeRouteTrace",
                                 &format!(
                                     "binding_flow_generation_changed requestId={} property={} key={} segment={} owner={} generation={}",
@@ -1154,6 +1157,7 @@ impl CoreNodeRouter {
                                     binding.nodeId,
                                     binding.generation
                                 ),
+                                VERBOSE_LEVEL_5,
                             );
                             break;
                         }
@@ -1168,13 +1172,6 @@ impl CoreNodeRouter {
                 break;
             }
         }
-        operit_util::AppLogger::AppLogger::i(
-            "CoreNodeRouteTrace",
-            &format!(
-                "binding_flow_stopped requestId={} property={} key={}",
-                requestId, propertyName, bindingKey
-            ),
-        );
     }
 
     /// Waits briefly before retrying a physical Binding Flow segment.
@@ -1506,7 +1503,7 @@ impl CoreNodeLinkClient for CoreNodeRouter {
         request: RoutedCoreRequest<CoreWatchRequest>,
     ) -> Result<CoreEventStream, CoreLinkError> {
         let atTarget = self.validateIncomingRoute(&previousNodeId, &request)?;
-        operit_util::AppLogger::AppLogger::i(
+        operit_util::AppLogger::AppLogger::trace(
             "CoreNodeRouteTrace",
             &format!(
                 "route_watch_incoming requestId={} property={} object={} previous={} local={} target={} ttl={} routeKind={:?} atTarget={}",
@@ -1590,7 +1587,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
         };
         let route = generatedRoute;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
-            operit_util::AppLogger::AppLogger::i(
+            operit_util::AppLogger::AppLogger::trace(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_call_resolve requestId={} path={} method={} key={} local={}",
@@ -1644,7 +1641,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
         let route = crate::generated_core_watch_route(&request)?;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
-            operit_util::AppLogger::AppLogger::i(
+            operit_util::AppLogger::AppLogger::trace(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_snapshot_resolve requestId={} path={} property={} key={} local={}",
@@ -1666,7 +1663,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
     /// Opens a watch stream on the CoreNode selected by generated metadata.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
-            operit_util::AppLogger::AppLogger::i(
+            operit_util::AppLogger::AppLogger::trace(
                 "CoreNodeRouteTrace",
                 &format!(
                     "watch_embedded_open requestId={} property={} object={} local={}",
@@ -1680,7 +1677,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
         }
         let route = crate::generated_core_watch_route(&request)?;
         if let GeneratedCoreRoute::Binding { key, .. } = &route {
-            operit_util::AppLogger::AppLogger::i(
+            operit_util::AppLogger::AppLogger::trace(
                 "CoreNodeRouteTrace",
                 &format!(
                     "binding_watch_resolve requestId={} path={} property={} key={} local={}",
@@ -1707,7 +1704,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
             return self.watchBindingFlow(key.clone(), request, None);
         }
         let targetNodeId = self.routeNodeId(route).await?;
-        operit_util::AppLogger::AppLogger::i(
+        operit_util::AppLogger::AppLogger::trace(
             "CoreNodeRouteTrace",
             &format!(
                 "watch_target_resolve requestId={} property={} object={} local={} target={}",
@@ -1965,6 +1962,22 @@ mod tests {
                 .get(path)
                 .cloned()
                 .ok_or_else(|| HostError::new(format!("missing runtime storage entry: {path}")))
+        }
+
+        /// Reads one bounded range from an in-memory runtime storage file.
+        #[allow(non_snake_case)]
+        fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+            let content = self.readBytes(path)?;
+            let start = usize::try_from(offset)
+                .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
+            if start >= content.len() {
+                return Ok(Vec::new());
+            }
+            let end = start
+                .checked_add(length)
+                .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
+                .min(content.len());
+            Ok(content[start..end].to_vec())
         }
 
         /// Writes one in-memory runtime storage file.
@@ -4221,6 +4234,7 @@ mod tests {
         waitForRoutedChatText(&routedFlow, "local-before-switch").await;
 
         localBinding.setNodeId(targetNodeId.clone());
+        tokio::time::sleep(Duration::from_millis(120)).await;
         {
             let mut holder = targetHolder.lock().await;
             holder
@@ -4237,6 +4251,14 @@ mod tests {
         waitForRoutedChatText(&routedFlow, "remote-after-switch").await;
 
         localBinding.setNodeId(localNodeId.clone());
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        let messagesAfterOwnerSwitch = routedFlow.value();
+        assert!(
+            messagesAfterOwnerSwitch
+                .iter()
+                .any(|message| message.displayText() == "remote-after-switch"),
+            "a replacement segment Snapshot must not roll the logical Flow back"
+        );
         {
             let mut holder = localHolder.lock().await;
             holder

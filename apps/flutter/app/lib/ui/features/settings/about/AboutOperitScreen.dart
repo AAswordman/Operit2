@@ -6,7 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../common/OperitLogoMark.dart';
 import '../../../theme/OperitGlassSurface.dart';
 
-const String _appVersion = '2.0.0+5';
+const String _appVersion = '2.0.0+6';
 final Uri _projectUri = Uri.parse('https://github.com/AAswordman/Operit2');
 final Uri _documentationUri = Uri.parse(
   'https://github.com/AAswordman/Operit2#readme',

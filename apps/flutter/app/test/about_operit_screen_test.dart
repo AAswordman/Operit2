@@ -12,7 +12,7 @@ void main() {
     );
 
     expect(find.text('Operit2'), findsWidgets);
-    expect(find.text('版本 2.0.0+5'), findsOneWidget);
+    expect(find.text('版本 2.0.0+6'), findsOneWidget);
     expect(find.text('项目源码'), findsOneWidget);
 
     await tester.tap(find.text('开源许可证'));

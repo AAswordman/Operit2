@@ -132,13 +132,16 @@ void _runDetachedChatWindow(DetachedChatWindowArguments arguments) {
   );
 }
 
+/// Routes Flutter framework diagnostics through the client logger.
 void _installClientLogHooks() {
-  final originalDebugPrint = debugPrint;
   debugPrint = (String? message, {int? wrapWidth}) {
     if (message != null && message.isNotEmpty) {
-      ClientLogger.d(message, tag: 'FlutterDebugPrint');
+      ClientLogger.v(
+        message,
+        verboseLevel: VerboseLevel.level6,
+        tag: 'FlutterDebugPrint',
+      );
     }
-    originalDebugPrint(message, wrapWidth: wrapWidth);
   };
 
   FlutterError.onError = (FlutterErrorDetails details) {

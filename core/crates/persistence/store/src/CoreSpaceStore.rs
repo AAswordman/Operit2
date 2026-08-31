@@ -228,7 +228,7 @@ impl CoreSpaceStore {
         }
 
         let now = currentTimeMillis();
-        self.writeMemberRecord(&CoreSpaceMemberRecord {
+        let record = CoreSpaceMemberRecord {
             spaceId: pairedSpace.spaceId,
             spaceName: pairedSpace.spaceName,
             spaceRevision: pairedSpace.spaceRevision,
@@ -238,7 +238,14 @@ impl CoreSpaceStore {
                 .map(|record| record.joinedAt)
                 .unwrap_or(now),
             updatedAt: now,
-        })?;
+        };
+        if !records
+            .get(&pairedNodeId)
+            .map(|existing| existing.hasSameMembershipAs(&record))
+            .unwrap_or(false)
+        {
+            self.writeMemberRecord(&record)?;
+        }
         self.space()
     }
 
@@ -678,14 +685,22 @@ impl CoreSpaceStore {
                 .get(&nodeId)
                 .map(|record| record.joinedAt)
                 .unwrap_or(now);
-            self.writeMemberRecord(&CoreSpaceMemberRecord {
+            let record = CoreSpaceMemberRecord {
                 spaceId: spaceId.clone(),
                 spaceName: spaceName.clone(),
                 spaceRevision,
                 nodeId,
                 joinedAt,
                 updatedAt: now,
-            })?;
+            };
+            if existingRecords
+                .get(&record.nodeId)
+                .map(|existing| existing.hasSameMembershipAs(&record))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            self.writeMemberRecord(&record)?;
         }
         self.space()
     }
@@ -783,6 +798,18 @@ impl CoreSpaceStore {
             self.storage.clone(),
             format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/{nodeId}.preferences.json"),
         )
+    }
+}
+
+impl CoreSpaceMemberRecord {
+    /// Returns whether two records encode the same durable membership fact.
+    #[allow(non_snake_case)]
+    fn hasSameMembershipAs(&self, other: &Self) -> bool {
+        self.spaceId == other.spaceId
+            && self.spaceName == other.spaceName
+            && self.spaceRevision == other.spaceRevision
+            && self.nodeId == other.nodeId
+            && self.joinedAt == other.joinedAt
     }
 }
 
@@ -990,4 +1017,187 @@ fn validateNodeId(nodeId: &str) -> Result<(), String> {
         return Err("Device id contains an invalid path character".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    use operit_host_api::{HostError, RuntimeStorageEntry, RuntimeStorageHost};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+
+    use crate::SyncOperationStore::SyncOperationStore;
+
+    #[derive(Clone, Default)]
+    struct MemoryStorageHost {
+        files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    }
+
+    impl RuntimeStorageHost for MemoryStorageHost {
+        /// Returns no physical runtime root for the in-memory test host.
+        fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+
+        /// Returns no physical workspace root for the in-memory test host.
+        fn workspaceRootDir(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+
+        /// Reads one exact virtual file from the in-memory test host.
+        fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .get(path)
+                .cloned()
+                .ok_or_else(|| HostError::new(format!("missing runtime storage file: {path}")))
+        }
+
+        /// Reads one byte range from the in-memory test host.
+        fn readBytesRange(
+            &self,
+            path: &str,
+            offset: u64,
+            length: usize,
+        ) -> operit_host_api::HostResult<Vec<u8>> {
+            let content = self.readBytes(path)?;
+            let start = usize::try_from(offset)
+                .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
+            if start >= content.len() {
+                return Ok(Vec::new());
+            }
+            let end = start
+                .checked_add(length)
+                .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
+                .min(content.len());
+            Ok(content[start..end].to_vec())
+        }
+
+        /// Writes one complete virtual file to the in-memory test host.
+        fn writeBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .insert(path.to_string(), content.to_vec());
+            Ok(())
+        }
+
+        /// Appends bytes to one virtual file in the in-memory test host.
+        fn appendBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .entry(path.to_string())
+                .or_default()
+                .extend_from_slice(content);
+            Ok(())
+        }
+
+        /// Deletes one virtual file from the in-memory test host.
+        fn delete(&self, path: &str, _recursive: bool) -> operit_host_api::HostResult<()> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .remove(path);
+            Ok(())
+        }
+
+        /// Reports whether one virtual file exists in the in-memory test host.
+        fn exists(&self, path: &str) -> operit_host_api::HostResult<bool> {
+            Ok(self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .contains_key(path))
+        }
+
+        /// Lists virtual files stored under one prefix in the in-memory test host.
+        fn list(&self, prefix: &str) -> operit_host_api::HostResult<Vec<RuntimeStorageEntry>> {
+            Ok(self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .iter()
+                .filter(|(path, _)| path.starts_with(prefix))
+                .map(|(path, content)| RuntimeStorageEntry {
+                    path: path.clone(),
+                    isDirectory: false,
+                    size: content.len() as i64,
+                })
+                .collect())
+        }
+    }
+
+    /// Reads the highest local sync sequence stored by one memory host.
+    fn localSyncSequence(host: Arc<dyn RuntimeStorageHost>) -> i64 {
+        SyncOperationStore::new(host, RUNTIME_SYNC_DIR_PATH.to_string())
+            .localClock()
+            .expect("test sync clock must be readable")
+            .sequences
+            .values()
+            .copied()
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Builds one deterministic peer Space projection for idempotence tests.
+    fn peerSpace(peerNodeId: &str) -> CoreSpace {
+        CoreSpace {
+            spaceId: "space-peer".to_string(),
+            spaceName: "peer-space".to_string(),
+            spaceRevision: 7,
+            members: vec![peerNodeId.to_string()],
+        }
+    }
+
+    /// Verifies that repeating the same paired Space observation records no new transaction.
+    #[test]
+    fn observe_paired_space_is_idempotent_for_identical_membership() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        store
+            .initializeNamed("local-space".to_string())
+            .expect("test space must initialize");
+        let peerNodeId = "core-peer-observe";
+        store
+            .observePairedDeviceSpace(peerNodeId.to_string(), peerSpace(peerNodeId))
+            .expect("first peer space observation must succeed");
+        let sequenceAfterFirstObserve = localSyncSequence(host.clone());
+
+        store
+            .observePairedDeviceSpace(peerNodeId.to_string(), peerSpace(peerNodeId))
+            .expect("second peer space observation must succeed");
+
+        assert_eq!(localSyncSequence(host), sequenceAfterFirstObserve);
+    }
+
+    /// Verifies that adopting the same joined Space projection records no new transaction.
+    #[test]
+    fn adopt_joined_space_is_idempotent_for_identical_membership() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        let localSpace = store
+            .initializeNamed("local-space".to_string())
+            .expect("test space must initialize");
+        let joinedSpace = CoreSpace {
+            spaceId: localSpace.spaceId,
+            spaceName: localSpace.spaceName,
+            spaceRevision: localSpace.spaceRevision,
+            members: localSpace.members,
+        };
+        store
+            .adopt(joinedSpace.clone())
+            .expect("first joined space adoption must succeed");
+        let sequenceAfterFirstAdopt = localSyncSequence(host.clone());
+
+        store
+            .adopt(joinedSpace)
+            .expect("second joined space adoption must succeed");
+
+        assert_eq!(localSyncSequence(host), sequenceAfterFirstAdopt);
+    }
 }

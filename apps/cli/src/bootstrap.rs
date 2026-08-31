@@ -125,6 +125,20 @@ pub(crate) async fn create_cli_core_application(
     .await
 }
 
+/// Starts a short-lived CLI Core tree without claiming the persistent sync worker.
+pub(crate) async fn create_cli_core_application_without_space_sync(
+    deviceName: &str,
+) -> Result<CoreApplication, String> {
+    CoreApplication::start(
+        CoreApplicationConfig::new(
+            create_cli_host_manager(),
+            RemoteDeviceInfo::nativeCli(deviceName)?,
+        )
+        .withSpaceSync(false),
+    )
+    .await
+}
+
 /// Starts the CLI Core tree after configuring its local client.
 pub(crate) async fn create_cli_core_application_configured(
     deviceName: &str,

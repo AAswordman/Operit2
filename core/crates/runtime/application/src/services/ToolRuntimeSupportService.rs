@@ -13,7 +13,7 @@ use operit_providers::chat::enhance::FileBindingService::{
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
-    CachedMcpToolInfo, CoreNodeToolRuntime, CoreRouteChangeHandler,
+    CachedMcpToolInfo, CoreNodeToolRuntime, CoreRouteChangeHandler, CoreRouteResumeContext,
     ResolvedCharacterCardToolAccess, RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo,
     RuntimeCharacterMemoryBinding, RuntimeChatSendRequest, RuntimeChatSlot,
     RuntimeCoreNodeRouteState, RuntimePluginAsset, RuntimeSkillCatalogEntry,
@@ -138,6 +138,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         &'a self,
         chatId: String,
         targetNodeId: String,
+        resumeContext: CoreRouteResumeContext,
     ) -> ToolRuntimeSupportFuture<'a, Result<(), String>> {
         let handler = self
             .coreRouteChangeHandler
@@ -147,7 +148,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         Box::pin(async move {
             let handler =
                 handler.ok_or_else(|| "Core route change handler is not bound".to_string())?;
-            handler(chatId, targetNodeId).await
+            handler(chatId, targetNodeId, resumeContext).await
         })
     }
 

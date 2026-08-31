@@ -104,6 +104,24 @@ fn chat_flow_trace_summary(messages: &[ChatMessage]) -> String {
     )
 }
 
+/// Preserves live stream projections while applying a persistence snapshot.
+fn preserveLiveMessageStreams(previous: &[ChatMessage], loaded: &mut [ChatMessage]) {
+    let liveMessages = previous
+        .iter()
+        .filter(|message| message.contentStream.is_some())
+        .map(|message| (message.timestamp, message))
+        .collect::<HashMap<_, _>>();
+    for message in loaded {
+        let Some(previousMessage) = liveMessages.get(&message.timestamp) else {
+            continue;
+        };
+        message.contentStream = previousMessage.contentStream.clone();
+        message.parts = previousMessage.parts.clone();
+        message.completedAt = previousMessage.completedAt;
+        message.completedExecutionGeneration = previousMessage.completedExecutionGeneration;
+    }
+}
+
 /// Coordinates chat history persistence, current-chat state, and display-window updates.
 pub struct ChatHistoryDelegate {
     pub chatHistoryManager: ChatHistoryManager,
@@ -216,7 +234,7 @@ impl ChatHistoryDelegate {
         }
         let messages =
             self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "flow.create chatId={} {}",
@@ -374,7 +392,7 @@ impl ChatHistoryDelegate {
             .get(chatId)
             .cloned();
         let Some(flow) = flow else {
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "publish.skipped_no_flow chatId={} {}",
@@ -397,7 +415,7 @@ impl ChatHistoryDelegate {
             messages.sort_by_key(|item| item.timestamp);
             "insert"
         };
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "publish chatId={} action={} count={} streamMessages={} {}",
@@ -409,7 +427,7 @@ impl ChatHistoryDelegate {
             ),
         );
         flow.set_value(messages);
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "publish.done chatId={} action={} before={} after={}",
@@ -480,7 +498,7 @@ impl ChatHistoryDelegate {
         let beforeSummary = chat_flow_trace_summary(&beforeMessages);
         let mut messages = beforeMessages;
         messages.retain(|message| retain(message));
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "retain chatId={} before={} after={}",
@@ -502,7 +520,7 @@ impl ChatHistoryDelegate {
             .cloned();
         if let Some(flow) = flow {
             let beforeMessages = flow.value();
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "clear chatId={} before={}",
@@ -511,7 +529,7 @@ impl ChatHistoryDelegate {
                 ),
             );
             flow.set_value(Vec::new());
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!("clear.done chatId={} after=count=0", chatId),
             );
@@ -579,7 +597,7 @@ impl ChatHistoryDelegate {
                 .openedChatMessageFlowSnapshot(&chatId)
                 .map(|messages| chat_flow_trace_summary(&messages))
                 .unwrap_or_else(|| "none".to_string());
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!("clear_current chatId={} snapshot={}", chatId, beforeSummary),
             );
@@ -591,7 +609,11 @@ impl ChatHistoryDelegate {
         self.isLoadingDisplayWindow = false;
         self.emitDisplayWindowState();
         self.emitChatHistoryState();
-        AppLogger::i("ChatFlowTrace", "clear_current.done");
+        AppLogger::v_with_level(
+            "ChatFlowTrace",
+            "clear_current.done",
+            operit_util::AppLogger::VERBOSE_LEVEL_5,
+        );
     }
 
     #[allow(non_snake_case)]
@@ -607,7 +629,7 @@ impl ChatHistoryDelegate {
             let beforeMessages = flow.value();
             let beforeSummary = chat_flow_trace_summary(&beforeMessages);
             let incomingSummary = chat_flow_trace_summary(&messages);
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "set_current chatId={} before={} incoming={} hasOlder={} hasNewer={}",
@@ -619,7 +641,7 @@ impl ChatHistoryDelegate {
                 ),
             );
             flow.set_value(messages);
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "set_current.done chatId={} after={}",
@@ -720,12 +742,13 @@ impl ChatHistoryDelegate {
             self.clearCurrentChatHistoryInMemory();
             return Vec::new();
         };
-        let currentSummary = self
+        let previousMessages = self
             .openedChatMessageFlowSnapshot(&chatId)
-            .map(|messages| chat_flow_trace_summary(&messages))
-            .unwrap_or_else(|| "none".to_string());
-        let messages =
+            .unwrap_or_default();
+        let currentSummary = chat_flow_trace_summary(&previousMessages);
+        let mut messages =
             self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
+        preserveLiveMessageStreams(&previousMessages, &mut messages);
         let loadedSummary = chat_flow_trace_summary(&messages);
         let hasOlder = messages
             .first()
@@ -743,7 +766,7 @@ impl ChatHistoryDelegate {
                     .expect("ChatHistoryManager.hasMessagesAfter must succeed")
             })
             .unwrap_or(false);
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "load_latest chatId={} current={} loaded={} hasOlder={} hasNewer={}",
@@ -757,12 +780,13 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Reloads the newest indexed display window for the supplied chat id.
     pub fn reloadCurrentChatDisplayHistory(&mut self, chatId: String) -> Vec<ChatMessage> {
-        let currentSummary = self
+        let previousMessages = self
             .openedChatMessageFlowSnapshot(&chatId)
-            .map(|messages| chat_flow_trace_summary(&messages))
-            .unwrap_or_else(|| "none".to_string());
-        let messages =
+            .unwrap_or_default();
+        let currentSummary = chat_flow_trace_summary(&previousMessages);
+        let mut messages =
             self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
+        preserveLiveMessageStreams(&previousMessages, &mut messages);
         let loadedSummary = chat_flow_trace_summary(&messages);
         let hasOlder = messages
             .first()
@@ -780,7 +804,7 @@ impl ChatHistoryDelegate {
                     .expect("ChatHistoryManager.hasMessagesAfter must succeed")
             })
             .unwrap_or(false);
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "reload_display chatId={} current={} loaded={} hasOlder={} hasNewer={}",
@@ -935,7 +959,7 @@ impl ChatHistoryDelegate {
                     .timestamp,
             )
             .expect("ChatHistoryManager.hasMessagesAfter must succeed");
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "load_older chatId={} merged={}",
@@ -981,7 +1005,7 @@ impl ChatHistoryDelegate {
                     .timestamp,
             )
             .expect("ChatHistoryManager.hasMessagesAfter must succeed");
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "load_newer chatId={} merged={}",
@@ -1051,7 +1075,7 @@ impl ChatHistoryDelegate {
         self.hasOlderDisplayHistory = hasOlder;
         self.hasNewerDisplayHistory = false;
         self.isLoadingDisplayWindow = false;
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "load_chat.start chatId={} current={} loaded={} allowAddMessage=false",
@@ -1064,7 +1088,7 @@ impl ChatHistoryDelegate {
         self.dispatchChatViewEvent(ChatViewEvent::ViewOpened, &chatId);
         self.emitDisplayWindowState();
         self.allowAddMessage = true;
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!("load_chat.done chatId={} hasOlder={}", chatId, hasOlder),
         );
@@ -1074,6 +1098,39 @@ impl ChatHistoryDelegate {
     /// Reloads the active display window for a chat.
     pub fn reloadChatMessagesSmart(&mut self, chatId: String) {
         self.reloadCurrentChatDisplayHistory(chatId);
+    }
+
+    /// Refreshes one opened chat flow from the persisted database snapshot.
+    pub fn refreshChatMessagesFromPersistence(&mut self, chatId: String) {
+        let currentChatId = self.currentChatIdFlow.value();
+        if currentChatId.as_ref() == Some(&chatId) {
+            self.reloadCurrentChatDisplayHistory(chatId);
+            return;
+        }
+        let flow = self
+            .chatMessageFlowsByChatId
+            .lock()
+            .expect("chat message flow registry mutex must not be poisoned")
+            .get(&chatId)
+            .cloned();
+        let Some(flow) = flow else {
+            return;
+        };
+        let beforeSummary = chat_flow_trace_summary(&flow.value());
+        let previousMessages = flow.value();
+        let messages =
+            self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
+        let mut messages = messages;
+        preserveLiveMessageStreams(&previousMessages, &mut messages);
+        let loadedSummary = chat_flow_trace_summary(&messages);
+        AppLogger::trace(
+            "ChatFlowTrace",
+            &format!(
+                "sync_refresh chatId={} before={} loaded={}",
+                chatId, beforeSummary, loadedSummary
+            ),
+        );
+        flow.set_value(messages);
     }
 
     #[allow(non_snake_case)]
@@ -1297,7 +1354,7 @@ impl ChatHistoryDelegate {
     /// Switches the selected chat and refreshes in-memory message state.
     pub fn switchChat(&mut self, chatId: String, syncToGlobal: bool) {
         let previousChatId = self.currentChatIdFlow.value();
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "switch.start from={} to={} syncToGlobal={}",
@@ -1321,7 +1378,7 @@ impl ChatHistoryDelegate {
             }
             self.clearCurrentChatHistoryInMemory();
             self.currentChatIdFlow.set_value(None);
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!("switch.done missing chatId={}", chatId),
             );
@@ -1335,7 +1392,11 @@ impl ChatHistoryDelegate {
         self.allowAddMessage = false;
         self.loadChatMessages(chatId);
         self.allowAddMessage = true;
-        AppLogger::i("ChatFlowTrace", "switch.done");
+        AppLogger::v_with_level(
+            "ChatFlowTrace",
+            "switch.done",
+            operit_util::AppLogger::VERBOSE_LEVEL_5,
+        );
     }
 
     #[allow(non_snake_case)]
@@ -1714,7 +1775,7 @@ impl ChatHistoryDelegate {
             publishedMessage.variantCount = message.variantCount + 1;
             *message = publishedMessage.clone();
         });
-        ChainLogger::info(
+        ChainLogger::verbose(
             MESSAGE_STORE_CHAIN,
             "message.store.variant",
             &[
@@ -1766,7 +1827,7 @@ impl ChatHistoryDelegate {
                         actualContextWindowSize,
                     )
                     .expect("ChatHistoryManager.updateChatTokenCounts must succeed");
-                ChainLogger::info(
+                ChainLogger::verbose(
                     MESSAGE_STORE_CHAIN,
                     "chat.store.metrics",
                     &[
@@ -1865,7 +1926,7 @@ impl ChatHistoryDelegate {
     /// Inserts or replaces an in-memory message in the current chat.
     pub fn upsertCurrentChatMessageInMemory(&mut self, message: ChatMessage) -> bool {
         let Some(chatId) = self.currentChatIdFlow.value() else {
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "upsert_current.skipped_no_chat {}",
@@ -1888,7 +1949,7 @@ impl ChatHistoryDelegate {
             messages.sort_by_key(|item| item.timestamp);
             false
         };
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "upsert_current chatId={} action={} count={} streamMessages={} {}",
@@ -1918,7 +1979,7 @@ impl ChatHistoryDelegate {
             .openedChatMessageFlowSnapshot(&targetChatId)
             .map(|messages| chat_flow_trace_summary(&messages))
             .unwrap_or_else(|| "none".to_string());
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "add.start chatId={} current={} sender={} timestamp={} chars={} currentChat={}",
@@ -1933,7 +1994,7 @@ impl ChatHistoryDelegate {
         if message.isVariantPreview {
             if isCurrentChat {
                 self.upsertCurrentChatMessageInMemory(message);
-                ChainLogger::info(
+                ChainLogger::verbose(
                     MESSAGE_STORE_CHAIN,
                     "message.store.preview.memory",
                     &[
@@ -1957,7 +2018,7 @@ impl ChatHistoryDelegate {
                 &persistedMessage,
             );
             self.publishChatMessage(&targetChatId, message);
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.hidden.update",
                 &[
@@ -1967,7 +2028,7 @@ impl ChatHistoryDelegate {
                     ("messageChars", messageChars),
                 ],
             );
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "add.hidden_update.done chatId={} current={}",
@@ -1990,7 +2051,7 @@ impl ChatHistoryDelegate {
                 &persistedMessage,
             );
             self.publishChatMessage(&targetChatId, message);
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.background.update",
                 &[
@@ -2000,7 +2061,7 @@ impl ChatHistoryDelegate {
                     ("messageChars", messageChars),
                 ],
             );
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "add.background.done chatId={} current={}",
@@ -2029,7 +2090,7 @@ impl ChatHistoryDelegate {
                 &targetChatId,
                 &persistedMessage,
             );
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.visible.update",
                 &[
@@ -2039,7 +2100,7 @@ impl ChatHistoryDelegate {
                     ("messageChars", messageChars),
                 ],
             );
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "add.visible_update chatId={} current={}",
@@ -2058,7 +2119,7 @@ impl ChatHistoryDelegate {
                 &targetChatId,
                 &persistedMessage,
             );
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.visible.insert",
                 &[
@@ -2068,7 +2129,7 @@ impl ChatHistoryDelegate {
                     ("messageChars", messageChars),
                 ],
             );
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "add.visible_insert chatId={} current={}",
@@ -2087,7 +2148,7 @@ impl ChatHistoryDelegate {
                 &targetChatId,
                 &persistedMessage,
             );
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.window.update",
                 &[
@@ -2097,7 +2158,7 @@ impl ChatHistoryDelegate {
                     ("messageChars", messageChars),
                 ],
             );
-            AppLogger::i(
+            AppLogger::trace(
                 "ChatFlowTrace",
                 &format!(
                     "add.window_update chatId={} current={}",
@@ -2122,7 +2183,7 @@ impl ChatHistoryDelegate {
         message: ChatMessage,
         chatMetrics: Option<(i64, i64, i64)>,
     ) -> Result<SyncClock, String> {
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "commit_assistant.start chatId={} metricsSet={} {}",
@@ -2141,7 +2202,7 @@ impl ChatHistoryDelegate {
         } else {
             self.publishChatMessage(&chatId, message.clone());
         }
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "commit_assistant.done chatId={} clockEntries={} current={}",
@@ -2152,7 +2213,7 @@ impl ChatHistoryDelegate {
                     .unwrap_or_else(|| "none".to_string())
             ),
         );
-        AppLogger::i(
+        AppLogger::trace(
             "ChatFlowTrace",
             &format!(
                 "commit_assistant.persisted chatId={} {}",
@@ -2451,5 +2512,44 @@ fn normalizedNonBlank(value: String) -> Option<String> {
         None
     } else {
         Some(normalized)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_link::{CoreEventStream, CoreStream, CoreStreamSource};
+    use operit_model::MessagePart::MessagePart;
+    use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
+    use std::sync::Arc;
+
+    /// Verifies that a persistence refresh keeps the active stream projection intact.
+    #[test]
+    fn persistence_refresh_preserves_live_message_stream() {
+        let source = Arc::new(CoreStreamSource::new(|_request| {
+            let (_sender, receiver) = CoreEventStream::channel();
+            Ok(receiver)
+        }));
+        let mut previous = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(),
+            "live content".to_string(),
+            123,
+        );
+        previous.contentStream = Some(CoreStream::<MarkdownStreamEvent>::fromSourceWithId(
+            "live-stream".to_string(),
+            source,
+        ));
+        let mut loaded =
+            ChatMessage::new_with_markdown_timestamp("ai".to_string(), String::new(), 123);
+        loaded.parts = vec![MessagePart::markdown(
+            "part-0".to_string(),
+            0,
+            String::new(),
+        )];
+
+        preserveLiveMessageStreams(&[previous.clone()], std::slice::from_mut(&mut loaded));
+
+        assert_eq!(loaded.contentStream, previous.contentStream);
+        assert_eq!(loaded.parts, previous.parts);
     }
 }

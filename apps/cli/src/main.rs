@@ -16,7 +16,10 @@ mod mdns;
 mod tui;
 mod web_access_assets;
 
-pub(crate) use bootstrap::{create_cli_core_application, create_cli_core_application_configured};
+pub(crate) use bootstrap::{
+    create_cli_core_application, create_cli_core_application_configured,
+    create_cli_core_application_without_space_sync,
+};
 pub(crate) use chat_runtime::{
     build_attachment_info, guess_mime_type, initialize_shell_chat, parse_shell_args, ChatSendArgs,
     ShellArgs,

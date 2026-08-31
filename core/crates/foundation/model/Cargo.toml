@@ -1,6 +1,6 @@
 [package]
 name = "operit-model"
-version = "2.0.0-preview.5"
+version = "2.0.0-preview.6"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -13,7 +13,7 @@ documentation = "https://docs.rs/operit-model"
 chrono.workspace = true
 operit-host-api = { version = "0.1.0", path = "../host-api" }
 operit-link = { path = "../link" }
-operit-util = { version = "2.0.0-preview.5", path = "../util" }
+operit-util = { version = "2.0.0-preview.6", path = "../util" }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

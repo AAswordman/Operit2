@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 
-const String currentAppVersion = '2.0.0+5';
+const String currentAppVersion = '2.0.0+6';
 final Uri coreMarketAuthCompletionRedirectUri = Uri.parse(
   'https://api.operit.app/oauth/github/complete',
 );

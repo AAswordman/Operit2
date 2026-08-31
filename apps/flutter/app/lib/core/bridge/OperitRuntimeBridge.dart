@@ -208,20 +208,9 @@ class _EmbeddedCoreStream<T> {
       final value = _decode(completeEvent);
       _replay.add(value);
       _events.add(value);
-      if (_shouldLogEmbeddedEvent(_eventCount)) {
-        debugPrint(
-          'CoreStreamTrace dart.embedded.event streamId=$_streamId '
-          'kind=${event.kind} count=$_eventCount replay=${_replay.length}',
-        );
-      }
     } catch (error, stackTrace) {
       _fail(error, stackTrace);
     }
-  }
-
-  /// Returns whether one embedded stream event should be logged.
-  bool _shouldLogEmbeddedEvent(int count) {
-    return count <= 5 || count % 256 == 0;
   }
 
   /// Replays values already received before a listener was attached.

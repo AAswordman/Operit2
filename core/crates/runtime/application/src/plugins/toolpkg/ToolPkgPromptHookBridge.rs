@@ -259,15 +259,6 @@ fn dispatch_prompt_hooks(
         .lock()
         .expect("toolpkg prompt hook mutex poisoned")
         .clone();
-    ChainLogger::info(
-        PLUGIN_CHAIN,
-        "plugin.toolpkg.prompt.scan",
-        &[
-            ("event", event.to_string()),
-            ("stage", context.stage.clone()),
-            ("hookCount", snapshot.len().to_string()),
-        ],
-    );
     let mut current = context.clone();
     let mut mutation = PromptHookMutation::default();
     let mut changed = false;

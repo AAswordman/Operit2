@@ -19,6 +19,7 @@ type LocalClientConfigurator = Box<dyn FnOnce(&mut LocalCoreProxy) -> Result<(),
 pub struct CoreApplicationConfig {
     pub hostManager: HostManager,
     pub deviceInfo: RemoteDeviceInfo,
+    startSpaceSync: bool,
     localClientConfigurator: Option<LocalClientConfigurator>,
 }
 
@@ -28,8 +29,16 @@ impl CoreApplicationConfig {
         Self {
             hostManager,
             deviceInfo,
+            startSpaceSync: true,
             localClientConfigurator: None,
         }
+    }
+
+    /// Selects whether this Core application owns the persistent Space synchronizer.
+    #[allow(non_snake_case)]
+    pub fn withSpaceSync(mut self, enabled: bool) -> Self {
+        self.startSpaceSync = enabled;
+        self
     }
 
     /// Adds a setup hook that runs before the local client is shared by the Core tree.
@@ -92,13 +101,18 @@ pub struct CoreApplication {
 impl CoreApplication {
     /// Starts one Core tree from explicit host and access configuration.
     pub async fn start(config: CoreApplicationConfig) -> Result<Self, String> {
+        let startSpaceSync = config.startSpaceSync;
         let mut runtimeApplication = OperitApplication::newWithContext(config.hostManager);
         runtimeApplication.onCreate()?;
         let mut localClient = LocalCoreProxy::new(runtimeApplication);
         if let Some(configurator) = config.localClientConfigurator {
             configurator(&mut localClient)?;
         }
-        Self::startWithLocalClient(localClient, config.deviceInfo)
+        Self::startWithSharedLocalClientConfigured(
+            Arc::new(localClient),
+            config.deviceInfo,
+            startSpaceSync,
+        )
     }
 
     /// Starts one Core tree from a configured local client owned by the caller until this point.
@@ -116,6 +130,16 @@ impl CoreApplication {
         localClient: Arc<LocalCoreProxy>,
         deviceInfo: RemoteDeviceInfo,
     ) -> Result<Self, String> {
+        Self::startWithSharedLocalClientConfigured(localClient, deviceInfo, true)
+    }
+
+    /// Starts one Core tree while explicitly selecting whether its persistence worker is owned here.
+    #[allow(non_snake_case)]
+    fn startWithSharedLocalClientConfigured(
+        localClient: Arc<LocalCoreProxy>,
+        deviceInfo: RemoteDeviceInfo,
+        startSpaceSync: bool,
+    ) -> Result<Self, String> {
         let nodeRuntime = localClient.coreNodeLocalRuntime();
         let nodeRouter = CoreNodeRouter::new(nodeRuntime.clone());
         let accessStore = LinkAccessStore::new(nodeRuntime.runtimeStorageHost());
@@ -126,11 +150,19 @@ impl CoreApplication {
             accessStore.clone(),
         );
         let routeChangeServices = accessServices.clone();
-        localClient.bindCoreRouteChangeHandler(Arc::new(move |chatId, targetNodeId| {
-            let services = routeChangeServices.clone();
-            Box::pin(async move { services.requestChangeRoute(chatId, targetNodeId).await })
-        }))?;
-        accessServices.startSpaceSync()?;
+        localClient.bindCoreRouteChangeHandler(Arc::new(
+            move |chatId, targetNodeId, resumeContext| {
+                let services = routeChangeServices.clone();
+                Box::pin(async move {
+                    services
+                        .requestChangeRoute(chatId, targetNodeId, resumeContext)
+                        .await
+                })
+            },
+        ))?;
+        if startSpaceSync {
+            accessServices.startSpaceSync()?;
+        }
         Ok(Self {
             localClient,
             nodeRuntime,
@@ -209,6 +241,14 @@ impl CoreApplication {
     /// Stops application-owned global route state from a synchronous host boundary.
     #[allow(non_snake_case)]
     pub fn shutdownNow(self) {
+        let _ = self.accessServices.stopSpaceSync();
         operit_link::clearCoreRouteRuntime();
+    }
+}
+
+impl Drop for CoreApplication {
+    /// Releases process-local synchronization ownership when a Core tree is dropped.
+    fn drop(&mut self) {
+        let _ = self.accessServices.stopSpaceSync();
     }
 }

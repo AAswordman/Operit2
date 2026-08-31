@@ -1,5 +1,8 @@
 use super::*;
-use crate::{create_cli_core_application, create_cli_core_application_configured};
+use crate::{
+    create_cli_core_application, create_cli_core_application_configured,
+    create_cli_core_application_without_space_sync,
+};
 
 use operit_access_runtime::{
     link_token_hash, AcceptedRemoteSessionRecord, LinkAccessStore, LinkTransportPreference,
@@ -156,7 +159,7 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
 async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
     let (url, token) =
         parse_remote_url_token(args, "usage: operit2 cli link hello <url> --token <token>")?;
-    let _coreApplication = create_cli_core_application("client").await?;
+    let _coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let client = RemoteLinkClient::new(url);
     let token_hash = link_token_hash(&token);
     let hello = client.hello(&token_hash).await?;
@@ -189,7 +192,7 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
         }
         index += 1;
     }
-    let coreApplication = create_cli_core_application("client").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let spaces = coreApplication
         .accessServices()
         .discoverSpaces(timeout_ms)
@@ -251,7 +254,15 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
 
 /// Runs user-facing device-space inspection and membership commands.
 async fn run_link_space_command(args: &[String]) -> Result<(), String> {
-    let coreApplication = create_cli_core_application("client").await?;
+    let ownsSpaceMutation = matches!(
+        args,
+        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "remove" | "join" | "leave")
+    );
+    let coreApplication = if ownsSpaceMutation {
+        create_cli_core_application("client").await?
+    } else {
+        create_cli_core_application_without_space_sync("client").await?
+    };
     let service = coreApplication.accessServices();
     match args.first().map(String::as_str) {
         None | Some("show") if args.len() <= 1 => {
@@ -301,7 +312,7 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
 }
 
 async fn run_link_sessions_command() -> Result<(), String> {
-    let coreApplication = create_cli_core_application("client").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let sessions = load_link_sessions(&coreApplication.accessStore())?;
     for (name, session) in sessions {
         println!(
@@ -322,7 +333,7 @@ async fn run_link_transport_command(args: &[String]) -> Result<(), String> {
         return Err("usage: operit2 cli link transport <session> <http|ws>".to_string());
     }
     let name = &args[0];
-    let coreApplication = create_cli_core_application("client").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let accessStore = coreApplication.accessStore();
     let mut record = load_link_session_record(&accessStore, name)?;
     record.transport = parse_link_transport(&args[1])?;
@@ -338,14 +349,14 @@ async fn run_link_session_delete_command(args: &[String]) -> Result<(), String> 
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link session-delete <name>".to_string())?;
-    let coreApplication = create_cli_core_application("client").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     coreApplication.accessStore().removeOutboundSession(name)?;
     println!("session deleted: {name}");
     Ok(())
 }
 
 async fn run_link_accepted_sessions_command() -> Result<(), String> {
-    let coreApplication = create_cli_core_application("server").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("server").await?;
     let sessions = load_link_server_sessions(&coreApplication.accessStore())?;
     for (session_id, session) in sessions {
         println!(
@@ -362,7 +373,7 @@ async fn run_link_accepted_session_delete_command(args: &[String]) -> Result<(),
     let session_id = args.get(0).ok_or_else(|| {
         "usage: operit2 cli link accepted-session-delete <session-id>".to_string()
     })?;
-    let coreApplication = create_cli_core_application("server").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("server").await?;
     remove_link_server_session(&coreApplication.accessStore(), session_id)?;
     println!("accepted session deleted: {session_id}");
     Ok(())
@@ -372,7 +383,7 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link ping <name>".to_string())?;
-    let coreApplication = create_cli_core_application("client").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let session = load_link_session_resolved(&coreApplication.accessStore(), name).await?;
     let info = session.sessionInfo().await?;
     println!(
@@ -390,7 +401,7 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link stream-probe <session>".to_string())?;
-    let coreApplication = create_cli_core_application("client").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let accessStore = coreApplication.accessStore();
     let record = load_link_session_record(&accessStore, name)?;
     let service = coreApplication.accessServices();
@@ -519,7 +530,7 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
 async fn run_link_refresh_command(args: &[String]) -> Result<(), String> {
     let (target_name, timeout_ms) = parse_link_refresh_args(args)?;
     let devices = crate::mdns::discover_devices(timeout_ms)?;
-    let coreApplication = create_cli_core_application("client").await?;
+    let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let accessStore = coreApplication.accessStore();
     let mut sessions = load_link_sessions(&accessStore)?;
     let mut updated_count = 0usize;

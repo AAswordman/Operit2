@@ -11,15 +11,15 @@ use operit_access_runtime::{
 };
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
-use operit_link::{fromCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_ROUTE_OBJECT_ID};
+use operit_link::{
+    fromCoreValue, toCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_ROUTE_OBJECT_ID,
+};
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
-use operit_store::CoreSpaceStore::{
-    CoreSpace, CoreSpaceDevicePresence, CoreSpaceDeviceProfile, CoreSpaceStore,
-};
+use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
 use operit_store::PreferencesDataStore::{
-    combine2, combine3, mutableStateFlow, CoroutineScope, SharingStarted, StateFlow,
+    combine2, mutableStateFlow, CoroutineScope, SharingStarted, StateFlow,
 };
-use operit_store::SyncOperationStore::{subscribeSyncMutations, SyncMutationSubscription};
+use operit_tools::runtime_support::CoreRouteResumeContext;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -178,7 +178,6 @@ impl RuntimeRemoteLinkService {
     pub fn deviceSpaceTopology(&self) -> Result<RuntimeDeviceSpaceTopology, String> {
         let space = self.spaceStore.initialize()?;
         let profiles = self.spaceStore.deviceProfiles()?;
-        let presences = self.spaceStore.devicePresences()?;
         let currentDeviceId = self.nodeRouter.localNodeId();
         let activePeers = activePeerNodeIds(&currentDeviceId)?;
         let devices = space
@@ -192,8 +191,7 @@ impl RuntimeRemoteLinkService {
                     || self
                         .spaceStore
                         .reachableNextHopThroughPeers(deviceId.clone(), activePeers.clone())?
-                        .is_some()
-                    || devicePresenceActive(&presences, &deviceId);
+                        .is_some();
                 Ok(runtimeDeviceSpaceDevice(profile, online))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -219,15 +217,9 @@ impl RuntimeRemoteLinkService {
                     )
                 })?;
                 let directlyOnline = if connection.firstDeviceId == currentDeviceId {
-                    Some(
-                        activePeers.contains(&connection.secondDeviceId)
-                            || devicePresenceActive(&presences, &connection.secondDeviceId),
-                    )
+                    Some(activePeers.contains(&connection.secondDeviceId))
                 } else if connection.secondDeviceId == currentDeviceId {
-                    Some(
-                        activePeers.contains(&connection.firstDeviceId)
-                            || devicePresenceActive(&presences, &connection.firstDeviceId),
-                    )
+                    Some(activePeers.contains(&connection.firstDeviceId))
                 } else {
                     None
                 };
@@ -347,51 +339,18 @@ impl RuntimeRemoteLinkService {
         ))
     }
 
-    /// Observes paired device statuses from paired records, Peer Links, and presence records.
+    /// Observes paired device statuses from paired records and Peer Links.
     #[allow(non_snake_case)]
     pub fn pairedDeviceStatusesFlow(
         &self,
     ) -> Result<StateFlow<BTreeMap<String, RuntimePairedDeviceStatus>>, String> {
         let pairedDevicesFlow = self.pairedDevicesFlow()?;
         let activePeerNodeIdsFlow = self.activePeerNodeIdsFlow()?;
-        let devicePresencesFlow = self.devicePresencesFlow()?;
-        Ok(combine3(
+        Ok(combine2(
             &pairedDevicesFlow,
             &activePeerNodeIdsFlow,
-            &devicePresencesFlow,
             pairedDeviceStatusesFromState,
         ))
-    }
-
-    /// Observes synchronized device presence records through persistence mutations.
-    #[allow(non_snake_case)]
-    fn devicePresencesFlow(
-        &self,
-    ) -> Result<StateFlow<BTreeMap<String, CoreSpaceDevicePresence>>, String> {
-        let state = mutableStateFlow(self.spaceStore.devicePresences()?);
-        let stateForSubscription = state.clone();
-        let spaceStore = self.spaceStore.clone();
-        let subscription = subscribeSyncMutations(move || match spaceStore.devicePresences() {
-            Ok(presences) => stateForSubscription.set_value(presences),
-            Err(error) => {
-                operit_util::AppLogger::AppLogger::e(
-                    "RuntimeRemoteLinkService",
-                    &format!("device presence state refresh failed: {error}"),
-                );
-            }
-        });
-        defaultHostRuntimeTaskSchedulerHost()
-            .scheduleHostRuntimeAsyncTask(
-                "runtime-remote-link-presence-flow",
-                Box::new(move || {
-                    Box::pin(async move {
-                        let _subscription: SyncMutationSubscription = subscription;
-                        std::future::pending::<()>().await;
-                    })
-                }),
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(state.asStateFlow())
     }
 
     /// Observes the active direct Peer Links adjacent to this runtime.
@@ -442,22 +401,22 @@ impl RuntimeRemoteLinkService {
         Ok(state.asStateFlow())
     }
 
-    /// Returns whether one paired device currently has an active or announced connection.
+    /// Returns whether one paired device currently has an active Peer Link.
     #[allow(non_snake_case)]
     pub fn pairedDeviceOnline(&self, deviceId: String) -> Result<bool, String> {
         if !self.pairedDevicesSnapshot()?.contains_key(&deviceId) {
             return Err(format!("paired device does not exist: {deviceId}"));
         }
-        Ok(isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)?
-            || devicePresenceActive(&self.spaceStore.devicePresences()?, &deviceId))
+        isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)
     }
 
-    /// Commits a chat Binding change, synchronizes the target Core, and resumes there.
+    /// Commits a chat Binding change, installs it on the target Core, and resumes there.
     #[allow(non_snake_case)]
     pub async fn requestChangeRoute(
         &self,
         chatId: String,
         targetNodeId: String,
+        resumeContext: CoreRouteResumeContext,
     ) -> Result<(), String> {
         if chatId.trim().is_empty() {
             return Err("route change chat id must not be empty".to_string());
@@ -481,10 +440,66 @@ impl RuntimeRemoteLinkService {
             &localNodeId,
             GeneratedRouteLifecycle::BeforeChangeRoute,
             chatId.clone(),
+            None,
         )
         .await?;
+
+        let routeChangeStartedAt = currentTimeMillis();
         let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
         let currentBinding = bindingStore.binding(&chatId)?;
+        operit_util::AppLogger::AppLogger::trace(
+            "CoreRouteTrace",
+            &format!(
+                "route_change.binding_observed chatId={} local={} currentOwner={} currentGeneration={} target={} elapsedMs={}",
+                chatId,
+                localNodeId,
+                currentBinding.nodeId,
+                currentBinding.generation,
+                targetNodeId,
+                currentTimeMillis() - routeChangeStartedAt
+            ),
+        );
+        if currentBinding.nodeId == targetNodeId {
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreRouteTrace",
+                &format!(
+                    "route_change.noop chatId={} owner={} generation={} elapsedMs={}",
+                    chatId,
+                    currentBinding.nodeId,
+                    currentBinding.generation,
+                    currentTimeMillis() - routeChangeStartedAt
+                ),
+            );
+        }
+
+        if targetNodeId != localNodeId {
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreRouteTrace",
+                &format!(
+                    "route_change.sync_before_commit.start chatId={} fromOwner={} target={} generation={} elapsedMs={}",
+                    chatId,
+                    currentBinding.nodeId,
+                    targetNodeId,
+                    currentBinding.generation,
+                    currentTimeMillis() - routeChangeStartedAt
+                ),
+            );
+            self.persistenceSyncService()
+                .synchronizeReachablePeer(targetNodeId.clone(), 512, false)
+                .await?;
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreRouteTrace",
+                &format!(
+                    "route_change.sync_before_commit.done chatId={} fromOwner={} target={} generation={} elapsedMs={}",
+                    chatId,
+                    currentBinding.nodeId,
+                    targetNodeId,
+                    currentBinding.generation,
+                    currentTimeMillis() - routeChangeStartedAt
+                ),
+            );
+        }
+
         let commit = bindingStore.compareAndSet(&chatId, &currentBinding.nodeId, &targetNodeId)?;
         if commit.binding.nodeId != targetNodeId {
             return Err(format!(
@@ -492,19 +507,88 @@ impl RuntimeRemoteLinkService {
                 commit.binding.nodeId
             ));
         }
+        operit_util::AppLogger::AppLogger::trace(
+            "CoreRouteTrace",
+            &format!(
+                "route_change.binding_committed chatId={} fromOwner={} target={} generation={} elapsedMs={}",
+                chatId,
+                currentBinding.nodeId,
+                commit.binding.nodeId,
+                commit.binding.generation,
+                currentTimeMillis() - routeChangeStartedAt
+            ),
+        );
 
-        if targetNodeId != localNodeId {
-            self.persistenceSyncService()
-                .synchronizeReachablePeer(targetNodeId.clone(), 512, false)
-                .await?;
+        self.installRouteBindingOnTarget(&targetNodeId, commit.operation.clone())
+            .await?;
+
+        operit_util::AppLogger::AppLogger::trace(
+            "CoreRouteTrace",
+            &format!(
+                "route_change.lifecycle.after.start chatId={} target={} generation={} elapsedMs={}",
+                chatId,
+                targetNodeId,
+                commit.binding.generation,
+                currentTimeMillis() - routeChangeStartedAt
+            ),
+        );
+        let lifecycleResult = self
+            .callChatCoreLifecycle(
+                &targetNodeId,
+                GeneratedRouteLifecycle::AfterChangeRoute,
+                chatId,
+                Some(resumeContext),
+            )
+            .await;
+        operit_util::AppLogger::AppLogger::trace(
+            "CoreRouteTrace",
+            &format!(
+                "route_change.lifecycle.after.done target={} generation={} elapsedMs={} result={}",
+                targetNodeId,
+                commit.binding.generation,
+                currentTimeMillis() - routeChangeStartedAt,
+                if lifecycleResult.is_ok() {
+                    "ok"
+                } else {
+                    "error"
+                }
+            ),
+        );
+        lifecycleResult
+    }
+
+    /// Installs one committed Binding operation on the target without advancing sync clocks.
+    #[allow(non_snake_case)]
+    async fn installRouteBindingOnTarget(
+        &self,
+        targetNodeId: &str,
+        operation: operit_store::SyncOperationStore::SyncOperation,
+    ) -> Result<(), String> {
+        if targetNodeId == self.nodeRouter.localNodeId() {
+            return Ok(());
         }
-
-        self.callChatCoreLifecycle(
-            &targetNodeId,
-            GeneratedRouteLifecycle::AfterChangeRoute,
-            chatId,
-        )
-        .await
+        let objectId = self
+            .nodeRouter
+            .objectIdForSchema("application")
+            .ok_or_else(|| "unknown Core schema key: application".to_string())?;
+        let mut args = BTreeMap::new();
+        args.insert(
+            "operation".to_string(),
+            toCoreValue(operation).map_err(|error| error.to_string())?,
+        );
+        let request = CoreCallRequest::new(
+            format!("core-route-binding-install-{}", currentTimeMillis()),
+            objectId,
+            "syncApplyImmediateBindingOperation".to_string(),
+            CoreValue::Map(args),
+        );
+        let response = self
+            .nodeRouter
+            .callNode(targetNodeId.to_string(), request)
+            .await;
+        let value = response.result.map_err(|error| error.to_string())?;
+        let _: serde_json::Value = fromCoreValue(value).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     /// Invokes one route lifecycle callback on an explicit CoreNode target.
@@ -514,11 +598,18 @@ impl RuntimeRemoteLinkService {
         targetNodeId: &str,
         lifecycle: GeneratedRouteLifecycle,
         chatId: String,
+        resumeContext: Option<CoreRouteResumeContext>,
     ) -> Result<(), String> {
         let route = crate::generated_space_lifecycle_route(lifecycle)
             .ok_or_else(|| format!("route lifecycle hook is not registered: {lifecycle:?}"))?;
         let mut args = BTreeMap::new();
         args.insert(route.bindingArgument.to_string(), CoreValue::String(chatId));
+        if let Some(resumeContext) = resumeContext {
+            args.insert(
+                "resumeContext".to_string(),
+                toCoreValue(resumeContext).map_err(|error| error.to_string())?,
+            );
+        }
         let request = CoreCallRequest::new(
             format!("core-route-lifecycle-{}", currentTimeMillis()),
             CORE_INTERNAL_ROUTE_OBJECT_ID,
@@ -542,15 +633,33 @@ impl RuntimeRemoteLinkService {
         &self,
         deviceId: String,
     ) -> Result<RuntimePairedDeviceStatus, String> {
+        operit_util::AppLogger::AppLogger::trace(
+            "CoreSyncTrace",
+            &format!(
+                "device_status.start local={} device={}",
+                self.nodeRouter.localNodeId(),
+                deviceId
+            ),
+        );
         let mut devices = self.pairedDevicesSnapshot()?;
         let Some(device) = devices.remove(&deviceId) else {
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreSyncTrace",
+                &format!("device_status.invalid device={deviceId} reason=not_paired"),
+            );
             return Ok(RuntimePairedDeviceStatus::Invalid);
         };
         let Some(sessionName) = device.outboundSessionName else {
+            operit_util::AppLogger::AppLogger::trace(
+                "CoreSyncTrace",
+                &format!(
+                    "device_status.local_peer device={} activePeer={}",
+                    deviceId,
+                    isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)?
+                ),
+            );
             return Ok(
-                if isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)?
-                    || devicePresenceActive(&self.spaceStore.devicePresences()?, &deviceId)
-                {
+                if isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)? {
                     RuntimePairedDeviceStatus::Online
                 } else {
                     RuntimePairedDeviceStatus::Offline
@@ -559,7 +668,16 @@ impl RuntimeRemoteLinkService {
         };
         let (record, session) = self.pairedSession(&sessionName)?;
         let info = match session.sessionInfo().await {
-            Ok(info) => info,
+            Ok(info) => {
+                operit_util::AppLogger::AppLogger::trace(
+                    "CoreSyncTrace",
+                    &format!(
+                        "device_status.session_info_online device={} remote={}",
+                        deviceId, info.coreDeviceId
+                    ),
+                );
+                info
+            }
             Err(error) => {
                 if remoteSessionAuthReason(&error) == Some("invalid_session") {
                     return Ok(RuntimePairedDeviceStatus::Invalid);
@@ -577,9 +695,7 @@ impl RuntimeRemoteLinkService {
             return Ok(RuntimePairedDeviceStatus::RemovedFromSpace);
         }
         Ok(
-            if isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)?
-                || devicePresenceActive(&self.spaceStore.devicePresences()?, &deviceId)
-            {
+            if isPeerLinkActive(&self.nodeRouter.localNodeId(), &deviceId)? {
                 RuntimePairedDeviceStatus::Online
             } else {
                 RuntimePairedDeviceStatus::Offline
@@ -666,6 +782,12 @@ impl RuntimeRemoteLinkService {
     #[allow(non_snake_case)]
     pub fn startSpaceSync(&self) -> Result<(), String> {
         self.persistenceSyncService().start()
+    }
+
+    /// Stops the persistent synchronization worker owned by this CoreNode.
+    #[allow(non_snake_case)]
+    pub fn stopSpaceSync(&self) -> Result<(), String> {
+        self.persistenceSyncService().stop()
     }
 
     /// Discovers nearby Spaces and groups their directly connectable CoreNodes.
@@ -997,28 +1119,16 @@ fn runtimeDeviceSpaceConnectionState(
     (status, reason)
 }
 
-/// Reports whether one synchronized presence record currently announces a device as active.
-#[allow(non_snake_case)]
-fn devicePresenceActive(
-    presences: &BTreeMap<String, CoreSpaceDevicePresence>,
-    deviceId: &str,
-) -> bool {
-    matches!(presences.get(deviceId), Some(presence) if presence.active)
-}
-
-/// Maps paired devices to online states using Peer Links and presence records.
+/// Maps paired devices to online states using Peer Links.
 #[allow(non_snake_case)]
 fn pairedDeviceStatusesFromState(
     pairedDevices: BTreeMap<String, RuntimePairedDevice>,
     activePeerNodeIds: BTreeSet<String>,
-    presences: BTreeMap<String, CoreSpaceDevicePresence>,
 ) -> BTreeMap<String, RuntimePairedDeviceStatus> {
     pairedDevices
         .into_keys()
         .map(|deviceId| {
-            let status = if activePeerNodeIds.contains(&deviceId)
-                || devicePresenceActive(&presences, &deviceId)
-            {
+            let status = if activePeerNodeIds.contains(&deviceId) {
                 RuntimePairedDeviceStatus::Online
             } else {
                 RuntimePairedDeviceStatus::Offline
@@ -1109,4 +1219,45 @@ fn ensureDeviceInfoMatches(
         return Err("paired device metadata conflicts across session directions".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates one paired-device projection for status mapping tests.
+    fn test_paired_device(device_id: &str) -> RuntimePairedDevice {
+        RuntimePairedDevice {
+            deviceId: device_id.to_string(),
+            deviceInfo: RemoteDeviceInfo {
+                platform: "test".to_string(),
+                model: "peer".to_string(),
+            },
+            outboundSessionName: None,
+            outboundBaseUrl: None,
+            outboundTransport: None,
+            inboundSessionIds: Vec::new(),
+        }
+    }
+
+    /// Verifies paired-device statuses are driven only by active Peer Links.
+    #[test]
+    fn paired_device_statuses_follow_active_peer_links_only() {
+        let statuses = pairedDeviceStatusesFromState(
+            BTreeMap::from([
+                ("node-b".to_string(), test_paired_device("node-b")),
+                ("node-c".to_string(), test_paired_device("node-c")),
+            ]),
+            BTreeSet::from(["node-b".to_string()]),
+        );
+
+        assert_eq!(
+            statuses.get("node-b"),
+            Some(&RuntimePairedDeviceStatus::Online)
+        );
+        assert_eq!(
+            statuses.get("node-c"),
+            Some(&RuntimePairedDeviceStatus::Offline)
+        );
+    }
 }

@@ -40,6 +40,7 @@ use operit_store::PreferencesDataStore::{
     combine2, combine3, mutableStateFlow, MutableStateFlow, StateFlow,
 };
 use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::runtime_support::CoreRouteResumeContext;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::ConversationMarkupManager::ToolResult;
@@ -561,6 +562,63 @@ impl ChatServiceCore {
         Ok(())
     }
 
+    /// Resumes a route continuation using the context transported with the route change.
+    #[allow(non_snake_case)]
+    async fn resumeFromRouteContext(
+        &mut self,
+        chatId: String,
+        resumeContext: CoreRouteResumeContext,
+    ) -> Result<(), String> {
+        AppLogger::i(
+            "ChatServiceCore",
+            &format!(
+                "route resume context chatId={} historyMessages={} roleCardId={} roleName={}",
+                chatId,
+                resumeContext.runtimeChatHistory.len(),
+                resumeContext.roleCardId,
+                resumeContext.roleName
+            ),
+        );
+        let Some(service) = self.enhancedAiService.as_mut() else {
+            return Err(format!(
+                "route resume EnhancedAIService is not initialized chatId={chatId}"
+            ));
+        };
+        let Some(delegate) = self.messageCoordinationDelegate.as_mut() else {
+            return Err(format!(
+                "route resume MessageCoordinationDelegate is not initialized chatId={chatId}"
+            ));
+        };
+        self.chatHistoryDelegate.switchChat(chatId.clone(), false);
+        delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+        delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
+        delegate
+            .sendMessageInternal(
+                service,
+                resumeContext.promptFunctionType,
+                false,
+                true,
+                true,
+                Some(resumeContext.roleCardId),
+                Some(chatId.clone()),
+                String::new(),
+                resumeContext.proxySenderName,
+                resumeContext.chatProviderIdOverride,
+                resumeContext.chatModelIdOverride,
+                Vec::new(),
+                None,
+                resumeContext.groupOrchestrationMode,
+                resumeContext.groupParticipantNamesText,
+                true,
+                Some(resumeContext.runtimeChatHistory),
+                resumeContext.turnOptions,
+            )
+            .await;
+        self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+        self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
+        Ok(())
+    }
+
     /// Marks the source chat as paused while route synchronization is in progress.
     #[operit_route_macros::before_change_route]
     #[operit_route_macros::operit_core_route(binding = chatId)]
@@ -572,15 +630,19 @@ impl ChatServiceCore {
         Ok(())
     }
 
-    /// Resumes the target chat after route synchronization has completed.
+    /// Resumes the target chat after the route change reaches the selected Core.
     #[operit_route_macros::after_change_route]
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub async fn afterChangeRoute(&mut self, chatId: String) -> Result<(), String> {
+    pub async fn afterChangeRoute(
+        &mut self,
+        chatId: String,
+        resumeContext: CoreRouteResumeContext,
+    ) -> Result<(), String> {
         AppLogger::i(
             "ChatServiceCore",
             &format!("route change reached target chatId={chatId}"),
         );
-        self.__operit_core_local_resume(chatId).await
+        self.resumeFromRouteContext(chatId, resumeContext).await
     }
 
     /// Cancels message generation for a specific chat id.
@@ -1151,7 +1213,11 @@ impl ChatServiceCore {
 
     /// Restores the bound workspace before one timestamp without crossing route again.
     #[allow(non_snake_case)]
-    fn rewindWorkspaceForMessageTimestamp(&mut self, chatId: String, messageTimestamp: i64) -> bool {
+    fn rewindWorkspaceForMessageTimestamp(
+        &mut self,
+        chatId: String,
+        messageTimestamp: i64,
+    ) -> bool {
         let Some((chatId, workspacePath, rewindTimestamp)) =
             self.resolveWorkspaceRewindTarget(chatId, messageTimestamp)
         else {

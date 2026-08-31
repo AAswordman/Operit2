@@ -82,6 +82,7 @@ Future<void> clear() async {
 void write(
   ClientLogLevel level,
   String message, {
+  bool writeToConsole = true,
   Object? error,
   StackTrace? stackTrace,
 }) {

@@ -39,6 +39,7 @@ use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
 };
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_tools::runtime_support::CoreRouteResumeContext;
 use operit_tools::tools::ToolProgressBus::ToolProgressBus;
 use operit_util::stream::HotStream::SharedStream;
 use operit_util::stream::RevisableTextStream::{
@@ -72,7 +73,7 @@ fn openCoreResponseStream(
     let (sender, receiver) = CoreEventStream::channel();
     let initialContent = stream.initial_render_content();
     let mut orderedStream = stream;
-    AppLogger::i(
+    AppLogger::trace(
         "CoreStreamTrace",
         &format!(
             "response.open requestId={} target={} property={} streamKey={} initialChars={}",
@@ -122,7 +123,7 @@ fn openCoreResponseStream(
                             let markdownEvent = match event.event_type {
                                 operit_util::stream::RevisableTextStream::TextStreamEventType::Savepoint => {
                                     textRevisions.savepoint(&event.id);
-                                    AppLogger::i(
+                                    AppLogger::trace(
                                         "CoreStreamTrace",
                                         &format!(
                                             "response.revision.savepoint streamKey={} id={}",
@@ -136,7 +137,7 @@ fn openCoreResponseStream(
                                         "markdown rollback must reference an active savepoint",
                                     );
                                     markdownStream.restoreContent(content);
-                                    AppLogger::i(
+                                    AppLogger::trace(
                                         "CoreStreamTrace",
                                         &format!(
                                             "response.revision.rollback streamKey={} id={}",
@@ -160,9 +161,12 @@ fn openCoreResponseStream(
                     orderedStream.collect_ordered(&mut itemCollector).await;
                     let completionValue = operit_link::toCoreValue(markdownStream.completed())
                         .expect("MarkdownStreamEvent must serialize");
-                    AppLogger::i(
+                    AppLogger::trace(
                         "CoreStreamTrace",
-                        &format!("response.completed streamKey={}", streamKey),
+                        &format!(
+                            "response.completed requestId={} streamKey={}",
+                            request.requestId.0, streamKey
+                        ),
                     );
                     sendCoreTextEvent(
                         &sender,
@@ -1186,7 +1190,7 @@ impl MessageProcessingDelegate {
             workspaceToolHookSession = Some(session);
         }
         if shouldAddUserMessageToChat {
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.user.start",
                 &[
@@ -1201,7 +1205,7 @@ impl MessageProcessingDelegate {
             request
                 .chatHistoryDelegate
                 .addMessageToChat(userMessage.clone(), Some(chatId.clone()));
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.user.done",
                 &[
@@ -1354,7 +1358,7 @@ impl MessageProcessingDelegate {
             format!("chat-message-stream:{}", aiMessage.timestamp),
             segmentSource,
         ));
-        AppLogger::i(
+        AppLogger::trace(
             "ResponseExecutionTrace",
             &format!(
                 "response_started chatId={} timestamp={}",
@@ -1375,6 +1379,8 @@ impl MessageProcessingDelegate {
         let completionContextPromptFunctionType = request.promptFunctionType.clone();
         let completionContextRoleCardId = request.roleCardId.clone();
         let completionContextRoleName = currentRoleName.clone();
+        let completionContextEnableThinking = request.enableThinking;
+        let completionContextEnableMemoryAutoUpdate = request.enableMemoryAutoUpdate;
         let completionContextGroupOrchestrationMode = request.isGroupOrchestrationTurn;
         let completionContextGroupParticipantNamesText = request.groupParticipantNamesText.clone();
         let completionContextProxySenderName = request.proxySenderNameOverride.clone();
@@ -1393,7 +1399,7 @@ impl MessageProcessingDelegate {
                 .addMessageToChat(userMessage, Some(chatId.clone()));
         }
         if workerTurnOptions.persistTurn {
-            ChainLogger::info(
+            ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.ai.placeholder",
                 &[
@@ -1576,7 +1582,7 @@ impl MessageProcessingDelegate {
                             )
                         };
                         if workerTurnOptions.persistTurn {
-                            ChainLogger::info(
+                            ChainLogger::verbose(
                                 MESSAGE_STORE_CHAIN,
                                 "message.store.ai.final",
                                 &[
@@ -1603,6 +1609,25 @@ impl MessageProcessingDelegate {
                                 .expect("persisted assistant placeholder must remain in chat history");
                             *persistedAssistant = finalMessage.clone();
                         }
+                        let pendingRouteChange = workerService.takePendingRouteChange();
+                        let routeResumeContext =
+                            pendingRouteChange.as_ref().map(|_| CoreRouteResumeContext {
+                                runtimeChatHistory: completionChatHistory.clone(),
+                                workspacePath: completionContextWorkspacePath.clone(),
+                                promptFunctionType: completionContextPromptFunctionType.clone(),
+                                enableThinking: completionContextEnableThinking,
+                                enableMemoryAutoUpdate: completionContextEnableMemoryAutoUpdate,
+                                roleCardId: completionContextRoleCardId.clone(),
+                                roleName: completionContextRoleName.clone(),
+                                groupOrchestrationMode: completionContextGroupOrchestrationMode,
+                                groupParticipantNamesText: completionContextGroupParticipantNamesText
+                                    .clone(),
+                                proxySenderName: completionContextProxySenderName.clone(),
+                                notifyReplyOverride: completionTurnOptions.notifyReply,
+                                chatProviderIdOverride: completionContextProviderIdOverride.clone(),
+                                chatModelIdOverride: completionContextModelIdOverride.clone(),
+                                turnOptions: completionTurnOptions.clone(),
+                            });
                         let nextWindowSize = async {
                             let runtimeOptions = SendMessageOptions {
                                 roleCardId: Some(completionContextRoleCardId.clone()),
@@ -1692,7 +1717,7 @@ impl MessageProcessingDelegate {
                             }
                         }
                         drop(workerChatHistoryDelegate);
-                        if let Some(routeChange) = workerService.takePendingRouteChange() {
+                        if let Some(routeChange) = pendingRouteChange {
                             ChainLogger::info(
                                 SEND_CHAIN,
                                 "send.route_change.request",
@@ -1705,6 +1730,9 @@ impl MessageProcessingDelegate {
                                 .requestCoreRouteChange(
                                     completionChatId.clone(),
                                     routeChange.targetNodeId,
+                                    routeResumeContext.expect(
+                                        "route resume context must be created with route intent",
+                                    ),
                                 )
                                 .await
                             {

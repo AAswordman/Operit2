@@ -12,7 +12,7 @@ need to import the internal `chat::llmprovider` path.
 External providers implement the public contracts from the crate root:
 
 ```toml
-operit-providers = "2.0.0-preview.5"
+operit-providers = "2.0.0-preview.6"
 ```
 
 The same crate contains the built-in LLM adapters, text-to-speech,

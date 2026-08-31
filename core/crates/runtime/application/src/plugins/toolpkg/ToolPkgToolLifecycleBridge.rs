@@ -190,14 +190,6 @@ fn deliver(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value)
         .lock()
         .expect("toolpkg tool lifecycle hook mutex poisoned")
         .clone();
-    ChainLogger::info(
-        PLUGIN_CHAIN,
-        "plugin.toolpkg.tool_lifecycle.scan",
-        &[
-            ("event", eventName.to_string()),
-            ("hookCount", snapshot.len().to_string()),
-        ],
-    );
     let manager = runtime.package_manager();
     for hook in snapshot {
         ChainLogger::info(

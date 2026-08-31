@@ -114,27 +114,10 @@ class _ChatAreaState extends State<ChatArea> {
   double _viewportHeight = 0;
   double _scrollViewportDimension = 0;
   bool _bottomFollowScheduled = false;
-  int _buildTraceCount = 0;
 
   /// Builds the scrollable message area and its navigation overlay.
   @override
   Widget build(BuildContext context) {
-    _buildTraceCount += 1;
-    if (_shouldLogChatAreaTrace(widget.messages, _buildTraceCount)) {
-      final lastMessage = widget.messages.isEmpty ? null : widget.messages.last;
-      debugPrint(
-        'ChatRenderTrace area.build count=$_buildTraceCount '
-        'messages=${widget.messages.length} '
-        'lastTs=${lastMessage?.timestamp ?? 'none'} '
-        'lastSender=${lastMessage?.sender ?? 'none'} '
-        'lastParts=${lastMessage?.parts.length ?? 0} '
-        'lastStream=${lastMessage?.contentStream == null ? 'none' : identityHashCode(lastMessage!.contentStream!).toString()} '
-        'isLoading=${widget.isLoading} '
-        'older=${widget.hasOlderDisplayHistory} newer=${widget.hasNewerDisplayHistory} '
-        'loadingWindow=${widget.isLoadingDisplayWindow} '
-        'selected=${widget.selectedMessageTimestamps.length} multiSelect=${widget.isMultiSelectMode}',
-      );
-    }
     final showLoadingIndicator = _shouldShowLoadingIndicator();
     final itemCount =
         widget.messages.length +
@@ -499,19 +482,6 @@ class _ChatAreaState extends State<ChatArea> {
             widget.messages.firstOrNull?.timestamp ||
         oldWidget.messages.lastOrNull?.timestamp !=
             widget.messages.lastOrNull?.timestamp;
-    if (_shouldLogChatAreaTrace(widget.messages, _buildTraceCount)) {
-      final oldLast = oldWidget.messages.isEmpty ? null : oldWidget.messages.last;
-      final nextLast = widget.messages.isEmpty ? null : widget.messages.last;
-      debugPrint(
-        'ChatRenderTrace area.update '
-        'oldMessages=${oldWidget.messages.length} newMessages=${widget.messages.length} '
-        'oldLastTs=${oldLast?.timestamp ?? 'none'} newLastTs=${nextLast?.timestamp ?? 'none'} '
-        'oldLastStream=${oldLast?.contentStream == null ? 'none' : identityHashCode(oldLast!.contentStream!).toString()} '
-        'newLastStream=${nextLast?.contentStream == null ? 'none' : identityHashCode(nextLast!.contentStream!).toString()} '
-        'oldLastParts=${oldLast?.parts.length ?? 0} newLastParts=${nextLast?.parts.length ?? 0} '
-        'oldLoading=${oldWidget.isLoading} newLoading=${widget.isLoading}',
-      );
-    }
     if (messagesChanged) {
       _scheduleBottomFollow();
       _scheduleMessageAnchorCollection();
@@ -540,7 +510,9 @@ class _ChatAreaState extends State<ChatArea> {
   }
 
   Widget _messageRowFor(int messageIndex, ChatUiMessage message) {
-    final selected = widget.selectedMessageTimestamps.contains(message.timestamp);
+    final selected = widget.selectedMessageTimestamps.contains(
+      message.timestamp,
+    );
     final selectionMode = widget.isMultiSelectMode;
     final isStreaming = _isStreamingMessage(messageIndex);
     final themePreferenceSnapshot = OperitTheme.of(
@@ -660,7 +632,8 @@ class _ChatAreaState extends State<ChatArea> {
     final lastMessage = widget.messages.last;
     return lastMessage.sender == 'user' ||
         (lastMessage.sender == 'ai' &&
-            lastMessage.parts.isEmpty && lastMessage.contentStream == null);
+            lastMessage.parts.isEmpty &&
+            lastMessage.contentStream == null);
   }
 
   /// Reports whether this AI row currently owns a live response stream.
@@ -671,18 +644,6 @@ class _ChatAreaState extends State<ChatArea> {
     final message = widget.messages[index];
     return message.sender == 'ai' && message.contentStream != null;
   }
-}
-
-/// Returns whether the chat area trace should print on this frame.
-bool _shouldLogChatAreaTrace(List<ChatUiMessage> messages, int buildCount) {
-  if (messages.isEmpty) {
-    return false;
-  }
-  final lastMessage = messages.last;
-  return buildCount <= 5 ||
-      buildCount % 32 == 0 ||
-      lastMessage.contentStream != null ||
-      lastMessage.parts.isNotEmpty;
 }
 
 class _ChatAreaContentColumn extends StatelessWidget {

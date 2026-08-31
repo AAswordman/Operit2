@@ -243,7 +243,9 @@ where
 struct SyncOperationLogIndex {
     loaded: bool,
     operationIds: BTreeSet<String>,
+    sequenceOffsets: BTreeMap<i64, u64>,
     highestSequence: i64,
+    encodedByteLength: u64,
 }
 
 struct SyncOperationStoreRegistryKey {
@@ -327,9 +329,14 @@ impl SyncOperationStore {
             createdAt: currentTimeMillis()?,
             schemaVersion: 1,
         };
-        self.appendOperationLine(&op)?;
+        let operationOffset = operationLog.encodedByteLength;
+        let writtenBytes = self.appendOperationLine(&op)?;
         operationLog.operationIds.insert(op.opId.clone());
+        operationLog
+            .sequenceOffsets
+            .insert(op.sequence, operationOffset);
         operationLog.highestSequence = sequence;
+        operationLog.encodedByteLength += writtenBytes;
         clock.setSequence(originDeviceId.to_string(), sequence);
         self.writeLocalClockValue(&clock)?;
         clockState.value = clock;
@@ -420,6 +427,7 @@ impl SyncOperationStore {
             let mut content = Vec::new();
             let mut appendedOperations = Vec::new();
             let mut appendedOperationIds = BTreeSet::new();
+            let mut nextOffset = operationLog.encodedByteLength;
             for operation in originOperations {
                 if operationLog.operationIds.contains(&operation.opId)
                     || appendedOperationIds.contains(&operation.opId)
@@ -437,19 +445,29 @@ impl SyncOperationStore {
                     self.encodeOperationPayloadWithEncryption(operation, encryption.as_ref())?;
                 let mut line = serde_json::to_vec(&storedOperation)?;
                 line.push(b'\n');
+                let lineLength = u64::try_from(line.len()).map_err(|_| {
+                    SyncOperationStoreError::Message(
+                        "sync operation line length does not fit u64".to_string(),
+                    )
+                })?;
                 content.extend_from_slice(&line);
                 appendedOperationIds.insert(operation.opId.clone());
-                appendedOperations.push(operation);
+                appendedOperations.push((operation, nextOffset, lineLength));
+                nextOffset += lineLength;
                 clock.setSequence(originDeviceId.clone(), operation.sequence);
                 clockChanged = true;
             }
             if !content.is_empty() {
                 self.storageHost
                     .appendBytes(&self.operationsPath(&originDeviceId), &content)?;
-                for operation in appendedOperations {
+                for (operation, offset, lineLength) in appendedOperations {
                     operationLog.operationIds.insert(operation.opId.clone());
+                    operationLog
+                        .sequenceOffsets
+                        .insert(operation.sequence, offset);
                     operationLog.highestSequence =
                         operationLog.highestSequence.max(operation.sequence);
+                    operationLog.encodedByteLength += lineLength;
                 }
                 appendedOrigins.insert(originDeviceId);
             }
@@ -479,9 +497,14 @@ impl SyncOperationStore {
         if operationLog.operationIds.contains(&operation.opId) {
             return Ok(());
         }
-        self.appendOperationLine(operation)?;
+        let operationOffset = operationLog.encodedByteLength;
+        let writtenBytes = self.appendOperationLine(operation)?;
         operationLog.operationIds.insert(operation.opId.clone());
+        operationLog
+            .sequenceOffsets
+            .insert(operation.sequence, operationOffset);
         operationLog.highestSequence = operationLog.highestSequence.max(operation.sequence);
+        operationLog.encodedByteLength += writtenBytes;
         drop(operationLog);
         self.registerDevice(&operation.originDeviceId)?;
         publishSyncMutation();
@@ -505,8 +528,41 @@ impl SyncOperationStore {
         for deviceId in self.devices()? {
             let operationLog = self.operationLog(&deviceId)?;
             let content = {
-                let _operationLogGuard = lockSyncState(&operationLog, "operation log")?;
-                self.readOperationLog(&deviceId)?
+                let mut operationLog = lockSyncState(&operationLog, "operation log")?;
+                self.loadOperationLogIndex(&deviceId, &mut operationLog)?;
+                let minimumSequence = clock
+                    .sequenceFor(&deviceId)
+                    .max(exportFloors.get(&deviceId).copied().unwrap_or(0));
+                if operationLog.highestSequence <= minimumSequence {
+                    String::new()
+                } else {
+                    let startOffset = operationLog
+                        .sequenceOffsets
+                        .range((minimumSequence + 1)..)
+                        .next()
+                        .map(|(_, offset)| *offset)
+                        .ok_or_else(|| {
+                            SyncOperationStoreError::Message(format!(
+                                "sync operation log index is missing sequence after {minimumSequence} for {deviceId}"
+                            ))
+                        })?;
+                    let byteLength = usize::try_from(
+                        operationLog
+                            .encodedByteLength
+                            .checked_sub(startOffset)
+                            .ok_or_else(|| {
+                                SyncOperationStoreError::Message(format!(
+                                    "sync operation log offset exceeds length for {deviceId}"
+                                ))
+                            })?,
+                    )
+                    .map_err(|_| {
+                        SyncOperationStoreError::Message(
+                            "sync operation log range length does not fit usize".to_string(),
+                        )
+                    })?;
+                    self.readOperationLogRange(&deviceId, startOffset, byteLength)?
+                }
             };
             for operation in self.decodeOperationLog(&content)? {
                 if operation.sequence <= clock.sequenceFor(&deviceId) {
@@ -768,6 +824,22 @@ impl SyncOperationStore {
             .map_err(|error| SyncOperationStoreError::Message(error.to_string()))
     }
 
+    /// Reads one indexed byte range from an origin operation log.
+    #[allow(non_snake_case)]
+    fn readOperationLogRange(
+        &self,
+        deviceId: &str,
+        offset: u64,
+        length: usize,
+    ) -> Result<String, SyncOperationStoreError> {
+        let path = self.operationsPath(deviceId);
+        if length == 0 {
+            return Ok(String::new());
+        }
+        String::from_utf8(self.storageHost.readBytesRange(&path, offset, length)?)
+            .map_err(|error| SyncOperationStoreError::Message(error.to_string()))
+    }
+
     /// Decodes one immutable operation-log snapshot without holding its file lock.
     #[allow(non_snake_case)]
     fn decodeOperationLog(
@@ -797,15 +869,32 @@ impl SyncOperationStore {
             return Ok(());
         }
         let content = self.readOperationLog(deviceId)?;
-        for line in content.lines() {
+        let mut byteOffset = 0u64;
+        for line in content.split_inclusive('\n') {
             let trimmed = line.trim();
             if trimmed.is_empty() {
+                byteOffset += u64::try_from(line.len()).map_err(|_| {
+                    SyncOperationStoreError::Message(
+                        "sync operation line length does not fit u64".to_string(),
+                    )
+                })?;
                 continue;
             }
             let operation: SyncOperation = serde_json::from_str(trimmed)?;
             index.highestSequence = index.highestSequence.max(operation.sequence);
+            index.sequenceOffsets.insert(operation.sequence, byteOffset);
             index.operationIds.insert(operation.opId);
+            byteOffset += u64::try_from(line.len()).map_err(|_| {
+                SyncOperationStoreError::Message(
+                    "sync operation line length does not fit u64".to_string(),
+                )
+            })?;
         }
+        index.encodedByteLength = u64::try_from(content.len()).map_err(|_| {
+            SyncOperationStoreError::Message(
+                "sync operation log length does not fit u64".to_string(),
+            )
+        })?;
         index.loaded = true;
         Ok(())
     }
@@ -815,13 +904,18 @@ impl SyncOperationStore {
     fn appendOperationLine(
         &self,
         operation: &SyncOperation,
-    ) -> Result<(), SyncOperationStoreError> {
+    ) -> Result<u64, SyncOperationStoreError> {
         let storedOperation = self.encodeOperationPayload(operation)?;
         let mut content = serde_json::to_vec(&storedOperation)?;
         content.push(b'\n');
+        let writtenBytes = u64::try_from(content.len()).map_err(|_| {
+            SyncOperationStoreError::Message(
+                "sync operation line length does not fit u64".to_string(),
+            )
+        })?;
         self.storageHost
             .appendBytes(&self.operationsPath(&operation.originDeviceId), &content)?;
-        Ok(())
+        Ok(writtenBytes)
     }
 
     /// Encodes operation payloads that are stored encrypted in the sync log.

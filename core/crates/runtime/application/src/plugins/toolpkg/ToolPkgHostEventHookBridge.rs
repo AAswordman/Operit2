@@ -67,15 +67,6 @@ impl ToolPkgHostEventHookBridge {
             .expect("toolpkg host event hook mutex poisoned")
             .clone();
 
-        ChainLogger::info(
-            PLUGIN_CHAIN,
-            "plugin.toolpkg.host_event.dispatch",
-            &[
-                ("source", source.to_string()),
-                ("hooks", hooks.len().to_string()),
-            ],
-        );
-
         let manager = runtime.package_manager();
         for hook in hooks {
             if !hook.enabled {

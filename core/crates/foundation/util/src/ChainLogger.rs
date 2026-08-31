@@ -1,4 +1,4 @@
-use crate::AppLogger::AppLogger;
+use crate::AppLogger::{AppLogger, VERBOSE_LEVEL_5};
 
 pub const SEND_CHAIN: &str = "SendChain";
 pub const MESSAGE_STORE_CHAIN: &str = "MessageStoreChain";
@@ -9,6 +9,12 @@ pub const PLUGIN_CHAIN: &str = "PluginChain";
 #[allow(non_snake_case)]
 pub fn info(tag: &str, event: &str, fields: &[(&str, String)]) {
     AppLogger::i(tag, &format_event(event, fields));
+}
+
+/// Writes a detailed chain event at Verbose level five.
+#[allow(non_snake_case)]
+pub fn verbose(tag: &str, event: &str, fields: &[(&str, String)]) {
+    AppLogger::v_with_level(tag, &format_event(event, fields), VERBOSE_LEVEL_5);
 }
 
 #[allow(non_snake_case)]

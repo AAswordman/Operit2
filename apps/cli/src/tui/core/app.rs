@@ -1984,7 +1984,8 @@ impl OperitTui {
         self.apply_full_update_download_events();
         let mut should_refresh_messages = false;
         let mut should_sync_content_streams = false;
-        for event in self.core.drainEvents() {
+        let drainedEvents = self.core.drainEvents();
+        for event in drainedEvents {
             match event.propertyName.as_str() {
                 "currentChatIdFlow" => {
                     if let Ok(value) = operit_link::fromCoreValue::<Option<String>>(event.value) {
@@ -1999,6 +2000,39 @@ impl OperitTui {
                         if let Ok(value) =
                             operit_link::fromCoreValue::<Vec<ChatMessage>>(event.value)
                         {
+                            let streamIds = value
+                                .iter()
+                                .filter_map(|message| {
+                                    message
+                                        .contentStream
+                                        .as_ref()
+                                        .map(|stream| stream.descriptor.streamId.clone())
+                                })
+                                .collect::<Vec<_>>();
+                            let last = value.last().map(|message| {
+                                format!(
+                                    "ts={} sender={} chars={} stream={}",
+                                    message.timestamp,
+                                    message.sender,
+                                    message.displayText().chars().count(),
+                                    message
+                                        .contentStream
+                                        .as_ref()
+                                        .map(|stream| stream.descriptor.streamId.as_str())
+                                        .unwrap_or("none")
+                                )
+                            });
+                            AppLogger::trace(
+                                "TuiStreamTrace",
+                                &format!(
+                                    "messages_watch.applied requestId={} eventKind={:?} messages={} streams={} last={}",
+                                    event.requestId.as_ref().map(|id| id.0.as_str()).unwrap_or("none"),
+                                    event.kind,
+                                    value.len(),
+                                    streamIds.join(","),
+                                    last.as_deref().unwrap_or("none")
+                                ),
+                            );
                             self.current_messages_cache = value;
                             self.apply_existing_content_stream_parts_to_cache();
                             should_sync_content_streams = true;
@@ -2063,9 +2097,12 @@ impl OperitTui {
     ) -> Result<(), String> {
         let markdown: MarkdownStreamEvent =
             operit_link::fromCoreValue(event.value).map_err(|error| error.to_string())?;
+        let eventKind = event.kind.clone();
+        let streamId = info.streamId.clone();
+        let messageTimestamp = info.messageTimestamp;
         let state = self
             .content_stream_states
-            .entry(info.streamId)
+            .entry(streamId.clone())
             .or_insert_with(TuiMessageContentStreamState::new);
         let parts = match markdown.eventType.as_str() {
             "reset" => {
@@ -2094,8 +2131,23 @@ impl OperitTui {
             "completed" => Some(state.finish()?),
             _ => None,
         };
+        let partCount = parts.as_ref().map(Vec::len);
         if let Some(parts) = parts {
-            self.update_cached_content_stream_message(info.messageTimestamp, parts);
+            self.update_cached_content_stream_message(messageTimestamp, parts);
+        }
+        if is_content_stream_boundary_event(&markdown.eventType) {
+            AppLogger::trace(
+                "TuiStreamTrace",
+                &format!(
+                    "content_event.applied streamId={} messageTimestamp={} kind={:?} eventType={} resultingParts={} cachedMessages={}",
+                    streamId,
+                    messageTimestamp,
+                    eventKind,
+                    markdown.eventType,
+                    partCount.map(|count| count.to_string()).unwrap_or_else(|| "unchanged".to_string()),
+                    self.current_messages_cache.len()
+                ),
+            );
         }
         Ok(())
     }
@@ -2648,6 +2700,11 @@ impl OperitTui {
             InputProcessingState::Error { message } => message.clone(),
         }
     }
+}
+
+/// Returns whether a Markdown stream event should be logged as a lifecycle boundary.
+fn is_content_stream_boundary_event(eventType: &str) -> bool {
+    matches!(eventType, "reset" | "savepoint" | "rollback" | "completed")
 }
 
 fn parse_permission_level(value: Option<&str>) -> Result<AiPermissionMode, String> {

@@ -65,14 +65,6 @@ impl SummaryGenerateHook for SummaryGenerateBridge {
             .lock()
             .expect("toolpkg summary hook mutex poisoned")
             .clone();
-        ChainLogger::info(
-            PLUGIN_CHAIN,
-            "plugin.toolpkg.summary.scan",
-            &[
-                ("stage", context.stage.clone()),
-                ("hookCount", snapshot.len().to_string()),
-            ],
-        );
         let mut mutation = SummaryHookMutation::default();
         let mut changed = false;
         let manager = self.runtime.package_manager();

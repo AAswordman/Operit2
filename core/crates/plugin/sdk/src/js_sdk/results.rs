@@ -1559,7 +1559,7 @@ impl DirectoryListingData {
         for entry in &self.entries {
             let typeIndicator = if entry.isDirectory { "d" } else { "-" };
             sb.push_str(&format!(
-                "{typeIndicator}{} {:>8} {} {}\n",
+                "{typeIndicator}{} {:>8} {} name={:?}\n",
                 entry.permissions, entry.size, entry.lastModified, entry.name
             ));
         }

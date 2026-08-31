@@ -115,14 +115,6 @@ impl ToolPkgAppLifecycleHookBridge {
         if matchingHooks.is_empty() {
             return;
         }
-        ChainLogger::info(
-            PLUGIN_CHAIN,
-            "plugin.toolpkg.app_lifecycle.scan",
-            &[
-                ("event", eventName.to_string()),
-                ("hookCount", matchingHooks.len().to_string()),
-            ],
-        );
         for hook in matchingHooks {
             runAppLifecycleHook(runtime, &hook, eventName, eventPayload.clone());
         }

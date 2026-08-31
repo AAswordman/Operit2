@@ -82,18 +82,6 @@ impl MessageProcessingPlugin for MessageProcessingBridge {
             .lock()
             .expect("toolpkg message processing hook mutex poisoned")
             .clone();
-        ChainLogger::info(
-            PLUGIN_CHAIN,
-            "plugin.toolpkg.message_processing.probe.scan",
-            &[
-                ("hookCount", hooks.len().to_string()),
-                (
-                    "messageChars",
-                    ChainLogger::lenField(&params.message_content),
-                ),
-                ("historyCount", params.chat_history.len().to_string()),
-            ],
-        );
         let probeEventPayload = buildMessageEventPayload(params, true);
         let manager = self.runtime.package_manager();
         for hook in hooks {

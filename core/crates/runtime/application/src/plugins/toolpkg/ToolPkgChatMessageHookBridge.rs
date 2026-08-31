@@ -70,18 +70,6 @@ impl ToolPkgChatMessageHookBridge {
             return;
         }
 
-        ChainLogger::info(
-            PLUGIN_CHAIN,
-            "plugin.toolpkg.chat_message.scan",
-            &[
-                ("event", CHAT_MESSAGE_EVENT_PERSISTED.to_string()),
-                ("chatId", chatId.to_string()),
-                ("sender", message.sender.clone()),
-                ("timestamp", message.timestamp.to_string()),
-                ("hookCount", activeHooks.len().to_string()),
-            ],
-        );
-
         let eventPayload = buildChatMessagePayload(chatId, message);
         let manager = runtime.package_manager();
         for hook in activeHooks {

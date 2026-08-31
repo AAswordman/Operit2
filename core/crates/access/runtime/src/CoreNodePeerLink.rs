@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 #[cfg(feature = "test-support")]
 use std::sync::Weak;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
@@ -501,7 +501,7 @@ impl PeerLinkClient {
                 return Err(error);
             }
         }
-        operit_util::AppLogger::AppLogger::i(
+        operit_util::AppLogger::AppLogger::trace(
             "PeerWatchTrace",
             &format!(
                 "outgoing_watch_opened local={} peer={} subscription={} requestId={} target={} property={}",
@@ -515,7 +515,7 @@ impl PeerLinkClient {
         );
         let connection = self.connection.clone();
         Ok(CoreEventStream::new(receiver).withOnClose(move || {
-            operit_util::AppLogger::AppLogger::i(
+            operit_util::AppLogger::AppLogger::trace(
                 "PeerWatchTrace",
                 &format!(
                     "outgoing_watch_drop local={} peer={} subscription={} requestId={} target={} property={}",
@@ -808,7 +808,7 @@ impl PeerConnection {
                             let event = tokio::select! {
                                 biased;
                                 _ = &mut cancelReceiver => {
-                                    operit_util::AppLogger::AppLogger::i(
+                                    operit_util::AppLogger::AppLogger::trace(
                                         "PeerWatchTrace",
                                         &format!(
                                             "incoming_watch_cancelled local={} peer={} subscription={} requestId={} property={}",
@@ -918,7 +918,7 @@ impl PeerConnection {
         &self,
         request: PeerWatchCloseRequest,
     ) -> Result<(), CoreLinkError> {
-        operit_util::AppLogger::AppLogger::i(
+        operit_util::AppLogger::AppLogger::trace(
             "PeerWatchTrace",
             &format!(
                 "incoming_watch_close_request local={} peer={} subscription={}",
@@ -1421,11 +1421,6 @@ fn failOutboundPeerFrameBatch(state: &Arc<OutboundPeerFrameBatchState>, error: S
     );
 }
 
-/// Returns whether one HTTP Peer carrier chunk should be logged.
-fn shouldLogPeerCarrierChunk(count: u64) -> bool {
-    count <= 5 || count % 256 == 0
-}
-
 /// Drains queued Peer frames into ordered bounded HTTP batches.
 async fn runOutboundPeerFrameBatchSender(
     state: Arc<OutboundPeerFrameBatchState>,
@@ -1553,8 +1548,6 @@ async fn openOutboundPeerLinkHttp(
     let chunkLocalNodeId = localNodeId.clone();
     let chunkPeerNodeId = peerNodeId.clone();
     let chunkChannelId = channelId.clone();
-    let chunkCount = Arc::new(AtomicU64::new(0));
-    let chunkCountForLog = chunkCount.clone();
     let closedLocalNodeId = localNodeId.clone();
     let closedPeerNodeId = peerNodeId.clone();
     let closedChannelId = channelId.clone();
@@ -1580,12 +1573,13 @@ async fn openOutboundPeerLinkHttp(
             proxyPort: 0,
         },
         Arc::new(move || {
-            operit_util::AppLogger::AppLogger::i(
+            operit_util::AppLogger::AppLogger::v_with_level(
                 "PeerCarrierTrace",
                 &format!(
                     "http_stream_opened local={} peer={} channel={}",
                     openedLocalNodeId, openedPeerNodeId, openedChannelId
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_5,
             );
             if let Some(sender) = openedSignal
                 .lock()
@@ -1598,20 +1592,17 @@ async fn openOutboundPeerLinkHttp(
         Arc::new(move |chunk| {
             let frames = decodePeerFrameChunks(&chunkBuffer, chunk)
                 .expect("Peer Link frame stream must decode");
-            let chunkIndex = chunkCountForLog.fetch_add(1, Ordering::Relaxed) + 1;
-            if shouldLogPeerCarrierChunk(chunkIndex) || frames.len() > 1 {
-                operit_util::AppLogger::AppLogger::i(
-                    "PeerCarrierTrace",
-                    &format!(
-                        "http_stream_chunk local={} peer={} channel={} chunk={} frames={}",
-                        chunkLocalNodeId,
-                        chunkPeerNodeId,
-                        chunkChannelId,
-                        chunkIndex,
-                        frames.len()
-                    ),
-                );
-            }
+            operit_util::AppLogger::AppLogger::v_with_level(
+                "PeerCarrierTrace",
+                &format!(
+                    "http_stream_chunk local={} peer={} channel={} frames={}",
+                    chunkLocalNodeId,
+                    chunkPeerNodeId,
+                    chunkChannelId,
+                    frames.len()
+                ),
+                operit_util::AppLogger::VERBOSE_LEVEL_6,
+            );
             let sender = chunkFrameQueueSender
                 .lock()
                 .expect("Peer Link frame queue lock poisoned");
@@ -1633,12 +1624,13 @@ async fn openOutboundPeerLinkHttp(
                 Ok(()) => "Peer Link stream closed".to_string(),
                 Err(error) => error,
             };
-            operit_util::AppLogger::AppLogger::w(
+            operit_util::AppLogger::AppLogger::v_with_level(
                 "PeerCarrierTrace",
                 &format!(
                     "http_stream_closed local={} peer={} channel={} reason={}",
                     closedLocalNodeId, closedPeerNodeId, closedChannelId, reason
                 ),
+                operit_util::AppLogger::VERBOSE_LEVEL_5,
             );
             if let Some(sender) = closedSignal
                 .lock()

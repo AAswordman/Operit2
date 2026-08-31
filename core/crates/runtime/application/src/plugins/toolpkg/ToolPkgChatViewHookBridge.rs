@@ -71,16 +71,6 @@ impl ToolPkgChatViewHookBridge {
             return;
         }
 
-        ChainLogger::info(
-            PLUGIN_CHAIN,
-            "plugin.toolpkg.chat_view.scan",
-            &[
-                ("event", event.wireName().to_string()),
-                ("chatId", params.chatId.clone()),
-                ("viewId", params.viewId.clone()),
-                ("hookCount", activeHooks.len().to_string()),
-            ],
-        );
         let eventPayload = buildChatViewEventPayload(&params);
         for hook in activeHooks {
             runChatViewHook(runtime, &hook, event.wireName(), eventPayload.clone());

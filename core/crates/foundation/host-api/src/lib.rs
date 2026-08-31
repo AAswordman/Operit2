@@ -26,6 +26,8 @@ pub type HostRuntimeEventScheduleSink =
 
 type HostLogSink = Arc<dyn Fn(&str, &str) + Send + Sync + 'static>;
 static HOST_LOG_SINK: OnceLock<RwLock<Option<HostLogSink>>> = OnceLock::new();
+pub type HostConsoleLogSink = Arc<dyn Fn(i32, &str, &str) + Send + Sync + 'static>;
+static HOST_CONSOLE_LOG_SINK: OnceLock<RwLock<Option<HostConsoleLogSink>>> = OnceLock::new();
 
 /// Installs the process-wide host log sink used for host error reporting.
 pub fn setHostLogSink(sink: HostLogSink) {
@@ -42,6 +44,27 @@ pub fn logHostError(tag: &str, message: &str) {
         .clone()
         .expect("host log sink must be installed before host errors are logged");
     sink(tag, message);
+}
+
+/// Installs the host-owned live console sink for runtime log records.
+pub fn setHostConsoleLogSink(sink: HostConsoleLogSink) {
+    let holder = HOST_CONSOLE_LOG_SINK.get_or_init(|| RwLock::new(None));
+    *holder.write().expect("host console log sink lock poisoned") = Some(sink);
+}
+
+/// Emits one runtime log record through the host-owned live console sink.
+pub fn tryLogHostConsole(priority: i32, tag: &str, message: &str) -> bool {
+    let sink = HOST_CONSOLE_LOG_SINK
+        .get_or_init(|| RwLock::new(None))
+        .read()
+        .expect("host console log sink lock poisoned")
+        .clone();
+    if let Some(sink) = sink {
+        sink(priority, tag, message);
+        true
+    } else {
+        false
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
