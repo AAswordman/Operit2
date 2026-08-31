@@ -1,0 +1,15 @@
+Running `HOME=/home/runner ANDROID_HOME=/usr/local/lib/android/sdk PATH=/home/runner/work/Operit2/Operit2/.ci-tools/typescript/node_modules/.bin:/home/runner/work/Operit2/Operit2/.ci-tools/wasm-bindgen/bin:/home/runner/.pub-cache/bin:/opt/hostedtoolcache/node/22.23.2/x64/bin:/opt/hostedtoolcache/flutter/stable-3.41.9-x64/flutter/bin/cache/dart-sdk/bin:/opt/hostedtoolcache/flutter/stable-3.41.9-x64/flutter/bin:/snap/bin:/home/runner/.local/bin:/opt/pipx_bin:/home/runner/.cargo/bin:/home/runner/.config/composer/vendor/bin:/usr/local/.ghcup/bin:/home/runner/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin /home/runner/fvm/versions/3.41.9/bin/cache/dart-sdk/bin/dart --packages=/home/runner/work/Operit2/Operit2/apps/flutter/app/.dart_tool/package_config.json /home/runner/work/Operit2/Operit2/apps/flutter/app/.dart_tool/hooks_runner/operit2/6782ff62a0/hook.dill --config=/home/runner/work/Operit2/Operit2/apps/flutter/app/.dart_tool/hooks_runner/operit2/6782ff62a0/input.json`.
+RUN-CMD: (cd /home/runner/work/Operit2/Operit2/core) cargo run -p operit-plugin-sdk-codegen -- generate /home/runner/work/Operit2/Operit2/core/crates/plugin/sdk/src /home/runner/work/Operit2/Operit2/plugins/types
+RUN-CMD: (cd /home/runner/work/Operit2/Operit2) tsc -p /home/runner/work/Operit2/Operit2/plugins/packages/buildin/tsconfig.json
+RUN-CMD: (cd /home/runner/work/Operit2/Operit2) tsc -p /home/runner/work/Operit2/Operit2/plugins/packages/buildin/thinking_guidance/tsconfig.json
+COPY: /home/runner/work/Operit2/Operit2/plugins/.out/buildin/browser.js -> /home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/browser.js
+COPY: /home/runner/work/Operit2/Operit2/plugins/.out/buildin/extended_chat.js -> /home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/extended_chat.js
+COPY: /home/runner/work/Operit2/Operit2/plugins/.out/buildin/extended_memory_tools.js -> /home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/extended_memory_tools.js
+COPY: /home/runner/work/Operit2/Operit2/plugins/.out/buildin/operit_editor.js -> /home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/operit_editor.js
+COPY: /home/runner/work/Operit2/Operit2/plugins/.out/buildin/super_admin.js -> /home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/super_admin.js
+PACK: /home/runner/work/Operit2/Operit2/plugins/packages/buildin/thinking_guidance -> /home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/thinking_guidance.toolpkg
+HOT-RELOAD-DONE: buildin output signature recorded
+Done. source=buildin, copied=5, packed=1, deleted=0, dry_run=False
+
+Web Access version 1 hash=ed031124c467bb1d14620c06cef1fe99d810f69d99c6625a32337c90b465477f files=34 bytes=59609108
+

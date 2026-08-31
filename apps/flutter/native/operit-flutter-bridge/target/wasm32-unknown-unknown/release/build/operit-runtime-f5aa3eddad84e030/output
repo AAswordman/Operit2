@@ -1,0 +1,13 @@
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/browser.js
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/extended_chat.js
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/extended_memory_tools.js
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/operit_editor.js
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/super_admin.js
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/buildin/thinking_guidance.toolpkg
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/external
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/external/context_limiter.toolpkg
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/external/dino_runner.toolpkg
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/plugins/external/message_insert.toolpkg
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/assets/workspace_templates
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/runtime/application/../../../plugins/skills/external

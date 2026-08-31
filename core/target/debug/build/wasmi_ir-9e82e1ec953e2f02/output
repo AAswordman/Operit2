@@ -1,0 +1,14 @@
+cargo:rerun-if-changed=build/mod.rs
+cargo:rerun-if-changed=build/ty.rs
+cargo:rerun-if-changed=build/op.rs
+cargo:rerun-if-changed=build/isa.rs
+cargo:rerun-if-changed=build/display/utils.rs
+cargo:rerun-if-changed=build/display/result.rs
+cargo:rerun-if-changed=build/display/encode.rs
+cargo:rerun-if-changed=build/display/mod.rs
+cargo:rerun-if-changed=build/display/op_code.rs
+cargo:rerun-if-changed=build/display/op.rs
+cargo:rerun-if-changed=build/display/decode.rs
+cargo:rerun-if-changed=build/display/ident.rs
+cargo:rerun-if-changed=build/display/constructors.rs
+cargo:rerun-if-changed=build/ident.rs

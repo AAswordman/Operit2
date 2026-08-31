@@ -1,0 +1,407 @@
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling memchr v2.8.0
+   Compiling tree-sitter-language v0.1.7
+   Compiling cc v1.2.62
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling hashbrown v0.17.1
+   Compiling equivalent v1.0.2
+   Compiling serde_json v1.0.149
+   Compiling itoa v1.0.18
+   Compiling indexmap v2.14.0
+   Compiling proc-macro2 v1.0.106
+   Compiling aho-corasick v1.1.4
+   Compiling regex-syntax v0.8.10
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling tree-sitter-javascript v0.23.1
+   Compiling regex-automata v0.4.14
+   Compiling tree-sitter v0.25.10
+   Compiling streaming-iterator v0.1.9
+   Compiling syn v2.0.117
+   Compiling regex v1.12.3
+   Compiling operit-plugin-sdk-codegen v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/plugin/codegen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.39s
+     Running `target/debug/operit-plugin-sdk-codegen generate /home/runner/work/Operit2/Operit2/core/crates/plugin/sdk/src /home/runner/work/Operit2/Operit2/plugins/types`
+
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded async-task v4.7.1
+  Downloaded async-fs v2.2.0
+  Downloaded async-lock v3.4.2
+  Downloaded async-channel v2.5.0
+  Downloaded async-broadcast v0.7.2
+  Downloaded async-executor v1.14.0
+  Downloaded downcast-rs v1.2.1
+  Downloaded foreign-types v0.3.2
+  Downloaded ahash v0.8.12
+  Downloaded openssl-probe v0.2.1
+  Downloaded native-tls v0.2.18
+  Downloaded grep-searcher v0.1.16
+  Downloaded futures-lite v2.6.1
+  Downloaded foreign-types-shared v0.1.1
+  Downloaded filedescriptor v0.8.3
+  Downloaded enumflags2_derive v0.7.12
+  Downloaded lazycell v1.3.0
+  Downloaded shell-words v1.1.1
+  Downloaded hyper-tls v0.6.0
+  Downloaded zeroize_derive v1.4.3
+  Downloaded zbus_names v3.0.0
+  Downloaded zvariant_utils v2.1.0
+  Downloaded zvariant_derive v4.2.0
+  Downloaded tokio-native-tls v0.3.1
+  Downloaded lazy_static v1.5.0
+  Downloaded xdg-home v1.3.0
+  Downloaded blocking v1.6.2
+  Downloaded walkdir v2.5.0
+  Downloaded zbus_macros v4.4.0
+  Downloaded tracing-attributes v0.1.31
+  Downloaded polling v3.11.0
+  Downloaded wasm-bindgen v0.2.122
+  Downloaded zvariant v4.2.0
+  Downloaded js-sys v0.3.99
+  Downloaded http v1.4.1
+  Downloaded zbus v4.4.0
+  Downloaded rusqlite v0.31.0
+  Downloaded tower-http v0.6.11
+  Downloaded bumpalo v3.20.3
+  Downloaded vcpkg v0.2.15
+  Downloaded bstr v1.12.1
+  Downloaded wasm-bindgen-macro-support v0.2.122
+  Downloaded nix v0.28.0
+  Downloaded openssl v0.10.80
+  Downloaded nix v0.29.0
+  Downloaded rustix v0.38.44
+  Downloaded ignore v0.4.26
+  Downloaded openssl-sys v0.9.116
+  Downloaded wasm-streams v0.4.2
+  Downloaded spin v0.9.8
+  Downloaded serial2 v0.2.37
+  Downloaded piper v0.2.5
+  Downloaded ordered-stream v0.2.0
+  Downloaded console_error_panic_hook v0.1.7
+  Downloaded memmap2 v0.9.10
+  Downloaded portable-pty v0.9.0
+  Downloaded pkg-config v0.3.33
+  Downloaded log v0.4.30
+  Downloaded event-listener v5.4.1
+  Downloaded web-sys v0.3.99
+  Downloaded enumflags2 v0.7.12
+  Downloaded web-time v1.1.0
+  Downloaded wasm-bindgen-macro v0.2.122
+  Downloaded static_assertions v1.1.0
+  Downloaded same-file v1.0.6
+  Downloaded hashlink v0.9.1
+  Downloaded encoding_rs_io v0.1.7
+  Downloaded serde_repr v0.1.20
+  Downloaded rustc-hash v1.1.0
+  Downloaded parking v2.2.1
+  Downloaded which v4.4.2
+  Downloaded wasm-bindgen-futures v0.4.72
+  Downloaded grep-matcher v0.1.8
+  Downloaded endi v1.1.1
+  Downloaded home v0.5.12
+  Downloaded hex v0.4.3
+  Downloaded hashbrown v0.14.5
+  Downloaded cfg_aliases v0.1.1
+  Downloaded concurrent-queue v2.5.0
+  Downloaded grep-regex v0.1.14
+  Downloaded globset v0.4.18
+  Downloaded openssl-macros v0.1.1
+  Downloaded memoffset v0.9.1
+  Downloaded fallible-streaming-iterator v0.1.9
+  Downloaded event-listener-strategy v0.5.4
+  Downloaded bindgen v0.69.5
+  Downloaded async-io v2.6.0
+  Downloaded encoding_rs v0.8.35
+  Downloaded linux-raw-sys v0.4.15
+  Downloaded quickjs-wasm-sys v1.2.1
+  Downloaded libsqlite3-sys v0.28.0
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling cfg-if v1.0.4
+   Compiling wasm-bindgen-shared v0.2.122
+   Compiling bumpalo v3.20.3
+   Compiling memchr v2.8.0
+   Compiling rustversion v1.0.22
+   Compiling once_cell v1.21.4
+   Compiling serde_core v1.0.228
+   Compiling wasm-bindgen v0.2.122
+   Compiling syn v2.0.117
+   Compiling futures-core v0.3.32
+   Compiling pin-project-lite v0.2.17
+   Compiling slab v0.4.12
+   Compiling futures-io v0.3.32
+   Compiling futures-sink v0.3.32
+   Compiling futures-task v0.3.32
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling zmij v1.0.21
+   Compiling cc v1.2.62
+   Compiling itoa v1.0.18
+   Compiling version_check v0.9.5
+   Compiling serde v1.0.228
+   Compiling generic-array v0.14.7
+   Compiling typenum v1.20.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling libc v0.2.186
+   Compiling crc32fast v1.5.0
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling wasm-bindgen-macro-support v0.2.122
+   Compiling synstructure v0.13.2
+   Compiling aho-corasick v1.1.4
+   Compiling equivalent v1.0.2
+   Compiling regex-syntax v0.8.10
+   Compiling futures-macro v0.3.32
+   Compiling displaydoc v0.2.5
+   Compiling futures-util v0.3.32
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerofrom v0.1.8
+   Compiling serde_derive v1.0.228
+   Compiling wasm-bindgen-macro v0.2.122
+   Compiling yoke v0.8.2
+   Compiling tokio-macros v2.7.0
+   Compiling zerovec-derive v0.11.3
+   Compiling hashbrown v0.17.1
+   Compiling js-sys v0.3.99
+   Compiling zerovec v0.11.6
+   Compiling indexmap v2.14.0
+   Compiling tinystr v0.8.3
+   Compiling regex-automata v0.4.14
+   Compiling subtle v2.6.1
+   Compiling serde_json v1.0.150
+   Compiling litemap v0.8.2
+   Compiling writeable v0.6.3
+   Compiling icu_locale_core v2.2.0
+   Compiling regex v1.12.3
+   Compiling potential_utf v0.1.5
+   Compiling zerotrie v0.2.4
+   Compiling tree-sitter-language v0.1.7
+   Compiling pkg-config v0.3.33
+   Compiling icu_normalizer_data v2.2.0
+   Compiling utf8_iter v1.0.4
+   Compiling icu_properties_data v2.2.0
+   Compiling vcpkg v0.2.15
+   Compiling icu_collections v2.2.0
+   Compiling openssl-sys v0.9.116
+   Compiling icu_provider v2.2.0
+   Compiling log v0.4.30
+   Compiling zeroize_derive v1.4.3
+   Compiling smallvec v1.15.1
+   Compiling bitflags v2.11.1
+   Compiling icu_normalizer v2.2.0
+   Compiling zeroize v1.8.2
+   Compiling icu_properties v2.2.0
+   Compiling async-trait v0.1.89
+   Compiling thiserror v2.0.18
+   Compiling bytes v1.11.1
+   Compiling unicase v2.9.0
+   Compiling percent-encoding v2.3.2
+   Compiling mime_guess v2.0.5
+   Compiling http v1.4.1
+   Compiling form_urlencoded v1.2.2
+   Compiling idna_adapter v1.2.2
+   Compiling tree-sitter v0.25.10
+   Compiling mio v1.2.0
+   Compiling socket2 v0.6.3
+   Compiling getrandom v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling operit-host-api v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/foundation/host-api)
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling tree-sitter-javascript v0.23.1
+   Compiling simd-adler32 v0.3.9
+   Compiling glob v0.3.3
+   Compiling httparse v1.10.1
+   Compiling foreign-types-shared v0.1.1
+   Compiling openssl v0.10.80
+   Compiling foreign-types v0.3.2
+   Compiling clang-sys v1.8.1
+   Compiling digest v0.10.7
+   Compiling tokio v1.52.3
+   Compiling http-body v1.0.1
+   Compiling wasm-bindgen-futures v0.4.72
+   Compiling web-sys v0.3.99
+   Compiling idna v1.1.0
+   Compiling thiserror-impl v2.0.18
+   Compiling openssl-macros v0.1.1
+   Compiling inout v0.1.4
+   Compiling ryu v1.0.23
+   Compiling try-lock v0.2.5
+   Compiling mime v0.3.17
+   Compiling zip v2.4.2
+   Compiling prettyplease v0.2.37
+   Compiling native-tls v0.2.18
+   Compiling anyhow v1.0.102
+   Compiling rustix v0.38.44
+   Compiling streaming-iterator v0.1.9
+   Compiling tracing-core v0.1.36
+   Compiling want v0.3.1
+   Compiling wasm-streams v0.4.2
+   Compiling serde_urlencoded v0.7.1
+   Compiling cipher v0.4.4
+   Compiling url v2.5.8
+   Compiling futures-channel v0.3.32
+   Compiling rmp v0.8.15
+   Compiling chrono v0.4.44
+   Compiling serde_bytes v0.11.19
+   Compiling sync_wrapper v1.0.2
+   Compiling either v1.16.0
+   Compiling base64 v0.22.1
+   Compiling atomic-waker v1.1.2
+   Compiling adler2 v2.0.1
+   Compiling minimal-lexical v0.2.1
+   Compiling openssl-probe v0.2.1
+   Compiling linux-raw-sys v0.4.15
+   Compiling ucd-trie v0.1.7
+   Compiling pest v2.8.6
+   Compiling nom v7.1.3
+   Compiling reqwest v0.12.28
+   Compiling miniz_oxide v0.8.9
+   Compiling hyper v1.9.0
+   Compiling rmp-serde v1.3.1
+   Compiling operit-plugin-sdk-codegen v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/plugin/codegen)
+   Compiling tracing v0.1.44
+   Compiling universal-hash v0.5.1
+   Compiling libloading v0.8.9
+   Compiling tower-service v0.3.3
+   Compiling bindgen v0.69.5
+   Compiling home v0.5.12
+   Compiling opaque-debug v0.3.1
+   Compiling thiserror v1.0.69
+   Compiling poly1305 v0.8.0
+   Compiling which v4.4.2
+   Compiling operit-link v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/foundation/link)
+   Compiling hyper-util v0.1.20
+   Compiling cexpr v0.6.0
+   Compiling flate2 v1.1.9
+   Compiling operit-util v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/foundation/util)
+   Compiling pest_meta v2.8.6
+   Compiling tokio-native-tls v0.3.1
+   Compiling itertools v0.12.1
+   Compiling chacha20 v0.9.1
+   Compiling http-body-util v0.1.3
+   Compiling sha2 v0.10.9
+   Compiling aead v0.5.2
+   Compiling uuid v1.23.1
+   Compiling thiserror-impl v1.0.69
+   Compiling lazy_static v1.5.0
+   Compiling rustc-hash v1.1.0
+   Compiling same-file v1.0.6
+   Compiling lazycell v1.3.0
+   Compiling walkdir v2.5.0
+   Compiling chacha20poly1305 v0.10.1
+   Compiling hyper-tls v0.6.0
+   Compiling pest_generator v2.8.6
+   Compiling zopfli v0.8.3
+   Compiling pest_derive v2.8.6
+   Compiling operit-model v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/foundation/model)
+   Compiling operit-plugin-sdk v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/plugin/sdk)
+   Compiling fdeflate v0.3.7
+   Compiling quickjs-wasm-sys v1.2.1
+   Compiling zune-core v0.5.1
+   Compiling pxfm v0.1.29
+   Compiling png v0.18.1
+   Compiling operit-store v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/persistence/store)
+   Compiling moxcms v0.8.1
+   Compiling zune-jpeg v0.5.15
+   Compiling json5 v0.4.1
+   Compiling bytemuck v1.25.0
+   Compiling semver v1.0.28
+   Compiling byteorder-lite v0.1.0
+   Compiling rustc_version v0.4.1
+   Compiling image v0.25.10
+   Compiling operit-tools v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/tool/services)
+   Compiling aes v0.8.4
+   Compiling md-5 v0.10.6
+   Compiling operit-rslink-codegen v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/rslink/codegen)
+warning: unused import: `ItemImpl`
+ --> /home/runner/work/Operit2/Operit2/core/crates/rslink/codegen/src/lib.rs:8:39
+  |
+8 |     Fields, ImplItem, Item, ItemEnum, ItemImpl, ItemStruct, Meta, Token, Type, UseTree, Visibility,
+  |                                       ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `operit-rslink-codegen` (lib) generated 1 warning (run `cargo fix --lib -p operit-rslink-codegen` to apply 1 suggestion)
+   Compiling quickjs-wasm-rs v3.1.0 (/home/runner/work/Operit2/Operit2/core/vendor/quickjs-wasm-rs)
+   Compiling curve25519-dalek v4.1.3
+   Compiling filetime v0.2.29
+   Compiling tinyvec v1.11.0
+   Compiling bzip2-rs v0.1.2
+   Compiling tar v0.4.46
+   Compiling operit-runtime v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/runtime/application)
+   Compiling operit-local-models v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/provider/local-model)
+   Compiling operit-proxy-scan v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/proxy/scan)
+warning: unused import: `syn::punctuated::Punctuated`
+ --> /home/runner/work/Operit2/Operit2/core/crates/proxy/scan/src/lib.rs:6:5
+  |
+6 | use syn::punctuated::Punctuated;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Fields`, `ItemEnum`, `ItemStruct`, `MetaNameValue`, `Token`, and `UseTree`
+ --> /home/runner/work/Operit2/Operit2/core/crates/proxy/scan/src/lib.rs:8:22
+  |
+8 |     Attribute, Expr, Fields, FnArg, ImplItem, ImplItemFn, Item, ItemEnum, ItemImpl, ItemStruct,
+  |                      ^^^^^^                                     ^^^^^^^^            ^^^^^^^^^^
+9 |     Lit, Meta, MetaNameValue, Pat, ReturnType, Token, Type, TypePath, UseTree, Visibility,
+  |                ^^^^^^^^^^^^^                   ^^^^^                  ^^^^^^^
+
+warning: unused import: `operit_rslink_codegen::*`
+  --> /home/runner/work/Operit2/Operit2/core/crates/proxy/scan/src/lib.rs:18:5
+   |
+18 | use operit_rslink_codegen::*;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `operit-proxy-scan` (lib) generated 3 warnings (run `cargo fix --lib -p operit-proxy-scan` to apply 3 suggestions)
+   Compiling operit-proxy-dart-codegen v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/proxy/dart-codegen)
+warning: unused imports: `FactoryProtocol`, `ReverseStreamProtocol`, and `WatchStreamProtocol`
+ --> /home/runner/work/Operit2/Operit2/core/crates/proxy/dart-codegen/src/lib.rs:7:5
+  |
+7 |     FactoryProtocol, MethodProtocol, ObjectAccess, ReverseStreamProtocol, SerializableEnumVariant,
+  |     ^^^^^^^^^^^^^^^                                ^^^^^^^^^^^^^^^^^^^^^
+8 |     SerializableField, SerializableType, SerializableTypeKind, SourceArg, SourceMethod,
+9 |     SourceObject, WatchStreamProtocol,
+  |                   ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `object`
+   --> /home/runner/work/Operit2/Operit2/core/crates/proxy/dart-codegen/src/lib.rs:515:5
+    |
+515 |     object: &SourceObject,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_object`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `operit-proxy-dart-codegen` (lib) generated 2 warnings (run `cargo fix --lib -p operit-proxy-dart-codegen` to apply 2 suggestions)
+   Compiling operit-proxy-rust-codegen v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/proxy/rust-codegen)
+warning: unused variable: `object`
+   --> /home/runner/work/Operit2/Operit2/core/crates/proxy/rust-codegen/src/build_rust_dispatch_codegen.rs:696:5
+    |
+696 |     object: &SourceObject,
+    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_object`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `operit-proxy-rust-codegen` (lib) generated 1 warning (run `cargo fix --lib -p operit-proxy-rust-codegen` to apply 1 suggestion)
+   Compiling operit-js-bridge v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/plugin/javascript-bridge)
+   Compiling operit-providers v2.0.0-preview.6 (/home/runner/work/Operit2/Operit2/core/crates/provider/services)
+   Compiling operit-rslink-runtime v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/rslink/runtime)
+   Compiling operit-route-macros v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/node/route-macros)
+   Compiling operit-proxy-local v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/proxy/local)
+   Compiling x25519-dalek v2.0.1
+   Compiling hmac v0.12.1
+   Compiling operit-access-runtime v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/access/runtime)
+   Compiling operit-proxy-bridge v0.1.0 (/home/runner/work/Operit2/Operit2/core/crates/proxy/bridge)
+   Compiling console_error_panic_hook v0.1.7
+   Compiling operit-host-web v0.1.0 (/home/runner/work/Operit2/Operit2/hosts/web)
+   Compiling operit-flutter-bridge v0.1.0 (/home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge)
+    Finished `release` profile [optimized] target(s) in 4m 18s
+
