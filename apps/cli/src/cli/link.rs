@@ -220,7 +220,7 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     let coreApplication = create_cli_core_application("client").await?;
     let service = coreApplication.accessServices();
     let pairing = service
-        .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client")?)
+        .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client"))
         .await?;
     println!(
         "device={} id={}",

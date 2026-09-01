@@ -2259,6 +2259,7 @@ name = "operit-host-apple-native"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "gethostname",
  "globset",
  "grep-regex",
  "grep-searcher",

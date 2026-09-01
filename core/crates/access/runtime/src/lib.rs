@@ -1192,17 +1192,10 @@ pub struct RemoteDeviceInfo {
 impl RemoteDeviceInfo {
     /// Describes the local CLI device with its runtime role.
     #[allow(non_snake_case)]
-    pub fn nativeCli(role: &str) -> Result<Self, String> {
-        let hostname =
-            std::env::var("HOSTNAME").map_err(|error| format!("HOSTNAME unavailable: {error}"))?;
-        let hostname = hostname.trim();
-        if hostname.is_empty() {
-            return Err("HOSTNAME is empty".to_string());
-        }
-        Ok(Self {
-            platform: std::env::consts::OS.to_string(),
-            model: format!("{}-{}(cli)-{}", hostname, role, std::env::consts::ARCH),
-        })
+    pub fn nativeCli(role: &str) -> Self {
+        let mut deviceInfo = Self::native();
+        deviceInfo.model = format!("{}(cli)-{}", role, deviceInfo.model);
+        deviceInfo
     }
 
     pub fn native() -> Self {

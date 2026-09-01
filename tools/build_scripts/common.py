@@ -48,6 +48,7 @@ OHOS_ONLY_DEPENDENCIES = frozenset(
         "video_player_ohos",
     }
 )
+FLUTTER_BUILD_STAGED_DEPENDENCIES = OHOS_ONLY_DEPENDENCIES | frozenset({"integration_test"})
 _fvm_sdk_prepared = False
 _ohos_fvm_sdk_prepared = False
 
@@ -223,45 +224,38 @@ def prepare_web_access_embedded_assets() -> None:
         )
 
 
-def remove_direct_dependencies_from_pubspec(pubspec: Path, dependency_names: frozenset[str]) -> str:
-    """Stages a pubspec without the requested direct dependency declarations."""
+def remove_direct_dependencies_from_pubspec(
+    pubspec: Path,
+    dependency_names: frozenset[str],
+    dependency_sections: frozenset[str] = frozenset({"dependencies"}),
+) -> str:
+    """Stages a pubspec without the requested declarations that are present."""
     original = pubspec.read_text(encoding="utf-8")
     lines = original.splitlines(keepends=True)
     staged: list[str] = []
-    removed: set[str] = set()
-    inside_dependencies = False
+    current_section: str | None = None
     index = 0
     while index < len(lines):
         line = lines[index]
-        if line.rstrip("\r\n") == "dependencies:":
-            inside_dependencies = True
-            staged.append(line)
-            index += 1
-            continue
-        if inside_dependencies and not line.startswith(" ") and line.strip():
-            inside_dependencies = False
+        stripped_line = line.rstrip("\r\n")
+        if not line.startswith(" ") and stripped_line.endswith(":"):
+            current_section = stripped_line.removesuffix(":")
+        elif not line.startswith(" ") and line.strip():
+            current_section = None
         if (
-            inside_dependencies
+            current_section in dependency_sections
             and line.startswith("  ")
             and not line.startswith("    ")
             and line.rstrip("\r\n").endswith(":")
         ):
             dependency_name = line.strip().removesuffix(":")
             if dependency_name in dependency_names:
-                removed.add(dependency_name)
                 index += 1
                 while index < len(lines) and lines[index].startswith("    "):
                     index += 1
                 continue
         staged.append(line)
         index += 1
-    if removed != dependency_names:
-        missing = sorted(dependency_names - removed)
-        unexpected = sorted(removed - dependency_names)
-        raise RuntimeError(
-            "Unexpected direct dependency declarations: "
-            f"missing={missing} unexpected={unexpected}"
-        )
     with pubspec.open("w", encoding="utf-8", newline="") as output:
         output.write("".join(staged))
     return original
@@ -272,7 +266,11 @@ def staged_non_ohos_flutter_dependencies() -> Iterator[None]:
     """Stages and restores the Flutter dependency view used by non-OpenHarmony targets."""
     pubspec = FLUTTER_APP_DIR / "pubspec.yaml"
     pubspec_lock = FLUTTER_APP_DIR / "pubspec.lock"
-    original_pubspec = remove_direct_dependencies_from_pubspec(pubspec, OHOS_ONLY_DEPENDENCIES)
+    original_pubspec = remove_direct_dependencies_from_pubspec(
+        pubspec,
+        FLUTTER_BUILD_STAGED_DEPENDENCIES,
+        frozenset({"dependencies", "dev_dependencies"}),
+    )
     original_pubspec_lock = pubspec_lock.read_text(encoding="utf-8")
     try:
         yield

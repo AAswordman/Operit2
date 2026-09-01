@@ -529,11 +529,9 @@ fn get_apple_device_info() -> HostResult<DeviceInfoData> {
     let model = "apple".to_string();
     #[cfg(not(any(target_os = "ios", target_os = "macos")))]
     let osVersion = String::new();
-    let hostName = env::var("HOSTNAME").map_err(|error| {
-        HostError::new(format!(
-            "HOSTNAME is required for Apple device info: {error}"
-        ))
-    })?;
+    let hostName = gethostname::gethostname()
+        .into_string()
+        .map_err(|error| HostError::new(format!("Apple host name is not valid UTF-8: {error:?}")))?;
     let mut additionalInfo = BTreeMap::new();
     additionalInfo.insert("Platform".to_string(), apple_platform_name().to_string());
     additionalInfo.insert("Host name".to_string(), hostName.clone());

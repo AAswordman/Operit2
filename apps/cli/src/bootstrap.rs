@@ -120,7 +120,7 @@ pub(crate) async fn create_cli_core_application(
 ) -> Result<CoreApplication, String> {
     CoreApplication::start(CoreApplicationConfig::new(
         create_cli_host_manager(),
-        RemoteDeviceInfo::nativeCli(deviceName)?,
+        RemoteDeviceInfo::nativeCli(deviceName),
     ))
     .await
 }
@@ -132,7 +132,7 @@ pub(crate) async fn create_cli_core_application_without_space_sync(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager(),
-            RemoteDeviceInfo::nativeCli(deviceName)?,
+            RemoteDeviceInfo::nativeCli(deviceName),
         )
         .withSpaceSync(false),
     )
@@ -147,7 +147,7 @@ pub(crate) async fn create_cli_core_application_configured(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager(),
-            RemoteDeviceInfo::nativeCli(deviceName)?,
+            RemoteDeviceInfo::nativeCli(deviceName),
         )
         .withLocalClientConfigurator(configurator),
     )
