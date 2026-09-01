@@ -36,10 +36,13 @@ use operit_model::PendingQueueMessageItem::PendingQueueMessageItem;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
+use operit_store::repository::UsageStatisticsStore::UsageStatisticsStore;
 use operit_store::PreferencesDataStore::{
     combine2, combine3, mutableStateFlow, MutableStateFlow, StateFlow,
 };
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -52,11 +55,12 @@ use operit_util::OperitPaths;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use url::Url;
 
 const PACKAGE_ATTACHMENT_PREFIX: &str = "package_attach:";
 const PASTED_TEXT_ATTACHMENT_PREFIX: &str = "pasted_text:";
+const WORKSPACE_MENTION_ATTACHMENT_PREFIX: &str = "workspace_mention:";
 const OCR_INLINE_INSTRUCTION: &str = "Do not read the file, answer the user's question directly based on the attachment content and the user's question.";
 pub trait ChatServiceUiBridge {}
 
@@ -169,6 +173,7 @@ pub struct ChatServiceCore {
     pub uiBridge: EmptyChatServiceUiBridge,
     pub attachments: Vec<AttachmentInfo>,
     pendingQueueStore: Arc<PendingChatQueueStore>,
+    chatEnhancedAiServicesByChatId: Arc<Mutex<HashMap<String, EnhancedAIService>>>,
 }
 
 impl ChatServiceCore {
@@ -200,6 +205,7 @@ impl ChatServiceCore {
             uiBridge: EmptyChatServiceUiBridge,
             attachments: Vec::new(),
             pendingQueueStore,
+            chatEnhancedAiServicesByChatId: Arc::new(Mutex::new(HashMap::new())),
         };
         core.initializeDelegates();
         core
@@ -212,6 +218,26 @@ impl ChatServiceCore {
             .expect("ChatServiceCore requires an enhanced AI service for runtime tool access")
             .tool_handler
             .clone()
+    }
+
+    /// Returns the persistent AI service instance owned by one chat id.
+    fn newEnhancedAiServiceForChat(&self, chatId: &str) -> Option<EnhancedAIService> {
+        let baseService = self.enhancedAiService.as_ref()?;
+        let mut services = self
+            .chatEnhancedAiServicesByChatId
+            .lock()
+            .expect("chat enhanced AI service mutex poisoned");
+        Some(
+            services
+                .entry(chatId.to_string())
+                .or_insert_with(|| {
+                    EnhancedAIService::new(
+                        baseService.tool_handler.clone(),
+                        baseService.provider_runtime_context.clone(),
+                    )
+                })
+                .clone(),
+        )
     }
 
     /// Returns the shared pending-message queue state for this chat runtime.
@@ -465,29 +491,30 @@ impl ChatServiceCore {
         if self.enhancedAiService.is_some() && self.messageCoordinationDelegate.is_some() {
             self.markPendingQueueBlocked(&hookChatId);
         }
-        if let (Some(service), Some(delegate)) = (
-            self.enhancedAiService.as_mut(),
-            self.messageCoordinationDelegate.as_mut(),
-        ) {
-            delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
-            delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
-            delegate
-                .sendUserMessage(
-                    service,
-                    promptFunctionType,
-                    roleCardIdOverride,
-                    chatIdOverride,
-                    messageText,
-                    proxySenderNameOverride,
-                    chatProviderIdOverride,
-                    chatModelIdOverride,
-                    attachments,
-                    replyToMessage,
-                    turnOptions,
-                )
-                .await;
-            self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
-            self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
+        if let Some(mut service) = self.newEnhancedAiServiceForChat(&hookChatId) {
+            if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
+                delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+                delegate.messageProcessingDelegate =
+                    self.messageProcessingDelegate.clone_for_core();
+                delegate
+                    .sendUserMessage(
+                        &mut service,
+                        promptFunctionType,
+                        roleCardIdOverride,
+                        chatIdOverride,
+                        messageText,
+                        proxySenderNameOverride,
+                        chatProviderIdOverride,
+                        chatModelIdOverride,
+                        attachments,
+                        replyToMessage,
+                        turnOptions,
+                    )
+                    .await;
+                self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+                self.messageProcessingDelegate =
+                    delegate.messageProcessingDelegate.clone_for_core();
+            }
         }
         AppLogger::i(
             "ChatServiceCore",
@@ -519,7 +546,7 @@ impl ChatServiceCore {
             .ok_or_else(|| {
                 format!("resume role card not found chatId={chatId} name={roleCardName}")
             })?;
-        let Some(service) = self.enhancedAiService.as_mut() else {
+        let Some(mut service) = self.newEnhancedAiServiceForChat(&chatId) else {
             return Err(format!(
                 "resume EnhancedAIService is not initialized chatId={chatId}"
             ));
@@ -537,7 +564,7 @@ impl ChatServiceCore {
             .getRuntimeChatHistory(chatId.clone());
         delegate
             .sendMessageInternal(
-                service,
+                &mut service,
                 PromptFunctionType::CHAT,
                 false,
                 true,
@@ -579,7 +606,7 @@ impl ChatServiceCore {
                 resumeContext.roleName
             ),
         );
-        let Some(service) = self.enhancedAiService.as_mut() else {
+        let Some(mut service) = self.newEnhancedAiServiceForChat(&chatId) else {
             return Err(format!(
                 "route resume EnhancedAIService is not initialized chatId={chatId}"
             ));
@@ -594,7 +621,7 @@ impl ChatServiceCore {
         delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
         delegate
             .sendMessageInternal(
-                service,
+                &mut service,
                 resumeContext.promptFunctionType,
                 false,
                 true,
@@ -648,7 +675,14 @@ impl ChatServiceCore {
     /// Cancels message generation for a specific chat id.
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn cancelMessage(&mut self, chatId: String) {
-        self.messageProcessingDelegate.cancelMessage(chatId).await;
+        let partialMessage = self
+            .messageProcessingDelegate
+            .cancelMessage(chatId.clone())
+            .await;
+        if let Some(partialMessage) = partialMessage {
+            self.chatHistoryDelegate
+                .addMessageToChat(partialMessage, Some(chatId));
+        }
     }
 
     /// Adds one message to the queue owned by a specific chat.
@@ -928,24 +962,23 @@ impl ChatServiceCore {
         };
         self.chatHistoryDelegate
             .addMessageToChat(editedMessage, Some(chatId.clone()));
-        if let (Some(service), Some(delegate)) = (
-            self.enhancedAiService.as_mut(),
-            self.messageCoordinationDelegate.as_mut(),
-        ) {
-            delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
-            delegate
-                .refreshStableContextWindow(
-                    service,
-                    Some(chatId.clone()),
-                    None,
-                    Some(PromptFunctionType::CHAT),
-                    false,
-                    None,
-                    None,
-                    None,
-                )
-                .await;
-            self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+        if let Some(mut service) = self.newEnhancedAiServiceForChat(&chatId) {
+            if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
+                delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
+                delegate
+                    .refreshStableContextWindow(
+                        &mut service,
+                        Some(chatId.clone()),
+                        None,
+                        Some(PromptFunctionType::CHAT),
+                        false,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
+            }
         }
         true
     }
@@ -965,6 +998,13 @@ impl ChatServiceCore {
             .deleteMessageVariant(timestamp, variantIndex);
     }
 
+    /// Selects the displayed response variant for one message timestamp.
+    #[allow(non_snake_case)]
+    pub fn selectMessageVariant(&mut self, timestamp: i64, selectedVariantIndex: i32) {
+        self.chatHistoryDelegate
+            .selectMessageVariant(timestamp, selectedVariantIndex);
+    }
+
     /// Creates a branch chat from the current conversation at an optional message timestamp.
     pub fn createBranch(&mut self, upToMessageTimestamp: Option<i64>) {
         self.chatHistoryDelegate.createBranch(upToMessageTimestamp);
@@ -981,7 +1021,7 @@ impl ChatServiceCore {
         let Some(currentChatId) = self.chatHistoryDelegate.currentChatIdFlow.value() else {
             return false;
         };
-        let Some(enhancedAiService) = self.enhancedAiService.as_mut() else {
+        let Some(mut enhancedAiService) = self.newEnhancedAiServiceForChat(&currentChatId) else {
             return false;
         };
         self.messageProcessingDelegate
@@ -1021,7 +1061,7 @@ impl ChatServiceCore {
             .and_then(|chat| chat.characterGroupId)
             .is_some();
         let summaryMessage = match AIMessageManager::summarizeMemory(
-            enhancedAiService,
+            &mut enhancedAiService,
             messagesToSummarize,
             false,
             isGroupChat,
@@ -1046,7 +1086,7 @@ impl ChatServiceCore {
             delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
             delegate
                 .refreshStableContextWindow(
-                    enhancedAiService,
+                    &mut enhancedAiService,
                     Some(currentChatId.clone()),
                     None,
                     None,
@@ -1305,7 +1345,7 @@ impl ChatServiceCore {
         chatId: String,
         messageTimestamp: i64,
     ) -> Result<(), String> {
-        let Some(service) = self.enhancedAiService.as_mut() else {
+        let Some(mut service) = self.newEnhancedAiServiceForChat(&chatId) else {
             return Err("EnhancedAIService is not initialized".to_string());
         };
         let Some(delegate) = self.messageCoordinationDelegate.as_mut() else {
@@ -1314,7 +1354,7 @@ impl ChatServiceCore {
         delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
         delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
         delegate
-            .regenerateSingleAiMessage(service, chatId, messageTimestamp)
+            .regenerateSingleAiMessage(&mut service, chatId, messageTimestamp)
             .await?;
         self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
         self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
@@ -1355,6 +1395,13 @@ impl ChatServiceCore {
 
     /// Clears the token counters associated with the current chat service.
     pub fn resetTokenStatistics(&mut self) {
+        if let Err(error) = UsageStatisticsStore::new().clearAllTokenUsageRecords() {
+            AppLogger::e(
+                "TokenStatistics",
+                &format!("failed to clear token ledger: {error}"),
+            );
+            return;
+        }
         let service = self.enhancedAiService.as_mut();
         if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
             delegate
@@ -1402,6 +1449,18 @@ impl ChatServiceCore {
         }
         if let Some(packageName) = filePath.strip_prefix(PACKAGE_ATTACHMENT_PREFIX) {
             self.attachPackageInternal(packageName.trim());
+            return;
+        }
+        if let Some(relativePath) = filePath.strip_prefix(WORKSPACE_MENTION_ATTACHMENT_PREFIX) {
+            match self.attachWorkspaceMentionInternal(relativePath) {
+                Ok(fileName) => {
+                    self.messageProcessingDelegate
+                        .showToast(format!("已添加工作区引用: {fileName}"));
+                }
+                Err(message) => {
+                    self.messageProcessingDelegate.showToast(message);
+                }
+            }
             return;
         }
 
@@ -1644,6 +1703,80 @@ impl ChatServiceCore {
 
         self.messageProcessingDelegate
             .showToast(format!("已添加包: {packageName}"));
+    }
+
+    /// Adds a workspace mention as an in-memory plain-text attachment.
+    #[allow(non_snake_case)]
+    fn attachWorkspaceMentionInternal(&mut self, relativePath: &str) -> Result<String, String> {
+        let normalizedRelativePath = PathMapper::normalizeRelativePath(relativePath)?;
+        if normalizedRelativePath.is_empty() {
+            return Err("无法添加工作区引用: 路径为空".to_string());
+        }
+        let workspaceRoot = self.currentWorkspaceRoot()?;
+        let vfs = self.vfsForWorkspace()?;
+        let targetPath = PathMapper::joinVfsPath(&workspaceRoot, &normalizedRelativePath)?;
+        let targetInfo = vfs.fileExists(&targetPath)?;
+        if !targetInfo.exists {
+            return Err("工作区路径不存在".to_string());
+        }
+
+        let (mimeType, content) = if targetInfo.isDirectory {
+            (
+                "application/vnd.workspace-directory+plain".to_string(),
+                buildWorkspaceDirectoryMentionContent(&vfs, &targetPath, &normalizedRelativePath)?,
+            )
+        } else {
+            (
+                "text/plain".to_string(),
+                buildWorkspaceFileMentionContent(&vfs, &targetPath, &normalizedRelativePath)?,
+            )
+        };
+        let attachmentInfo = AttachmentInfo {
+            filePath: workspaceMentionAttachmentPath(&normalizedRelativePath),
+            fileName: normalizedRelativePath.clone(),
+            mimeType,
+            fileSize: content.len() as i64,
+            content,
+        };
+        self.attachments
+            .retain(|attachment| attachment.filePath != attachmentInfo.filePath);
+        self.attachments.push(attachmentInfo);
+        Ok(normalizedRelativePath)
+    }
+
+    /// Returns the workspace root bound to the currently selected chat.
+    #[allow(non_snake_case)]
+    fn currentWorkspaceRoot(&self) -> Result<String, String> {
+        let chatId = self
+            .chatHistoryDelegate
+            .currentChatIdFlow
+            .value()
+            .ok_or_else(|| "无法添加工作区引用: 当前聊天不存在".to_string())?;
+        self.chatHistoryDelegate
+            .chatHistoriesFlow()
+            .value()
+            .into_iter()
+            .find(|chat| chat.id == chatId)
+            .and_then(|chat| chat.workspace)
+            .map(|workspace| workspace.trim().to_string())
+            .filter(|workspace| !workspace.is_empty())
+            .ok_or_else(|| "当前聊天未绑定工作区".to_string())
+    }
+
+    /// Creates a VFS instance for chat workspace attachment reads.
+    #[allow(non_snake_case)]
+    fn vfsForWorkspace(&self) -> Result<VisualFileSystem, String> {
+        let runtimeStorageHost = defaultRuntimeStorageHost();
+        let runtimeStoreRoot = runtimeStorageHost.runtimeRootDir().ok_or_else(|| {
+            "RuntimeStorageHost runtime root is not configured for workspace mentions".to_string()
+        })?;
+        let workspaceCollectionRoot = runtimeStorageHost.workspaceRootDir().ok_or_else(|| {
+            "RuntimeStorageHost workspace root is not configured for workspace mentions".to_string()
+        })?;
+        Ok(VisualFileSystem::new(
+            self.fileSystemHost.clone(),
+            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot),
+        ))
     }
 
     #[allow(non_snake_case)]
@@ -2353,6 +2486,59 @@ fn packageAttachmentPath(packageName: &str) -> String {
 #[allow(non_snake_case)]
 fn packageAttachmentDisplayName(packageName: &str) -> String {
     format!("包: {packageName}")
+}
+
+/// Builds the stored attachment path for a workspace mention.
+#[allow(non_snake_case)]
+fn workspaceMentionAttachmentPath(relativePath: &str) -> String {
+    format!("{WORKSPACE_MENTION_ATTACHMENT_PREFIX}{relativePath}")
+}
+
+/// Builds the prompt content for a workspace file mention.
+#[allow(non_snake_case)]
+fn buildWorkspaceFileMentionContent(
+    vfs: &VisualFileSystem,
+    fullPath: &str,
+    relativePath: &str,
+) -> Result<String, String> {
+    let content = vfs.readFile(fullPath)?;
+    Ok(format!(
+        "Selected workspace file: {relativePath}\nThis file was referenced via @ mention.\n\nFile content:\n{content}"
+    ))
+}
+
+/// Builds the prompt content for a workspace directory mention.
+#[allow(non_snake_case)]
+fn buildWorkspaceDirectoryMentionContent(
+    vfs: &VisualFileSystem,
+    fullPath: &str,
+    relativePath: &str,
+) -> Result<String, String> {
+    let mut entries = vfs.listFiles(fullPath)?;
+    entries.sort_by(|left, right| {
+        (!left.isDirectory)
+            .cmp(&(!right.isDirectory))
+            .then_with(|| {
+                left.name
+                    .to_ascii_lowercase()
+                    .cmp(&right.name.to_ascii_lowercase())
+            })
+    });
+    let entryText = if entries.is_empty() {
+        "(empty)\n".to_string()
+    } else {
+        entries
+            .into_iter()
+            .map(|entry| {
+                let kind = if entry.isDirectory { "[DIR]" } else { "[FILE]" };
+                format!("{kind} {}", entry.name)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(format!(
+        "Selected workspace directory: {relativePath}\nThis directory was referenced via @ mention.\n\nDirectory entries:\n{entryText}"
+    ))
 }
 
 #[allow(non_snake_case)]

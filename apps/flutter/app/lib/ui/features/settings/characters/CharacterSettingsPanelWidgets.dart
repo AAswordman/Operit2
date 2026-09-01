@@ -189,10 +189,7 @@ class _CharacterCardTile extends StatelessWidget {
     final tagNames = _tagNamesFor(tags, card.attachedTagIds);
     return _SettingsEntityTile(
       leading: _SettingsListAvatar(
-        avatar: CharacterAvatarImage(
-          avatarUri: avatarUri,
-          fit: BoxFit.cover,
-        ),
+        avatar: CharacterAvatarImage(avatarUri: avatarUri, fit: BoxFit.cover),
         active: active,
       ),
       title: Text(card.name),
@@ -232,7 +229,6 @@ class _CharacterGroupTile extends StatelessWidget {
     required this.group,
     required this.active,
     required this.cards,
-    required this.avatarUri,
     required this.onActivate,
     required this.onEdit,
   });
@@ -240,7 +236,6 @@ class _CharacterGroupTile extends StatelessWidget {
   final core_proxy.CharacterGroupCard group;
   final bool active;
   final List<core_proxy.CharacterCard> cards;
-  final String? avatarUri;
   final VoidCallback onActivate;
   final VoidCallback onEdit;
 
@@ -253,9 +248,7 @@ class _CharacterGroupTile extends StatelessWidget {
         .join(', ');
     return _SettingsEntityTile(
       leading: _SettingsListAvatar(
-        avatar: avatarUri != null && avatarUri!.isNotEmpty
-            ? CharacterAvatarImage(avatarUri: avatarUri, fit: BoxFit.cover)
-            : const Center(child: Icon(Icons.groups_outlined, size: 18)),
+        avatar: _CharacterGroupCompositeAvatar(group: group, cards: cards),
         active: active,
       ),
       title: Text(group.name),
@@ -278,11 +271,99 @@ class _CharacterGroupTile extends StatelessWidget {
   }
 }
 
-class _SettingsListAvatar extends StatelessWidget {
-  const _SettingsListAvatar({
-    required this.avatar,
-    required this.active,
+class _CharacterGroupCompositeAvatar extends StatelessWidget {
+  const _CharacterGroupCompositeAvatar({
+    required this.group,
+    required this.cards,
   });
+
+  final core_proxy.CharacterGroupCard group;
+  final List<core_proxy.CharacterCard> cards;
+
+  /// Builds the member-avatar grid used as the group's generated avatar.
+  @override
+  Widget build(BuildContext context) {
+    final cardsById = <String, core_proxy.CharacterCard>{
+      for (final card in cards) card.id: card,
+    };
+    final members = group.members.toList()
+      ..sort((left, right) => left.orderIndex.compareTo(right.orderIndex));
+    final tiles = members
+        .take(9)
+        .map((member) {
+          final card = cardsById[member.characterCardId];
+          return _CharacterGroupAvatarTileData(
+            label: card?.name ?? group.name,
+            avatarUri: card?.avatarUri,
+          );
+        })
+        .toList(growable: false);
+    final visibleTiles = tiles.isEmpty
+        ? <_CharacterGroupAvatarTileData>[
+            _CharacterGroupAvatarTileData(label: group.name, avatarUri: null),
+          ]
+        : tiles;
+    final columns = visibleTiles.length == 1
+        ? 1
+        : visibleTiles.length <= 4
+        ? 2
+        : 3;
+
+    return GridView.count(
+      crossAxisCount: columns,
+      crossAxisSpacing: 1,
+      mainAxisSpacing: 1,
+      padding: EdgeInsets.zero,
+      physics: const NeverScrollableScrollPhysics(),
+      children: <Widget>[
+        for (final tile in visibleTiles) _CharacterGroupAvatarTile(tile: tile),
+      ],
+    );
+  }
+}
+
+class _CharacterGroupAvatarTileData {
+  const _CharacterGroupAvatarTileData({
+    required this.label,
+    required this.avatarUri,
+  });
+
+  final String label;
+  final String? avatarUri;
+}
+
+class _CharacterGroupAvatarTile extends StatelessWidget {
+  const _CharacterGroupAvatarTile({required this.tile});
+
+  final _CharacterGroupAvatarTileData tile;
+
+  /// Builds one member cell in a generated group avatar.
+  @override
+  Widget build(BuildContext context) {
+    final avatarUri = tile.avatarUri?.trim();
+    if (avatarUri != null && avatarUri.isNotEmpty) {
+      return CharacterAvatarImage(avatarUri: avatarUri, fit: BoxFit.cover);
+    }
+    final label = tile.label.trim();
+    final hue = label.hashCode.abs() % 360;
+    final color = HSVColor.fromAHSV(1, hue.toDouble(), 0.35, 0.82).toColor();
+    return ColoredBox(
+      color: color,
+      child: Center(
+        child: Text(
+          label.isEmpty ? '?' : label.substring(0, 1).toUpperCase(),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsListAvatar extends StatelessWidget {
+  const _SettingsListAvatar({required this.avatar, required this.active});
 
   final Widget avatar;
   final bool active;

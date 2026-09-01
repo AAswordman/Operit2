@@ -177,6 +177,7 @@ class _MarkdownTextState extends State<_MarkdownText>
     var index = 0;
     var textBlockIndex = 0;
     var typewriterOffset = 0;
+    var pendingParagraphBreak = false;
     final enableTypewriter = _enableTypewriter;
 
     _RevealSegment revealSegmentFor(int length) {
@@ -337,6 +338,20 @@ class _MarkdownTextState extends State<_MarkdownText>
       paragraphLines.clear();
     }
 
+    /// Inserts a paragraph break only when later content makes it visible.
+    void flushPendingParagraphBreak() {
+      if (!pendingParagraphBreak) {
+        return;
+      }
+      widgets.add(
+        const SizedBox(
+          key: ValueKey<String>('markdown-paragraph-break'),
+          height: _markdownParagraphBreakHeight,
+        ),
+      );
+      pendingParagraphBreak = false;
+    }
+
     while (index < lines.length) {
       final line = lines[index];
       final trimmed = line.trimRight();
@@ -346,6 +361,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           codeLanguage = '';
         } else {
           flushParagraph();
+          flushPendingParagraphBreak();
           codeLanguage = trimmed.substring(3).trim();
         }
         inCode = !inCode;
@@ -353,6 +369,7 @@ class _MarkdownTextState extends State<_MarkdownText>
         codeLines.add(line);
       } else if (_isBlockLatexStart(trimmed)) {
         flushParagraph();
+        flushPendingParagraphBreak();
         final latexLines = <String>[trimmed];
         final start = trimmed.trimLeft();
         final singleLine = start.length > 2 && _isBlockLatexEnd(start, start);
@@ -372,6 +389,7 @@ class _MarkdownTextState extends State<_MarkdownText>
         );
       } else if (_isTableStart(lines, index)) {
         flushParagraph();
+        flushPendingParagraphBreak();
         final tableLines = <String>[];
         while (index < lines.length && lines[index].trim().contains('|')) {
           tableLines.add(lines[index]);
@@ -386,6 +404,7 @@ class _MarkdownTextState extends State<_MarkdownText>
         );
       } else if (trimmed.trimLeft().startsWith('>')) {
         flushParagraph();
+        flushPendingParagraphBreak();
         final quoteLines = <String>[];
         while (index < lines.length &&
             lines[index].trimLeft().startsWith('>')) {
@@ -404,6 +423,7 @@ class _MarkdownTextState extends State<_MarkdownText>
         );
       } else if (isCompleteImageMarkdown(trimmed.trim())) {
         flushParagraph();
+        flushPendingParagraphBreak();
         widgets.add(
           MarkdownImageRenderer(
             imageMarkdown: trimmed.trim(),
@@ -412,16 +432,16 @@ class _MarkdownTextState extends State<_MarkdownText>
         );
       } else if (_isHorizontalRule(trimmed)) {
         flushParagraph();
+        flushPendingParagraphBreak();
         widgets.add(const MarkdownHorizontalRule());
       } else if (trimmed.isEmpty) {
         flushParagraph();
-        if (widgets.isNotEmpty) {
-          widgets.add(const SizedBox(height: _markdownParagraphBreakHeight));
-        }
+        pendingParagraphBreak = widgets.isNotEmpty;
       } else if (_headingLevel(trimmed) > 0 ||
           _isBulletLine(trimmed) ||
           _isOrderedLine(trimmed)) {
         flushParagraph();
+        flushPendingParagraphBreak();
         widgets.add(
           _MarkdownLine(
             textKey: '${widget.nodeKey}-text-${textBlockIndex++}',
@@ -432,6 +452,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           ),
         );
       } else {
+        flushPendingParagraphBreak();
         paragraphLines.add(trimmed);
       }
       index++;
@@ -876,6 +897,7 @@ class _RevealSegment {
   final bool showCursor;
 }
 
+/// Interpolates the cursor between adjacent text caret positions.
 Offset _cursorPositionForReveal(TextPainter painter, double revealLength) {
   final textLength = painter.plainText.length;
   if (textLength == 0) {
@@ -884,28 +906,19 @@ Offset _cursorPositionForReveal(TextPainter painter, double revealLength) {
   final target = revealLength.clamp(0, textLength).toDouble();
   final baseLen = target.floor().clamp(0, textLength).toInt();
   final partial = (target - baseLen).clamp(0, 1).toDouble();
-
-  if (baseLen < textLength) {
-    final boxes = painter.getBoxesForSelection(
-      TextSelection(baseOffset: baseLen, extentOffset: baseLen + 1),
-    );
-    if (boxes.isNotEmpty) {
-      final rect = boxes.first.toRect();
-      final top = rect.top + ((rect.height - 16) / 2).clamp(0, rect.height);
-      return Offset(rect.left + rect.width * partial, top);
-    }
-  }
-
-  final offset = (baseLen - 1).clamp(0, textLength - 1).toInt();
-  final boxes = painter.getBoxesForSelection(
-    TextSelection(baseOffset: offset, extentOffset: offset + 1),
+  const cursorRect = Rect.fromLTWH(0, 0, 7, 16);
+  final current = painter.getOffsetForCaret(
+    TextPosition(offset: baseLen),
+    cursorRect,
   );
-  if (boxes.isEmpty) {
-    return Offset.zero;
+  if (baseLen == textLength) {
+    return current;
   }
-  final rect = boxes.last.toRect();
-  final top = rect.top + ((rect.height - 16) / 2).clamp(0, rect.height);
-  return Offset(rect.right, top);
+  final next = painter.getOffsetForCaret(
+    TextPosition(offset: baseLen + 1),
+    cursorRect,
+  );
+  return Offset.lerp(current, next, partial)!;
 }
 
 bool _containsWidgetSpan(InlineSpan span) {

@@ -4,7 +4,9 @@ use crate::commands::util::{parse_bool_arg, read_content_arg};
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
+use serde_json::json;
 
+/// Runs skill repository commands.
 pub fn run_skill_command(
     application: &OperitApplication,
     args: &[String],
@@ -18,7 +20,10 @@ pub fn run_skill_command(
 
     match args[0].as_str() {
         "dir" => {
-            output.push_stdout_line(repository.getSkillsDirectoryPath());
+            let path = repository.getSkillsDirectoryPath();
+            output.push_stdout_line("Skills directory");
+            output.push_stdout_line(path.clone());
+            output.setJsonStdout(json!({ "skillsDirectory": path }));
             Ok(())
         }
         "list" => list_skills(&repository, output),
@@ -47,12 +52,20 @@ pub fn run_skill_command(
             })?;
             let content = read_content_arg(contentArg)?;
             let attachmentPaths = args[4..].iter().map(PathBuf::from).collect::<Vec<_>>();
-            output.push_stdout_line(repository.importSkillFromDirectInput(
+            let result = repository.importSkillFromDirectInput(
                 skillId,
                 description,
                 &content,
                 &attachmentPaths,
-            ));
+            );
+            output.push_stdout_line("Skill create result");
+            output.push_stdout_line(result.clone());
+            output.setJsonStdout(json!({
+                "skillId": skillId,
+                "description": description,
+                "attachmentPaths": attachmentPaths,
+                "message": result
+            }));
             Ok(())
         }
         "import-zip" => {
@@ -65,7 +78,13 @@ pub fn run_skill_command(
                 }
                 None => repository.importSkillFromZip(Path::new(zipPath)),
             };
-            output.push_stdout_line(result);
+            output.push_stdout_line("Skill zip import result");
+            output.push_stdout_line(result.clone());
+            output.setJsonStdout(json!({
+                "zipPath": zipPath,
+                "subDirectory": args.get(2),
+                "message": result
+            }));
             Ok(())
         }
         "delete" => {
@@ -73,7 +92,11 @@ pub fn run_skill_command(
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill delete <name>".to_string())?;
             if repository.deleteSkill(name) {
-                output.push_stdout_line(format!("deleted: {name}"));
+                output.push_stdout_line(format!("Deleted skill {name}"));
+                output.setJsonStdout(json!({
+                    "name": name,
+                    "deleted": true
+                }));
                 Ok(())
             } else {
                 Err(format!("skill not found: {name}"))
@@ -84,7 +107,12 @@ pub fn run_skill_command(
                 .get(1)
                 .ok_or_else(|| "usage: operit2 skill visible <name> [true|false]".to_string())?;
             if args.len() == 2 {
-                output.push_stdout_line(repository.isSkillVisibleToAi(name).to_string());
+                let visible = repository.isSkillVisibleToAi(name);
+                output.push_stdout_line(format!("Skill {name} visibility: {visible}"));
+                output.setJsonStdout(json!({
+                    "name": name,
+                    "visible": visible
+                }));
             } else {
                 let visible = parse_bool_arg(
                     args.get(2),
@@ -93,14 +121,22 @@ pub fn run_skill_command(
                 repository
                     .setSkillVisibleToAi(name, visible)
                     .map_err(|error| error.to_string())?;
-                output.push_stdout_line(format!("visible: {name}={visible}"));
+                output.push_stdout_line(format!("Skill {name} visibility updated: {visible}"));
+                output.setJsonStdout(json!({
+                    "name": name,
+                    "visible": visible,
+                    "updated": true
+                }));
             }
             Ok(())
         }
         "errors" => {
-            for (name, error) in repository.getSkillLoadErrors() {
-                output.push_stdout_line(format!("{name}\t{error}"));
+            let errors = repository.getSkillLoadErrors();
+            output.push_stdout_line(format!("Skill load errors: {}", errors.len()));
+            for (name, error) in &errors {
+                output.push_stdout_line(format!("- {name}: {error}"));
             }
+            output.setJsonStdout(json!({ "errors": errors }));
             Ok(())
         }
         _ => {
@@ -110,44 +146,64 @@ pub fn run_skill_command(
     }
 }
 
+/// Lists bundled external skills available to import.
 fn list_more_skills(
     repository: &SkillRepository,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    for candidate in repository.getBundledExternalSkillCandidates() {
-        output.push_stdout_line(format!("{}\t{}", candidate.name, candidate.description));
+    let candidates = repository.getBundledExternalSkillCandidates();
+    output.push_stdout_line(format!("Bundled skills available: {}", candidates.len()));
+    for candidate in &candidates {
+        output.push_stdout_line(format!("- {}: {}", candidate.name, candidate.description));
     }
+    output.setJsonStdout(serde_json::to_value(&candidates).map_err(|error| error.to_string())?);
     Ok(())
 }
 
+/// Imports one bundled external skill by exact name.
 fn load_more_skill(
     repository: &SkillRepository,
     name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let skill = repository.importBundledExternalSkill(name)?;
-    output.push_stdout_line(format!("loaded: {}", skill.name));
+    output.push_stdout_line(format!("Loaded skill {}", skill.name));
+    output.push_stdout_line(format!("Description: {}", skill.description));
+    output.push_stdout_line(format!("Directory: {}", skill.directory.to_string_lossy()));
+    output.setJsonStdout(serde_json::to_value(&skill).map_err(|error| error.to_string())?);
     Ok(())
 }
 
+/// Lists installed skill packages and scan errors.
 fn list_skills(repository: &SkillRepository, output: &mut CoreCommandOutput) -> Result<(), String> {
-    for (name, skill) in repository.getAvailableSkillPackages() {
+    let (skills, errors) = repository.getAvailableSkillPackagesSnapshot();
+    let mut rows = Vec::new();
+    output.push_stdout_line(format!("Installed skills: {}", skills.len()));
+    for (name, skill) in skills {
         let visible = repository.isSkillVisibleToAi(&name);
         output.push_stdout_line(format!(
-            "{}\tvisible={}\t{}\t{}",
-            name,
-            visible,
-            skill.description,
-            skill.directory.to_string_lossy()
+            "- {name}: {} | visible: {visible}",
+            skill.description
         ));
+        rows.push(json!({
+            "name": name,
+            "description": skill.description,
+            "directory": skill.directory,
+            "skillFile": skill.skillFile,
+            "visible": visible
+        }));
     }
-    let errors = repository.getSkillLoadErrors();
     if !errors.is_empty() {
-        output.push_stderr_line(format!("loadErrors={}", errors.len()));
+        output.push_stdout_line(format!("Load errors: {}", errors.len()));
     }
+    output.setJsonStdout(json!({
+        "skills": rows,
+        "loadErrors": errors
+    }));
     Ok(())
 }
 
+/// Shows one installed skill and its SKILL.md content.
 fn show_skill(
     repository: &SkillRepository,
     name: &str,
@@ -157,18 +213,30 @@ fn show_skill(
     let skill = skills
         .get(name)
         .ok_or_else(|| format!("skill not found: {name}"))?;
-    output.push_stdout_line(format!("name={}", skill.name));
-    output.push_stdout_line(format!("description={}", skill.description));
-    output.push_stdout_line(format!("directory={}", skill.directory.to_string_lossy()));
-    output.push_stdout_line(format!("skillFile={}", skill.skillFile.to_string_lossy()));
-    output.push_stdout_line(format!("visible={}", repository.isSkillVisibleToAi(name)));
-    output.push_stdout_line("");
-    if let Some(content) = repository.readSkillContent(name) {
+    let visible = repository.isSkillVisibleToAi(name);
+    let content = repository.readSkillContent(name);
+    output.push_stdout_line(format!("Skill {}", skill.name));
+    output.push_stdout_line(format!("Description: {}", skill.description));
+    output.push_stdout_line(format!("Directory: {}", skill.directory.to_string_lossy()));
+    output.push_stdout_line(format!("Skill file: {}", skill.skillFile.to_string_lossy()));
+    output.push_stdout_line(format!("Visible to AI: {visible}"));
+    if let Some(content) = content.as_ref() {
+        output.push_stdout_line("");
+        output.push_stdout_line("Content:");
         output.push_stdout(&content);
     }
+    output.setJsonStdout(json!({
+        "name": skill.name,
+        "description": skill.description,
+        "directory": skill.directory,
+        "skillFile": skill.skillFile,
+        "visible": visible,
+        "content": content
+    }));
     Ok(())
 }
 
+/// Returns the skill repository for the active application context.
 fn skill_repository(application: &OperitApplication) -> SkillRepository {
     SkillRepository::getInstance(
         &application.hostManager,
@@ -176,17 +244,22 @@ fn skill_repository(application: &OperitApplication) -> SkillRepository {
     )
 }
 
+/// Prints skill command usage.
 fn print_skill_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 skill dir");
-    output.push_stdout_line("operit2 skill list");
-    output.push_stdout_line("operit2 skill more");
-    output.push_stdout_line("operit2 skill load <name>");
-    output.push_stdout_line("operit2 skill show <name>");
-    output.push_stdout_line(
+    let lines = [
+        "operit2 skill dir",
+        "operit2 skill list",
+        "operit2 skill more",
+        "operit2 skill load <name>",
+        "operit2 skill show <name>",
         "operit2 skill create <skill-id> <description> <content-or-@file> [attachment-path...]",
-    );
-    output.push_stdout_line("operit2 skill import-zip <zip-path> [sub-dir-in-zip]");
-    output.push_stdout_line("operit2 skill delete <name>");
-    output.push_stdout_line("operit2 skill visible <name> [true|false]");
-    output.push_stdout_line("operit2 skill errors");
+        "operit2 skill import-zip <zip-path> [sub-dir-in-zip]",
+        "operit2 skill delete <name>",
+        "operit2 skill visible <name> [true|false]",
+        "operit2 skill errors",
+    ];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
 }

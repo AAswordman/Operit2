@@ -35,11 +35,12 @@ class RemotePairingBridge {
     required String tokenHash,
   }) async {
     final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
-    final result = await _clients.server.runtimeRemoteLinkService.startPairedRemote(
-      baseUrl: baseUrl,
-      tokenHash: tokenHash,
-      clientDeviceInfo: clientDeviceInfo,
-    );
+    final result = await _clients.server.runtimeRemoteLinkService
+        .startPairedRemote(
+          baseUrl: baseUrl,
+          tokenHash: tokenHash,
+          clientDeviceInfo: clientDeviceInfo,
+        );
     return RemotePairStartResult(
       pairingId: result.pairingId,
       pairingServiceVersion: result.pairingServiceVersion,
@@ -57,17 +58,31 @@ class RemotePairingBridge {
     generated.LinkTransportPreference transport =
         generated.LinkTransportPreference.http,
   }) async {
-    final session = await _clients.server.runtimeRemoteLinkService.finishPairedRemote(
-      pairingId: pairingId,
-      pairingCode: pairingCode,
-      name: name,
-    );
+    final session = await _clients.server.runtimeRemoteLinkService
+        .finishPairedRemote(
+          pairingId: pairingId,
+          pairingCode: pairingCode,
+          name: name,
+        );
     if (session.transport == transport) {
       return session;
     }
     return _clients.server.runtimeRemoteLinkService.setPairedRemoteTransport(
       name: name,
       transport: transport,
+    );
+  }
+
+  /// Bootstraps one Web Access pairing from the URL token and stores it locally.
+  Future<generated.PairedRemoteSessionRecord> bootstrap({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
+    return _clients.server.runtimeRemoteLinkService.bootstrapPairedRemote(
+      baseUrl: baseUrl,
+      tokenHash: _linkTokenHash(token),
+      clientDeviceInfo: clientDeviceInfo,
     );
   }
 }
@@ -80,6 +95,13 @@ String _linkTokenHash(String token) {
 /// Builds one stable local session key for a completed remote pairing.
 String remotePairingSessionName(RemotePairStartResult pairing) {
   return '${pairing.coreDeviceInfo.platform}-${pairing.coreDeviceInfo.model}-${pairing.coreDeviceId}';
+}
+
+/// Builds the stable local session key from a persisted remote session record.
+String remotePairingSessionNameFromRecord(
+  generated.PairedRemoteSessionRecord session,
+) {
+  return '${session.remoteDeviceInfo.platform}-${session.remoteDeviceInfo.model}-${session.coreDeviceId}';
 }
 
 class RemotePairStartResult {

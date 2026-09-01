@@ -177,25 +177,24 @@ class MethodChannelCoreProxy extends CoreProxy {
       await watchChannel.fail(subscriptionId, error, stackTrace);
       rethrow;
     }
-    if (subscriptionBytes == null) {
-      await watchChannel.fail(
-        subscriptionId,
-        const CoreLinkError(
+    try {
+      if (subscriptionBytes == null) {
+        throw const CoreLinkError(
           code: 'EMPTY_RESPONSE',
           message: 'runtime bridge returned empty stream subscription',
-        ),
-        StackTrace.current,
-      );
-      throw const CoreLinkError(
-        code: 'EMPTY_RESPONSE',
-        message: 'runtime bridge returned empty stream subscription',
-      );
-    }
-    final String openedSubscriptionId;
-    try {
-      openedSubscriptionId = decodeNativeCoreWatchStreamResult(
+        );
+      }
+      final openedSubscriptionId = decodeNativeCoreWatchStreamResult(
         subscriptionBytes,
       );
+      if (openedSubscriptionId != subscriptionId) {
+        throw CoreLinkError(
+          code: 'INVALID_RESPONSE',
+          message:
+              'runtime watch subscription id mismatch: $openedSubscriptionId',
+        );
+      }
+      yield* events;
     } catch (error, stackTrace) {
       ClientLogger.e(
         'watch stream response decode failed subscription=$subscriptionId',
@@ -206,23 +205,9 @@ class MethodChannelCoreProxy extends CoreProxy {
       await watchChannel.fail(subscriptionId, error, stackTrace);
       rethrow;
     }
-    if (openedSubscriptionId != subscriptionId) {
-      final error = CoreLinkError(
-        code: 'INVALID_RESPONSE',
-        message:
-            'runtime watch subscription id mismatch: $openedSubscriptionId',
-      );
-      ClientLogger.e(
-        'watch stream subscription mismatch expected=$subscriptionId '
-        'actual=$openedSubscriptionId',
-        tag: 'MethodChannelWatch',
-        error: error,
-        stackTrace: StackTrace.current,
-      );
-      await watchChannel.fail(subscriptionId, error, StackTrace.current);
-      throw error;
+    finally {
+      await watchChannel.closeIfAttached(subscriptionId);
     }
-    yield* events;
   }
 }
 
@@ -315,10 +300,18 @@ class _MethodChannelWatchChannel {
   Stream<CoreEvent> attach(String subscriptionId) {
     final controller = StreamController<CoreEvent>();
     controller.onCancel = () async {
-      await _closeSubscription(subscriptionId);
+      await closeIfAttached(subscriptionId);
     };
     _controllers[subscriptionId] = controller;
     return controller.stream;
+  }
+
+  /// Closes one native watch only while its local controller is still attached.
+  Future<void> closeIfAttached(String subscriptionId) async {
+    if (_controllers.remove(subscriptionId) == null) {
+      return;
+    }
+    await _closeNativeWatchStream(_channel, subscriptionId);
   }
 
   Future<void> fail(
@@ -411,10 +404,6 @@ class _MethodChannelWatchChannel {
     }
   }
 
-  Future<void> _closeSubscription(String subscriptionId) async {
-    _controllers.remove(subscriptionId);
-    await _closeNativeWatchStream(_channel, subscriptionId);
-  }
 }
 
 class _MethodChannelWatchFrame {

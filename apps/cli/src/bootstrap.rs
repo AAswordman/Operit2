@@ -303,6 +303,7 @@ pub(crate) fn scope_cli_storage_command_args(args: &[String]) -> Result<Vec<Stri
     let mut index = 2usize;
     while index < scoped.len() {
         match scoped[index].as_str() {
+            "--json" => {}
             "--runtime" | "--workspace" => {
                 index += 1;
                 let root = scoped
@@ -326,6 +327,31 @@ pub(crate) fn persist_cli_storage_config(stdout: &str) -> Result<(), String> {
     let Some(config) = parse_storage_migration_output(stdout)? else {
         return Ok(());
     };
+    write_cli_storage_config(&config)
+}
+
+/// Persists storage roots returned by structured JSON migration output.
+pub(crate) fn persist_cli_storage_config_json(stdout: &str) -> Result<(), String> {
+    let value = serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .map_err(|error| format!("storage migrate JSON output is invalid: {error}"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "storage migrate JSON output must be an object".to_string())?;
+    if object.get("storageConfig").and_then(serde_json::Value::as_str) != Some("updated") {
+        return Ok(());
+    }
+    let runtimeRoot = object
+        .get("runtimeRoot")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "storage migrate JSON output missed runtimeRoot".to_string())?;
+    let workspaceRoot = object
+        .get("workspaceRoot")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "storage migrate JSON output missed workspaceRoot".to_string())?;
+    let mut config = CliStorageConfig::read();
+    let identityId = config.activeIdentity().id.clone();
+    config.runtimeRoot = identityBaseRoot(PathBuf::from(runtimeRoot), &identityId)?;
+    config.workspaceRoot = identityBaseRoot(PathBuf::from(workspaceRoot), &identityId)?;
     write_cli_storage_config(&config)
 }
 

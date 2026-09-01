@@ -177,15 +177,6 @@ impl ToolPermissionSystem {
             .unwrap_or_else(|| format!("Tool operation: {}", tool.name))
     }
 
-    /// Asynchronously requests approval for a package tool invocation.
-    #[allow(non_snake_case)]
-    pub async fn checkPackageToolApprovalAsync(
-        &self,
-        tool: &AITool,
-    ) -> Result<bool, PreferencesDataStoreError> {
-        self.requestPermissionAsync(tool).await
-    }
-
     /// Asynchronously requests approval for a tool invocation that can escape the sandbox boundary.
     #[allow(non_snake_case)]
     pub async fn checkSandboxEscapeApprovalAsync(

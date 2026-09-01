@@ -4,6 +4,7 @@ use operit_tools::tools::AIToolHandler::{AIToolHandler, ToolRegistrationVisibili
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 
+/// Runs tool inspection and execution commands.
 pub fn run_tool_command(
     application: &OperitApplication,
     args: &[String],
@@ -59,14 +60,18 @@ fn list_tools(
         "all" => handler.getAllToolNames(),
         _ => return Err("usage: operit2 tool list <public|internal|all>".to_string()),
     };
+    let mut items = Vec::new();
+    output.push_stdout_line(format!("Tools ({scope}): {}", names.len()));
     for name in names {
         let visibility: Option<ToolRegistrationVisibility> = handler.getToolVisibility(&name);
-        output.push_stdout_line(format!(
-            "{}\tvisibility={}",
-            name,
-            format_tool_visibility(visibility)
-        ));
+        let visibilityName = format_tool_visibility(visibility);
+        output.push_stdout_line(format!("- {name} ({visibilityName})"));
+        items.push(serde_json::json!({
+            "name": name,
+            "visibility": visibilityName,
+        }));
     }
+    output.setJsonStdout(serde_json::json!({"scope": scope, "tools": items}));
     Ok(())
 }
 
@@ -75,13 +80,21 @@ fn show_tool(
     tool_name: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    output.push_stdout_line(format!("name={tool_name}"));
-    output.push_stdout_line(format!("registered={}", handler.hasToolExecutor(tool_name)));
+    let registered = handler.hasToolExecutor(tool_name);
     let visibility: Option<ToolRegistrationVisibility> = handler.getToolVisibility(tool_name);
-    output.push_stdout_line(format!("visibility={}", format_tool_visibility(visibility)));
+    let visibilityName = format_tool_visibility(visibility);
+    output.push_stdout_line(format!("Tool: {tool_name}"));
+    output.push_stdout_line(format!("Registered: {registered}"));
+    output.push_stdout_line(format!("Visibility: {visibilityName}"));
+    output.setJsonStdout(serde_json::json!({
+        "name": tool_name,
+        "registered": registered,
+        "visibility": visibilityName,
+    }));
     Ok(())
 }
 
+/// Formats a registered tool visibility value for command output.
 fn format_tool_visibility(visibility: Option<ToolRegistrationVisibility>) -> String {
     match visibility {
         Some(value) => format!("{value:?}"),
@@ -103,6 +116,7 @@ pub fn exec_tool(
     print_tool_execution_result(&result, output)
 }
 
+/// Parses a JSON object into tool parameters.
 fn parse_tool_parameters_json(value: &str) -> Result<Vec<ToolParameter>, String> {
     let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(value)
         .map_err(|error| error.to_string())?;
@@ -118,13 +132,15 @@ fn parse_tool_parameters_json(value: &str) -> Result<Vec<ToolParameter>, String>
         .collect())
 }
 
+/// Prints a tool execution result and records its JSON object.
 fn print_tool_execution_result(
     result: &ToolResult,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    output.push_stdout_line(format!("toolName={}", result.toolName));
-    output.push_stdout_line(format!("success={}", result.success));
     let resultText = result.result.toString();
+    output.push_stdout_line(format!("Tool: {}", result.toolName));
+    output.push_stdout_line(format!("Success: {}", result.success));
+    output.setJsonStdout(serde_json::to_value(result).map_err(|error| error.to_string())?);
     if result.success {
         output.push_stdout_line(&resultText);
         Ok(())
@@ -139,8 +155,15 @@ fn print_tool_execution_result(
     }
 }
 
+/// Prints tool command usage.
 fn print_tool_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 tool list <public|internal|all>");
-    output.push_stdout_line("operit2 tool show <tool-name>");
-    output.push_stdout_line("operit2 tool exec <tool-name> <params-json>");
+    let lines = vec![
+        "operit2 tool list <public|internal|all>",
+        "operit2 tool show <tool-name>",
+        "operit2 tool exec <tool-name> <params-json>",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

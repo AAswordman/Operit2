@@ -28,10 +28,18 @@ pub(crate) use chat_runtime::{
 #[tokio::main]
 async fn main() -> ExitCode {
     error::install_panic_hook();
+    let json_requested = std::env::args().any(|arg| arg == "--json");
     match std::panic::AssertUnwindSafe(run()).catch_unwind().await {
         Ok(Ok(())) => ExitCode::SUCCESS,
         Ok(Err(error)) => {
-            eprintln!("{error}");
+            if json_requested {
+                println!(
+                    "{}",
+                    serde_json::json!({ "error": error.to_string() })
+                );
+            } else {
+                eprintln!("{error}");
+            }
             ExitCode::FAILURE
         }
         Err(_) => {

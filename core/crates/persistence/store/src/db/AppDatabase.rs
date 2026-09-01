@@ -14,7 +14,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::MessagePartEntity::MessagePartEntity;
 
 /// Current SQLite schema version expected by the runtime.
-pub const DATABASE_VERSION: i32 = 26;
+pub const DATABASE_VERSION: i32 = 27;
 
 #[derive(Debug, Error)]
 /// Error surface for opening and migrating the application database.
@@ -134,6 +134,7 @@ impl AppDatabase {
             23 => MIGRATION_23_24(self)?,
             24 => MIGRATION_24_25(self)?,
             25 => MIGRATION_25_26(self)?,
+            26 => MIGRATION_26_27(self)?,
             version => {
                 return Err(AppDatabaseError::MissingMigration {
                     from: version,
@@ -157,6 +158,8 @@ impl AppDatabase {
             DROP TABLE IF EXISTS messages;
             DROP TABLE IF EXISTS chats;
             DROP TABLE IF EXISTS usage_request_records;
+            DROP TABLE IF EXISTS token_usage_records;
+            DROP TABLE IF EXISTS token_stats_models;
             DROP TABLE IF EXISTS sync_sql_deletions;
             DROP TABLE IF EXISTS sync_sql_message_part_rows;
             DROP TABLE IF EXISTS sync_sql_message_variant_rows;
@@ -1067,6 +1070,7 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
         "#,
     )?;
     createUsageRequestRecordsTable(store)?;
+    createTokenStatisticsTables(store)?;
     createSyncTables(store)
 }
 
@@ -1101,6 +1105,69 @@ fn createUsageRequestRecordsTable(store: &SqliteStore) -> Result<(), SqliteStore
             ON usage_request_records(source);
         CREATE INDEX IF NOT EXISTS index_usage_request_records_chatId
             ON usage_request_records(chatId);
+        "#,
+    )
+}
+
+#[allow(non_snake_case)]
+/// Creates the OP1-compatible token ledger and current pricing-settings tables.
+fn createTokenStatisticsTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
+    store.executeBatch(
+        r#"
+        CREATE TABLE IF NOT EXISTS token_usage_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            importKey TEXT,
+            occurredAtMs INTEGER,
+            configId TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            requestCount INTEGER NOT NULL DEFAULT 1,
+            uncachedInputTokens INTEGER,
+            cachedInputTokens INTEGER,
+            cacheWriteTokens INTEGER,
+            totalInputTokens INTEGER,
+            outputTokens INTEGER
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS index_token_usage_records_importKey
+            ON token_usage_records(importKey);
+        CREATE INDEX IF NOT EXISTS index_token_usage_records_occurredAtMs
+            ON token_usage_records(occurredAtMs);
+        CREATE INDEX IF NOT EXISTS index_token_usage_records_provider_model_configId_occurredAtMs
+            ON token_usage_records(provider, model, configId, occurredAtMs);
+        CREATE TABLE IF NOT EXISTS token_stats_models (
+            configId TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            billingMode TEXT,
+            currency TEXT,
+            inputPricePerMillion REAL,
+            cachedInputPricePerMillion REAL,
+            cacheWritePricePerMillion REAL,
+            outputPricePerMillion REAL,
+            pricePerRequest REAL,
+            PRIMARY KEY(configId, provider, model)
+        );
+        "#,
+    )
+}
+
+#[allow(non_snake_case)]
+/// Migrates legacy request rows into the OP1-compatible token ledger.
+fn MIGRATION_26_27(database: &AppDatabase) -> Result<(), SqliteStoreError> {
+    createTokenStatisticsTables(&database.store)?;
+    database.store.executeBatch(
+        r#"
+        INSERT INTO token_usage_records (
+            importKey, occurredAtMs, configId, provider, model, requestCount,
+            uncachedInputTokens, cachedInputTokens, totalInputTokens, outputTokens
+        )
+        SELECT
+            'op2-request:' || id, createdAtMs, '', provider, modelName, 1,
+            MAX(inputTokens - cachedInputTokens, 0), cachedInputTokens,
+            inputTokens, outputTokens
+        FROM usage_request_records
+        WHERE TRIM(provider) <> '' AND TRIM(modelName) <> '';
+        PRAGMA user_version = 27;
         "#,
     )
 }

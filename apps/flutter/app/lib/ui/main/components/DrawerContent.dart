@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../../core/link/CoreLinkProtocol.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../l10n/generated/app_localizations.dart';
@@ -29,6 +28,7 @@ class DrawerContent extends StatefulWidget {
     required this.selectedRouteId,
     required this.appearance,
     required this.histories,
+    required this.activeStreamingChatIds,
     required this.characterGroupNamesById,
     required this.characterCardAvatarUrisByName,
     required this.currentChatId,
@@ -44,6 +44,7 @@ class DrawerContent extends StatefulWidget {
   final String selectedRouteId;
   final NavigationDrawerAppearance appearance;
   final List<core_proxy.ChatHistoryListItem> histories;
+  final Set<String> activeStreamingChatIds;
   final Map<String, String> characterGroupNamesById;
   final Map<String, String> characterCardAvatarUrisByName;
   final String? currentChatId;
@@ -78,8 +79,6 @@ class _DrawerContentState extends State<DrawerContent> {
 
   GeneratedChatRuntimeHolderMainCoreProxy get _chatCoreProxy =>
       GeneratedCoreProxyClients(widget.bridge).chatRuntimeHolderMain;
-
-  String _requestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';
 
   List<core_proxy.ChatHistoryListItem> get _histories =>
       _pendingOrderedHistories ?? widget.histories;
@@ -208,7 +207,9 @@ class _DrawerContentState extends State<DrawerContent> {
     });
     try {
       final binding = await _activePromptBindingForCreate();
-      await GeneratedCoreProxyClients(widget.bridge).chatRuntimeHolderMain.createNewChat(
+      await GeneratedCoreProxyClients(
+        widget.bridge,
+      ).chatRuntimeHolderMain.createNewChat(
         characterCardName: binding.characterCardName,
         group: groupName,
         inheritGroupFromCurrent: false,
@@ -989,6 +990,9 @@ class _DrawerContentState extends State<DrawerContent> {
                             selected:
                                 conversationSelectionEnabled &&
                                 widget.currentChatId == history.id,
+                            isRunning: widget.activeStreamingChatIds.contains(
+                              history.id,
+                            ),
                             appearance: widget.appearance,
                             nested: true,
                             onClick: () => _switchConversation(history),

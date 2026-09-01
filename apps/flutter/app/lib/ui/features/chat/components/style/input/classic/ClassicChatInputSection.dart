@@ -28,6 +28,7 @@ class ClassicChatInputSection extends StatefulWidget {
     required this.focusNode,
     required this.isLoading,
     required this.inputState,
+    this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
     required this.onSendMessage,
@@ -60,6 +61,7 @@ class ClassicChatInputSection extends StatefulWidget {
   final FocusNode focusNode;
   final bool isLoading;
   final core_proxy.InputProcessingState inputState;
+  final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final VoidCallback onSendMessage;
@@ -453,21 +455,12 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final l10n = AppLocalizations.of(context)!;
     final snapshot = OperitTheme.of(context).themePreferenceSnapshot;
     final processing = widget.isLoading || widget.inputState.isProcessing;
     final hasDraftText = widget.controller.text.trim().isNotEmpty;
     final canSendMessage = hasDraftText || widget.attachments.isNotEmpty;
     final showCancelAction = processing && !hasDraftText;
     final showQueueAction = processing && hasDraftText;
-    final processingStatus = _classicInputProcessingStatus(
-      l10n,
-      widget.inputState,
-    );
-    final showProcessingStatus =
-        snapshot.showInputProcessingStatus &&
-        widget.inputState.isProcessing &&
-        processingStatus.isNotEmpty;
     final borderRadius = snapshot.chatInputFloating
         ? BorderRadius.circular(22)
         : BorderRadius.zero;
@@ -482,85 +475,88 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                 ? chatWideContentMaxWidth
                 : chatContentMaxWidth,
           ),
-          child: _ClassicInputSurface(
-            color: colorScheme.surface,
-            shape: surfaceShape,
-            borderRadius: borderRadius,
-            transparentSurface: snapshot.transparentSurfaceEnabled,
-            width: double.infinity,
-            margin: snapshot.chatInputFloating
-                ? const EdgeInsets.fromLTRB(8, 0, 8, 6)
-                : EdgeInsets.zero,
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: snapshot.chatInputFloating ? 14 : 22,
-                vertical: snapshot.chatInputFloating ? 6 : 8,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  if (widget.pendingQueueMessages.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _ClassicPendingMessageQueuePanel(
-                        queuedMessages: widget.pendingQueueMessages,
-                        expanded: widget.isPendingQueueExpanded,
-                        onExpandedChange: widget.onPendingQueueExpandedChange,
-                        onDeleteMessage: widget.onDeletePendingQueueMessage,
-                        onEditMessage: widget.onEditPendingQueueMessage,
-                        onSendMessage: widget.onSendPendingQueueMessage,
-                      ),
-                    ),
-                  if (showProcessingStatus)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          processingStatus,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurface.withValues(alpha: 0.8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (widget.mentionSuggestionPanel != null)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    snapshot.chatInputFloating ? 8 : 0,
+                    0,
+                    snapshot.chatInputFloating ? 8 : 0,
+                    4,
+                  ),
+                  child: widget.mentionSuggestionPanel!,
+                ),
+              _ClassicInputSurface(
+                color: colorScheme.surface,
+                shape: surfaceShape,
+                borderRadius: borderRadius,
+                transparentSurface: snapshot.transparentSurfaceEnabled,
+                width: double.infinity,
+                margin: snapshot.chatInputFloating
+                    ? const EdgeInsets.fromLTRB(8, 0, 8, 6)
+                    : EdgeInsets.zero,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: snapshot.chatInputFloating ? 14 : 22,
+                    vertical: snapshot.chatInputFloating ? 6 : 8,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (widget.pendingQueueMessages.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _ClassicPendingMessageQueuePanel(
+                            queuedMessages: widget.pendingQueueMessages,
+                            expanded: widget.isPendingQueueExpanded,
+                            onExpandedChange:
+                                widget.onPendingQueueExpandedChange,
+                            onDeleteMessage: widget.onDeletePendingQueueMessage,
+                            onEditMessage: widget.onEditPendingQueueMessage,
+                            onSendMessage: widget.onSendPendingQueueMessage,
                           ),
                         ),
+                      if (widget.attachments.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: _ClassicAttachmentStrip(
+                            attachments: widget.attachments,
+                            onRemoveAttachment: widget.onRemoveAttachment,
+                            onInsertAttachment: widget.onInsertAttachment,
+                          ),
+                        ),
+                      _ClassicInputBody(
+                        controller: widget.controller,
+                        focusNode: widget.focusNode,
+                        inputState: widget.inputState,
+                        settingsKey: _inputMenuPopupTargetKey,
+                        attachmentKey: _attachmentPopupTargetKey,
+                        processing: processing,
+                        hasDraftText: hasDraftText,
+                        canSendMessage: canSendMessage,
+                        showCancelAction: showCancelAction,
+                        showQueueAction: showQueueAction,
+                        onSendMessage: widget.onSendMessage,
+                        onQueueMessage: widget.onQueueMessage,
+                        onCancelMessage: widget.onCancelMessage,
+                        isSpeechRecording: widget.isSpeechRecording,
+                        isSpeechTranscribing: widget.isSpeechTranscribing,
+                        onSpeechInput: widget.onSpeechInput,
+                        inputExpanded: _inputExpanded,
+                        onToggleInputExpansion: _toggleInputExpansion,
+                        onAttachFiles: widget.onAttachFiles,
+                        draggingFiles: _draggingFiles,
+                        onDraggingFilesChanged: _setDraggingFiles,
+                        onSettings: _toggleInputMenuPopup,
+                        onAttach: _toggleAttachmentPopup,
                       ),
-                    ),
-                  if (widget.attachments.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: _ClassicAttachmentStrip(
-                        attachments: widget.attachments,
-                        onRemoveAttachment: widget.onRemoveAttachment,
-                        onInsertAttachment: widget.onInsertAttachment,
-                      ),
-                    ),
-                  _ClassicInputBody(
-                    controller: widget.controller,
-                    focusNode: widget.focusNode,
-                    inputState: widget.inputState,
-                    settingsKey: _inputMenuPopupTargetKey,
-                    attachmentKey: _attachmentPopupTargetKey,
-                    processing: processing,
-                    hasDraftText: hasDraftText,
-                    canSendMessage: canSendMessage,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    onSendMessage: widget.onSendMessage,
-                    onQueueMessage: widget.onQueueMessage,
-                    onCancelMessage: widget.onCancelMessage,
-                    isSpeechRecording: widget.isSpeechRecording,
-                    isSpeechTranscribing: widget.isSpeechTranscribing,
-                    onSpeechInput: widget.onSpeechInput,
-                    inputExpanded: _inputExpanded,
-                    onToggleInputExpansion: _toggleInputExpansion,
-                    onAttachFiles: widget.onAttachFiles,
-                    draggingFiles: _draggingFiles,
-                    onDraggingFilesChanged: _setDraggingFiles,
-                    onSettings: _toggleInputMenuPopup,
-                    onAttach: _toggleAttachmentPopup,
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -1839,67 +1835,6 @@ IconData _classicAttachmentIcon(String mimeType) {
     return Icons.image;
   }
   return Icons.description;
-}
-
-/// Converts a processing state into a visible status message.
-String _classicInputProcessingStatus(
-  AppLocalizations l10n,
-  core_proxy.InputProcessingState state,
-) {
-  final message = _classicInputProcessingMessage(l10n, state.message);
-  if (message.isNotEmpty) {
-    return message;
-  }
-  return switch (state.kind) {
-    'Processing' => l10n.processingMessage,
-    'Connecting' => l10n.connectingAiService,
-    'Receiving' => l10n.receivingAiResponse,
-    'Summarizing' => l10n.summarizingMemories,
-    'ExecutingPlan' => l10n.executingPlan,
-    'ExecutingTool' => l10n.executingTool(state.toolName),
-    'ProcessingToolResult' => l10n.processingToolResult(state.toolName),
-    'ToolProgress' => _classicToolProgressStatus(l10n, state),
-    _ => '',
-  };
-}
-
-/// Converts tool progress into a visible status message.
-String _classicToolProgressStatus(
-  AppLocalizations l10n,
-  core_proxy.InputProcessingState state,
-) {
-  final message = _classicInputProcessingMessage(l10n, state.message);
-  if (message.isNotEmpty) {
-    return state.toolName.isEmpty
-        ? message
-        : l10n.toolStatusWithName(state.toolName, message);
-  }
-  if (state.toolName.isEmpty) {
-    return l10n.toolRunning;
-  }
-  return l10n.toolRunningWithName(state.toolName);
-}
-
-/// Maps internal processing message keys to localized text.
-String _classicInputProcessingMessage(AppLocalizations l10n, String key) {
-  const memberReplyingPrefix = 'role_response_planner_member_replying|';
-  if (key.startsWith(memberReplyingPrefix)) {
-    return l10n.roleResponsePlannerMemberReplying(
-      key.substring(memberReplyingPrefix.length),
-    );
-  }
-  return switch (key) {
-    'enhanced_processing_input' => l10n.processingInput,
-    'enhanced_processing_message' => l10n.processingMessage,
-    'enhanced_connecting_service' => l10n.connectingAiService,
-    'enhanced_receiving_response' => l10n.receivingAiResponse,
-    'enhanced_receiving_tool_result' => l10n.receivingToolResultAiResponse,
-    'role_response_planner_planning' => l10n.roleResponsePlannerPlanning,
-    'role_response_planner_failed' => l10n.roleResponsePlannerFailed,
-    'message_processing' => l10n.processingMessage,
-    'message_summarizing' => l10n.summarizingMemories,
-    _ => key,
-  };
 }
 
 /// Resolves a progress value for the classic action button ring.

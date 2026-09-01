@@ -142,6 +142,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get summarizingMemories => '正在总结记忆...';
 
   @override
+  String get summaryGenerating => '正在生成总结...';
+
+  @override
+  String get chatCompressingHistory => '正在压缩历史记录...';
+
+  @override
   String get executingPlan => '正在执行计划...';
 
   @override
@@ -282,7 +288,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get messageSenderUser => '用户';
 
   @override
-  String get messageSenderSummary => '摘要';
+  String get messageSenderSummary => '总结';
+
+  @override
+  String get historyDialogSummary => '历史对话摘要';
+
+  @override
+  String get confirmDeleteSummary => '删除摘要';
+
+  @override
+  String get confirmDeleteSummaryMessage => '确定要删除这条摘要吗？';
 
   @override
   String get messageSenderSystem => '系统';
@@ -301,6 +316,17 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String toolsGroupTitleWithCount(int count) {
     return '工具调用（$count）';
+  }
+
+  @override
+  String get searchGroupTitle => '搜索';
+
+  @override
+  String get thinkingSearchGroupTitle => '思考并搜索';
+
+  @override
+  String thinkingSearchToolsGroupTitleWithCount(int count) {
+    return '思考、搜索并调用工具（$count）';
   }
 
   @override
@@ -2365,6 +2391,10 @@ class AppLocalizationsZh extends AppLocalizations {
       '附近设备会按设备空间归并；展开设备空间后，可以选择其中一台设备直接连接。';
 
   @override
+  String get settingsRuntimeWebPairDescription =>
+      '输入其他设备的地址和配对令牌，让此浏览器作为主动配对方连接。';
+
+  @override
   String settingsRuntimeDiscoveredSpaceSummary(
     int memberCount,
     int nearbyCount,
@@ -2967,7 +2997,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataOpenDetailedStatsDescription =>
-      '打开每日趋势、输入输出 Token 变化，以及按供应商、模型、会话分类的使用明细。';
+      '打开每日趋势、输入输出 Token 变化、使用热力图，以及按供应商、模型、功能模型分类的使用明细。';
 
   @override
   String get settingsDataRefreshTokenStats => '刷新统计';
@@ -2991,6 +3021,43 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataDetailedStatsSourceLabel => '模型请求明细';
+
+  @override
+  String get settingsDataDetailedStatsHistoricalTotal => '历史累计';
+
+  @override
+  String get settingsDataDetailedStatsRangeAll => '全部';
+
+  @override
+  String get settingsDataDetailedStatsRangeLast7Days => '近 7 天';
+
+  @override
+  String get settingsDataDetailedStatsRangeLast30Days => '近 30 天';
+
+  @override
+  String get settingsDataDetailedStatsRangeCustom => '自定义';
+
+  @override
+  String get settingsDataDetailedStatsCustomRangePickerTitle => '选择统计时间范围';
+
+  @override
+  String get settingsDataDetailedStatsNoDataInRange => '当前范围暂无数据';
+
+  @override
+  String get settingsDataDetailedStatsNoRankRows => '当前范围暂无排行数据';
+
+  @override
+  String get settingsDataDetailedStatsFunctionModels => '功能模型数';
+
+  @override
+  String get settingsDataDetailedStatsFunctionModelPieTitle => '功能模型分布';
+
+  @override
+  String get settingsDataDetailedStatsTopFunctionModelsTitle => '功能模型排行';
+
+  @override
+  String get settingsDataDetailedStatsTopFunctionModelsSubtitle =>
+      '按功能模型累计 Token 消耗排序';
 
   @override
   String get settingsDataDetailedStatsSourceChat => '对话回复';
@@ -3026,6 +3093,33 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDataDetailedStatsModels => '模型数';
 
   @override
+  String get settingsDataDetailedStatsUnknownTokenRecords => '含未知 Token 的记录';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapTitle => '使用热力图';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapSubtitle => '所选时间范围内每日 Token 消耗强度';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapTapHint => '点击方格查看详细数据';
+
+  @override
+  String settingsDataDetailedStatsHeatmapDayDetail(
+    String date,
+    String tokens,
+    String requests,
+  ) {
+    return '$date 使用了 $tokens Token · $requests 次请求';
+  }
+
+  @override
+  String get settingsDataDetailedStatsHeatmapLow => '少';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapHigh => '多';
+
+  @override
   String get settingsDataDetailedStatsDailyUsageTitle => '每日使用趋势';
 
   @override
@@ -3054,11 +3148,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDataDetailedStatsTotalTokens => '总 Token';
 
   @override
-  String get settingsDataDetailedStatsTopRequestsTitle => '单项请求排行';
+  String get settingsDataDetailedStatsTopRequestsTitle => '单次请求峰值';
 
   @override
   String get settingsDataDetailedStatsTopRequestsSubtitle =>
-      '单次请求 Token 消耗最高的记录';
+      '单次调用中 Token 消耗最高的记录';
 
   @override
   String get settingsDataDetailedStatsTopChatsTitle => '会话排行';
@@ -3085,6 +3179,11 @@ class AppLocalizationsZh extends AppLocalizations {
     int models,
   ) {
     return '$requests 次请求 · $models 个模型';
+  }
+
+  @override
+  String settingsDataDetailedStatsRequestCountSummary(int requests) {
+    return '$requests 次请求';
   }
 
   @override

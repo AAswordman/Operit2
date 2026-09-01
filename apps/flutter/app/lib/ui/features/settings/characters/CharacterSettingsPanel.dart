@@ -938,7 +938,6 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                     group: group,
                     active: group.id == data.activeGroupId,
                     cards: data.cards,
-                    avatarUri: null,
                     onActivate: () => _activateGroup(group),
                     onEdit: () => _editGroup(group, data),
                   ),

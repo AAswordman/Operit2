@@ -145,6 +145,8 @@ class _TabletLayoutState extends State<TabletLayout> {
                           selectedRouteId: widget.selectedRouteId,
                           appearance: appearance,
                           histories: drawerState.histories,
+                          activeStreamingChatIds:
+                              drawerState.activeStreamingChatIds,
                           characterGroupNamesById:
                               drawerState.characterGroupNamesById,
                           characterCardAvatarUrisByName:

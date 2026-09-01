@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,32 +14,14 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
 use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
-use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+use operit_tools::tools::packTool::RuntimePackageManager::{
+    ExternalPackageImportResult, RuntimePackageManager,
+};
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
+use serde_json::json;
 use sha2::{Digest, Sha256};
-
-macro_rules! println {
-    () => { market_stdout_line("") };
-    ($($arg:tt)*) => { market_stdout_line(format!($($arg)*)) };
-}
-
-thread_local! {
-    static MARKET_OUTPUT: Cell<*mut CoreCommandOutput> = Cell::new(std::ptr::null_mut());
-}
-
-fn set_market_output(output: &mut CoreCommandOutput) {
-    MARKET_OUTPUT.with(|slot| slot.set(output as *mut CoreCommandOutput));
-}
-
-fn market_stdout_line(line: impl AsRef<str>) {
-    MARKET_OUTPUT.with(|slot| {
-        let output = slot.get();
-        assert!(!output.is_null(), "market command output is not set");
-        unsafe { (&mut *output).push_stdout_line(line.as_ref()) };
-    });
-}
 
 struct MarketCommand {
     context: HostManager,
@@ -48,6 +29,7 @@ struct MarketCommand {
 }
 
 impl MarketCommand {
+    /// Creates a market command context from the current application.
     fn new(application: &OperitApplication) -> Self {
         Self {
             context: application.hostManager.clone(),
@@ -55,28 +37,34 @@ impl MarketCommand {
         }
     }
 
+    /// Creates an authenticated marketplace service client for this command.
     fn api(&self) -> MarketStatsApiService {
         MarketStatsApiService::new_with_github_token(
             GitHubAuthPreferences::getInstance().getCurrentAccessToken(),
         )
     }
 
+    /// Returns the GitHub auth preference service used by market writes.
     fn github_auth(&self) -> GitHubAuthPreferences {
         GitHubAuthPreferences::getInstance()
     }
 
+    /// Returns the skill repository bound to the active host context.
     fn skill_repo(&self) -> SkillRepository {
         SkillRepository::getInstance(&self.context, self.tool_handler.runtimeSupport())
     }
 
+    /// Returns the local MCP server registry bound to the active host context.
     fn mcp_local(&self) -> MCPLocalServer {
         MCPLocalServer::getInstance(&self.context)
     }
 
+    /// Returns the MCP repository installer bound to the active host context.
     fn mcp_repo(&self) -> MCPRepository {
         MCPRepository::getInstance(&self.context, self.tool_handler.runtimeSupport())
     }
 
+    /// Returns a package manager command adapter.
     fn package_manager(&self) -> PackageManagerCommand {
         PackageManagerCommand {
             manager: self.tool_handler.getOrCreatePackageManager(),
@@ -89,11 +77,12 @@ struct PackageManagerCommand {
 }
 
 impl PackageManagerCommand {
-    fn add_from_external(&self, path: &str) -> String {
+    /// Imports an external package file and returns structured metadata.
+    fn add_from_external(&self, path: &str) -> Result<ExternalPackageImportResult, String> {
         self.manager
             .lock()
             .expect("package manager mutex poisoned")
-            .addPackageFileFromExternalStorage(path)
+            .addPackageFileFromExternalStorageResult(path)
     }
 }
 
@@ -104,10 +93,9 @@ pub fn run_market_command(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    set_market_output(output);
     let core = &mut MarketCommand::new(application);
     if args.is_empty() {
-        print_usage();
+        print_usage(output);
         return Ok(());
     }
 
@@ -115,14 +103,14 @@ pub fn run_market_command(
         "rank" => {
             let sort = normalize_sort(args.get(1).map(String::as_str).unwrap_or("updated"))?;
             let page = parse_i32_opt(args.get(2), 1)?;
-            print_list(core, sort, page)
+            print_list(core, sort, page, output)
         }
         "list" => {
             let sort = normalize_sort(args.get(1).map(String::as_str).unwrap_or("updated"))?;
             let type_filter = args.get(2).map(String::as_str);
             let category = args.get(3).map(String::as_str);
             let page = parse_i32_opt(args.get(4), 1)?;
-            print_list_filtered(core, sort, type_filter, category, page)
+            print_list_filtered(core, sort, type_filter, category, page, output)
         }
         "search" => {
             let query = args.get(1).ok_or_else(|| {
@@ -131,38 +119,42 @@ pub fn run_market_command(
             let sort = normalize_sort(args.get(2).map(String::as_str).unwrap_or("updated"))?;
             let type_filter = args.get(3).map(String::as_str);
             let category = args.get(4).map(String::as_str);
-            print_search(core, query, sort, type_filter, category)
+            print_search(core, query, sort, type_filter, category, output)
         }
         "show" => {
             let entry_id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market show <entryId>".to_string())?;
-            print_entry(core, entry_id)
+            print_entry(core, entry_id, output)
         }
         "comments" => {
             let entry_id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market comments <entryId> [page]".to_string())?;
             let page = parse_i32_opt(args.get(2), 1)?;
-            print_comments(core, entry_id, page)
+            print_comments(core, entry_id, page, output)
         }
-        "comment" => run_comment(core, &args[1..]),
+        "comment" => run_comment(core, &args[1..], output),
         "like" => {
             let entry_id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market like <entryId>".to_string())?;
             require_login(core)?;
             core.api().create_entry_reaction(entry_id)?;
-            println!("liked {entry_id}");
+            output.push_stdout_line(format!("Liked market entry: {entry_id}"));
+            output.setJsonStdout(json!({
+                "entryId": entry_id,
+                "reaction": "+1",
+            }));
             Ok(())
         }
         "notifications" => {
             let limit = parse_i32_opt(args.get(1), 50)?;
             let offset = parse_i32_opt(args.get(2), 0)?;
-            print_notifications(core, limit, offset)
+            print_notifications(core, limit, offset, output)
         }
-        "my" => print_my_entries(core),
-        "publish" => run_publish(core, &args[1..]),
+        "my" => print_my_entries(core, output),
+        "publish" => run_publish(core, &args[1..], output),
         "install" => {
             let entry_id = args.get(1).ok_or_else(|| {
                 "usage: operit2 market install <entryId> <clientAppVersion> [versionId]".to_string()
@@ -171,64 +163,96 @@ pub fn run_market_command(
                 "usage: operit2 market install <entryId> <clientAppVersion> [versionId]".to_string()
             })?;
             let version_id = args.get(3).map(String::as_str);
-            install_entry(core, entry_id, client_app_version, version_id)
+            install_entry(core, entry_id, client_app_version, version_id, output)
         }
         "download" => {
             let asset_id = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market download <assetId>".to_string())?;
             let bytes = core.api().download_asset(asset_id)?;
-            println!("downloaded asset {asset_id} bytes={}", bytes.len());
+            output.push_stdout_line(format!(
+                "Downloaded market asset: {asset_id} ({} bytes)",
+                bytes.len()
+            ));
+            output.setJsonStdout(json!({
+                "assetId": asset_id,
+                "bytes": bytes.len(),
+            }));
             Ok(())
         }
         _ => {
-            print_usage();
+            print_usage(output);
             Ok(())
         }
     }
 }
 
-fn print_usage() {
-    println!("usage: operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>");
-    println!("sort: updated|likes|downloads");
-    println!("list: operit2 market list [sort] [type|-] [category|-] [page]");
-    println!("search: operit2 market search <query> [sort] [type|-] [category|-]");
-    println!("comment: operit2 market comment <entryId> <body-or-@file>");
-    println!("comment edit: operit2 market comment edit <commentId> <body-or-@file>");
-    println!("comment delete: operit2 market comment delete <commentId>");
-    println!("publish artifact: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>");
-    println!("publish repo: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->");
-    println!("publish version artifact: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
-    println!("publish version repo: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
-    println!("publish update-entry: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->");
-    println!("install: operit2 market install <entryId> <clientAppVersion> [versionId]");
-    println!("download: operit2 market download <assetId>");
+/// Prints marketplace command usage in text and JSON form.
+fn print_usage(output: &mut CoreCommandOutput) {
+    let lines = vec![
+        "usage: operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>",
+        "sort: updated|likes|downloads",
+        "list: operit2 market list [sort] [type|-] [category|-] [page]",
+        "search: operit2 market search <exact-query> [sort] [type|-] [category|-]",
+        "comment: operit2 market comment <entryId> <body-or-@file>",
+        "comment edit: operit2 market comment edit <commentId> <body-or-@file>",
+        "comment delete: operit2 market comment delete <commentId>",
+        "publish artifact: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>",
+        "publish repo: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->",
+        "publish version artifact: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]",
+        "publish version repo: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]",
+        "publish update-entry: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->",
+        "install: operit2 market install <entryId> <clientAppVersion> [versionId]",
+        "download: operit2 market download <assetId>",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({"usage": lines}));
 }
 
 // ── List ────────────────────────────────────────────────────
 
-fn print_list(core: &mut MarketCommand, sort: &str, page: i32) -> Result<(), String> {
+/// Prints one marketplace rank page.
+fn print_list(
+    core: &mut MarketCommand,
+    sort: &str,
+    page: i32,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let list = core.api().get_list_page(sort, page)?;
-    println!(
-        "generatedAt={}  sort={sort}  page={page}  total={}",
-        list.generated_at.unwrap_or_default(),
-        list.total
-    );
+    let total_pages = market_total_pages(list.total, list.page_size)?;
+    output.push_stdout_line("Market entries");
+    output.push_stdout_line(format!("Sort: {sort}"));
+    output.push_stdout_line(format!("Page: {page} / {total_pages}"));
+    output.push_stdout_line(format!("Total: {}", list.total));
+    output.push_stdout_line(format!(
+        "Generated: {}",
+        list.generated_at.as_deref().unwrap_or("-")
+    ));
     for entry in &list.items {
-        println!(
-            "{}/{} [{}]  {}",
+        output.push_stdout_line(format!(
+            "- {} / {} [{}] {}",
             entry.r#type, entry.id, entry.state_code, entry.title
-        );
+        ));
     }
+    output.setJsonStdout(json!({
+        "command": "rank",
+        "sort": sort,
+        "page": page,
+        "pageData": list,
+    }));
     Ok(())
 }
 
+/// Prints one filtered marketplace list page.
 fn print_list_filtered(
     core: &mut MarketCommand,
     sort: &str,
     type_filter: Option<&str>,
     category: Option<&str>,
     page: i32,
+    output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let type_filter = clean_optional_arg(type_filter);
     let category = clean_optional_arg(category);
@@ -241,39 +265,74 @@ fn print_list_filtered(
         (None, Some(category_id)) => core.api().get_category_page(category_id, sort, page)?,
         (None, None) => core.api().get_list_page(sort, page)?,
     };
-    println!("sort={sort}  page={page}  total={}", list.total);
+    let total_pages = market_total_pages(list.total, list.page_size)?;
+    output.push_stdout_line("Market entries");
+    output.push_stdout_line(format!("Sort: {sort}"));
+    output.push_stdout_line(format!("Page: {page} / {total_pages}"));
+    output.push_stdout_line(format!("Type: {}", type_filter.unwrap_or("-")));
+    output.push_stdout_line(format!("Category: {}", category.unwrap_or("-")));
+    output.push_stdout_line(format!("Total: {}", list.total));
     for entry in &list.items {
-        println!(
-            "{}/{} [{}]  {}",
+        output.push_stdout_line(format!(
+            "- {} / {} [{}] {}",
             entry.r#type, entry.id, entry.state_code, entry.title
-        );
+        ));
     }
+    output.setJsonStdout(json!({
+        "command": "list",
+        "sort": sort,
+        "typeFilter": type_filter,
+        "category": category,
+        "page": page,
+        "pageData": list,
+    }));
     Ok(())
 }
 
+/// Prints exact marketplace field matches across the selected list scope.
 fn print_search(
     core: &mut MarketCommand,
     query: &str,
     sort: &str,
     type_filter: Option<&str>,
     category: Option<&str>,
+    output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Err("market search query is empty".to_string());
+    }
     let entries = load_all_market_pages(core, sort, type_filter, category)?;
-    let query = query.trim().to_lowercase();
+    let type_filter = clean_optional_arg(type_filter);
+    let category = clean_optional_arg(category);
     let matched = entries
         .into_iter()
-        .filter(|entry| market_entry_matches_query(entry, &query))
+        .filter(|entry| market_entry_matches_query(entry, query))
         .collect::<Vec<_>>();
-    println!("search query={query}  sort={sort}  count={}", matched.len());
+    output.push_stdout_line("Market search");
+    output.push_stdout_line(format!("Query: {query}"));
+    output.push_stdout_line(format!("Sort: {sort}"));
+    output.push_stdout_line(format!("Type: {}", type_filter.unwrap_or("-")));
+    output.push_stdout_line(format!("Category: {}", category.unwrap_or("-")));
+    output.push_stdout_line(format!("Matches: {}", matched.len()));
     for entry in &matched {
-        println!(
-            "{}/{} [{}]  {}",
+        output.push_stdout_line(format!(
+            "- {} / {} [{}] {}",
             entry.r#type, entry.id, entry.state_code, entry.title
-        );
+        ));
     }
+    output.setJsonStdout(json!({
+        "command": "search",
+        "query": query,
+        "sort": sort,
+        "typeFilter": type_filter,
+        "category": category,
+        "items": matched,
+    }));
     Ok(())
 }
 
+/// Loads every market list page for the selected scope.
 fn load_all_market_pages(
     core: &mut MarketCommand,
     sort: &str,
@@ -291,6 +350,7 @@ fn load_all_market_pages(
     Ok(entries)
 }
 
+/// Computes the total number of market list pages from API pagination metadata.
 fn market_total_pages(total: i32, page_size: i32) -> Result<i32, String> {
     if page_size <= 0 {
         return Err(format!("invalid market page_size: {page_size}"));
@@ -298,6 +358,7 @@ fn market_total_pages(total: i32, page_size: i32) -> Result<i32, String> {
     Ok(((total + page_size - 1) / page_size).max(1))
 }
 
+/// Loads one market list page from the selected scope.
 fn load_market_page(
     core: &mut MarketCommand,
     sort: &str,
@@ -316,47 +377,51 @@ fn load_market_page(
     }
 }
 
+/// Returns whether an entry has a field exactly matching the query.
 fn market_entry_matches_query(entry: &MarketEntrySummary, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    entry.title.to_lowercase().contains(query)
-        || entry.description.to_lowercase().contains(query)
-        || entry.detail.to_lowercase().contains(query)
-        || entry.id.to_lowercase().contains(query)
-        || entry.r#type.to_lowercase().contains(query)
+    market_field_matches(&entry.id, query)
+        || market_field_matches(&entry.r#type, query)
+        || market_field_matches(&entry.title, query)
+        || market_field_matches(&entry.description, query)
+        || market_field_matches(&entry.detail, query)
         || entry
             .category_id
             .as_deref()
-            .unwrap_or("")
-            .to_lowercase()
-            .contains(query)
+            .map(|category_id| market_field_matches(category_id, query))
+            .unwrap_or(false)
         || entry
             .author
             .as_ref()
-            .map(|author| author.login.as_str())
-            .unwrap_or("")
-            .to_lowercase()
-            .contains(query)
+            .map(|author| market_field_matches(&author.login, query))
+            .unwrap_or(false)
         || entry
             .publisher
             .as_ref()
-            .map(|publisher| publisher.login.as_str())
-            .unwrap_or("")
-            .to_lowercase()
-            .contains(query)
+            .map(|publisher| market_field_matches(&publisher.login, query))
+            .unwrap_or(false)
 }
 
-fn print_entry(core: &mut MarketCommand, entry_id: &str) -> Result<(), String> {
+/// Returns whether one market field exactly matches a query value.
+fn market_field_matches(value: &str, query: &str) -> bool {
+    value.trim().eq_ignore_ascii_case(query)
+}
+
+/// Prints one market entry detail.
+fn print_entry(
+    core: &mut MarketCommand,
+    entry_id: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let entry = core.api().get_entry_by_id(entry_id)?;
-    println!("id: {}", entry.id);
-    println!("type: {}", entry.r#type);
-    println!("title: {}", entry.title);
-    println!("description: {}", entry.description);
-    println!(
-        "detail: {}",
+    output.push_stdout_line(format!("Market entry: {}", entry.title));
+    output.push_stdout_line(format!("ID: {}", entry.id));
+    output.push_stdout_line(format!("Type: {}", entry.r#type));
+    output.push_stdout_line(format!("State: {}", entry.state_code));
+    output.push_stdout_line(format!("Description: {}", entry.description));
+    output.push_stdout_line(format!(
+        "Detail: {}",
         entry.detail.chars().take(500).collect::<String>()
-    );
+    ));
     let author_login = entry
         .author
         .as_ref()
@@ -373,35 +438,37 @@ fn print_entry(core: &mut MarketCommand, entry_id: &str) -> Result<(), String> {
             }
         })
         .unwrap_or("-");
-    println!("author: {author_login} ({author_avatar})");
-    println!(
-        "publisher: {}",
+    output.push_stdout_line(format!("Author: {author_login} ({author_avatar})"));
+    output.push_stdout_line(format!(
+        "Publisher: {}",
         entry
             .publisher
             .as_ref()
             .map(|p| p.login.as_str())
             .unwrap_or("")
-    );
-    println!(
-        "category_id: {}",
+    ));
+    output.push_stdout_line(format!(
+        "Category: {}",
         entry.category_id.as_deref().unwrap_or("-")
-    );
-    println!("state: {}", entry.state_code);
-    println!("featured: {}", entry.featured);
-    println!("downloads: {}", entry_downloads(&entry));
-    println!("allow_public_updates: {}", entry.allow_public_updates);
-    println!("source: {:?}", entry.source.as_ref().map(|s| s.url.clone()));
+    ));
+    output.push_stdout_line(format!("Featured: {}", entry.featured));
+    output.push_stdout_line(format!("Downloads: {}", entry_downloads(&entry)));
+    output.push_stdout_line(format!("Public updates: {}", entry.allow_public_updates));
+    output.push_stdout_line(format!(
+        "Source: {}",
+        entry.source.as_ref().map(|s| s.url.as_str()).unwrap_or("-")
+    ));
     if let Some(artifact) = &entry.artifact {
-        println!("artifact project_id: {}", artifact.project_id);
-        println!(
-            "artifact runtime_package_id: {}",
+        output.push_stdout_line(format!("Artifact project: {}", artifact.project_id));
+        output.push_stdout_line(format!(
+            "Artifact runtime package: {}",
             artifact.runtime_package_id.as_deref().unwrap_or("-")
-        );
+        ));
     }
-    println!("versions: {}", entry.versions.len());
+    output.push_stdout_line(format!("Versions: {}", entry.versions.len()));
     for version in &entry.versions {
-        println!(
-            "  version {}  id={}  format={}  publisher={}",
+        output.push_stdout_line(format!(
+            "- Version {} — {} — format {} — publisher {}",
             version.version,
             version.id,
             version.format_ver,
@@ -410,62 +477,93 @@ fn print_entry(core: &mut MarketCommand, entry_id: &str) -> Result<(), String> {
                 .as_ref()
                 .map(|p| p.login.as_str())
                 .unwrap_or("")
-        );
+        ));
     }
-    println!("assets: {}", entry.assets.len());
+    output.push_stdout_line(format!("Assets: {}", entry.assets.len()));
     for asset in &entry.assets {
-        println!("  {}  kind={}  url={}", asset.id, asset.kind, asset.url);
+        output.push_stdout_line(format!("- {} — {} — {}", asset.id, asset.kind, asset.url));
     }
     for r in &entry.reactions {
-        println!("reaction {}  total={}", r.reaction, r.total);
+        output.push_stdout_line(format!("Reaction {}: {}", r.reaction, r.total));
     }
+    output.setJsonStdout(json!(entry));
     Ok(())
 }
 
-fn print_comments(core: &mut MarketCommand, entry_id: &str, page: i32) -> Result<(), String> {
-    let page = core.api().get_comments_page(entry_id, page)?;
-    println!(
-        "comments for {entry_id}  page={}  total={}",
-        page.page, page.total
-    );
-    for c in &page.items {
-        println!(
-            "#{} {} by {}  at {}",
+/// Prints one page of market entry comments.
+fn print_comments(
+    core: &mut MarketCommand,
+    entry_id: &str,
+    page: i32,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let comments_page = core.api().get_comments_page(entry_id, page)?;
+    output.push_stdout_line(format!("Comments for market entry: {entry_id}"));
+    output.push_stdout_line(format!(
+        "Page: {} | Total: {}",
+        comments_page.page, comments_page.total
+    ));
+    for c in &comments_page.items {
+        output.push_stdout_line(format!(
+            "- #{} by {} at {}: {}",
             c.id,
-            c.body.chars().take(120).collect::<String>(),
             c.author.login,
-            c.created_at
-        );
+            c.created_at,
+            c.body.chars().take(120).collect::<String>()
+        ));
     }
+    output.setJsonStdout(json!(comments_page));
     Ok(())
 }
 
-fn print_notifications(core: &mut MarketCommand, limit: i32, offset: i32) -> Result<(), String> {
+/// Prints authenticated marketplace notifications.
+fn print_notifications(
+    core: &mut MarketCommand,
+    limit: i32,
+    offset: i32,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let resp = core.api().get_notifications(limit, offset, None)?;
-    println!("notifications: {}", resp.items.len());
+    output.push_stdout_line(format!("Market notifications: {}", resp.items.len()));
+    output.push_stdout_line(format!("Window: {limit} items starting at {offset}"));
     for n in &resp.items {
-        println!(
-            "{} [{}] entry={:?}  {}  {}",
-            n.id, n.kind, n.entry_id, n.title, n.created_at
-        );
+        output.push_stdout_line(format!(
+            "- {} [{}] — entry {} — {} — {}",
+            n.id,
+            n.kind,
+            n.entry_id.as_deref().unwrap_or("-"),
+            n.title,
+            n.created_at
+        ));
     }
+    output.setJsonStdout(json!(resp));
     Ok(())
 }
 
-fn print_my_entries(core: &mut MarketCommand) -> Result<(), String> {
+/// Prints marketplace entries owned by the authenticated user.
+fn print_my_entries(
+    core: &mut MarketCommand,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let resp = core.api().get_my_entries()?;
-    println!("my entries: {}", resp.entries.len());
+    output.push_stdout_line(format!("My market entries: {}", resp.entries.len()));
     for e in &resp.entries {
-        println!(
-            "{}  {}  {}  {}  {:?}",
+        output.push_stdout_line(format!(
+            "- {} — {} — relation {} — state {} — reasons {:?}",
             e.id, e.r#type, e.relation, e.state_code, e.reason_codes
-        );
-        println!("  title={}", e.title);
+        ));
+        output.push_stdout_line(format!("  Title: {}", e.title));
     }
+    output.setJsonStdout(json!(resp));
     Ok(())
 }
 
-fn run_comment(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Executes marketplace comment mutation commands.
+fn run_comment(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("edit") => {
             let comment_id = args.get(1).ok_or_else(|| "usage: operit2 market comment edit <commentId> <body-or-@file>".to_string())?;
@@ -473,14 +571,22 @@ fn run_comment(core: &mut MarketCommand, args: &[String]) -> Result<(), String> 
             require_login(core)?;
             let body = read_content_arg(body_arg)?;
             core.api().edit_entry_comment(comment_id, &body)?;
-            println!("edited comment={comment_id}");
+            output.push_stdout_line(format!("Edited market comment: {comment_id}"));
+            output.setJsonStdout(json!({
+                "action": "edit",
+                "commentId": comment_id,
+            }));
             Ok(())
         }
         Some("delete") => {
             let comment_id = args.get(1).ok_or_else(|| "usage: operit2 market comment delete <commentId>".to_string())?;
             require_login(core)?;
             core.api().delete_entry_comment(comment_id)?;
-            println!("deleted comment={comment_id}");
+            output.push_stdout_line(format!("Deleted market comment: {comment_id}"));
+            output.setJsonStdout(json!({
+                "action": "delete",
+                "commentId": comment_id,
+            }));
             Ok(())
         }
         Some(entry_id) => {
@@ -488,7 +594,12 @@ fn run_comment(core: &mut MarketCommand, args: &[String]) -> Result<(), String> 
             require_login(core)?;
             let body = read_content_arg(body_arg)?;
             let comment_id = core.api().create_entry_comment(entry_id, &body)?;
-            println!("created comment={comment_id}");
+            output.push_stdout_line(format!("Created market comment: {comment_id}"));
+            output.setJsonStdout(json!({
+                "action": "create",
+                "entryId": entry_id,
+                "commentId": comment_id,
+            }));
             Ok(())
         }
         None => Err("usage: operit2 market comment <entryId> <body-or-@file> | comment edit <commentId> <body-or-@file> | comment delete <commentId>".to_string()),
@@ -497,19 +608,29 @@ fn run_comment(core: &mut MarketCommand, args: &[String]) -> Result<(), String> 
 
 // ── Publish ────────────────────────────────────────────────
 
-fn run_publish(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Dispatches marketplace publish subcommands.
+fn run_publish(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("artifact") => publish_artifact_cli(core, &args[1..]),
-        Some("repo") => publish_repo_cli(core, &args[1..]),
-        Some("version") => publish_version_cli(core, &args[1..]),
-        Some("update-entry") => update_entry_cli(core, &args[1..]),
+        Some("artifact") => publish_artifact_cli(core, &args[1..], output),
+        Some("repo") => publish_repo_cli(core, &args[1..], output),
+        Some("version") => publish_version_cli(core, &args[1..], output),
+        Some("update-entry") => update_entry_cli(core, &args[1..], output),
         _ => Err(
             "usage: operit2 market publish <artifact|repo|version|update-entry> ...".to_string(),
         ),
     }
 }
 
-fn publish_artifact_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Publishes one artifact-backed marketplace entry.
+fn publish_artifact_cli(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.len() < 20 {
         return Err("usage: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>".to_string());
     }
@@ -540,11 +661,16 @@ fn publish_artifact_cli(core: &mut MarketCommand, args: &[String]) -> Result<(),
         &args[18],
         &args[19],
     )?;
-    println_publish_response(resp);
+    write_publish_response(resp, output);
     Ok(())
 }
 
-fn publish_repo_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Publishes one repository-backed marketplace entry.
+fn publish_repo_cli(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.len() < 14 {
         return Err("usage: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->".to_string());
     }
@@ -569,19 +695,29 @@ fn publish_repo_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), Str
         parse_optional_string(&args[13]),
         parse_optional_content_arg(args.get(14).map(String::as_str).unwrap_or("-"))?,
     )?;
-    println_publish_response(resp);
+    write_publish_response(resp, output);
     Ok(())
 }
 
-fn publish_version_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Dispatches marketplace version publishing commands.
+fn publish_version_cli(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("artifact") => publish_artifact_version_cli(core, &args[1..]),
-        Some("repo") => publish_repo_version_cli(core, &args[1..]),
+        Some("artifact") => publish_artifact_version_cli(core, &args[1..], output),
+        Some("repo") => publish_repo_version_cli(core, &args[1..], output),
         _ => Err("usage: operit2 market publish version <artifact|repo> ...".to_string()),
     }
 }
 
-fn publish_artifact_version_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Publishes one artifact-backed marketplace entry version.
+fn publish_artifact_version_cli(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.len() < 15 {
         return Err("usage: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
     }
@@ -608,11 +744,16 @@ fn publish_artifact_version_cli(core: &mut MarketCommand, args: &[String]) -> Re
         parse_optional_string_arg(args.get(18)),
         parse_optional_bool_arg(args.get(19))?,
     )?;
-    println_publish_response(resp);
+    write_publish_response(resp, output);
     Ok(())
 }
 
-fn publish_repo_version_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Publishes one repository-backed marketplace entry version.
+fn publish_repo_version_cli(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.len() < 9 {
         return Err("usage: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
     }
@@ -634,11 +775,16 @@ fn publish_repo_version_cli(core: &mut MarketCommand, args: &[String]) -> Result
         parse_optional_string_arg(args.get(12)),
         parse_optional_bool_arg(args.get(13))?,
     )?;
-    println_publish_response(resp);
+    write_publish_response(resp, output);
     Ok(())
 }
 
-fn update_entry_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), String> {
+/// Updates marketplace entry metadata.
+fn update_entry_cli(
+    core: &mut MarketCommand,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     if args.len() < 6 {
         return Err("usage: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->".to_string());
     }
@@ -651,40 +797,50 @@ fn update_entry_cli(core: &mut MarketCommand, args: &[String]) -> Result<(), Str
         parse_optional_string(&args[4]),
         parse_optional_bool_str(&args[5])?,
     )?;
-    println_update_entry_response(resp);
+    write_update_entry_response(resp, output);
     Ok(())
 }
 
-fn println_publish_response(
+/// Writes a marketplace publish response as readable text and JSON.
+fn write_publish_response(
     resp: operit_providers::market::MarketStatsApiService::MarketPublishResponse,
+    output: &mut CoreCommandOutput,
 ) {
-    println!("published ok={} entry={}", resp.ok, resp.entry_id);
+    output.push_stdout_line(format!("Published market entry: {}", resp.entry_id));
+    output.push_stdout_line(format!("OK: {}", resp.ok));
     if !resp.version_id.trim().is_empty() {
-        println!("version_id={}", resp.version_id);
+        output.push_stdout_line(format!("Version: {}", resp.version_id));
     }
+    output.setJsonStdout(json!(resp));
 }
 
-fn println_update_entry_response(
+/// Writes a marketplace entry update response as readable text and JSON.
+fn write_update_entry_response(
     resp: operit_providers::market::MarketStatsApiService::MarketEntryUpdateResponse,
+    output: &mut CoreCommandOutput,
 ) {
-    println!("updated ok={} entry={}", resp.ok, resp.item.id);
-    println!("state={}", resp.item.state_code);
+    output.push_stdout_line(format!("Updated market entry: {}", resp.item.id));
+    output.push_stdout_line(format!("OK: {}", resp.ok));
+    output.push_stdout_line(format!("State: {}", resp.item.state_code));
+    output.setJsonStdout(json!(resp));
 }
 
 // ── Install ─────────────────────────────────────────────────
 
+/// Installs one marketplace entry according to its declared type.
 fn install_entry(
     core: &mut MarketCommand,
     entry_id: &str,
     client_app_version: &str,
     version_id: Option<&str>,
+    output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let entry = core.api().get_entry_by_id(entry_id)?;
     ensure_entry_app_version_supported(&entry, client_app_version, version_id)?;
     match entry.r#type.as_str() {
-        "skill" => install_skill_from_entry(core, entry),
-        "mcp" => install_mcp_from_entry(core, entry),
-        "package" | "script" => install_artifact_from_entry(core, entry, version_id),
+        "skill" => install_skill_from_entry(core, entry, output),
+        "mcp" => install_mcp_from_entry(core, entry, output),
+        "package" | "script" => install_artifact_from_entry(core, entry, version_id, output),
         other => Err(format!("unknown market type: {other}")),
     }
 }
@@ -800,41 +956,35 @@ fn parse_market_app_version_component(
         .map_err(|error| format!("{label} {component} component is invalid: {error}"))
 }
 
+/// Installs a skill marketplace entry from its repository source.
 fn install_skill_from_entry(
     core: &mut MarketCommand,
     entry: MarketEntrySummary,
+    output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let source_url = entry
-        .source
-        .as_ref()
-        .and_then(|s| {
-            if s.url.trim().is_empty() {
-                None
-            } else {
-                Some(s.url.clone())
-            }
-        })
-        .ok_or_else(|| "skill entry has no source url".to_string())?;
+    let source_url = entry_source_url(&entry, "skill")?;
     let result = core.skill_repo().importSkillFromGitHubRepo(&source_url);
-    println!("{result}");
+    output.push_stdout_line("Skill import");
+    output.push_stdout_line(format!("Entry: {} ({})", entry.title, entry.id));
+    output.push_stdout_line(format!("Source: {source_url}"));
+    output.push_stdout_line(result.clone());
+    output.setJsonStdout(json!({
+        "entryId": entry.id,
+        "type": entry.r#type,
+        "title": entry.title,
+        "sourceUrl": source_url,
+        "message": result,
+    }));
     Ok(())
 }
 
+/// Installs an MCP marketplace entry from its repository source.
 fn install_mcp_from_entry(
     core: &mut MarketCommand,
     entry: MarketEntrySummary,
+    output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let source_url = entry
-        .source
-        .as_ref()
-        .and_then(|s| {
-            if s.url.trim().is_empty() {
-                None
-            } else {
-                Some(s.url.clone())
-            }
-        })
-        .ok_or_else(|| "mcp entry has no source url".to_string())?;
+    let source_url = entry_source_url(&entry, "mcp")?;
     let plugin_id = sanitize_id(&entry.title);
     let metadata = operit_tools::tools::mcp_runtime::MCPLocalServer::PluginMetadata {
         name: entry.title.clone(),
@@ -848,14 +998,25 @@ fn install_mcp_from_entry(
     };
     match core.mcp_repo().installMCPServerWithObject(
         plugin_id.clone(),
-        source_url,
+        source_url.clone(),
         metadata,
         String::new(),
         |_| {},
     ) {
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
-            println!("installed={plugin_id}");
-            println!("path={pluginPath}");
+            output.push_stdout_line("MCP install");
+            output.push_stdout_line(format!("Entry: {} ({})", entry.title, entry.id));
+            output.push_stdout_line(format!("Plugin: {plugin_id}"));
+            output.push_stdout_line(format!("Path: {pluginPath}"));
+            output.setJsonStdout(json!({
+                "entryId": entry.id,
+                "type": entry.r#type,
+                "title": entry.title,
+                "sourceUrl": source_url,
+                "pluginId": plugin_id,
+                "path": pluginPath,
+                "installed": true,
+            }));
             Ok(())
         }
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => {
@@ -869,6 +1030,7 @@ fn install_artifact_from_entry(
     core: &mut MarketCommand,
     entry: MarketEntrySummary,
     version_id: Option<&str>,
+    output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     entry
         .artifact
@@ -898,18 +1060,53 @@ fn install_artifact_from_entry(
             .find(|asset| !asset.id.trim().is_empty())
             .ok_or_else(|| "entry has no downloadable asset".to_string())?
     };
+    let asset_id = asset.id.clone();
+    let asset_version_id = asset.version_id.clone();
+    let entry_id = entry.id.clone();
+    let entry_type = entry.r#type.clone();
+    let entry_title = entry.title.clone();
     let temp_file = download_asset_to_temp_file(core, asset)?;
     let package_manager = core.package_manager();
-    let result = package_manager.add_from_external(&temp_file.to_string_lossy());
-    let _ = fs::remove_file(&temp_file);
-    if !result
-        .to_ascii_lowercase()
-        .starts_with("successfully imported")
-    {
-        return Err(result);
-    }
-    println!("{result}");
+    let import_result = package_manager.add_from_external(&temp_file.to_string_lossy());
+    fs::remove_file(&temp_file)
+        .map_err(|error| format!("failed to remove market temp file: {error}"))?;
+    let import_result = import_result?;
+    write_external_package_import_result(&import_result, output);
+    output.setJsonStdout(json!({
+        "entryId": entry_id,
+        "type": entry_type,
+        "title": entry_title,
+        "assetId": asset_id,
+        "versionId": asset_version_id,
+        "import": import_result,
+    }));
     Ok(())
+}
+
+/// Extracts the non-empty source URL for a repository-backed market entry.
+fn entry_source_url(entry: &MarketEntrySummary, entry_type: &str) -> Result<String, String> {
+    let source = entry
+        .source
+        .as_ref()
+        .ok_or_else(|| format!("{entry_type} entry has no source url"))?;
+    let source_url = source.url.trim();
+    if source_url.is_empty() {
+        return Err(format!("{entry_type} entry has no source url"));
+    }
+    Ok(source_url.to_string())
+}
+
+/// Writes an external package import result in readable text form.
+fn write_external_package_import_result(
+    result: &ExternalPackageImportResult,
+    output: &mut CoreCommandOutput,
+) {
+    output.push_stdout_line(format!("Package imported: {}", result.packageName));
+    output.push_stdout_line(format!("Format: {}", result.packageFormat));
+    output.push_stdout_line(format!("Stored: {}", result.storedPath));
+    if let Some(source_notice) = &result.sourceNotice {
+        output.push_stdout_line(format!("Source notice: {source_notice}"));
+    }
 }
 
 /// Downloads one market asset to a temporary file whose extension matches the published asset.
@@ -957,6 +1154,7 @@ fn market_asset_temp_path(asset: &MarketEntryAsset) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Converts a market title into a stable identifier-safe string.
 fn sanitize_id(title: &str) -> String {
     title
         .chars()
@@ -983,6 +1181,7 @@ fn require_login(core: &mut MarketCommand) -> Result<(), String> {
     }
 }
 
+/// Parses an optional signed integer argument with an explicit default.
 fn parse_i32_opt(raw: Option<&String>, default: i32) -> Result<i32, String> {
     match raw {
         Some(s) => s.parse::<i32>().map_err(|e| e.to_string()),
@@ -990,6 +1189,7 @@ fn parse_i32_opt(raw: Option<&String>, default: i32) -> Result<i32, String> {
     }
 }
 
+/// Validates the market sort key against the supported values.
 fn normalize_sort(sort: &str) -> Result<&str, String> {
     match sort {
         "updated" | "likes" | "downloads" => Ok(sort),
@@ -999,6 +1199,7 @@ fn normalize_sort(sort: &str) -> Result<&str, String> {
     }
 }
 
+/// Converts blank and sentinel arguments into absent values.
 fn clean_optional_arg(value: Option<&str>) -> Option<&str> {
     value.and_then(|raw| {
         let trimmed = raw.trim();
@@ -1010,6 +1211,7 @@ fn clean_optional_arg(value: Option<&str>) -> Option<&str> {
     })
 }
 
+/// Parses a string argument that may intentionally be absent.
 fn parse_optional_string(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed == "-" {
@@ -1019,10 +1221,12 @@ fn parse_optional_string(value: &str) -> Option<String> {
     }
 }
 
+/// Parses an optional owned string argument from command input.
 fn parse_optional_string_arg(value: Option<&String>) -> Option<String> {
     value.and_then(|raw| parse_optional_string(raw))
 }
 
+/// Resolves an optional literal or file-backed content argument.
 fn parse_optional_content_arg(value: &str) -> Result<Option<String>, String> {
     match parse_optional_string(value) {
         Some(raw) => read_content_arg(&raw).map(Some),
@@ -1030,14 +1234,16 @@ fn parse_optional_content_arg(value: &str) -> Result<Option<String>, String> {
     }
 }
 
+/// Parses a boolean argument using the canonical true or false literals.
 fn parse_bool_arg(value: &str) -> Result<bool, String> {
     match value.trim() {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        other => Err(format!("invalid bool: {other}")),
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(format!("invalid bool: {other}; expected true | false")),
     }
 }
 
+/// Parses an optional canonical boolean string.
 fn parse_optional_bool_str(value: &str) -> Result<Option<bool>, String> {
     match parse_optional_string(value) {
         Some(raw) => parse_bool_arg(&raw).map(Some),
@@ -1045,6 +1251,7 @@ fn parse_optional_bool_str(value: &str) -> Result<Option<bool>, String> {
     }
 }
 
+/// Parses an optional canonical boolean command argument.
 fn parse_optional_bool_arg(value: Option<&String>) -> Result<Option<bool>, String> {
     match value {
         Some(raw) => parse_optional_bool_str(raw),
@@ -1052,10 +1259,12 @@ fn parse_optional_bool_arg(value: Option<&String>) -> Result<Option<bool>, Strin
     }
 }
 
+/// Returns the effective download count exposed by a market entry.
 fn entry_downloads(entry: &MarketEntrySummary) -> i32 {
     entry.download_count.max(entry.downloads)
 }
 
+/// Returns the current Unix timestamp in milliseconds for temporary names.
 fn current_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1346,51 +1555,5 @@ mod tests {
     #[test]
     fn invalid_featured_sort_is_rejected_without_network() {
         run_market_cli(&["rank", "featured"]);
-    }
-
-    fn run_online_rank(sort: &str) -> String {
-        setDefaultHttpHost(Arc::new(ReqwestTestHttpHost));
-        let mut root = std::env::temp_dir();
-        root.push(format!("operit_market_online_test_{}", current_millis()));
-        std::fs::create_dir_all(&root).expect("create test runtime root");
-        let application = market_test_application(root);
-        let mut out = CoreCommandOutput::new();
-        let args = vec!["rank".to_string(), sort.to_string(), "1".to_string()];
-        run_market_command(&application, &args, &mut out)
-            .expect("online rank command should read cloud market");
-        out.stdout
-    }
-
-    fn assert_online_rank_output(stdout: &str, sort: &str) {
-        assert!(
-            stdout.contains(&format!("sort={sort}")),
-            "stdout was: {stdout}"
-        );
-        assert!(stdout.contains("page=1"), "stdout was: {stdout}");
-        assert!(
-            stdout.contains("total=") && !stdout.contains("total=0"),
-            "stdout was: {stdout}"
-        );
-        assert!(
-            stdout.contains("package/")
-                || stdout.contains("mcp/")
-                || stdout.contains("skill/")
-                || stdout.contains("script/"),
-            "stdout was: {stdout}"
-        );
-    }
-
-    #[test]
-    #[ignore = "hits api.operit.app"]
-    fn online_rank_command_reads_cloud_market_v2() {
-        let stdout = run_online_rank("updated");
-        assert_online_rank_output(&stdout, "updated");
-    }
-
-    #[test]
-    #[ignore = "hits api.operit.app"]
-    fn online_rank_command_reads_cloud_downloads_market_v2() {
-        let stdout = run_online_rank("downloads");
-        assert_online_rank_output(&stdout, "downloads");
     }
 }

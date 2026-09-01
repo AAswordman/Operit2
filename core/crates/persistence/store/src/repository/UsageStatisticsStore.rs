@@ -32,6 +32,40 @@ pub struct UsageRequestRecord {
     pub cachedInputTokens: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+/// Stores one completed token-usage ledger entry using the OP1 accounting schema.
+pub struct TokenUsageRecord {
+    pub id: i64,
+    pub importKey: Option<String>,
+    pub occurredAtMs: Option<i64>,
+    pub configId: String,
+    pub provider: String,
+    pub model: String,
+    pub requestCount: i64,
+    pub uncachedInputTokens: Option<i64>,
+    pub cachedInputTokens: Option<i64>,
+    pub cacheWriteTokens: Option<i64>,
+    pub totalInputTokens: Option<i64>,
+    pub outputTokens: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+/// Stores one configurable provider/model pricing identity from the OP1 schema.
+pub struct TokenStatsModel {
+    pub configId: String,
+    pub provider: String,
+    pub model: String,
+    pub billingMode: Option<String>,
+    pub currency: Option<String>,
+    pub inputPricePerMillion: Option<f64>,
+    pub cachedInputPricePerMillion: Option<f64>,
+    pub cacheWritePricePerMillion: Option<f64>,
+    pub outputPricePerMillion: Option<f64>,
+    pub pricePerRequest: Option<f64>,
+}
+
 pub struct UsageStatisticsStore;
 
 impl UsageStatisticsStore {
@@ -69,6 +103,191 @@ impl UsageStatisticsStore {
         database
             .store()
             .execute("DELETE FROM usage_request_records", sqliteParams![])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    /// Reads every OP1-compatible token ledger entry in chronological order.
+    pub fn getAllTokenUsageRecords(&self) -> Result<Vec<TokenUsageRecord>, String> {
+        let database = AppDatabase::default().map_err(|error| error.to_string())?;
+        database
+            .store()
+            .queryRows(
+                r#"
+                SELECT id, importKey, occurredAtMs, configId, provider, model,
+                    requestCount, uncachedInputTokens, cachedInputTokens,
+                    cacheWriteTokens, totalInputTokens, outputTokens
+                FROM token_usage_records
+                ORDER BY occurredAtMs IS NULL ASC, occurredAtMs ASC, id ASC
+                "#,
+                sqliteParams![],
+            )
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|row| mapTokenUsageRecord(&row).map_err(|error| error.to_string()))
+            .collect()
+    }
+
+    #[allow(non_snake_case)]
+    /// Reads every configured provider/model pricing identity.
+    pub fn getAllTokenStatsModels(&self) -> Result<Vec<TokenStatsModel>, String> {
+        let database = AppDatabase::default().map_err(|error| error.to_string())?;
+        database
+            .store()
+            .queryRows(
+                r#"
+                SELECT configId, provider, model, billingMode, currency,
+                    inputPricePerMillion, cachedInputPricePerMillion,
+                    cacheWritePricePerMillion, outputPricePerMillion, pricePerRequest
+                FROM token_stats_models
+                ORDER BY provider ASC, model ASC, configId ASC
+                "#,
+                sqliteParams![],
+            )
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|row| mapTokenStatsModel(&row).map_err(|error| error.to_string()))
+            .collect()
+    }
+
+    #[allow(non_snake_case)]
+    /// Removes token ledger entries while retaining configured pricing identities.
+    pub fn clearAllTokenUsageRecords(&self) -> Result<(), String> {
+        let database = AppDatabase::default().map_err(|error| error.to_string())?;
+        database
+            .store()
+            .execute("DELETE FROM token_usage_records", sqliteParams![])
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    /// Inserts one OP1-compatible token ledger entry and returns its stored row.
+    pub fn recordTokenUsage(
+        &self,
+        importKey: Option<String>,
+        occurredAtMs: Option<i64>,
+        configId: String,
+        provider: String,
+        model: String,
+        requestCount: i64,
+        uncachedInputTokens: Option<i64>,
+        cachedInputTokens: Option<i64>,
+        cacheWriteTokens: Option<i64>,
+        totalInputTokens: Option<i64>,
+        outputTokens: Option<i64>,
+    ) -> Result<TokenUsageRecord, String> {
+        let database = AppDatabase::default().map_err(|error| error.to_string())?;
+        database
+            .store()
+            .execute(
+                r#"
+                INSERT INTO token_usage_records (
+                    importKey, occurredAtMs, configId, provider, model, requestCount,
+                    uncachedInputTokens, cachedInputTokens, cacheWriteTokens,
+                    totalInputTokens, outputTokens
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                ON CONFLICT(importKey) DO UPDATE SET
+                    occurredAtMs = excluded.occurredAtMs,
+                    configId = excluded.configId,
+                    provider = excluded.provider,
+                    model = excluded.model,
+                    requestCount = excluded.requestCount,
+                    uncachedInputTokens = excluded.uncachedInputTokens,
+                    cachedInputTokens = excluded.cachedInputTokens,
+                    cacheWriteTokens = excluded.cacheWriteTokens,
+                    totalInputTokens = excluded.totalInputTokens,
+                    outputTokens = excluded.outputTokens
+                "#,
+                sqliteParams![
+                    importKey,
+                    occurredAtMs,
+                    configId,
+                    provider,
+                    model,
+                    requestCount,
+                    uncachedInputTokens,
+                    cachedInputTokens,
+                    cacheWriteTokens,
+                    totalInputTokens,
+                    outputTokens,
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        let id = if let Some(importKey) = importKey.as_ref() {
+            database
+                .store()
+                .queryRows(
+                    "SELECT id FROM token_usage_records WHERE importKey = ?1",
+                    sqliteParams![importKey],
+                )
+                .map_err(|error| error.to_string())?
+                .first()
+                .ok_or_else(|| "token usage upsert did not return its row".to_string())?
+                .get::<usize, i64>(0)
+                .map_err(|error| error.to_string())?
+        } else {
+            database
+                .store()
+                .queryRows("SELECT last_insert_rowid()", sqliteParams![])
+                .map_err(|error| error.to_string())?
+                .first()
+                .ok_or_else(|| "token usage insert did not return a row id".to_string())?
+                .get::<usize, i64>(0)
+                .map_err(|error| error.to_string())?
+        };
+        Ok(TokenUsageRecord {
+            id,
+            importKey,
+            occurredAtMs,
+            configId,
+            provider,
+            model,
+            requestCount,
+            uncachedInputTokens,
+            cachedInputTokens,
+            cacheWriteTokens,
+            totalInputTokens,
+            outputTokens,
+        })
+    }
+
+    #[allow(non_snake_case)]
+    /// Upserts one provider/model pricing identity.
+    pub fn upsertTokenStatsModel(&self, model: TokenStatsModel) -> Result<(), String> {
+        let database = AppDatabase::default().map_err(|error| error.to_string())?;
+        database
+            .store()
+            .execute(
+                r#"
+                INSERT INTO token_stats_models (
+                    configId, provider, model, billingMode, currency,
+                    inputPricePerMillion, cachedInputPricePerMillion,
+                    cacheWritePricePerMillion, outputPricePerMillion, pricePerRequest
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                ON CONFLICT(configId, provider, model) DO UPDATE SET
+                    billingMode = excluded.billingMode,
+                    currency = excluded.currency,
+                    inputPricePerMillion = excluded.inputPricePerMillion,
+                    cachedInputPricePerMillion = excluded.cachedInputPricePerMillion,
+                    cacheWritePricePerMillion = excluded.cacheWritePricePerMillion,
+                    outputPricePerMillion = excluded.outputPricePerMillion,
+                    pricePerRequest = excluded.pricePerRequest
+                "#,
+                sqliteParams![
+                    model.configId,
+                    model.provider,
+                    model.model,
+                    model.billingMode,
+                    model.currency,
+                    model.inputPricePerMillion,
+                    model.cachedInputPricePerMillion,
+                    model.cacheWritePricePerMillion,
+                    model.outputPricePerMillion,
+                    model.pricePerRequest,
+                ],
+            )
             .map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -126,6 +345,19 @@ impl UsageStatisticsStore {
                 ],
             )
             .map_err(|error| error.to_string())?;
+        self.recordTokenUsage(
+            None,
+            Some(record.createdAtMs),
+            String::new(),
+            record.provider.clone(),
+            record.modelName.clone(),
+            1,
+            Some((inputTokens - cachedInputTokens).max(0)),
+            Some(cachedInputTokens),
+            Some(0),
+            Some(inputTokens),
+            Some(outputTokens),
+        )?;
         Ok(record)
     }
 }
@@ -147,6 +379,42 @@ fn mapUsageRequestRecord(row: &SqliteRow) -> Result<UsageRequestRecord, SqliteSt
         inputTokens: row.get("inputTokens")?,
         outputTokens: row.get("outputTokens")?,
         cachedInputTokens: row.get("cachedInputTokens")?,
+    })
+}
+
+#[allow(non_snake_case)]
+/// Maps one token ledger row while preserving nullable usage values.
+fn mapTokenUsageRecord(row: &SqliteRow) -> Result<TokenUsageRecord, SqliteStoreError> {
+    Ok(TokenUsageRecord {
+        id: row.get("id")?,
+        importKey: row.get("importKey")?,
+        occurredAtMs: row.get("occurredAtMs")?,
+        configId: row.get("configId")?,
+        provider: row.get("provider")?,
+        model: row.get("model")?,
+        requestCount: row.get("requestCount")?,
+        uncachedInputTokens: row.get("uncachedInputTokens")?,
+        cachedInputTokens: row.get("cachedInputTokens")?,
+        cacheWriteTokens: row.get("cacheWriteTokens")?,
+        totalInputTokens: row.get("totalInputTokens")?,
+        outputTokens: row.get("outputTokens")?,
+    })
+}
+
+#[allow(non_snake_case)]
+/// Maps one token pricing row into its serializable model.
+fn mapTokenStatsModel(row: &SqliteRow) -> Result<TokenStatsModel, SqliteStoreError> {
+    Ok(TokenStatsModel {
+        configId: row.get("configId")?,
+        provider: row.get("provider")?,
+        model: row.get("model")?,
+        billingMode: row.get("billingMode")?,
+        currency: row.get("currency")?,
+        inputPricePerMillion: row.get("inputPricePerMillion")?,
+        cachedInputPricePerMillion: row.get("cachedInputPricePerMillion")?,
+        cacheWritePricePerMillion: row.get("cacheWritePricePerMillion")?,
+        outputPricePerMillion: row.get("outputPricePerMillion")?,
+        pricePerRequest: row.get("pricePerRequest")?,
     })
 }
 

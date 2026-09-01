@@ -874,6 +874,18 @@ impl ChatHistoryDelegate {
             .collect()
     }
 
+    /// Loads runtime chat messages through one inclusive message timestamp.
+    #[allow(non_snake_case)]
+    pub fn getRuntimeChatHistoryUpTo(
+        &self,
+        chatId: String,
+        upToTimestampInclusive: i64,
+    ) -> Vec<ChatMessage> {
+        self.chatHistoryManager
+            .loadMessagesAfterLatestSummaryInRange(chatId, None, Some(upToTimestampInclusive))
+            .expect("ChatHistoryManager.loadMessagesAfterLatestSummaryInRange must succeed")
+    }
+
     #[allow(non_snake_case)]
     /// Loads messages used when inserting or refreshing conversation summaries.
     pub fn loadMessagesForSummaryInsertion(
@@ -1054,12 +1066,13 @@ impl ChatHistoryDelegate {
     /// Loads the newest indexed display window for one active chat.
     pub fn loadChatMessages(&mut self, chatId: String) {
         self.allowAddMessage = false;
-        let currentSummary = self
+        let previousMessages = self
             .openedChatMessageFlowSnapshot(&chatId)
-            .map(|messages| chat_flow_trace_summary(&messages))
-            .unwrap_or_else(|| "none".to_string());
-        let messages =
+            .unwrap_or_default();
+        let currentSummary = chat_flow_trace_summary(&previousMessages);
+        let mut messages =
             self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
+        preserveLiveMessageStreams(&previousMessages, &mut messages);
         let loadedSummary = chat_flow_trace_summary(&messages);
         let hasOlder = messages
             .first()
@@ -1748,9 +1761,7 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .selectMessageVariant(chatId.clone(), timestamp, selectedVariantIndex)
             .expect("ChatHistoryManager.selectMessageVariant must select the requested variant");
-        self.updateOpenedChatMessage(&chatId, timestamp, |message| {
-            message.selectedVariantIndex = selectedVariantIndex;
-        });
+        self.reloadCurrentChatDisplayHistory(chatId);
     }
 
     #[allow(non_snake_case)]

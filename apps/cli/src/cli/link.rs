@@ -156,6 +156,7 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
     }
 }
 
+/// Performs a remote Link hello handshake.
 async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
     let (url, token) =
         parse_remote_url_token(args, "usage: operit2 cli link hello <url> --token <token>")?;
@@ -163,10 +164,11 @@ async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
     let client = RemoteLinkClient::new(url);
     let token_hash = link_token_hash(&token);
     let hello = client.hello(&token_hash).await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&hello).map_err(|error| error.to_string())?
-    );
+    if cli_json_mode() {
+        emit_cli_json(serde_json::to_value(&hello).map_err(|error| error.to_string())?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&hello).map_err(|error| error.to_string())?);
+    }
     Ok(())
 }
 
@@ -197,21 +199,23 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
         .accessServices()
         .discoverSpaces(timeout_ms)
         .await?;
-    for space in spaces {
-        println!(
-            "device space={} id={} devices={}",
-            space.spaceName, space.spaceId, space.memberCount
-        );
-        for device in space.devices {
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "spaces": spaces }));
+    } else {
+        for space in spaces {
             println!(
-                "  device={} id={} address={}",
-                device.displayName, device.deviceId, device.baseUrl
+                "{} ({}) — {} devices",
+                space.spaceName, space.spaceId, space.memberCount
             );
+            for device in space.devices {
+                println!("  {} ({}) — {}", device.displayName, device.deviceId, device.baseUrl);
+            }
         }
     }
     Ok(())
 }
 
+/// Pairs with a remote Link endpoint and saves the resulting session.
 async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: operit2 cli link connect <url> --token <token> --save <name> [--transport <http|ws>]";
     let (url, token, save_name, transport) = parse_remote_url_token_save(args, USAGE)?;
@@ -222,14 +226,12 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     let pairing = service
         .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client"))
         .await?;
-    println!(
-        "device={} id={}",
-        pairing.coreDeviceInfo.displayName(),
-        pairing.coreDeviceId
-    );
-    println!("pairing started: {}", pairing.pairingId);
-    println!("check the server terminal for pairing code");
-    print!("pairing code> ");
+    if !cli_json_mode() {
+        println!("Pairing with {} ({})", pairing.coreDeviceInfo.displayName(), pairing.coreDeviceId);
+        println!("Pairing started: {}", pairing.pairingId);
+        println!("Check the server terminal for the pairing code.");
+        print!("Pairing code: ");
+    }
     io::stdout().flush().map_err(|error| error.to_string())?;
     let mut code = String::new();
     io::stdin()
@@ -241,14 +243,19 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     if let Some(transport) = transport {
         session = service.setPairedRemoteTransport(name.clone(), transport)?;
     }
-    println!(
-        "paired device={} deviceId={} localDeviceId={}",
-        session.remoteDeviceInfo.displayName(),
-        session.coreDeviceId,
-        session.deviceId
-    );
-    println!("device paired: {name}");
-    println!("join its device space with: operit2 cli link space join {name}");
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({
+            "name": name,
+            "pairedDevice": session.remoteDeviceInfo.displayName(),
+            "deviceId": session.coreDeviceId,
+            "localDeviceId": session.deviceId,
+            "transport": link_transport_name(&session.transport),
+        }));
+    } else {
+        println!("Paired device {} ({})", session.remoteDeviceInfo.displayName(), session.coreDeviceId);
+        println!("Saved as: {name}");
+        println!("Join its device space with: operit2 cli link space join {name}");
+    }
     Ok(())
 }
 
@@ -267,67 +274,70 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None | Some("show") if args.len() <= 1 => {
             let space = service.deviceSpace()?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&space).map_err(|error| error.to_string())?
-            );
+            if cli_json_mode() {
+                emit_cli_json(serde_json::to_value(&space).map_err(|error| error.to_string())?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&space).map_err(|error| error.to_string())?);
+            }
             Ok(())
         }
         Some("rename") if args.len() == 2 => {
             let space = service.renameDeviceSpace(args[1].clone())?;
-            println!("device space renamed: {}", space.spaceName);
+            if cli_json_mode() { emit_cli_json(serde_json::json!(space)); }
+            else { println!("Device space renamed to {}", space.spaceName); }
             Ok(())
         }
         Some("status") if args.len() == 2 => {
             let status = service.pairedDeviceStatus(args[1].clone()).await?;
-            println!("status={status:?}");
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "status": format!("{status:?}") })); }
+            else { println!("Status: {status:?}"); }
             Ok(())
         }
         Some("disconnect") if args.len() == 2 => {
             service.disconnectDeviceSpaceConnection(args[1].clone())?;
-            println!("device space connection disconnected: {}", args[1]);
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "deviceId": args[1], "disconnected": true })); }
+            else { println!("Disconnected device {}", args[1]); }
             Ok(())
         }
         Some("remove") if args.len() == 2 => {
             service.removePairedDevice(args[1].clone())?;
-            println!("paired device removed: {}", args[1]);
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "deviceId": args[1], "removed": true })); }
+            else { println!("Removed paired device {}", args[1]); }
             Ok(())
         }
         Some("join") if args.len() == 2 => {
             let space = service.joinPairedDeviceSpace(args[1].clone()).await?;
-            println!(
-                "joined device space: {} ({} devices)",
-                space.spaceName,
-                space.members.len()
-            );
+            if cli_json_mode() { emit_cli_json(serde_json::json!(space)); }
+            else { println!("Joined device space {} ({} devices)", space.spaceName, space.members.len()); }
             Ok(())
         }
         Some("leave") if args.len() == 1 => {
             let space = service.leaveDeviceSpace()?;
-            println!("left device space; current space: {}", space.spaceName);
+            if cli_json_mode() { emit_cli_json(serde_json::json!(space)); }
+            else { println!("Left device space; current space: {}", space.spaceName); }
             Ok(())
         }
         _ => Err("usage: operit2 cli link space <show|status <device-id>|rename <name>|join <paired-session>|disconnect <device-id>|remove <device-id>|leave>".to_string()),
     }
 }
 
+/// Lists saved outbound Link sessions.
 async fn run_link_sessions_command() -> Result<(), String> {
     let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let sessions = load_link_sessions(&coreApplication.accessStore())?;
-    for (name, session) in sessions {
-        println!(
-            "{}\t{}\t{}\t{}",
-            name,
-            session.remoteDeviceInfo.displayName(),
-            session.baseUrl,
-            session.coreDeviceId
-        );
-        println!("  transport={}", link_transport_name(&session.transport));
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "sessions": sessions }));
+    } else {
+        for (name, session) in sessions {
+            println!("{} — {} — {} — {}", name, session.remoteDeviceInfo.displayName(), session.baseUrl, session.coreDeviceId);
+            println!("  Transport: {}", link_transport_name(&session.transport));
+        }
     }
     Ok(())
 }
 
 /// Changes the concrete carrier used by one saved paired session.
+/// Updates the transport preference for one saved Link session.
 async fn run_link_transport_command(args: &[String]) -> Result<(), String> {
     if args.len() != 2 {
         return Err("usage: operit2 cli link transport <session> <http|ws>".to_string());
@@ -338,47 +348,53 @@ async fn run_link_transport_command(args: &[String]) -> Result<(), String> {
     let mut record = load_link_session_record(&accessStore, name)?;
     record.transport = parse_link_transport(&args[1])?;
     accessStore.saveOutboundSession(name.clone(), record.clone())?;
-    println!(
-        "session transport updated: {}",
-        link_transport_name(&record.transport)
-    );
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "name": name, "transport": link_transport_name(&record.transport) }));
+    } else {
+        println!("Session transport updated: {}", link_transport_name(&record.transport));
+    }
     Ok(())
 }
 
+/// Deletes one saved outbound Link session.
 async fn run_link_session_delete_command(args: &[String]) -> Result<(), String> {
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link session-delete <name>".to_string())?;
     let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     coreApplication.accessStore().removeOutboundSession(name)?;
-    println!("session deleted: {name}");
+    if cli_json_mode() { emit_cli_json(serde_json::json!({ "name": name, "deleted": true })); }
+    else { println!("Deleted session {name}"); }
     Ok(())
 }
 
+/// Lists inbound Link sessions accepted by the local server.
 async fn run_link_accepted_sessions_command() -> Result<(), String> {
     let coreApplication = create_cli_core_application_without_space_sync("server").await?;
     let sessions = load_link_server_sessions(&coreApplication.accessStore())?;
-    for (session_id, session) in sessions {
-        println!(
-            "{}\t{}\t{}",
-            session_id,
-            session.deviceInfo.displayName(),
-            session.deviceId
-        );
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "sessions": sessions }));
+    } else {
+        for (session_id, session) in sessions {
+            println!("{} — {} ({})", session_id, session.deviceInfo.displayName(), session.deviceId);
+        }
     }
     Ok(())
 }
 
+/// Deletes one accepted inbound Link session.
 async fn run_link_accepted_session_delete_command(args: &[String]) -> Result<(), String> {
     let session_id = args.get(0).ok_or_else(|| {
         "usage: operit2 cli link accepted-session-delete <session-id>".to_string()
     })?;
     let coreApplication = create_cli_core_application_without_space_sync("server").await?;
     remove_link_server_session(&coreApplication.accessStore(), session_id)?;
-    println!("accepted session deleted: {session_id}");
+    if cli_json_mode() { emit_cli_json(serde_json::json!({ "sessionId": session_id, "deleted": true })); }
+    else { println!("Deleted accepted session {session_id}"); }
     Ok(())
 }
 
+/// Pings one saved Link session and reports its negotiated transports.
 async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     let name = args
         .get(0)
@@ -386,18 +402,19 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let session = load_link_session_resolved(&coreApplication.accessStore(), name).await?;
     let info = session.sessionInfo().await?;
-    println!(
-        "session active remote={} core={} client={} transports={}",
-        info.coreDeviceInfo.displayName(),
-        info.coreDeviceId,
-        info.clientDeviceId,
-        info.transports.join(",")
-    );
+    if cli_json_mode() {
+        emit_cli_json(serde_json::to_value(&info).map_err(|error| error.to_string())?);
+    } else {
+        println!("Session active: {} ({})", info.coreDeviceInfo.displayName(), info.coreDeviceId);
+        println!("Client device: {}", info.clientDeviceId);
+        println!("Transports: {}", info.transports.join(", "));
+    }
     Ok(())
 }
 
 /// Proves routed StateFlow values and embedded response streams over one real paired CLI session.
 async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
+    let json_mode = cli_json_mode();
     let name = args
         .get(0)
         .ok_or_else(|| "usage: operit2 cli link stream-probe <session>".to_string())?;
@@ -406,20 +423,14 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
     let record = load_link_session_record(&accessStore, name)?;
     let service = coreApplication.accessServices();
     let space = service.joinPairedDeviceSpace(name.clone()).await?;
-    println!(
-        "probe.space_joined name={} remoteNode={} members={}",
-        name,
-        record.coreDeviceId,
-        space.members.len()
-    );
+    if !json_mode {
+        println!("Probe joined space {name} on {} ({} members)", record.coreDeviceId, space.members.len());
+    }
 
     let chatId = format!("route-probe-{}", link_probe_unix_millis());
     CoreNodeBindingStore::new(coreApplication.nodeRuntime().runtimeStorageHost())?
         .create(&chatId, &record.coreDeviceId)?;
-    println!(
-        "probe.binding_created chatId={} target={}",
-        chatId, record.coreDeviceId
-    );
+    if !json_mode { println!("Probe binding created for chat {chatId} -> {}", record.coreDeviceId); }
 
     let targetObjectId =
         operit_proxy_local::LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
@@ -448,22 +459,14 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
         .iter()
         .filter(|message| message.contentStream.is_some())
         .count();
-    println!(
-        "probe.flow_event kind={:?} messages={} contentStreams={}",
-        flowEvent.kind,
-        messages.len(),
-        contentStreamCount
-    );
+    if !json_mode { println!("Probe flow event {:?}: {} messages, {} content streams", flowEvent.kind, messages.len(), contentStreamCount); }
     if messages.is_empty() || contentStreamCount == 0 {
         return Err("probe flow did not expose a ChatMessage.contentStream".to_string());
     }
 
     let descriptor = find_core_stream_descriptor(&flowEvent.value)
         .ok_or_else(|| "probe flow did not contain a $coreStream descriptor".to_string())?;
-    println!(
-        "probe.stream_descriptor streamId={} target={} property={}",
-        descriptor.streamId, descriptor.targetObjectId, descriptor.propertyName
-    );
+    if !json_mode { println!("Probe stream descriptor {} -> {}.{}", descriptor.streamId, descriptor.targetObjectId, descriptor.propertyName); }
     if descriptor.targetObjectId != CORE_STREAM_POOL_OBJECT_ID
         || descriptor.propertyName != "openCoreStream"
     {
@@ -488,12 +491,7 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
             recv_link_probe_event(&mut embeddedStream, "route probe embedded stream").await?;
         let markdown: MarkdownStreamEvent =
             operit_link::fromCoreValue(event.value.clone()).map_err(|error| error.to_string())?;
-        println!(
-            "probe.stream_event kind={:?} markdownType={} value={}",
-            event.kind,
-            markdown.eventType,
-            markdown.value.clone().unwrap_or_default()
-        );
+        if !json_mode { println!("Probe stream event {:?}: {} {}", event.kind, markdown.eventType, markdown.value.clone().unwrap_or_default()); }
         match event.kind {
             CoreEventKind::Changed => {
                 changedCount += 1;
@@ -519,10 +517,21 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
     if chunkText != "rslink-route-probe / chunk-one / chunk-two" {
         return Err(format!("probe embedded stream chunks invalid: {chunkText}"));
     }
-    println!(
-        "probe.ok changed={} completed={} text={}",
-        changedCount, completedCount, chunkText
-    );
+    if json_mode {
+        emit_cli_json(serde_json::json!({
+            "ok": true,
+            "space": name,
+            "remoteNode": record.coreDeviceId,
+            "chatId": chatId,
+            "messages": messages.len(),
+            "contentStreams": contentStreamCount,
+            "changed": changedCount,
+            "completed": completedCount,
+            "text": chunkText,
+        }));
+    } else {
+        println!("Probe succeeded: {changedCount} changes, {completedCount} completion, text: {chunkText}");
+    }
     Ok(())
 }
 
@@ -564,7 +573,11 @@ async fn run_link_refresh_command(args: &[String]) -> Result<(), String> {
         }
     }
     write_link_sessions(&accessStore, sessions)?;
-    println!("sessions refreshed: updated={updated_count}");
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "updated": updated_count }));
+    } else {
+        println!("Sessions refreshed: {updated_count} updated");
+    }
     Ok(())
 }
 
@@ -742,7 +755,9 @@ async fn refresh_link_session_record_from_devices(
         return Ok((record, false));
     }
     verify_link_session_record(&updated).await?;
-    eprintln!("session address updated: {name} {}", updated.baseUrl);
+    if !cli_json_mode() {
+        eprintln!("session address updated: {name} {}", updated.baseUrl);
+    }
     Ok((updated, true))
 }
 
@@ -812,7 +827,12 @@ fn remove_link_server_session(
     accessStore.removeInboundSession(session_id)
 }
 
+/// Prints Link command usage in the selected output format.
 fn print_link_usage() {
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "usage": "operit2 cli link <serve|discover|hello|connect|space|sessions|transport|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>" }));
+        return;
+    }
     println!("operit2 cli link serve [--bind <addr:port>] [--token <token>]");
     println!("operit2 cli link discover [--timeout-ms <ms>]");
     println!("operit2 cli link hello <url> --token <token>");

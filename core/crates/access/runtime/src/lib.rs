@@ -1240,6 +1240,8 @@ pub struct PairStartRequest {
     pub clientDeviceInfo: RemoteDeviceInfo,
     pub clientPublicKey: String,
     pub clientNonce: String,
+    #[serde(default)]
+    pub autoBootstrap: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1257,6 +1259,8 @@ pub struct PairFinishRequest {
     pub pairingId: String,
     pub pairingCode: String,
     pub clientProof: String,
+    #[serde(default)]
+    pub tokenHash: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1517,6 +1521,18 @@ impl RemoteLinkClient {
         clientDeviceId: String,
         clientDeviceInfo: RemoteDeviceInfo,
     ) -> Result<PairStartState, String> {
+        self.pairStartInternal(tokenHash, clientDeviceId, clientDeviceInfo, false)
+            .await
+    }
+
+    /// Starts one pairing transaction with an explicit bootstrap mode.
+    async fn pairStartInternal(
+        &self,
+        tokenHash: &str,
+        clientDeviceId: String,
+        clientDeviceInfo: RemoteDeviceInfo,
+        autoBootstrap: bool,
+    ) -> Result<PairStartState, String> {
         let clientSecret = StaticSecret::random_from_rng(OsRng);
         let clientPublic = PublicKey::from(&clientSecret);
         if clientDeviceId.trim().is_empty() {
@@ -1530,6 +1546,7 @@ impl RemoteLinkClient {
             clientDeviceInfo: clientDeviceInfo.clone(),
             clientPublicKey: public_key_to_string(&clientPublic),
             clientNonce: clientNonce.clone(),
+            autoBootstrap,
         };
         let response: PairStartResponse = decodeRemoteHttpJson(remoteHttpJsonRequest(
             format!("{}/link/pair/start", self.baseUrl),
@@ -1566,6 +1583,58 @@ impl RemoteLinkClient {
             pairingId: state.pairingId.clone(),
             pairingCode: pairingCode.trim().to_string(),
             clientProof,
+            tokenHash: None,
+        };
+        let response: PairFinishResponse = decodeRemoteHttpJson(remoteHttpJsonRequest(
+            format!("{}/link/pair/finish", self.baseUrl),
+            &request,
+        )?)?;
+        let expectedCoreProof = proof(
+            &state.sharedSecret,
+            &state.clientNonce,
+            &state.serverNonce,
+            "core",
+        );
+        if response.coreProof != expectedCoreProof {
+            return Err("core proof mismatch".to_string());
+        }
+        Ok(PairedRemoteSession {
+            baseUrl: self.baseUrl.clone(),
+            sessionId: response.sessionId,
+            deviceId: state.clientDeviceId.clone(),
+            coreDeviceId: state.coreDeviceId.clone(),
+            remoteDeviceInfo: state.coreDeviceInfo.clone(),
+            pairingServiceVersion: response.pairingServiceVersion,
+            transport: LinkTransportPreference::Http,
+            sessionSecret: session_secret(
+                &state.sharedSecret,
+                &state.clientNonce,
+                &state.serverNonce,
+            ),
+        })
+    }
+
+    /// Completes one pairing transaction using possession of the Link token.
+    pub async fn pairBootstrap(
+        &self,
+        tokenHash: &str,
+        clientDeviceId: String,
+        clientDeviceInfo: RemoteDeviceInfo,
+    ) -> Result<PairedRemoteSession, String> {
+        let state = self
+            .pairStartInternal(tokenHash, clientDeviceId, clientDeviceInfo, true)
+            .await?;
+        let clientProof = proof(
+            &state.sharedSecret,
+            &state.clientNonce,
+            &state.serverNonce,
+            "client",
+        );
+        let request = PairFinishRequest {
+            pairingId: state.pairingId.clone(),
+            pairingCode: String::new(),
+            clientProof,
+            tokenHash: Some(tokenHash.to_string()),
         };
         let response: PairFinishResponse = decodeRemoteHttpJson(remoteHttpJsonRequest(
             format!("{}/link/pair/finish", self.baseUrl),
@@ -2041,14 +2110,16 @@ async fn pair_start(
             sharedSecret,
         },
     );
-    publishOwnerWebAccessPairing(RuntimeHostInteractionWebAccessPairingPayload {
-        pairingId: pairingRecord.pairingId,
-        clientDeviceId: pairingRecord.clientDeviceId,
-        clientPlatform: pairingRecord.clientDeviceInfo.platform,
-        clientModel: pairingRecord.clientDeviceInfo.model,
-        pairingCode: pairingRecord.pairingCode,
-        createdAt: pairingRecord.createdAt,
-    });
+    if !request.autoBootstrap {
+        publishOwnerWebAccessPairing(RuntimeHostInteractionWebAccessPairingPayload {
+            pairingId: pairingRecord.pairingId,
+            clientDeviceId: pairingRecord.clientDeviceId,
+            clientPlatform: pairingRecord.clientDeviceInfo.platform,
+            clientModel: pairingRecord.clientDeviceInfo.model,
+            pairingCode: pairingRecord.pairingCode,
+            createdAt: pairingRecord.createdAt,
+        });
+    }
     Json(PairStartResponse {
         pairingId,
         pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
@@ -2068,7 +2139,12 @@ async fn pair_finish(
     let Some(pairing) = state.pairings.lock().await.get(&request.pairingId).cloned() else {
         return bad_request("pairing not found");
     };
-    if pairing.pairingCode != request.pairingCode.trim() {
+    let tokenAuthorized = request
+        .tokenHash
+        .as_deref()
+        .map(|tokenHash| token_hash_matches(&state, tokenHash))
+        .unwrap_or(false);
+    if !tokenAuthorized && pairing.pairingCode != request.pairingCode.trim() {
         return unauthorized("invalid pairing code");
     }
     let expectedClientProof = proof(
@@ -2529,14 +2605,16 @@ async fn static_web_access_pair_start(
             sharedSecret,
         },
     );
-    publishOwnerWebAccessPairing(RuntimeHostInteractionWebAccessPairingPayload {
-        pairingId: pairingRecord.pairingId,
-        clientDeviceId: pairingRecord.clientDeviceId,
-        clientPlatform: pairingRecord.clientDeviceInfo.platform,
-        clientModel: pairingRecord.clientDeviceInfo.model,
-        pairingCode: pairingRecord.pairingCode,
-        createdAt: pairingRecord.createdAt,
-    });
+    if !request.autoBootstrap {
+        publishOwnerWebAccessPairing(RuntimeHostInteractionWebAccessPairingPayload {
+            pairingId: pairingRecord.pairingId,
+            clientDeviceId: pairingRecord.clientDeviceId,
+            clientPlatform: pairingRecord.clientDeviceInfo.platform,
+            clientModel: pairingRecord.clientDeviceInfo.model,
+            pairingCode: pairingRecord.pairingCode,
+            createdAt: pairingRecord.createdAt,
+        });
+    }
     Json(PairStartResponse {
         pairingId,
         pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
@@ -2564,7 +2642,12 @@ async fn static_web_access_pair_finish(
     else {
         return bad_request("pairing not found");
     };
-    if pairing.pairingCode != request.pairingCode.trim() {
+    let tokenAuthorized = request
+        .tokenHash
+        .as_deref()
+        .map(|tokenHash| tokenHash == link_token_hash(&control.token))
+        .unwrap_or(false);
+    if !tokenAuthorized && pairing.pairingCode != request.pairingCode.trim() {
         return unauthorized("invalid pairing code");
     }
     let expectedClientProof = proof(

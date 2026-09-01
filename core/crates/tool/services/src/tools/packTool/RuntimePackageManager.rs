@@ -156,6 +156,16 @@ pub struct BundledExternalPackageCandidate {
     pub subpackageCount: usize,
 }
 
+/// Structured result returned after importing one external package file.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ExternalPackageImportResult {
+    pub packageName: String,
+    pub packageFormat: String,
+    pub storedPath: String,
+    pub sourceNotice: Option<String>,
+}
+
 #[derive(Clone, Default)]
 struct PackageScanSnapshot {
     availablePackages: BTreeMap<String, ToolPackage>,
@@ -2643,16 +2653,28 @@ impl RuntimePackageManager {
         Ok(leftBytes == rightBytes)
     }
 
-    #[allow(non_snake_case)]
     /// Imports a package file from external storage into package storage.
+    #[allow(non_snake_case)]
     pub fn addPackageFileFromExternalStorage(&mut self, filePath: &str) -> String {
+        match self.addPackageFileFromExternalStorageResult(filePath) {
+            Ok(result) => formatExternalPackageImportResult(&result),
+            Err(error) => error,
+        }
+    }
+
+    /// Imports a package file from external storage and returns structured metadata.
+    #[allow(non_snake_case)]
+    pub fn addPackageFileFromExternalStorageResult(
+        &mut self,
+        filePath: &str,
+    ) -> Result<ExternalPackageImportResult, String> {
         let file = PathBuf::from(filePath);
         let downloadedFileExists = matches!(
             self.fileSystemHost.fileExists(filePath),
             Ok(info) if info.exists && !info.isDirectory
         );
         if !downloadedFileExists {
-            return format!("Cannot access file at path: {filePath}");
+            return Err(format!("Cannot access file at path: {filePath}"));
         }
 
         let lowerPath = filePath.to_ascii_lowercase();
@@ -2660,93 +2682,80 @@ impl RuntimePackageManager {
         let isHjson = lowerPath.ends_with(".hjson");
         let isToolPkg = lowerPath.ends_with(".toolpkg");
         if !isJsLike && !isHjson && !isToolPkg {
-            return "Only HJSON, JavaScript (.js), TypeScript (.ts) and ToolPkg (.toolpkg) package files are supported"
-                .to_string();
+            return Err("Only HJSON, JavaScript (.js), TypeScript (.ts) and ToolPkg (.toolpkg) package files are supported"
+                .to_string());
         }
 
         if isToolPkg {
-            let loadResult = match self.loadToolPkgFromExternalFile(&file) {
-                Ok(value) => value,
-                Err(error) => return format!("Error importing package: {error}"),
-            };
+            let loadResult = self
+                .loadToolPkgFromExternalFile(&file)
+                .map_err(|error| format!("Error importing package: {error}"))?;
             let packageName = loadResult.containerPackage.name.clone();
             let marketOrigin = loadResult.marketOrigin.clone();
             if !self
                 .toolPkgManager()
                 .canRegisterToolPkg(&loadResult, self.availablePackages())
             {
-                return format!(
+                return Err(format!(
                     "A package with name '{}' already exists in available packages",
                     packageName
-                );
+                ));
             }
-            if let Err(error) = self.storePaths.ensure_packages_dir() {
-                return format!("Error importing package: {error}");
-            }
-            let Some(fileName) = file.file_name() else {
-                return "Error importing package: invalid file name".to_string();
-            };
+            self.storePaths
+                .ensure_packages_dir()
+                .map_err(|error| format!("Error importing package: {error}"))?;
+            let fileName = file
+                .file_name()
+                .ok_or_else(|| "Error importing package: invalid file name".to_string())?;
             let destinationFile = self.storePaths.packages_dir().join(fileName);
             if file != destinationFile {
-                if let Err(error) = self.fileSystemHost.copyFile(
-                    &hostPath(&file),
-                    &hostPath(&destinationFile),
-                    false,
-                ) {
-                    return format!("Error importing package: {error}");
-                }
+                self.fileSystemHost
+                    .copyFile(&hostPath(&file), &hostPath(&destinationFile), false)
+                    .map_err(|error| format!("Error importing package: {error}"))?;
             }
-            let importedLoadResult = match self.loadToolPkgFromExternalFile(&destinationFile) {
-                Ok(value) => value,
-                Err(error) => return format!("Error importing package: {error}"),
-            };
+            let importedLoadResult = self
+                .loadToolPkgFromExternalFile(&destinationFile)
+                .map_err(|error| format!("Error importing package: {error}"))?;
             if !self.registerToolPkg(importedLoadResult) {
-                return format!(
+                return Err(format!(
                     "A package with name '{}' already exists in available packages",
                     packageName
-                );
+                ));
             }
-            let marketOriginNotice = match marketOrigin {
-                Some(origin) => format!(
-                    "\nSource notice: this is the {} marketplace ToolPkg '{}' (version: {}, author: {}). Please support the original author and beware of resales.",
+            let sourceNotice = marketOrigin.map(|origin| {
+                format!(
+                    "this is the {} marketplace ToolPkg '{}' (version: {}, author: {}). Please support the original author and beware of resales.",
                     origin.market,
                     packageName,
                     origin.version,
                     origin.author.join(", ")
-                ),
-                None => String::new(),
-            };
-            return format!(
-                "Successfully imported package: {}\nStored at: {}{}",
+                )
+            });
+            return Ok(ExternalPackageImportResult {
                 packageName,
-                destinationFile.to_string_lossy(),
-                marketOriginNotice
-            );
+                packageFormat: "toolpkg".to_string(),
+                storedPath: destinationFile.to_string_lossy().to_string(),
+                sourceNotice,
+            });
         }
 
-        let packageMetadata = if isHjson {
-            let content = match self.fileSystemHost.readFile(&hostPath(&file)) {
-                Ok(value) => value,
-                Err(error) => return format!("Error importing package: {error}"),
-            };
-            match JsPackageLoader::parse_metadata(&content, "") {
-                Ok(value) => value,
-                Err(error) => return format!("Error importing package: {error}"),
-            }
+        let packageFormat = if isHjson {
+            "hjson"
+        } else if lowerPath.ends_with(".ts") {
+            "typescript"
         } else {
-            match self.loadPackageFromJsFile(&file) {
-                Some(value) => value,
-                None => {
-                    return format!(
-                        "Failed to parse {} package file",
-                        if lowerPath.ends_with(".ts") {
-                            "TypeScript"
-                        } else {
-                            "JavaScript"
-                        }
-                    )
-                }
-            }
+            "javascript"
+        };
+        let packageMetadata = if isHjson {
+            let content = self
+                .fileSystemHost
+                .readFile(&hostPath(&file))
+                .map_err(|error| format!("Error importing package: {error}"))?;
+            JsPackageLoader::parse_metadata(&content, "")
+                .map_err(|error| format!("Error importing package: {error}"))?
+        } else {
+            self.loadPackageFromJsFile(&file)
+                .ok_or_else(|| format!("Failed to parse {packageFormat} package file"))?
         };
 
         if self.availablePackages().contains_key(&packageMetadata.name)
@@ -2755,33 +2764,30 @@ impl RuntimePackageManager {
                 .isToolPkgContainer(&packageMetadata.name)
             || self.toolPkgManager().hasSubpackage(&packageMetadata.name)
         {
-            return format!(
+            return Err(format!(
                 "A package with name '{}' already exists in available packages",
                 packageMetadata.name
-            );
+            ));
         }
 
-        if let Err(error) = self.storePaths.ensure_packages_dir() {
-            return format!("Error importing package: {error}");
-        }
-        let Some(fileName) = file.file_name() else {
-            return "Error importing package: invalid file name".to_string();
-        };
+        self.storePaths
+            .ensure_packages_dir()
+            .map_err(|error| format!("Error importing package: {error}"))?;
+        let fileName = file
+            .file_name()
+            .ok_or_else(|| "Error importing package: invalid file name".to_string())?;
         let destinationFile = self.storePaths.packages_dir().join(fileName);
         if file != destinationFile {
-            if let Err(error) =
-                self.fileSystemHost
-                    .copyFile(&hostPath(&file), &hostPath(&destinationFile), false)
-            {
-                return format!("Error importing package: {error}");
-            }
+            self.fileSystemHost
+                .copyFile(&hostPath(&file), &hostPath(&destinationFile), false)
+                .map_err(|error| format!("Error importing package: {error}"))?;
         }
 
         let scriptMarketOrigin = if isJsLike {
-            let script = match self.fileSystemHost.readFile(&hostPath(&file)) {
-                Ok(value) => value,
-                Err(error) => return format!("Error importing package: {error}"),
-            };
+            let script = self
+                .fileSystemHost
+                .readFile(&hostPath(&file))
+                .map_err(|error| format!("Error importing package: {error}"))?;
             ToolPkgProtection::readScriptMarketOrigin(&script, &packageMetadata.name)
         } else {
             None
@@ -2790,23 +2796,21 @@ impl RuntimePackageManager {
             is_built_in: false,
             ..packageMetadata.clone()
         });
-        let marketOriginNotice = scriptMarketOrigin
-            .map(|origin| {
-                format!(
-                    "\nSource notice: this is the {} marketplace script '{}' (version: {}, author: {}). Please support the original author and beware of resales.",
-                    origin.market,
-                    packageMetadata.name,
-                    origin.version,
-                    origin.author.join(", ")
-                )
-            })
-            .unwrap_or_default();
-        format!(
-            "Successfully imported package: {}\nStored at: {}{}",
-            packageMetadata.name,
-            destinationFile.to_string_lossy(),
-            marketOriginNotice
-        )
+        let sourceNotice = scriptMarketOrigin.map(|origin| {
+            format!(
+                "this is the {} marketplace script '{}' (version: {}, author: {}). Please support the original author and beware of resales.",
+                origin.market,
+                packageMetadata.name,
+                origin.version,
+                origin.author.join(", ")
+            )
+        });
+        Ok(ExternalPackageImportResult {
+            packageName: packageMetadata.name,
+            packageFormat: packageFormat.to_string(),
+            storedPath: destinationFile.to_string_lossy().to_string(),
+            sourceNotice,
+        })
     }
 
     /// Imports one marketplace artifact from bytes after validating its declared digest.
@@ -2853,8 +2857,8 @@ impl RuntimePackageManager {
         result
     }
 
+    /// Imports one signed marketplace ToolPkg as a locally authenticated package archive.
     #[allow(non_snake_case)]
-    /// Installs one signed marketplace ToolPkg as a locally authenticated package archive.
     pub fn addMarketToolPkgFileFromExternalStorage(
         &mut self,
         filePath: &str,
@@ -3900,6 +3904,21 @@ fn buildBundledPluginAssetSignature(asset: &RuntimePluginAsset) -> String {
         asset.bytes.len(),
         sha256Hex(asset.bytes)
     )
+}
+
+/// Formats one structured external package import result for text callers.
+#[allow(non_snake_case)]
+fn formatExternalPackageImportResult(result: &ExternalPackageImportResult) -> String {
+    let mut message = format!(
+        "Successfully imported package: {}\nStored at: {}",
+        result.packageName, result.storedPath
+    );
+    if let Some(sourceNotice) = &result.sourceNotice {
+        message.push('\n');
+        message.push_str("Source notice: ");
+        message.push_str(sourceNotice);
+    }
+    message
 }
 
 #[allow(non_snake_case)]

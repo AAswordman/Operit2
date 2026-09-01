@@ -96,7 +96,7 @@ AiPermissionMode
   ReadOnly
     文件能力：读
     应用内沙盒：开启
-    工具批准：READ 不询问，WRITE 不允许
+    工具批准：READ 不询问，WRITE 请求用户批准
 
   WorkspaceWrite
     文件能力：读写
@@ -106,29 +106,28 @@ AiPermissionMode
   Full
     文件能力：读写
     应用内沙盒：关闭
-    工具批准：内置工具不询问，PackageTool 仍询问
+    工具批准：不询问
 ```
 
 runtime 只保存用户选择的 `AiPermissionMode`。文件能力、应用内沙盒状态、工具批准策略都由这个模式派生，不单独保存成一个混合状态对象。
 
 ```text
 readOnly
-  文件工具只能读当前 workspace。
+  文件工具可以读取 Host Authorization 允许的 VFS 路径。
   ToolEffect.READ 不询问。
-  ToolEffect.WRITE 不允许启动。
+  ToolEffect.WRITE 请求用户批准；批准只放行本次调用或当前会话的同名调用。
 
 workspaceWrite
-  文件工具可以读写当前 workspace。
+  文件工具可以读取 Host Authorization 允许的 VFS 路径，并且可以读写当前 workspace。
   仍然运行在应用内沙盒里。
   ToolEffect.READ 不询问。
   普通 workspace 内 ToolEffect.WRITE 不询问。
-  如果 ToolEffect.WRITE 需要逃逸应用内沙盒，则询问用户。
+  工作区外 ToolEffect.WRITE 与非文件 ToolEffect.WRITE 请求用户批准。
 
 full
   文件工具可以读写 Host Authorization 允许的 VFS 路径。
   不启用应用内沙盒。
-  内置工具调用不询问。
-  PackageTool 调用仍询问。
+  工具调用不询问。
   READ / WRITE 工具可以在 Host Authorization 允许的范围内启动。
 ```
 
@@ -294,7 +293,7 @@ runtime / tool execution
   检查 User Tool Approval
 
 host bridge boundary
-  文件工具检查 workspace read/write
+  文件工具只检查 workspace write；读取由 Host Authorization 检查
   终端、网络、浏览器、系统等工具按本次 accessSpec(tool) 声明检查 READ / WRITE
   终端是否受应用内沙盒限制只取决于实际执行边界，不取决于命令字符串审查
   具体 Host 执行仍受系统真实权限限制
@@ -335,9 +334,8 @@ host bridge boundary
      JS toolCall、PackageToolExecutor、MCPToolExecutor 最终都会走 AIToolHandler 的执行链路。
      这里不是 ToolPkg 拦截点。
      这里保证直接 toolCall 触达默认工具、MCP、终端、文件等 Host bridge 前能拿到当前 AiPermissionMode。
-     这里调用 executor.accessSpec(tool)，用 ToolEffect.READ / ToolEffect.WRITE 检查 AiPermissionMode。
-     这里对 packageName:toolName 触发 User Tool Approval。
-     WorkspaceWrite 下非文件 WRITE 作为沙盒逃逸请求用户确认。
+     这里调用 executor.accessSpec(tool)，用 ToolEffect.READ / ToolEffect.WRITE 检查 AiPermissionMode；受当前模式限制的调用请求用户批准。
+     ReadOnly 下 WRITE、WorkspaceWrite 下工作区外 WRITE 与非文件 WRITE 请求用户确认。
 
 4. file operation boundary
    位置：
@@ -346,8 +344,8 @@ host bridge boundary
    已落地：
      StandardFileSystemTools 从 AITool 参数取 path。
      VisualFileSystem.resolvePath 使用 PathMapper 解析 VFS path。
-     AIToolHandler 在 ReadOnly / WorkspaceWrite 模式下读取当前 workspacePath，用 PathMapper.resolve 解析 workspace 和目标 path。
-     ReadOnly / WorkspaceWrite 的文件读写在调用 Host FileSystemHost 前完成当前 workspace 边界检查。
+     AIToolHandler 在 ReadOnly / WorkspaceWrite 模式下仅对写入读取当前 workspacePath，用 PathMapper.resolve 解析 workspace 和目标 path。
+     ReadOnly / WorkspaceWrite 的文件写入在调用 Host FileSystemHost 前完成当前 workspace 边界检查；读取交给 VFS 和 Host Authorization。
      Full 的文件读写通过 VFS 解析后交给 Host FileSystemHost。
      list/read/fileExists/fileInfo/find/grep 属于 ToolEffect.READ。
      write/writeBinary/delete/move/copy/mkdir/download/apply/create 属于 ToolEffect.WRITE。
@@ -362,8 +360,8 @@ request/session
   -> ToolExecutionManager passes parsed tool invocation
   -> AIToolHandler resolves executor and reads accessSpec(tool)
   -> AI capability guard checks READ / WRITE mode
-  -> ReadOnly / WorkspaceWrite file boundary resolves workspace root and target path through PathMapper
-  -> ReadOnly / WorkspaceWrite PathMapper.relativePath confirms the target stays inside the active workspace
+  -> ReadOnly / WorkspaceWrite file write boundary resolves workspace root and target path through PathMapper
+  -> ReadOnly / WorkspaceWrite PathMapper.relativePath confirms write targets stay inside the active workspace
   -> Host FileSystemHost executes
 ```
 
@@ -373,16 +371,18 @@ request/session
 
 文件边界判定直接使用 `ToolEffect.READ / ToolEffect.WRITE`，不再定义第二套 `WorkspaceOperation`。
 
-当前实现由 `AIToolHandler` 根据 `AiPermissionMode` 处理文件边界。ReadOnly / WorkspaceWrite 在执行前读取 `workspacePath`，分别用 `PathMapper.resolve` 解析当前 workspace root 和目标 path，再用 `PathMapper.relativePath` 判定目标是否落在当前 workspace 内：
+当前实现由 `AIToolHandler` 根据 `AiPermissionMode` 处理文件边界。ReadOnly / WorkspaceWrite 的读取直接交给 VFS 和 Host Authorization；写入在执行前读取 `workspacePath`，用 `PathMapper.resolve` 解析当前 workspace root 和目标 path，再用 `PathMapper.relativePath` 判定目标是否落在当前 workspace 内：
 
 ```text
 ToolEffect.READ
-  要求 path 位于当前 workspacePath 内。
+  不读取 workspacePath。
   AiPermissionMode 可以是 ReadOnly 或 WorkspaceWrite。
+  path 交给 VFS 解析和 Host Authorization。
 
 ToolEffect.WRITE
   要求 path 位于当前 workspacePath 内。
   AiPermissionMode 必须是 WorkspaceWrite。
+  不满足这两项时请求用户批准，批准后交给 VFS 和 Host Authorization。
 
 Full
   不读取 workspacePath。
@@ -408,7 +408,7 @@ Full
 move / copy
   source 需要 Read。
   destination 需要 Write。
-  ReadOnly / WorkspaceWrite 下 source 和 destination 都必须位于当前 workspacePath 内。
+  ReadOnly / WorkspaceWrite 下 source 交给 VFS 解析和 Host Authorization，destination 必须位于当前 workspacePath 内。
   Full 下 source 和 destination 交给 VFS 解析和 Host Authorization。
 ```
 
@@ -452,20 +452,18 @@ move / copy
   ToolExecutionManager.checkToolPermission
   用于用户批准 AI 发起的某一次工具调用。
   批准粒度是 tool invocation，也就是工具名和本次参数。
-  内置工具是否询问由 AiPermissionMode、ToolEffect 和沙盒逃逸情况共同决定。
-  PackageTool invocation 永远询问。
+  是否询问由 AiPermissionMode、ToolEffect 和沙盒逃逸情况共同决定。
 
 AI 直接调用内置工具
   AITool.name = "read_file_full" / "write_file" / ...
-  ReadOnly 下 ToolEffect.READ 不询问，ToolEffect.WRITE 不允许。
-  WorkspaceWrite 下 ToolEffect.READ 不询问，普通 workspace WRITE 不询问，沙盒逃逸 WRITE 询问。
-  Full 下内置工具不询问。
+  ReadOnly 下 ToolEffect.READ 不询问，ToolEffect.WRITE 请求用户批准。
+  WorkspaceWrite 下 ToolEffect.READ 不询问，普通 workspace WRITE 不询问，工作区外或非文件 WRITE 请求用户批准。
+  Full 下不询问。
 
 AI 直接调用包工具
   AITool.name = "packageName:toolName"
-  User Tool Approval 对这个 packageName:toolName 生效。
-  PackageTool invocation 永远询问。
   不是批准整个 ToolPkg 容器。
+  包脚本内部的实际 Host bridge 调用按其 ToolEffect 和边界判定是否需要批准。
 
 Host bridge 上下文传递
   AIToolHandler.executeToolSafelyWithResolvedExecutor
@@ -635,12 +633,11 @@ ToolEffect.WRITE
   WorkspaceWrite / Full 可启动。
   带 FilePath / FilePair boundary 的工具必须继续做结构化 workspace 检查。
   WorkspaceWrite + sandbox on 下，如果本次调用需要逃逸应用内沙盒，则询问用户。
-  Full 下内置工具不询问。
+  Full 下不询问。
 
 PackageTool invocation
-  无论 ReadOnly / WorkspaceWrite / Full，都先询问用户是否允许 AI 调用 packageName:toolName。
-  PackageTool invocation 自身的 accessSpec 不代表脚本内部的 Host 读写效果。
-  允许后再由 PackageTool 脚本内部具体 Host bridge 工具的 accessSpec(tool)、AiPermissionMode 和 workspace boundary 继续判定。
+  不单独请求批准，因为其 accessSpec 不代表脚本内部的 Host 读写效果。
+  脚本内部具体 Host bridge 工具的 accessSpec(tool)、AiPermissionMode 和 workspace boundary 决定是否需要批准。
 
 Sandbox
   不属于 ToolEffect。
@@ -656,7 +653,6 @@ AI calls packageName:toolName
   -> ToolExecutionManager.checkRoleCardToolAccess(packageName:toolName)
   -> AIToolHandler.executeToolSafelyWithResolvedExecutor
   -> AIToolHandler.executeAccessPreflight
-  -> ToolPermissionSystem.checkPackageToolApproval(packageName:toolName)
   -> PackageToolExecutor
   -> JsToolManager.executeScript(PackageTool.script)
   -> JS Tools.Files.write
@@ -670,7 +666,7 @@ AI calls packageName:toolName
   -> Host FileSystemHost.writeFile
 ```
 
-所以 ToolPkg 容器不拦截，PackageTool 被 AI 直接调用时才是工具批准对象；包内部 API 不弹窗。文件读写仍在文件 Host bridge 边界受当前 `AiPermissionMode` 限制。
+所以 ToolPkg 容器和 PackageTool 直接调用都不单独拦截；包内部 API 的实际 Host bridge 调用按当前 `AiPermissionMode` 决定是否需要批准。文件读写仍在文件 Host bridge 边界受当前 `AiPermissionMode` 限制。
 
 工具执行受限层级：
 
@@ -1106,4 +1102,4 @@ TerminalHost != VFS 受限文件 API
 12. 删除旧 ToolPermissionSystem 数据与 UI。
 ```
 
-这不是 UI 改名任务。核心改动是把“工具权限”从一个 UI 开关，改成按 0-3 层自上而下收紧的工具执行权限链路。其中第 2 层当前收窄为：用户选择的 AiPermissionMode。普通用户看到的“完整权限”是 workspaceWrite + sandbox off 的映射；PackageTool invocation 始终询问。
+这不是 UI 改名任务。核心改动是把“工具权限”从一个 UI 开关，改成按 0-3 层自上而下收紧的工具执行权限链路。其中第 2 层当前收窄为：用户选择的 AiPermissionMode。普通用户看到的“完整权限”是 workspaceWrite + sandbox off 的映射；只有超出当前模式的实际 Host bridge 调用才请求批准。

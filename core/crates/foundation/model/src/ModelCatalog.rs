@@ -136,6 +136,7 @@ fn parseModelRow(line: &str) -> Result<ModelCatalogEntry, String> {
             billingMode,
             inputPricePerMillion,
             cachedInputPricePerMillion,
+            cacheWritePricePerMillion: None,
             outputPricePerMillion,
             pricePerRequest,
             currency,

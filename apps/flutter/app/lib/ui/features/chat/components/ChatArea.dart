@@ -43,6 +43,7 @@ class ChatArea extends StatefulWidget {
     required this.onDeleteMessage,
     required this.onDeleteMessagesFrom,
     required this.onDeleteMessageVariant,
+    required this.onSelectMessageVariant,
     required this.onRollbackToMessage,
     required this.onSelectMessageToEdit,
     required this.onRegenerateMessage,
@@ -53,6 +54,7 @@ class ChatArea extends StatefulWidget {
     required this.onToggleMultiSelectMode,
     required this.onToggleMessageSelection,
     required this.onRefreshRequested,
+    required this.bottomContentInset,
     this.splitMarkdownContent,
     this.isMultiSelectMode = false,
     this.selectedMessageTimestamps = const <int>{},
@@ -77,6 +79,7 @@ class ChatArea extends StatefulWidget {
   final MessageTimestampAction onDeleteMessage;
   final MessageTimestampBoolAction onDeleteMessagesFrom;
   final MessageVariantAction onDeleteMessageVariant;
+  final MessageVariantAction onSelectMessageVariant;
   final MessageTimestampSelectionAction onRollbackToMessage;
   final MessageSelectionAction onSelectMessageToEdit;
   final MessageTimestampAction onRegenerateMessage;
@@ -87,6 +90,7 @@ class ChatArea extends StatefulWidget {
   final MessageTimestampSelectionAction onToggleMultiSelectMode;
   final MessageTimestampSelectionAction onToggleMessageSelection;
   final Future<void> Function() onRefreshRequested;
+  final double bottomContentInset;
   final MarkdownCopySplitter? splitMarkdownContent;
   final bool isMultiSelectMode;
   final Set<int> selectedMessageTimestamps;
@@ -145,66 +149,70 @@ class _ChatAreaState extends State<ChatArea> {
               onNotification: _handleScrollMetricsNotification,
               child: NotificationListener<ScrollNotification>(
                 onNotification: _handleScrollNotification,
-                child: SingleChildScrollView(
+                child: ListView.builder(
                   controller: widget.scrollController,
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                  child: Column(
-                    children: List<Widget>.generate(itemCount, (index) {
-                      late final Widget child;
-                      if (widget.hasOlderDisplayHistory && index == 0) {
-                        child = _DisplayWindowAction(
-                          text: 'Load more history',
-                          isLoading: widget.isLoadingDisplayWindow,
-                          onTap: () {
-                            widget.onAutoScrollToBottomChanged(false);
-                            if (!widget.isLoadingDisplayWindow) {
-                              widget.onLoadOlderDisplayWindow();
-                            }
-                          },
-                        );
-                      } else if (index >= messageStartIndex &&
-                          index < messageEndIndex) {
-                        final message =
-                            widget.messages[index - messageStartIndex];
-                        final messageIndex = index - messageStartIndex;
-                        child = _messageRowFor(messageIndex, message);
-                      } else if (widget.hasNewerDisplayHistory &&
-                          index == messageEndIndex) {
-                        child = _DisplayWindowAction(
-                          text: 'Load newer history',
-                          isLoading: widget.isLoadingDisplayWindow,
-                          onTap: () {
-                            if (!widget.isLoadingDisplayWindow) {
-                              widget.onLoadNewerDisplayWindow();
-                            }
-                          },
-                        );
-                      } else if (widget.errorMessage != null) {
-                        child = _StatusMessage(
-                          text: widget.errorMessage!,
-                          isError: true,
-                        );
-                      } else {
-                        child = const Padding(
-                          padding: EdgeInsets.only(left: 16, top: 2, bottom: 2),
-                          child: StreamingCursor(),
-                        );
-                      }
-                      return Padding(
-                        padding: EdgeInsets.only(
-                          bottom: index == itemCount - 1 ? 0 : 8,
-                        ),
-                        child: _ChatAreaContentColumn(
-                          key: _rowKeyForIndex(
-                            index,
-                            messageStartIndex,
-                            messageEndIndex,
-                          ),
-                          child: child,
-                        ),
-                      );
-                    }),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    16,
+                    16,
+                    16 + widget.bottomContentInset,
                   ),
+                  itemCount: itemCount,
+                  itemBuilder: (context, index) {
+                    late final Widget child;
+                    if (widget.hasOlderDisplayHistory && index == 0) {
+                      child = _DisplayWindowAction(
+                        text: 'Load more history',
+                        isLoading: widget.isLoadingDisplayWindow,
+                        onTap: () {
+                          widget.onAutoScrollToBottomChanged(false);
+                          if (!widget.isLoadingDisplayWindow) {
+                            widget.onLoadOlderDisplayWindow();
+                          }
+                        },
+                      );
+                    } else if (index >= messageStartIndex &&
+                        index < messageEndIndex) {
+                      final message =
+                          widget.messages[index - messageStartIndex];
+                      final messageIndex = index - messageStartIndex;
+                      child = _messageRowFor(messageIndex, message);
+                    } else if (widget.hasNewerDisplayHistory &&
+                        index == messageEndIndex) {
+                      child = _DisplayWindowAction(
+                        text: 'Load newer history',
+                        isLoading: widget.isLoadingDisplayWindow,
+                        onTap: () {
+                          if (!widget.isLoadingDisplayWindow) {
+                            widget.onLoadNewerDisplayWindow();
+                          }
+                        },
+                      );
+                    } else if (widget.errorMessage != null) {
+                      child = _StatusMessage(
+                        text: widget.errorMessage!,
+                        isError: true,
+                      );
+                    } else {
+                      child = const Padding(
+                        padding: EdgeInsets.only(left: 16, top: 2, bottom: 2),
+                        child: StreamingCursor(),
+                      );
+                    }
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        bottom: index == itemCount - 1 ? 0 : 8,
+                      ),
+                      child: _ChatAreaContentColumn(
+                        key: _rowKeyForIndex(
+                          index,
+                          messageStartIndex,
+                          messageEndIndex,
+                        ),
+                        child: child,
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -476,13 +484,24 @@ class _ChatAreaState extends State<ChatArea> {
   @override
   void didUpdateWidget(ChatArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final chatChanged = oldWidget.currentChatId != widget.currentChatId;
+    if (chatChanged) {
+      _messageKeys.clear();
+      _messageRowCache.clear();
+      _messageAnchorsNotifier.value = const <int, ChatScrollMessageAnchor>{};
+      _showNavigatorChipNotifier.value = false;
+      _userScrollSessionActive = false;
+    }
     final messagesChanged =
+        chatChanged ||
         oldWidget.messages.length != widget.messages.length ||
         oldWidget.messages.firstOrNull?.timestamp !=
             widget.messages.firstOrNull?.timestamp ||
         oldWidget.messages.lastOrNull?.timestamp !=
             widget.messages.lastOrNull?.timestamp;
-    if (messagesChanged) {
+    final bottomInsetChanged =
+        oldWidget.bottomContentInset != widget.bottomContentInset;
+    if (messagesChanged || bottomInsetChanged) {
       _scheduleBottomFollow();
       _scheduleMessageAnchorCollection();
     }
@@ -536,7 +555,7 @@ class _ChatAreaState extends State<ChatArea> {
         themePreferenceSnapshot.chatStyle ==
             UserPreferencesManager.CHAT_STYLE_BUBBLE
         ? BubbleStyleChatMessage(
-            key: ValueKey<String>(message.stableKey),
+            key: ValueKey<String>(_messageWidgetKey(message)),
             message: message,
             isStreaming: isStreaming,
             userMessageColor:
@@ -573,18 +592,33 @@ class _ChatAreaState extends State<ChatArea> {
                 themePreferenceSnapshot.bubbleAiContentPaddingRight,
             currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
             splitMarkdownContent: widget.splitMarkdownContent,
+            onDeleteMessage: widget.onDeleteMessage,
+            onEditSummary: widget.onSelectMessageToEdit,
           )
         : CursorStyleChatMessage(
-            key: ValueKey<String>(message.stableKey),
+            key: ValueKey<String>(_messageWidgetKey(message)),
             message: message,
             isStreaming: isStreaming,
             currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
             splitMarkdownContent: widget.splitMarkdownContent,
+            onDeleteMessage: widget.onDeleteMessage,
+            onEditSummary: widget.onSelectMessageToEdit,
+            enableDialogs: true,
           );
     final messageContent = _SelectableMessageFrame(
       selected: selected,
       selectionMode: selectionMode,
-      child: chatMessage,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          chatMessage,
+          if (message.sender == 'ai' && message.variantCount > 1)
+            _MessageVariantSwitcher(
+              message: message,
+              onSelect: widget.onSelectMessageVariant,
+            ),
+        ],
+      ),
     );
     final row = selectionMode
         ? GestureDetector(
@@ -593,7 +627,7 @@ class _ChatAreaState extends State<ChatArea> {
             child: messageContent,
           )
         : MessageContextMenu(
-            key: ValueKey<String>('menu-${message.stableKey}'),
+            key: ValueKey<String>('menu-${_messageWidgetKey(message)}'),
             message: message,
             onToggleFavoriteMessage: widget.onToggleFavoriteMessage,
             onDeleteMessage: widget.onDeleteMessage,
@@ -624,6 +658,11 @@ class _ChatAreaState extends State<ChatArea> {
     return row;
   }
 
+  /// Builds an element identity that cannot be shared by different chats.
+  String _messageWidgetKey(ChatUiMessage message) {
+    return '${widget.currentChatId ?? '__NO_CHAT__'}-${message.stableKey}';
+  }
+
   /// Shows the standalone cursor only before an AI response stream is attached.
   bool _shouldShowLoadingIndicator() {
     if (!widget.isLoading || widget.messages.isEmpty) {
@@ -643,6 +682,65 @@ class _ChatAreaState extends State<ChatArea> {
     }
     final message = widget.messages[index];
     return message.sender == 'ai' && message.contentStream != null;
+  }
+}
+
+/// Displays controls for selecting the active response variant of one AI message.
+class _MessageVariantSwitcher extends StatelessWidget {
+  const _MessageVariantSwitcher({
+    required this.message,
+    required this.onSelect,
+  });
+
+  final ChatUiMessage message;
+  final MessageVariantAction onSelect;
+
+  @override
+  /// Builds the compact variant selection controls.
+  Widget build(BuildContext context) {
+    final hasPrevious = message.selectedVariantIndex > 0;
+    final hasNext = message.selectedVariantIndex < message.variantCount - 1;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(start: 16, top: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          IconButton(
+            tooltip: '上一条变体',
+            visualDensity: VisualDensity.compact,
+            onPressed: hasPrevious
+                ? () async {
+                    await onSelect(
+                      message.timestamp,
+                      message.selectedVariantIndex - 1,
+                    );
+                  }
+                : null,
+            icon: const Icon(Icons.arrow_back, size: 18),
+          ),
+          Text(
+            '${message.selectedVariantIndex + 1} / ${message.variantCount}',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          IconButton(
+            tooltip: '下一条变体',
+            visualDensity: VisualDensity.compact,
+            onPressed: hasNext
+                ? () async {
+                    await onSelect(
+                      message.timestamp,
+                      message.selectedVariantIndex + 1,
+                    );
+                  }
+                : null,
+            icon: const Icon(Icons.arrow_forward, size: 18),
+          ),
+        ],
+      ),
+    );
   }
 }
 

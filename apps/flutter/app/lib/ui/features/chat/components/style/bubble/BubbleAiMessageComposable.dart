@@ -112,9 +112,6 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
     final nodeGrouper = ThinkToolsXmlNodeGrouper(
       showThinkingProcess: showThinkingProcess,
       forceExpandGroups: widget.expandThinkToolsGroups,
-      toolCollapseMode: toolCollapseModeFromPreferenceValue(
-        snapshot.toolCollapseMode,
-      ),
     );
     final effectiveBubbleImageStyle = widget.transparentSurface
         ? null

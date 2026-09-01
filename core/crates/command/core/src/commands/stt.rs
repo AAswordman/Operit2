@@ -45,15 +45,18 @@ pub fn run_stt_command(
 
 /// Prints the built-in STT provider catalog.
 fn print_provider_catalog(output: &mut CoreCommandOutput) -> Result<(), String> {
-    for provider in SttConfigManager::getInstance().getProviderCatalogEntries()? {
+    let providers = SttConfigManager::getInstance().getProviderCatalogEntries()?;
+    output.push_stdout_line(format!("STT providers: {}", providers.len()));
+    for provider in &providers {
         output.push_stdout_line(format!(
-            "{}\t{}\t{}\t{}",
+            "- {} ({}) — endpoint: {} — model: {}",
             provider.providerTypeId,
             provider.displayName,
             provider.defaultEndpoint,
             provider.defaultModel
         ));
     }
+    output.setJsonStdout(serde_json::to_value(providers).map_err(|error| error.to_string())?);
     Ok(())
 }
 
@@ -62,17 +65,22 @@ fn print_provider_models(
     providerTypeId: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    for model in
-        SttConfigManager::getInstance().getAvailableSttModels(providerTypeId.to_string())?
-    {
+    let models =
+        SttConfigManager::getInstance().getAvailableSttModels(providerTypeId.to_string())?;
+    output.push_stdout_line(format!("STT models for {providerTypeId}: {}", models.len()));
+    for model in &models {
         output.push_stdout_line(format!(
-            "{}\t{}\t{}\t{}",
+            "- {} ({}) — languages: {} — {}",
             model.model,
             model.displayName,
-            model.description,
-            model.languages.join(",")
+            model.languages.join(","),
+            model.description
         ));
     }
+    output.setJsonStdout(serde_json::json!({
+        "providerTypeId": providerTypeId,
+        "models": models,
+    }));
     Ok(())
 }
 
@@ -81,12 +89,16 @@ fn run_config_command(args: &[String], output: &mut CoreCommandOutput) -> Result
     let manager = SttConfigManager::getInstance();
     match args.first().map(String::as_str) {
         Some("list") if args.len() == 1 => {
-            for config in manager.getAllSttConfigs()? {
+            let configs = manager.getAllSttConfigs()?;
+            let items = configs.iter().map(stt_config_json).collect::<Vec<_>>();
+            output.push_stdout_line(format!("STT configs: {}", configs.len()));
+            for config in &configs {
                 output.push_stdout_line(format!(
-                    "{}\t{}\t{}\t{}\t{}",
+                    "- {} ({}) — provider: {} — model: {} — endpoint: {}",
                     config.id, config.name, config.providerType, config.model, config.endpoint
                 ));
             }
+            output.setJsonStdout(serde_json::Value::Array(items));
             Ok(())
         }
         Some("show") if args.len() == 2 => {
@@ -101,31 +113,48 @@ fn run_config_command(args: &[String], output: &mut CoreCommandOutput) -> Result
         }
         Some("use") if args.len() == 2 => {
             let id = manager.setCurrentSttConfigId(&args[1])?;
-            output.push_stdout_line(format!("currentSttConfigId={id}"));
+            output.push_stdout_line(format!("Current STT config: {id}"));
+            output.setJsonStdout(serde_json::json!({"currentSttConfigId": id}));
             Ok(())
         }
         Some("create-local") if args.len() == 4 => {
             let config = create_local_config(&args[1], &args[2], &args[3])?;
             let created = manager.createSttConfig(config)?;
-            output.push_stdout_line(format!("id={}", created.id));
+            output.push_stdout_line(format!("STT config created: {}", created.id));
+            output.setJsonStdout(serde_json::json!({
+                "id": created.id,
+                "created": true,
+            }));
             Ok(())
         }
         Some("create-remote") if args.len() == 6 => {
             let config = create_remote_config(&args[1], &args[2], &args[3], &args[4], &args[5])?;
             let created = manager.createSttConfig(config)?;
-            output.push_stdout_line(format!("id={}", created.id));
+            output.push_stdout_line(format!("STT config created: {}", created.id));
+            output.setJsonStdout(serde_json::json!({
+                "id": created.id,
+                "created": true,
+            }));
             Ok(())
         }
         Some("update") if args.len() == 4 => {
             let mut config = manager.getSttConfig(&args[1])?;
             update_config_field(&mut config, &args[2], &args[3])?;
             let updated = manager.updateSttConfig(config)?;
-            output.push_stdout_line(format!("id={}", updated.id));
+            output.push_stdout_line(format!("STT config updated: {}", updated.id));
+            output.setJsonStdout(serde_json::json!({
+                "id": updated.id,
+                "updated": true,
+            }));
             Ok(())
         }
         Some("delete") if args.len() == 2 => {
             manager.deleteSttConfig(&args[1])?;
-            output.push_stdout_line(format!("deleted={}", args[1]));
+            output.push_stdout_line(format!("STT config deleted: {}", args[1]));
+            output.setJsonStdout(serde_json::json!({
+                "id": args[1],
+                "deleted": true,
+            }));
             Ok(())
         }
         _ => {
@@ -137,26 +166,40 @@ fn run_config_command(args: &[String], output: &mut CoreCommandOutput) -> Result
 
 /// Prints one STT configuration without exposing its API key value.
 fn print_config(config: &SttConfig, output: &mut CoreCommandOutput) -> Result<(), String> {
-    output.push_stdout_line(format!("id={}", config.id));
-    output.push_stdout_line(format!("name={}", config.name));
-    output.push_stdout_line(format!("providerType={}", config.providerType));
-    output.push_stdout_line(format!("endpoint={}", config.endpoint));
-    output.push_stdout_line(format!("apiKeyLength={}", config.apiKey.len()));
-    output.push_stdout_line(format!("model={}", config.model));
-    output.push_stdout_line(format!("fileFieldName={}", config.fileFieldName));
-    output.push_stdout_line(format!("modelFieldName={}", config.modelFieldName));
-    output.push_stdout_line(format!("languageFieldName={}", config.languageFieldName));
-    output.push_stdout_line(format!(
-        "responseTextJsonPath={}",
-        config.responseTextJsonPath
-    ));
-    output.push_stdout_line(format!(
-        "headers={}",
-        serde_json::to_string(&config.headers).map_err(|error| error.to_string())?
-    ));
-    output.push_stdout_line(format!("createdAt={}", config.createdAt));
-    output.push_stdout_line(format!("updatedAt={}", config.updatedAt));
+    output.push_stdout_line(format!("STT config: {}", config.name));
+    output.push_stdout_line(format!("ID: {}", config.id));
+    output.push_stdout_line(format!("Provider type: {}", config.providerType));
+    output.push_stdout_line(format!("Endpoint: {}", config.endpoint));
+    output.push_stdout_line(format!("API key length: {}", config.apiKey.len()));
+    output.push_stdout_line(format!("Model: {}", config.model));
+    output.push_stdout_line(format!("File field: {}", config.fileFieldName));
+    output.push_stdout_line(format!("Model field: {}", config.modelFieldName));
+    output.push_stdout_line(format!("Language field: {}", config.languageFieldName));
+    output.push_stdout_line(format!("Response path: {}", config.responseTextJsonPath));
+    output.push_stdout_line(format!("Headers: {}", config.headers.len()));
+    output.push_stdout_line(format!("Created at: {}", config.createdAt));
+    output.push_stdout_line(format!("Updated at: {}", config.updatedAt));
+    output.setJsonStdout(stt_config_json(config));
     Ok(())
+}
+
+/// Builds a JSON object for one STT configuration without exposing its API key value.
+fn stt_config_json(config: &SttConfig) -> serde_json::Value {
+    serde_json::json!({
+        "id": config.id,
+        "name": config.name,
+        "providerType": config.providerType,
+        "endpoint": config.endpoint,
+        "apiKeyLength": config.apiKey.len(),
+        "model": config.model,
+        "fileFieldName": config.fileFieldName,
+        "modelFieldName": config.modelFieldName,
+        "languageFieldName": config.languageFieldName,
+        "responseTextJsonPath": config.responseTextJsonPath,
+        "headers": config.headers,
+        "createdAt": config.createdAt,
+        "updatedAt": config.updatedAt,
+    })
 }
 
 /// Creates one LOCAL_MODEL STT configuration value.
@@ -242,7 +285,9 @@ fn transcribe_current(
         contentType,
         language,
     )?;
-    output.push_stdout_line(result.text);
+    let text = result.text;
+    output.push_stdout_line(&text);
+    output.setJsonStdout(serde_json::json!({"text": text}));
     Ok(())
 }
 
@@ -263,7 +308,9 @@ fn transcribe_config(
             contentType,
             language,
         )?;
-    output.push_stdout_line(result.text);
+    let text = result.text;
+    output.push_stdout_line(&text);
+    output.setJsonStdout(serde_json::json!({"text": text}));
     Ok(())
 }
 
@@ -301,22 +348,24 @@ fn readAudioInput(audioPath: &str) -> Result<(Vec<u8>, String, String), String> 
 
 /// Prints speech-to-text provider command usage.
 fn print_stt_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 stt provider-list");
-    output.push_stdout_line("operit2 stt provider-model-list <provider-type-id>");
-    output.push_stdout_line("operit2 stt config list");
-    output.push_stdout_line("operit2 stt config show <id>");
-    output.push_stdout_line("operit2 stt config current");
-    output.push_stdout_line("operit2 stt config use <id>");
-    output.push_stdout_line("operit2 stt config create-local <name> <model-id> <version>");
-    output.push_stdout_line(
+    let lines = vec![
+        "operit2 stt provider-list",
+        "operit2 stt provider-model-list <provider-type-id>",
+        "operit2 stt config list",
+        "operit2 stt config show <id>",
+        "operit2 stt config current",
+        "operit2 stt config use <id>",
+        "operit2 stt config create-local <name> <model-id> <version>",
         "operit2 stt config create-remote <name> <provider-type-id> <endpoint> <api-key> <model>",
-    );
-    output.push_stdout_line("operit2 stt config update <id> <field> <value>");
-    output.push_stdout_line("operit2 stt config delete <id>");
-    output.push_stdout_line("operit2 stt transcribe <audio-path>");
-    output.push_stdout_line("operit2 stt transcribe <audio-path> --language <language>");
-    output.push_stdout_line("operit2 stt transcribe-config <config-id> <audio-path>");
-    output.push_stdout_line(
+        "operit2 stt config update <id> <field> <value>",
+        "operit2 stt config delete <id>",
+        "operit2 stt transcribe <audio-path>",
+        "operit2 stt transcribe <audio-path> --language <language>",
+        "operit2 stt transcribe-config <config-id> <audio-path>",
         "operit2 stt transcribe-config <config-id> <audio-path> --language <language>",
-    );
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

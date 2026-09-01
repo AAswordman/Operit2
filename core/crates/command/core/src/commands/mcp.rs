@@ -6,12 +6,15 @@ use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp_runtime::plugins::MCPBridge::MCPBridge;
 use operit_tools::tools::mcp_runtime::plugins::MCPStarter::{MCPStarter, StartStatus};
-use operit_tools::tools::mcp_runtime::MCPLocalServer::{MCPLocalServer, PluginMetadata};
+use operit_tools::tools::mcp_runtime::MCPLocalServer::{
+    MCPLocalServer, PluginMetadata, ServerStatus,
+};
 use operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// Runs MCP server management commands.
 pub fn run_mcp_command(
     application: &OperitApplication,
     args: &[String],
@@ -52,38 +55,60 @@ pub fn run_mcp_command(
 
 fn print_mcp_dir(context: HostManager, output: &mut CoreCommandOutput) -> Result<(), String> {
     let server = mcp_local_server(&context);
-    output.push_stdout_line(format!("configDir={}", server.getConfigDirectory()));
-    output.push_stdout_line(format!("configFile={}", server.getConfigFilePath()));
+    let configDir = server.getConfigDirectory();
+    let configFile = server.getConfigFilePath();
+    output.push_stdout_line(format!("MCP config directory: {configDir}"));
+    output.push_stdout_line(format!("MCP config file: {configFile}"));
+    output.setJsonStdout(serde_json::json!({
+        "configDir": configDir,
+        "configFile": configFile,
+    }));
     Ok(())
 }
 
+/// Lists configured MCP servers.
 fn list_mcp_servers(context: HostManager, output: &mut CoreCommandOutput) -> Result<(), String> {
     let server = mcp_local_server(&context);
     let servers = server.getAllMCPServers();
     let metadata = server.getAllPluginMetadata();
     let status = server.getAllServerStatus();
+    let mut items = Vec::new();
+    output.push_stdout_line(format!("MCP servers: {}", servers.len()));
     for (serverId, serverConfig) in servers {
-        let mut line = format!(
-            "{}\tenabled={}\tcommand={}\targs={}",
-            serverId,
-            server.isServerEnabled(&serverId),
-            serverConfig.command,
-            serverConfig.args.join(" ")
-        );
-        if let Some(item) = metadata.get(&serverId) {
-            line.push_str(&format!("\tname={}", item.name));
-        }
-        if let Some(tools) = status
+        let enabled = server.isServerEnabled(&serverId);
+        let name = metadata.get(&serverId).map(|item| item.name.clone());
+        let toolCount = status
             .get(&serverId)
             .and_then(|item| item.cachedTools.as_ref())
-        {
-            line.push_str(&format!("\ttools={}", tools.len()));
-        }
-        output.push_stdout_line(line);
+            .map(Vec::len);
+        output.push_stdout_line(format!(
+            "- {} — {} — command: {} {} — name: {} — tools: {}",
+            serverId,
+            enabled,
+            serverConfig.command,
+            serverConfig.args.join(" "),
+            format_optional_string(name.as_ref()),
+            format_optional_usize(toolCount)
+        ));
+        items.push(serde_json::json!({
+            "id": serverId,
+            "enabled": enabled,
+            "command": serverConfig.command,
+            "args": serverConfig.args,
+            "url": serverConfig.url,
+            "type": serverConfig.r#type,
+            "headerKeys": serverConfig.headers.keys().cloned().collect::<Vec<_>>(),
+            "envKeys": serverConfig.env.keys().cloned().collect::<Vec<_>>(),
+            "autoApprove": serverConfig.autoApprove,
+            "name": name,
+            "tools": toolCount,
+        }));
     }
+    output.setJsonStdout(serde_json::Value::Array(items));
     Ok(())
 }
 
+/// Shows one configured MCP server.
 fn show_mcp_server(
     context: HostManager,
     id: &str,
@@ -93,43 +118,46 @@ fn show_mcp_server(
     let serverConfig = server
         .getMCPServer(id)
         .ok_or_else(|| format!("MCP server not found: {id}"))?;
-    output.push_stdout_line(format!("id={id}"));
-    output.push_stdout_line(format!("enabled={}", server.isServerEnabled(id)));
-    output.push_stdout_line(format!("command={}", serverConfig.command));
-    output.push_stdout_line(format!("args={}", serverConfig.args.join(" ")));
-    if let Some(url) = serverConfig.url {
-        output.push_stdout_line(format!("url={url}"));
+    let enabled = server.isServerEnabled(id);
+    let headerKeys = serverConfig.headers.keys().cloned().collect::<Vec<_>>();
+    let envKeys = serverConfig.env.keys().cloned().collect::<Vec<_>>();
+    let metadata = server.getPluginMetadata(id);
+    let status = server.getServerStatus(id);
+    output.push_stdout_line(format!("MCP server: {id}"));
+    output.push_stdout_line(format!("Enabled: {enabled}"));
+    output.push_stdout_line(format!("Command: {}", serverConfig.command));
+    output.push_stdout_line(format!("Arguments: {}", serverConfig.args.join(" ")));
+    if let Some(url) = &serverConfig.url {
+        output.push_stdout_line(format!("URL: {url}"));
     }
-    if let Some(serverType) = serverConfig.r#type {
-        output.push_stdout_line(format!("type={serverType}"));
+    if let Some(serverType) = &serverConfig.r#type {
+        output.push_stdout_line(format!("Type: {serverType}"));
     }
+    output.push_stdout_line(format!("Header keys: {}", headerKeys.join(", ")));
+    output.push_stdout_line(format!("Environment keys: {}", envKeys.join(", ")));
     output.push_stdout_line(format!(
-        "headerKeys={}",
-        serverConfig
-            .headers
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(",")
+        "Auto approve: {}",
+        serverConfig.autoApprove.join(", ")
     ));
-    output.push_stdout_line(format!(
-        "envKeys={}",
-        serverConfig
-            .env
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(",")
-    ));
-    output.push_stdout_line(format!(
-        "autoApprove={}",
-        serverConfig.autoApprove.join(",")
-    ));
-    print_optional_metadata(&server, id, output);
-    print_optional_status(&server, id, output);
+    print_optional_metadata(metadata.as_ref(), output);
+    print_optional_status(status.as_ref(), output);
+    output.setJsonStdout(serde_json::json!({
+        "id": id,
+        "enabled": enabled,
+        "command": serverConfig.command,
+        "args": serverConfig.args,
+        "url": serverConfig.url,
+        "type": serverConfig.r#type,
+        "headerKeys": headerKeys,
+        "envKeys": envKeys,
+        "autoApprove": serverConfig.autoApprove,
+        "metadata": metadata,
+        "status": status,
+    }));
     Ok(())
 }
 
+/// Imports MCP server configuration from JSON input.
 fn import_mcp_config(
     context: HostManager,
     args: &[String],
@@ -138,15 +166,22 @@ fn import_mcp_config(
     let configArg = required_arg(args, 1, "operit2 mcp import <json-or-@file>")?;
     let configJson = read_content_arg(configArg)?;
     let count = mcp_local_server(&context).mergeConfigFromJson(&configJson)?;
-    output.push_stdout_line(format!("imported={count}"));
+    output.push_stdout_line(format!("MCP servers imported: {count}"));
+    output.setJsonStdout(serde_json::json!({"imported": count}));
     Ok(())
 }
 
+/// Exports MCP server configuration as JSON.
 fn export_mcp_config(context: HostManager, output: &mut CoreCommandOutput) -> Result<(), String> {
-    output.push_stdout_line(mcp_local_server(&context).exportConfigAsJson());
+    let configJson = mcp_local_server(&context).exportConfigAsJson();
+    let configValue =
+        serde_json::from_str::<Value>(&configJson).map_err(|error| error.to_string())?;
+    output.push_stdout_line(configJson);
+    output.setJsonStdout(configValue);
     Ok(())
 }
 
+/// Removes one MCP server.
 fn remove_mcp_server(
     context: HostManager,
     args: &[String],
@@ -154,10 +189,12 @@ fn remove_mcp_server(
 ) -> Result<(), String> {
     let id = required_arg(args, 1, "operit2 mcp remove <id>")?;
     mcp_local_server(&context).removeMCPServer(id)?;
-    output.push_stdout_line(format!("removed={id}"));
+    output.push_stdout_line(format!("MCP server removed: {id}"));
+    output.setJsonStdout(serde_json::json!({"id": id, "removed": true}));
     Ok(())
 }
 
+/// Sets the enabled state for one MCP server.
 fn set_mcp_enabled(
     context: HostManager,
     args: &[String],
@@ -171,14 +208,12 @@ fn set_mcp_enabled(
     };
     let id = required_arg(args, 1, usage)?;
     mcp_local_server(&context).setServerEnabled(id, enabled)?;
-    if enabled {
-        output.push_stdout_line(format!("enabled={id}"));
-    } else {
-        output.push_stdout_line(format!("disabled={id}"));
-    }
+    output.push_stdout_line(format!("MCP server {}: {id}", enabled_status(enabled)));
+    output.setJsonStdout(serde_json::json!({"id": id, "enabled": enabled}));
     Ok(())
 }
 
+/// Starts one MCP server and prints startup progress.
 fn start_mcp_server(
     application: &OperitApplication,
     args: &[String],
@@ -196,8 +231,10 @@ fn start_mcp_server(
     let started = starter.startPluginWithTimeout(id, timeoutMs, |status| {
         statuses.push(status);
     });
+    let mut statusItems = Vec::new();
     for status in &statuses {
         print_start_status(status, output);
+        statusItems.push(start_status_json(status));
     }
     if !started {
         return Err(format!("MCP start failed: {id}"));
@@ -209,10 +246,17 @@ fn start_mcp_server(
         Some(current_time_millis()),
         None,
     )?;
-    output.push_stdout_line(format!("started={id}"));
+    output.push_stdout_line(format!("MCP server started: {id}"));
+    output.setJsonStdout(serde_json::json!({
+        "id": id,
+        "started": true,
+        "timeoutMs": timeoutMs,
+        "statuses": statusItems,
+    }));
     Ok(())
 }
 
+/// Stops one MCP server and unregisters its tools.
 fn kill_mcp_server(
     application: &OperitApplication,
     args: &[String],
@@ -236,12 +280,19 @@ fn kill_mcp_server(
         None,
         Some(current_time_millis()),
     )?;
-    output.push_stdout_line(format!("killed={id}"));
-    output.push_stdout_line(format!("unregisteredTools={removedTools}"));
-    output.push_stdout_line(format!("unregisteredPackage={removedPackage}"));
+    output.push_stdout_line(format!("MCP server stopped: {id}"));
+    output.push_stdout_line(format!("Unregistered tools: {removedTools}"));
+    output.push_stdout_line(format!("Unregistered package: {removedPackage}"));
+    output.setJsonStdout(serde_json::json!({
+        "id": id,
+        "killed": true,
+        "unregisteredTools": removedTools,
+        "unregisteredPackage": removedPackage,
+    }));
     Ok(())
 }
 
+/// Prints cached tools for one MCP server.
 fn print_mcp_tools(
     context: HostManager,
     args: &[String],
@@ -251,15 +302,21 @@ fn print_mcp_tools(
     let tools = mcp_local_server(&context)
         .getCachedTools(id)
         .ok_or_else(|| format!("MCP tools not cached: {id}"))?;
-    for tool in tools {
+    output.push_stdout_line(format!("MCP tools for {id}: {}", tools.len()));
+    for tool in &tools {
         output.push_stdout_line(format!(
-            "{}\t{}\t{}",
+            "- {} — {} — schema: {}",
             tool.name, tool.description, tool.inputSchema
         ));
     }
+    output.setJsonStdout(serde_json::json!({
+        "id": id,
+        "tools": tools,
+    }));
     Ok(())
 }
 
+/// Prints saved plugin configuration for one MCP server.
 fn print_mcp_config(
     context: HostManager,
     args: &[String],
@@ -267,10 +324,16 @@ fn print_mcp_config(
 ) -> Result<(), String> {
     let id = required_arg(args, 1, "operit2 mcp config <id>")?;
     require_mcp_server(&context, id)?;
-    output.push_stdout_line(mcp_local_server(&context).getPluginConfig(id));
+    let config = mcp_local_server(&context).getPluginConfig(id);
+    output.push_stdout_line(config.clone());
+    output.setJsonStdout(serde_json::json!({
+        "id": id,
+        "config": config,
+    }));
     Ok(())
 }
 
+/// Saves plugin configuration for one MCP server.
 fn save_mcp_config(
     context: HostManager,
     args: &[String],
@@ -283,10 +346,12 @@ fn save_mcp_config(
     if !saved {
         return Err(format!("MCP config did not contain server: {id}"));
     }
-    output.push_stdout_line(format!("configSaved={id}"));
+    output.push_stdout_line(format!("MCP config saved: {id}"));
+    output.setJsonStdout(serde_json::json!({"id": id, "configSaved": true}));
     Ok(())
 }
 
+/// Saves one local MCP server definition.
 fn save_local_mcp_server(
     context: HostManager,
     args: &[String],
@@ -295,6 +360,11 @@ fn save_local_mcp_server(
     let usage = "operit2 mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--approve TOOL] -- <command> [args...]";
     let id = required_arg(args, 1, usage)?;
     let parsed = parse_local_set_args(&args[2..], usage)?;
+    let command = parsed.command.clone();
+    let commandArgs = parsed.args.clone();
+    let envKeys = parsed.env.keys().cloned().collect::<Vec<_>>();
+    let disabled = parsed.disabled;
+    let autoApprove = parsed.autoApprove.clone();
     mcp_local_server(&context).addOrUpdateMCPServer(
         id.to_string(),
         parsed.command,
@@ -303,10 +373,21 @@ fn save_local_mcp_server(
         parsed.disabled,
         parsed.autoApprove,
     )?;
-    output.push_stdout_line(format!("localSaved={id}"));
+    output.push_stdout_line(format!("Local MCP server saved: {id}"));
+    output.push_stdout_line(format!("Command: {command} {}", commandArgs.join(" ")));
+    output.setJsonStdout(serde_json::json!({
+        "id": id,
+        "localSaved": true,
+        "command": command,
+        "args": commandArgs,
+        "envKeys": envKeys,
+        "disabled": disabled,
+        "autoApprove": autoApprove,
+    }));
     Ok(())
 }
 
+/// Installs an MCP server from a GitHub repository.
 fn install_mcp_from_github(
     application: &OperitApplication,
     args: &[String],
@@ -319,11 +400,23 @@ fn install_mcp_from_github(
     let metadata = metadata_from_install_args(args, usage)?;
     let mcpConfig = optional_content_arg(args.get(7))?;
     match MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
-        .installMCPServerWithObject(id.clone(), repoUrl, metadata, mcpConfig, |_| {})
-    {
+        .installMCPServerWithObject(
+            id.clone(),
+            repoUrl.clone(),
+            metadata.clone(),
+            mcpConfig,
+            |_| {},
+        ) {
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
-            output.push_stdout_line(format!("installed={id}"));
-            output.push_stdout_line(format!("path={pluginPath}"));
+            output.push_stdout_line(format!("MCP server installed: {id}"));
+            output.push_stdout_line(format!("Path: {pluginPath}"));
+            output.setJsonStdout(serde_json::json!({
+                "id": id,
+                "repoUrl": repoUrl,
+                "metadata": metadata,
+                "path": pluginPath,
+                "installed": true,
+            }));
             Ok(())
         }
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => {
@@ -332,6 +425,7 @@ fn install_mcp_from_github(
     }
 }
 
+/// Installs an MCP server from a zip archive.
 fn install_mcp_from_zip(
     application: &OperitApplication,
     args: &[String],
@@ -344,11 +438,23 @@ fn install_mcp_from_zip(
     let metadata = metadata_from_install_args(args, usage)?;
     let mcpConfig = optional_content_arg(args.get(7))?;
     match MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
-        .installMCPServerFromZip(id.clone(), zipPath, metadata, mcpConfig, |_| {})
-    {
+        .installMCPServerFromZip(
+            id.clone(),
+            zipPath.clone(),
+            metadata.clone(),
+            mcpConfig,
+            |_| {},
+        ) {
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Success { pluginPath } => {
-            output.push_stdout_line(format!("installed={id}"));
-            output.push_stdout_line(format!("path={pluginPath}"));
+            output.push_stdout_line(format!("MCP server installed: {id}"));
+            output.push_stdout_line(format!("Path: {pluginPath}"));
+            output.setJsonStdout(serde_json::json!({
+                "id": id,
+                "zipPath": zipPath,
+                "metadata": metadata,
+                "path": pluginPath,
+                "installed": true,
+            }));
             Ok(())
         }
         operit_tools::tools::mcp_runtime::MCPRepository::InstallResult::Error { message } => {
@@ -357,6 +463,7 @@ fn install_mcp_from_zip(
     }
 }
 
+/// Prints plugin metadata for one MCP server.
 fn print_mcp_metadata(
     context: HostManager,
     args: &[String],
@@ -366,13 +473,16 @@ fn print_mcp_metadata(
     let metadata = mcp_local_server(&context)
         .getPluginMetadata(id)
         .ok_or_else(|| format!("MCP metadata not found: {id}"))?;
-    output.push_stdout_line(format!("name={}", metadata.name));
-    output.push_stdout_line(format!("description={}", metadata.description));
-    output.push_stdout_line(format!("author={}", metadata.author));
-    output.push_stdout_line(format!("version={}", metadata.version));
+    output.push_stdout_line(format!("MCP metadata: {id}"));
+    output.push_stdout_line(format!("Name: {}", metadata.name));
+    output.push_stdout_line(format!("Description: {}", metadata.description));
+    output.push_stdout_line(format!("Author: {}", metadata.author));
+    output.push_stdout_line(format!("Version: {}", metadata.version));
+    output.setJsonStdout(serde_json::json!({"id": id, "metadata": metadata}));
     Ok(())
 }
 
+/// Saves plugin metadata for one MCP server.
 fn save_mcp_metadata(
     context: HostManager,
     args: &[String],
@@ -385,19 +495,20 @@ fn save_mcp_metadata(
     let description = read_content_arg(required_arg(args, 3, usage)?)?;
     let author = required_arg(args, 4, usage)?.to_string();
     let version = required_arg(args, 5, usage)?.to_string();
-    mcp_local_server(&context).addOrUpdatePluginMetadata(
-        id,
-        PluginMetadata {
-            name,
-            description,
-            author,
-            version,
-        },
-    )?;
-    output.push_stdout_line(format!("metadataSaved={id}"));
+    let metadata = PluginMetadata {
+        name,
+        description,
+        author,
+        version,
+    };
+    mcp_local_server(&context).addOrUpdatePluginMetadata(id, metadata.clone())?;
+    output.push_stdout_line(format!("MCP metadata saved: {id}"));
+    output
+        .setJsonStdout(serde_json::json!({"id": id, "metadata": metadata, "metadataSaved": true}));
     Ok(())
 }
 
+/// Generates and saves an MCP description.
 fn generate_mcp_description(
     application: &OperitApplication,
     args: &[String],
@@ -425,7 +536,11 @@ fn generate_mcp_description(
             version: metadata.version,
         },
     )?;
-    output.push_stdout_line(description);
+    output.push_stdout_line(description.clone());
+    output.setJsonStdout(serde_json::json!({
+        "id": id,
+        "description": description,
+    }));
     Ok(())
 }
 
@@ -511,48 +626,92 @@ fn require_mcp_server(context: &HostManager, id: &str) -> Result<(), String> {
         .ok_or_else(|| format!("MCP server not found: {id}"))
 }
 
-fn print_optional_metadata(server: &MCPLocalServer, id: &str, output: &mut CoreCommandOutput) {
-    if let Some(metadata) = server.getPluginMetadata(id) {
-        output.push_stdout_line(format!("name={}", metadata.name));
-        output.push_stdout_line(format!("description={}", metadata.description));
-        output.push_stdout_line(format!("author={}", metadata.author));
-        output.push_stdout_line(format!("version={}", metadata.version));
+/// Prints MCP metadata when it exists.
+fn print_optional_metadata(metadata: Option<&PluginMetadata>, output: &mut CoreCommandOutput) {
+    if let Some(metadata) = metadata {
+        output.push_stdout_line(format!("Name: {}", metadata.name));
+        output.push_stdout_line(format!("Description: {}", metadata.description));
+        output.push_stdout_line(format!("Author: {}", metadata.author));
+        output.push_stdout_line(format!("Version: {}", metadata.version));
     }
 }
 
-fn print_optional_status(server: &MCPLocalServer, id: &str, output: &mut CoreCommandOutput) {
-    if let Some(status) = server.getServerStatus(id) {
-        output.push_stdout_line(format!("lastStartTime={}", status.lastStartTime));
-        output.push_stdout_line(format!("lastStopTime={}", status.lastStopTime));
-        if let Some(errorMessage) = status.errorMessage {
-            output.push_stdout_line(format!("errorMessage={errorMessage}"));
+/// Prints MCP runtime status when it exists.
+fn print_optional_status(status: Option<&ServerStatus>, output: &mut CoreCommandOutput) {
+    if let Some(status) = status {
+        output.push_stdout_line(format!("Last start: {}", status.lastStartTime));
+        output.push_stdout_line(format!("Last stop: {}", status.lastStopTime));
+        if let Some(errorMessage) = &status.errorMessage {
+            output.push_stdout_line(format!("Error: {errorMessage}"));
         }
         if let Some(tools) = status.cachedTools.as_ref() {
-            output.push_stdout_line(format!("tools={}", tools.len()));
+            output.push_stdout_line(format!("Cached tools: {}", tools.len()));
         }
     }
 }
 
+/// Prints one MCP startup status message.
 fn print_start_status(status: &StartStatus, output: &mut CoreCommandOutput) {
     match status {
         StartStatus::InProgress(message) => {
-            output.push_stdout_line(format!("status=in_progress\tmessage={message}"))
+            output.push_stdout_line(format!("In progress: {message}"))
         }
-        StartStatus::Success(message) => {
-            output.push_stdout_line(format!("status=success\tmessage={message}"))
+        StartStatus::Success(message) => output.push_stdout_line(format!("Success: {message}")),
+        StartStatus::Error(message) => output.push_stdout_line(format!("Error: {message}")),
+        StartStatus::TerminalServiceUnavailable(message) => {
+            output.push_stdout_line(format!("Terminal service unavailable: {message}"))
         }
-        StartStatus::Error(message) => {
-            output.push_stdout_line(format!("status=error\tmessage={message}"))
-        }
-        StartStatus::TerminalServiceUnavailable(message) => output.push_stdout_line(format!(
-            "status=terminal_service_unavailable\tmessage={message}"
-        )),
         StartStatus::PnpmMissing(message) => {
-            output.push_stdout_line(format!("status=pnpm_missing\tmessage={message}"))
+            output.push_stdout_line(format!("pnpm missing: {message}"))
         }
     }
 }
 
+/// Builds a JSON object for one MCP startup status.
+fn start_status_json(status: &StartStatus) -> Value {
+    match status {
+        StartStatus::InProgress(message) => {
+            serde_json::json!({"status": "in_progress", "message": message})
+        }
+        StartStatus::Success(message) => {
+            serde_json::json!({"status": "success", "message": message})
+        }
+        StartStatus::Error(message) => serde_json::json!({"status": "error", "message": message}),
+        StartStatus::TerminalServiceUnavailable(message) => {
+            serde_json::json!({"status": "terminal_service_unavailable", "message": message})
+        }
+        StartStatus::PnpmMissing(message) => {
+            serde_json::json!({"status": "pnpm_missing", "message": message})
+        }
+    }
+}
+
+/// Formats an optional string reference for CLI text.
+fn format_optional_string(value: Option<&String>) -> String {
+    match value {
+        Some(value) => value.clone(),
+        None => "-".to_string(),
+    }
+}
+
+/// Formats an optional usize for CLI text.
+fn format_optional_usize(value: Option<usize>) -> String {
+    match value {
+        Some(value) => value.to_string(),
+        None => "-".to_string(),
+    }
+}
+
+/// Formats an enabled state as CLI text.
+fn enabled_status(enabled: bool) -> &'static str {
+    if enabled {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+/// Checks whether an MCP bridge command succeeded.
 fn require_bridge_success(value: &Value) -> Result<(), String> {
     match value.get("success").and_then(Value::as_bool) {
         Some(true) => Ok(()),
@@ -567,6 +726,7 @@ fn require_bridge_success(value: &Value) -> Result<(), String> {
     }
 }
 
+/// Returns the current Unix timestamp in milliseconds.
 fn current_time_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -574,34 +734,41 @@ fn current_time_millis() -> i64 {
         .as_millis() as i64
 }
 
+/// Reads a required command argument.
 fn required_arg<'a>(args: &'a [String], index: usize, usage: &str) -> Result<&'a String, String> {
     args.get(index).ok_or_else(|| format!("usage: {usage}"))
 }
 
+/// Creates an MCP local server repository.
 fn mcp_local_server(context: &HostManager) -> MCPLocalServer {
     MCPLocalServer::getInstance(context)
 }
 
+/// Prints MCP command usage.
 fn print_mcp_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 mcp dir");
-    output.push_stdout_line("operit2 mcp list");
-    output.push_stdout_line("operit2 mcp show <id>");
-    output.push_stdout_line("operit2 mcp import <json-or-@file>");
-    output.push_stdout_line("operit2 mcp export");
-    output.push_stdout_line("operit2 mcp remove <id>");
-    output.push_stdout_line("operit2 mcp enable <id>");
-    output.push_stdout_line("operit2 mcp disable <id>");
-    output.push_stdout_line("operit2 mcp start <id>");
-    output.push_stdout_line("operit2 mcp kill <id>");
-    output.push_stdout_line("operit2 mcp tools <id>");
-    output.push_stdout_line("operit2 mcp config <id>");
-    output.push_stdout_line("operit2 mcp config-set <id> <json-or-@file>");
-    output.push_stdout_line("operit2 mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--approve TOOL] -- <command> [args...]");
-    output.push_stdout_line("operit2 mcp install-github <id> <repo-url> <name> <description-or-@file> <author> <version> [config-or-@file]");
-    output.push_stdout_line("operit2 mcp install-zip <id> <zip-path> <name> <description-or-@file> <author> <version> [config-or-@file]");
-    output.push_stdout_line("operit2 mcp meta <id>");
-    output.push_stdout_line(
+    let lines = vec![
+        "operit2 mcp dir",
+        "operit2 mcp list",
+        "operit2 mcp show <id>",
+        "operit2 mcp import <json-or-@file>",
+        "operit2 mcp export",
+        "operit2 mcp remove <id>",
+        "operit2 mcp enable <id>",
+        "operit2 mcp disable <id>",
+        "operit2 mcp start <id>",
+        "operit2 mcp kill <id>",
+        "operit2 mcp tools <id>",
+        "operit2 mcp config <id>",
+        "operit2 mcp config-set <id> <json-or-@file>",
+        "operit2 mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--approve TOOL] -- <command> [args...]",
+        "operit2 mcp install-github <id> <repo-url> <name> <description-or-@file> <author> <version> [config-or-@file]",
+        "operit2 mcp install-zip <id> <zip-path> <name> <description-or-@file> <author> <version> [config-or-@file]",
+        "operit2 mcp meta <id>",
         "operit2 mcp meta-set <id> <name> <description-or-@file> <author> <version>",
-    );
-    output.push_stdout_line("operit2 mcp describe <id>");
+        "operit2 mcp describe <id>",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

@@ -16,6 +16,7 @@ import 'package:operit2/ui/features/chat/components/ChatArea.dart';
 import 'package:operit2/ui/features/chat/components/part/StructuredMessagePartRenderer.dart';
 import 'package:operit2/ui/features/chat/components/part/ThinkToolsXmlNodeGrouper.dart';
 import 'package:operit2/ui/features/chat/components/part/ToolDisplayComponents.dart';
+import 'package:operit2/ui/features/chat/components/style/input/common/InputProcessingStatusLane.dart';
 import 'package:operit2/ui/features/chat/components/style/cursor/CursorStyleChatMessage.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
@@ -99,6 +100,156 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.byType(StreamingCursor), findsOneWidget);
+  });
+
+  testWidgets('interpolates the cursor position across a stream line break', (
+    tester,
+  ) async {
+    final streamController = StreamController<MarkdownStreamEvent>();
+    addTearDown(() async {
+      await streamController.close();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 80,
+            child: StreamMarkdownRenderer(
+              content: '',
+              isStreaming: true,
+              textColor: Colors.black,
+              backgroundColor: Colors.white,
+              contentStream: streamController.stream,
+              splitMarkdownContent: _splitMarkdownContent,
+            ),
+          ),
+        ),
+      ),
+    );
+    streamController
+      ..add(_markdownBlockStart())
+      ..add(_markdownBlockChunk('ab\ncd'));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final cursorFinder = find.byType(StreamingCursor);
+    final initialPosition = tester.getTopLeft(cursorFinder);
+    await tester.pump(const Duration(milliseconds: 100));
+    final intermediatePosition = tester.getTopLeft(cursorFinder);
+    await tester.pump(const Duration(milliseconds: 100));
+    final finalPosition = tester.getTopLeft(cursorFinder);
+
+    expect(intermediatePosition.dy, greaterThan(initialPosition.dy));
+    expect(intermediatePosition.dy, lessThan(finalPosition.dy));
+  });
+
+  testWidgets('builds only the visible portion of a long transcript', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(true);
+    final messages = List<ChatUiMessage>.generate(
+      80,
+      (index) => _aiMessage(
+        parts: <MessagePart>[
+          MessagePart(
+            partId: 'part-$index',
+            sequence: 0,
+            kind: MessagePartKind.markdown,
+            content: 'Response $index',
+            toolCallId: null,
+            toolName: null,
+            attributes: const <String, String>{},
+          ),
+        ],
+        timestamp: index + 1,
+        completedAt: 1,
+      ),
+    );
+    addTearDown(() {
+      scrollController.dispose();
+      autoScrollToBottom.dispose();
+    });
+
+    await tester.pumpWidget(
+      _chatArea(
+        messages: messages,
+        isLoading: false,
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byType(CursorStyleChatMessage).evaluate().length,
+      lessThan(messages.length),
+    );
+  });
+
+  testWidgets('reserves transcript padding for the floating status lane', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(true);
+    addTearDown(() {
+      scrollController.dispose();
+      autoScrollToBottom.dispose();
+    });
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(
+          parts: <MessagePart>[
+            MessagePart(
+              partId: 'part',
+              sequence: 0,
+              kind: MessagePartKind.markdown,
+              content: 'Response',
+              toolCallId: null,
+              toolName: null,
+              attributes: const <String, String>{},
+            ),
+          ],
+          completedAt: 1,
+        ),
+        isLoading: false,
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+        bottomContentInset: inputProcessingStatusLaneHeight,
+      ),
+    );
+    await tester.pump();
+
+    final listView = tester.widget<ListView>(find.byType(ListView));
+    expect(listView.padding, const EdgeInsets.fromLTRB(16, 16, 16, 48));
+  });
+
+  testWidgets('does not render a trailing stream newline as a paragraph gap', (
+    tester,
+  ) async {
+    final streamController = StreamController<MarkdownStreamEvent>();
+    addTearDown(() async {
+      await streamController.close();
+    });
+
+    await tester.pumpWidget(
+      _streamingStructuredRendererHarness(
+        parts: const <MessagePart>[],
+        contentStream: streamController.stream,
+        isStreaming: true,
+        streamState: StreamMarkdownRendererState(),
+      ),
+    );
+    streamController
+      ..add(_markdownBlockStart())
+      ..add(_markdownBlockChunk('final line\n'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(
+      find.byKey(const ValueKey<String>('markdown-paragraph-break')),
+      findsNothing,
+    );
   });
 
   testWidgets('keeps live output when Flow rebuilds the stream wrapper', (
@@ -887,6 +1038,7 @@ Widget _chatArea({
   required ScrollController scrollController,
   required ValueNotifier<bool> autoScrollToBottom,
   bool isLoading = true,
+  double bottomContentInset = 0,
 }) {
   return OperitTheme(
     unconfiguredChildEnabled: true,
@@ -916,6 +1068,7 @@ Widget _chatArea({
         onDeleteMessage: (timestamp) async {},
         onDeleteMessagesFrom: (timestamp) async => true,
         onDeleteMessageVariant: (timestamp, variantIndex) async {},
+        onSelectMessageVariant: (timestamp, selectedVariantIndex) async {},
         onRollbackToMessage: (_) {},
         onSelectMessageToEdit: (message) {},
         onRegenerateMessage: (timestamp) async {},
@@ -926,6 +1079,7 @@ Widget _chatArea({
         onToggleMultiSelectMode: (_) {},
         onToggleMessageSelection: (_) {},
         onRefreshRequested: () async {},
+        bottomContentInset: bottomContentInset,
         splitMarkdownContent: _splitMarkdownContent,
       ),
     ),
@@ -1047,12 +1201,13 @@ Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
 ChatUiMessage _aiMessage({
   required List<MessagePart> parts,
   Stream<MarkdownStreamEvent>? stream,
+  int timestamp = 1,
   int completedAt = 0,
 }) {
   return ChatMessage(
     sender: 'ai',
     parts: parts,
-    timestamp: 1,
+    timestamp: timestamp,
     roleName: 'assistant',
     selectedVariantIndex: 0,
     variantCount: 1,

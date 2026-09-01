@@ -47,12 +47,16 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
   /// Reports whether this panel can start another discovery operation.
   bool get _controlsEnabled => widget.enabled && !_busy;
 
+  /// Reports whether the active host can browse native nearby announcements.
+  bool get _supportsDeviceSpaceDiscovery =>
+      LinkAccessHost.instance.supportsDeviceSpaceDiscovery;
+
   /// Loads discovery configuration and starts the initial nearby-space scan.
   @override
   void initState() {
     super.initState();
     unawaited(_loadDiscoverable());
-    if (widget.autoScan) {
+    if (widget.autoScan && _supportsDeviceSpaceDiscovery) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           unawaited(_scanForDeviceSpaces());
@@ -70,7 +74,9 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Text(
-          l10n.settingsRuntimeDiscoverSpacesDescription,
+          _supportsDeviceSpaceDiscovery
+              ? l10n.settingsRuntimeDiscoverSpacesDescription
+              : l10n.settingsRuntimeWebPairDescription,
           style: Theme.of(
             context,
           ).textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
@@ -80,23 +86,24 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
           spacing: 8,
           runSpacing: 8,
           children: <Widget>[
-            FilledButton.tonalIcon(
-              onPressed: !_controlsEnabled || _scanning
-                  ? null
-                  : _scanForDeviceSpaces,
-              icon: _scanning
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: M3LoadingIndicator(size: 18),
-                    )
-                  : const Icon(Icons.search_outlined, size: 18),
-              label: Text(
-                _scanning
-                    ? l10n.settingsRuntimeScanning
-                    : l10n.settingsRuntimeScan,
+            if (_supportsDeviceSpaceDiscovery)
+              FilledButton.tonalIcon(
+                onPressed: !_controlsEnabled || _scanning
+                    ? null
+                    : _scanForDeviceSpaces,
+                icon: _scanning
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: M3LoadingIndicator(size: 18),
+                      )
+                    : const Icon(Icons.search_outlined, size: 18),
+                label: Text(
+                  _scanning
+                      ? l10n.settingsRuntimeScanning
+                      : l10n.settingsRuntimeScan,
+                ),
               ),
-            ),
             TextButton.icon(
               onPressed: _controlsEnabled ? _pairRemoteManually : null,
               icon: const Icon(Icons.add_outlined, size: 18),
@@ -168,16 +175,18 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
               ],
             ),
         ],
-        const SizedBox(height: 12),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          dense: true,
-          visualDensity: VisualDensity.compact,
-          title: Text(l10n.settingsRuntimeEnableDiscovery),
-          subtitle: Text(l10n.settingsRuntimeEnableDiscoveryDescription),
-          value: _discoverable,
-          onChanged: _controlsEnabled ? _setDiscoverable : null,
-        ),
+        if (_supportsDeviceSpaceDiscovery) ...<Widget>[
+          const SizedBox(height: 12),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            title: Text(l10n.settingsRuntimeEnableDiscovery),
+            subtitle: Text(l10n.settingsRuntimeEnableDiscoveryDescription),
+            value: _discoverable,
+            onChanged: _controlsEnabled ? _setDiscoverable : null,
+          ),
+        ],
       ],
     );
   }

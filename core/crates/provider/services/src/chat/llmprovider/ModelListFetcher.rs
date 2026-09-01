@@ -201,6 +201,7 @@ fn readPricing(
                 operation.result.cachedInputPricePerTokenJsonPath.as_deref(),
             )?
             .map(|value| value * 1_000_000.0),
+            cacheWritePricePerMillion: None,
             outputPricePerMillion: output * 1_000_000.0,
             pricePerRequest: readOptionalF64(
                 item,

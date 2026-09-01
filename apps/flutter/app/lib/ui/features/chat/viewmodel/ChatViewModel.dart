@@ -48,10 +48,9 @@ class ChatInputSubmitDecision {
 }
 
 class ChatViewModel {
-  ChatViewModel({
-    this.bridge = const ProxyCoreRuntimeBridge(),
-  }) : clients = GeneratedCoreProxyClients(bridge),
-       _chat = GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain;
+  ChatViewModel({this.bridge = const ProxyCoreRuntimeBridge()})
+    : clients = GeneratedCoreProxyClients(bridge),
+      _chat = GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain;
 
   final OperitRuntimeBridge bridge;
   final GeneratedCoreProxyClients clients;
@@ -319,6 +318,14 @@ class ChatViewModel {
     );
   }
 
+  /// Selects the displayed response variant for a message.
+  Future<void> selectMessageVariant(int timestamp, int selectedVariantIndex) {
+    return _chat.selectMessageVariant(
+      timestamp: timestamp,
+      selectedVariantIndex: selectedVariantIndex,
+    );
+  }
+
   /// Rolls a chat back to the message identified by timestamp.
   Future<String?> rollbackToMessage(String chatId, int messageTimestamp) {
     return _chat.rollbackToMessage(
@@ -401,6 +408,19 @@ class ChatViewModel {
       chatId: chatId,
       relativePath: relativePath,
     );
+    return entries;
+  }
+
+  /// Lists workspace entries ranked for the active @ mention query.
+  Future<List<WorkspaceFileEntry>> listMentionWorkspaceSuggestions(
+    String searchQuery,
+  ) async {
+    final chatId = await _requiredCurrentChatId();
+    final entries = await clients.servicesWorkspaceService
+        .listMentionWorkspaceSuggestions(
+          chatId: chatId,
+          searchQuery: searchQuery,
+        );
     return entries;
   }
 

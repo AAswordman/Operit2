@@ -14,12 +14,17 @@ pub fn run_host_command(
 
     match args[0].as_str() {
         "show" => {
-            output.push_stdout_line(format!("targetOs={}", std::env::consts::OS));
-            output.push_stdout_line(format!("targetArch={}", std::env::consts::ARCH));
-            output.push_stdout_line(format!(
-                "coreVersion={}",
-                OperitApplication::newWithContext(context).coreVersion()
-            ));
+            let targetOs = std::env::consts::OS;
+            let targetArch = std::env::consts::ARCH;
+            let coreVersion = OperitApplication::newWithContext(context).coreVersion();
+            output.push_stdout_line(format!("Target OS: {targetOs}"));
+            output.push_stdout_line(format!("Target arch: {targetArch}"));
+            output.push_stdout_line(format!("Core version: {coreVersion}"));
+            output.setJsonStdout(serde_json::json!({
+                "targetOs": targetOs,
+                "targetArch": targetArch,
+                "coreVersion": coreVersion,
+            }));
             Ok(())
         }
         "capabilities" => Err("host capabilities are not exposed by core command".to_string()),
@@ -31,8 +36,15 @@ pub fn run_host_command(
     }
 }
 
+/// Prints host command usage.
 fn print_host_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 host show");
-    output.push_stdout_line("operit2 host capabilities");
-    output.push_stdout_line("operit2 host paths");
+    let lines = vec![
+        "operit2 host show",
+        "operit2 host capabilities",
+        "operit2 host paths",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

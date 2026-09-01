@@ -65,8 +65,8 @@ use operit_model::ModelConfigData::{
 };
 use operit_model::ModelParameter::{CustomParameterData, ModelParameter, ParameterCategory};
 use operit_model::OperitChatArchive::{
-    OperitArchivedChat, OperitArchivedMessage, OperitChatArchive, ARCHIVE_TYPE,
-    CURRENT_FORMAT_VERSION,
+    OperitArchivedChat, OperitArchivedMessage, OperitArchivedMessageVariant, OperitChatArchive,
+    ARCHIVE_TYPE, CURRENT_FORMAT_VERSION,
 };
 use operit_model::PromptTag::{PromptTag, TagType};
 use operit_model::StandardModelParameters::StandardModelParameters;
@@ -75,6 +75,7 @@ use operit_model::TtsConfig::{
 };
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::repository::MemoryRepository::MemoryRepository;
+use operit_store::repository::UsageStatisticsStore::{TokenStatsModel, UsageStatisticsStore};
 use operit_util::OperitPaths::{sanitizeMemoryOwnerId, sharedMemoryOwnerKey};
 
 const FORMAT_VERSION: i32 = 1;
@@ -143,6 +144,8 @@ pub struct Operit1SnapshotImportResult {
     pub importedDatastoreKeys: i32,
     pub importedChats: i32,
     pub importedMessages: i32,
+    pub importedTokenUsageRecords: i32,
+    pub importedTokenStatsModels: i32,
     pub importedMemories: i32,
     pub importedMemoryLinks: i32,
     pub importedFiles: i32,
@@ -188,9 +191,10 @@ impl Operit1SnapshotImportProgress {
             stage: "completed".to_string(),
             title: "导入完成".to_string(),
             detail: format!(
-                "已迁移 {} 个聊天、{} 条消息、{} 条记忆和 {} 个资源文件。",
+                "已迁移 {} 个聊天、{} 条消息、{} 条统计记录、{} 条记忆和 {} 个资源文件。",
                 result.importedChats,
                 result.importedMessages,
+                result.importedTokenUsageRecords,
                 result.importedMemories,
                 result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles
             ),
@@ -451,6 +455,8 @@ impl Operit1SnapshotImportManager {
         ));
         let (importedChats, importedMessages) =
             self.importChatDatabase(&parsed, &fileImportPlan)?;
+        let (importedTokenUsageRecords, importedTokenStatsModels) =
+            self.importTokenStatistics(&parsed)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "memory",
             "迁移记忆库",
@@ -471,6 +477,8 @@ impl Operit1SnapshotImportManager {
             importedDatastoreKeys,
             importedChats,
             importedMessages,
+            importedTokenUsageRecords,
+            importedTokenStatsModels,
             importedMemories,
             importedMemoryLinks,
             importedFiles: fileImportResult.importedFiles,
@@ -792,6 +800,91 @@ impl Operit1SnapshotImportManager {
                 );
             }
             Ok((chatCount, messageCount))
+        })
+    }
+
+    #[allow(non_snake_case)]
+    /// Imports the OP1 v21 token ledger and pricing identities without deriving usage from chats.
+    fn importTokenStatistics(&self, parsed: &ParsedOperit1Snapshot) -> Result<(i32, i32), String> {
+        self.withStagedOperit1ChatDatabase(parsed, |connection, bridge| {
+            if bridge != Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27 {
+                return Ok((0, 0));
+            }
+            let usageRows = connection
+                .query(
+                    r#"
+                    SELECT importKey, occurredAtMs, configId, provider, model, requestCount,
+                        uncachedInputTokens, cachedInputTokens, cacheWriteTokens,
+                        totalInputTokens, outputTokens
+                    FROM token_usage_records
+                    ORDER BY id ASC
+                    "#,
+                    Vec::new(),
+                )
+                .map_err(|error| error.to_string())?;
+            let pricingRows = connection
+                .query(
+                    r#"
+                    SELECT configId, provider, model, billingMode, currency,
+                        inputPricePerMillion, cachedInputPricePerMillion,
+                        cacheWritePricePerMillion, outputPricePerMillion, pricePerRequest
+                    FROM token_stats_models
+                    ORDER BY provider ASC, model ASC, configId ASC
+                    "#,
+                    Vec::new(),
+                )
+                .map_err(|error| error.to_string())?;
+            let statisticsStore = UsageStatisticsStore::new();
+            for row in &usageRows {
+                statisticsStore.recordTokenUsage(
+                    sqliteRowOptionalString(row, 0, "token_usage_records.importKey")?,
+                    sqliteRowOptionalI64(row, 1, "token_usage_records.occurredAtMs")?,
+                    sqliteRowString(row, 2, "token_usage_records.configId")?,
+                    sqliteRowString(row, 3, "token_usage_records.provider")?,
+                    sqliteRowString(row, 4, "token_usage_records.model")?,
+                    sqliteRowI64(row, 5, "token_usage_records.requestCount")?,
+                    sqliteRowOptionalI64(row, 6, "token_usage_records.uncachedInputTokens")?,
+                    sqliteRowOptionalI64(row, 7, "token_usage_records.cachedInputTokens")?,
+                    sqliteRowOptionalI64(row, 8, "token_usage_records.cacheWriteTokens")?,
+                    sqliteRowOptionalI64(row, 9, "token_usage_records.totalInputTokens")?,
+                    sqliteRowOptionalI64(row, 10, "token_usage_records.outputTokens")?,
+                )?;
+            }
+            for row in &pricingRows {
+                statisticsStore.upsertTokenStatsModel(TokenStatsModel {
+                    configId: sqliteRowString(row, 0, "token_stats_models.configId")?,
+                    provider: sqliteRowString(row, 1, "token_stats_models.provider")?,
+                    model: sqliteRowString(row, 2, "token_stats_models.model")?,
+                    billingMode: sqliteRowOptionalString(row, 3, "token_stats_models.billingMode")?,
+                    currency: sqliteRowOptionalString(row, 4, "token_stats_models.currency")?,
+                    inputPricePerMillion: sqliteRowOptionalF64(
+                        row,
+                        5,
+                        "token_stats_models.inputPricePerMillion",
+                    )?,
+                    cachedInputPricePerMillion: sqliteRowOptionalF64(
+                        row,
+                        6,
+                        "token_stats_models.cachedInputPricePerMillion",
+                    )?,
+                    cacheWritePricePerMillion: sqliteRowOptionalF64(
+                        row,
+                        7,
+                        "token_stats_models.cacheWritePricePerMillion",
+                    )?,
+                    outputPricePerMillion: sqliteRowOptionalF64(
+                        row,
+                        8,
+                        "token_stats_models.outputPricePerMillion",
+                    )?,
+                    pricePerRequest: sqliteRowOptionalF64(
+                        row,
+                        9,
+                        "token_stats_models.pricePerRequest",
+                    )?,
+                })?;
+            }
+            Ok((usageRows.len() as i32, pricingRows.len() as i32))
         })
     }
 
@@ -2753,15 +2846,18 @@ where
     F: FnMut(usize),
 {
     match bridge {
-        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV24
-        | Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV24 => {
-            buildChatArchiveFromOperit1RoomDatabase(connection, fileImportPlan, onMessageParsed)
+        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV27 => {
+            buildChatArchiveFromOperit1RoomV10Database(connection, fileImportPlan, onMessageParsed)
+        }
+        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV27
+        | Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27 => {
+            buildChatArchiveFromOperit1RoomV20Database(connection, fileImportPlan, onMessageParsed)
         }
     }
 }
 
-/// Builds a chat archive through an Operit1 Room chat database bridge.
-fn buildChatArchiveFromOperit1RoomDatabase<F>(
+/// Builds a chat archive from the original Operit1 Room schema version 10.
+fn buildChatArchiveFromOperit1RoomV10Database<F>(
     connection: &mut dyn RuntimeSqliteConnection,
     fileImportPlan: &SnapshotFileImportPlan,
     onMessageParsed: &mut F,
@@ -2770,7 +2866,7 @@ where
     F: FnMut(usize),
 {
     requireOperit1ChatTables(connection)?;
-    let chatRows = connection
+    let rows = connection
         .query(
             r#"
             SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
@@ -2782,7 +2878,7 @@ where
             Vec::new(),
         )
         .map_err(|error| error.to_string())?;
-    let chatRows = chatRows
+    let chatRows = rows
         .iter()
         .map(|row| {
             Ok(Operit1ChatRow {
@@ -2798,14 +2894,16 @@ where
                 workspace: sqliteRowOptionalString(row, 9, "chats.workspace")?,
                 parentChatId: sqliteRowOptionalString(row, 10, "chats.parentChatId")?,
                 characterCardName: sqliteRowOptionalString(row, 11, "chats.characterCardName")?,
+                characterGroupId: None,
                 locked: sqliteRowI64(row, 12, "chats.locked")? != 0,
+                pinned: false,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
     let mut chats = Vec::new();
     for (chatIndex, chat) in chatRows.into_iter().enumerate() {
         let mut onMessageForChat = || onMessageParsed(chatIndex + 1);
-        let messages = readOperit1Messages(connection, &chat.id, &mut onMessageForChat)?;
+        let messages = readOperit1RoomV10Messages(connection, &chat.id, &mut onMessageForChat)?;
         chats.push(OperitArchivedChat {
             id: chat.id,
             title: chat.title,
@@ -2833,6 +2931,81 @@ where
     })
 }
 
+/// Builds a chat archive from the Operit1 Room schemas 20 and 21.
+fn buildChatArchiveFromOperit1RoomV20Database<F>(
+    connection: &mut dyn RuntimeSqliteConnection,
+    fileImportPlan: &SnapshotFileImportPlan,
+    onMessageParsed: &mut F,
+) -> Result<OperitChatArchive, String>
+where
+    F: FnMut(usize),
+{
+    requireOperit1ChatTables(connection)?;
+    let rows = connection
+        .query(
+            r#"
+            SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
+                currentWindowSize, "group", displayOrder, workspace, parentChatId,
+                characterCardName, characterGroupId, locked, pinned
+            FROM chats
+            ORDER BY displayOrder ASC, updatedAt DESC
+            "#,
+            Vec::new(),
+        )
+        .map_err(|error| error.to_string())?;
+    let chatRows = rows
+        .iter()
+        .map(|row| {
+            Ok(Operit1ChatRow {
+                id: sqliteRowString(row, 0, "chats.id")?,
+                title: sqliteRowString(row, 1, "chats.title")?,
+                createdAt: sqliteRowI64(row, 2, "chats.createdAt")?,
+                updatedAt: sqliteRowI64(row, 3, "chats.updatedAt")?,
+                inputTokens: sqliteRowI64(row, 4, "chats.inputTokens")?,
+                outputTokens: sqliteRowI64(row, 5, "chats.outputTokens")?,
+                currentWindowSize: sqliteRowI64(row, 6, "chats.currentWindowSize")?,
+                group: sqliteRowOptionalString(row, 7, "chats.group")?,
+                displayOrder: sqliteRowI64(row, 8, "chats.displayOrder")?,
+                workspace: sqliteRowOptionalString(row, 9, "chats.workspace")?,
+                parentChatId: sqliteRowOptionalString(row, 10, "chats.parentChatId")?,
+                characterCardName: sqliteRowOptionalString(row, 11, "chats.characterCardName")?,
+                characterGroupId: sqliteRowOptionalString(row, 12, "chats.characterGroupId")?,
+                locked: sqliteRowI64(row, 13, "chats.locked")? != 0,
+                pinned: sqliteRowI64(row, 14, "chats.pinned")? != 0,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut chats = Vec::new();
+    for (chatIndex, chat) in chatRows.into_iter().enumerate() {
+        let mut onMessageForChat = || onMessageParsed(chatIndex + 1);
+        let messages = readOperit1RoomV20Messages(connection, &chat.id, &mut onMessageForChat)?;
+        chats.push(OperitArchivedChat {
+            id: chat.id,
+            title: chat.title,
+            messages,
+            createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,
+            updatedAt: epochMillisToLocalDateTimeString(chat.updatedAt)?,
+            inputTokens: chat.inputTokens,
+            outputTokens: chat.outputTokens,
+            currentWindowSize: chat.currentWindowSize,
+            group: chat.group,
+            displayOrder: chat.displayOrder,
+            workspace: fileImportPlan.rewriteChatWorkspace(chat.workspace)?,
+            parentChatId: chat.parentChatId,
+            characterCardName: chat.characterCardName,
+            characterGroupId: chat.characterGroupId,
+            locked: chat.locked,
+            pinned: chat.pinned,
+        });
+    }
+    Ok(OperitChatArchive {
+        archiveType: ARCHIVE_TYPE.to_string(),
+        formatVersion: CURRENT_FORMAT_VERSION,
+        exportedAt: currentTimeMillis(),
+        chats,
+    })
+}
+
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]
 struct Operit1ChatRow {
@@ -2848,12 +3021,14 @@ struct Operit1ChatRow {
     workspace: Option<String>,
     parentChatId: Option<String>,
     characterCardName: Option<String>,
+    characterGroupId: Option<String>,
     locked: bool,
+    pinned: bool,
 }
 
 #[allow(non_snake_case)]
 /// Reads archived messages for one Operit1 chat row.
-fn readOperit1Messages<F>(
+fn readOperit1RoomV10Messages<F>(
     connection: &mut dyn RuntimeSqliteConnection,
     chatId: &str,
     onMessageParsed: &mut F,
@@ -2911,6 +3086,138 @@ where
         onMessageParsed();
     }
     Ok(messages)
+}
+
+/// Reads complete message and revision data from Operit1 Room schemas 20 and 21.
+fn readOperit1RoomV20Messages<F>(
+    connection: &mut dyn RuntimeSqliteConnection,
+    chatId: &str,
+    onMessageParsed: &mut F,
+) -> Result<Vec<OperitArchivedMessage>, String>
+where
+    F: FnMut(),
+{
+    let rows = connection
+        .query(
+            r#"
+            SELECT sender, content, timestamp, roleName, selectedVariantIndex, provider, modelName,
+                inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs,
+                waitDurationMs, completedAt, displayMode, isFavorite
+            FROM messages
+            WHERE chatId = ?1
+            ORDER BY orderIndex ASC, timestamp ASC
+            "#,
+            vec![SqliteValue::Text(chatId.to_string())],
+        )
+        .map_err(|error| error.to_string())?;
+    let mut messages = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let sender = sqliteRowString(row, 0, "messages.sender")?;
+        let timestamp = sqliteRowI64(row, 2, "messages.timestamp")?;
+        let variants = readOperit1RoomV20MessageVariants(connection, chatId, timestamp, &sender)?;
+        messages.push(OperitArchivedMessage {
+            baseMessage: ChatMessage {
+                sender: sender.clone(),
+                parts: parseOperit1MessageParts(
+                    &sender,
+                    sqliteRowString(row, 1, "messages.content")?,
+                )?,
+                timestamp,
+                roleName: sqliteRowString(row, 3, "messages.roleName")?,
+                selectedVariantIndex: sqliteRowI32(row, 4, "messages.selectedVariantIndex")?,
+                variantCount: variants.len() as i32 + 1,
+                provider: sqliteRowString(row, 5, "messages.provider")?,
+                modelName: sqliteRowString(row, 6, "messages.modelName")?,
+                inputTokens: sqliteRowI64(row, 7, "messages.inputTokens")?,
+                outputTokens: sqliteRowI64(row, 8, "messages.outputTokens")?,
+                cachedInputTokens: sqliteRowI64(row, 9, "messages.cachedInputTokens")?,
+                sentAt: sqliteRowI64(row, 10, "messages.sentAt")?,
+                outputDurationMs: sqliteRowI64(row, 11, "messages.outputDurationMs")?,
+                waitDurationMs: sqliteRowI64(row, 12, "messages.waitDurationMs")?,
+                completedAt: sqliteRowI64(row, 13, "messages.completedAt")?,
+                completedExecutionGeneration: 0,
+                displayMode: parseOperit1ChatMessageDisplayMode(&sqliteRowString(
+                    row,
+                    14,
+                    "messages.displayMode",
+                )?)?,
+                isFavorite: sqliteRowI64(row, 15, "messages.isFavorite")? != 0,
+                isVariantPreview: false,
+                contentStream: None,
+            },
+            variants,
+        });
+        onMessageParsed();
+    }
+    Ok(messages)
+}
+
+/// Reads every stored revision for one message in an Operit1 Room schema 20 or 21 database.
+fn readOperit1RoomV20MessageVariants(
+    connection: &mut dyn RuntimeSqliteConnection,
+    chatId: &str,
+    messageTimestamp: i64,
+    sender: &str,
+) -> Result<Vec<OperitArchivedMessageVariant>, String> {
+    let rows = connection
+        .query(
+            r#"
+            SELECT variantIndex, content, roleName, provider, modelName, inputTokens, outputTokens,
+                cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt
+            FROM message_variants
+            WHERE chatId = ?1 AND messageTimestamp = ?2
+            ORDER BY variantIndex ASC
+            "#,
+            vec![
+                SqliteValue::Text(chatId.to_string()),
+                SqliteValue::Integer(messageTimestamp),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    rows.iter()
+        .map(|row| {
+            Ok(OperitArchivedMessageVariant {
+                variantIndex: sqliteRowI32(row, 0, "message_variants.variantIndex")?,
+                parts: parseOperit1MessageParts(
+                    sender,
+                    sqliteRowString(row, 1, "message_variants.content")?,
+                )?,
+                roleName: sqliteRowString(row, 2, "message_variants.roleName")?,
+                provider: sqliteRowString(row, 3, "message_variants.provider")?,
+                modelName: sqliteRowString(row, 4, "message_variants.modelName")?,
+                inputTokens: sqliteRowI64(row, 5, "message_variants.inputTokens")?,
+                outputTokens: sqliteRowI64(row, 6, "message_variants.outputTokens")?,
+                cachedInputTokens: sqliteRowI64(row, 7, "message_variants.cachedInputTokens")?,
+                sentAt: sqliteRowI64(row, 8, "message_variants.sentAt")?,
+                outputDurationMs: sqliteRowI64(row, 9, "message_variants.outputDurationMs")?,
+                waitDurationMs: sqliteRowI64(row, 10, "message_variants.waitDurationMs")?,
+                completedAt: sqliteRowI64(row, 11, "message_variants.completedAt")?,
+            })
+        })
+        .collect()
+}
+
+/// Converts one legacy text payload into the runtime's canonical message parts.
+fn parseOperit1MessageParts(sender: &str, content: String) -> Result<Vec<MessagePart>, String> {
+    if sender == "ai" {
+        MessagePartCodec::parseAssistantMarkup(&content)
+            .map_err(|error| format!("Operit1 assistant message markup is invalid: {error}"))
+    } else {
+        Ok(vec![MessagePart::markdown(
+            "part-0".to_string(),
+            0,
+            content,
+        )])
+    }
+}
+
+/// Parses a display mode persisted by Operit1 Room into the current typed representation.
+fn parseOperit1ChatMessageDisplayMode(value: &str) -> Result<ChatMessageDisplayMode, String> {
+    match value {
+        "NORMAL" => Ok(ChatMessageDisplayMode::NORMAL),
+        "HIDDEN_PLACEHOLDER" => Ok(ChatMessageDisplayMode::HIDDEN_PLACEHOLDER),
+        other => Err(format!("Operit1 message display mode is unknown: {other}")),
+    }
 }
 
 #[allow(non_snake_case)]
@@ -2973,6 +3280,36 @@ fn sqliteRowI64(row: &SqliteRow, index: usize, label: &str) -> Result<i64, Strin
         .map_err(|error| error.to_string())?
         .asI64()
         .map_err(|error| format!("{label}: {error}"))
+}
+
+/// Reads one nullable integer from a host-neutral SQLite row.
+fn sqliteRowOptionalI64(row: &SqliteRow, index: usize, label: &str) -> Result<Option<i64>, String> {
+    let value = row.valueAt(index).map_err(|error| error.to_string())?;
+    if value.isNull() {
+        return Ok(None);
+    }
+    value
+        .asI64()
+        .map(Some)
+        .map_err(|error| format!("{label}: {error}"))
+}
+
+/// Reads one nullable real value from a host-neutral SQLite row.
+fn sqliteRowOptionalF64(row: &SqliteRow, index: usize, label: &str) -> Result<Option<f64>, String> {
+    let value = row.valueAt(index).map_err(|error| error.to_string())?;
+    if value.isNull() {
+        return Ok(None);
+    }
+    value
+        .asF64()
+        .map(Some)
+        .map_err(|error| format!("{label}: {error}"))
+}
+
+/// Reads one required 32-bit integer from a host-neutral SQLite row.
+fn sqliteRowI32(row: &SqliteRow, index: usize, label: &str) -> Result<i32, String> {
+    let value = sqliteRowI64(row, index, label)?;
+    i32::try_from(value).map_err(|_| format!("{label}: integer does not fit i32: {value}"))
 }
 
 /// Reads one required text value from a host-neutral SQLite row.

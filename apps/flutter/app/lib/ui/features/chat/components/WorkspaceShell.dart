@@ -68,7 +68,6 @@ class WorkspaceShell extends StatelessWidget {
         onOpenWorkspaceFile: onOpenWorkspaceFile,
         onCreateDefaultWorkspace: onCreateDefaultWorkspace,
         onBindWorkspace: onBindWorkspace,
-        onRevealRequested: () => onWorkspaceOpenChanged(true),
       ),
       child: child,
     );

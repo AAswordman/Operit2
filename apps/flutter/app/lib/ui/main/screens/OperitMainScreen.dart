@@ -47,6 +47,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   StreamSubscription<List<core_proxy.ChatHistoryListItem>>?
   _drawerHistoriesSubscription;
   StreamSubscription<String?>? _drawerCurrentChatSubscription;
+  StreamSubscription<List<String>>? _drawerActiveStreamingChatIdsSubscription;
   StreamSubscription<List<core_proxy.CharacterGroupCard>>?
   _drawerCharacterGroupsSubscription;
   StreamSubscription<List<String>>? _drawerCharacterCardIdsSubscription;
@@ -111,6 +112,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     NotificationActivationService.instance.clearChatHandler();
     _drawerHistoriesSubscription?.cancel();
     _drawerCurrentChatSubscription?.cancel();
+    _drawerActiveStreamingChatIdsSubscription?.cancel();
     _drawerCharacterGroupsSubscription?.cancel();
     _drawerCharacterCardIdsSubscription?.cancel();
     for (final subscription in _drawerCharacterCardSubscriptions.values) {
@@ -211,6 +213,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     final currentState = _drawerConversationState.value;
     _drawerConversationState.value = DrawerConversationState(
       histories: currentState.histories,
+      activeStreamingChatIds: currentState.activeStreamingChatIds,
       characterGroupNamesById: currentState.characterGroupNamesById,
       characterCardAvatarUrisByName: currentState.characterCardAvatarUrisByName,
       currentChatId: currentState.currentChatId,
@@ -225,17 +228,22 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
         _clients.chatRuntimeHolderMain.currentChatIdFlow().first,
         characterGroupCoreProxy.allCharacterGroupCardsFlow().first,
         characterCardCoreProxy.getAllCharacterCards(),
+        _clients.chatRuntimeHolderMain.activeStreamingChatIds(),
       ]);
       final histories = results[0] as List<core_proxy.ChatHistoryListItem>;
       final currentChatId = results[1] as String?;
       final characterGroups = results[2] as List<core_proxy.CharacterGroupCard>;
       final characterCards = results[3] as List<core_proxy.CharacterCard>;
+      final activeStreamingChatIds = results[4] as List<String>;
       if (!mounted) {
         return;
       }
       _replaceDrawerCharacterCardAvatars(characterCards);
       _drawerConversationState.value = DrawerConversationState(
         histories: List<core_proxy.ChatHistoryListItem>.unmodifiable(histories),
+        activeStreamingChatIds: Set<String>.unmodifiable(
+          activeStreamingChatIds,
+        ),
         characterGroupNamesById: _characterGroupNameMap(characterGroups),
         characterCardAvatarUrisByName:
             _drawerConversationState.value.characterCardAvatarUrisByName,
@@ -253,6 +261,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       final state = _drawerConversationState.value;
       _drawerConversationState.value = DrawerConversationState(
         histories: state.histories,
+        activeStreamingChatIds: state.activeStreamingChatIds,
         characterGroupNamesById: state.characterGroupNamesById,
         characterCardAvatarUrisByName: state.characterCardAvatarUrisByName,
         currentChatId: state.currentChatId,
@@ -276,6 +285,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
               histories: List<core_proxy.ChatHistoryListItem>.unmodifiable(
                 histories,
               ),
+              activeStreamingChatIds: state.activeStreamingChatIds,
               characterGroupNamesById: state.characterGroupNamesById,
               characterCardAvatarUrisByName:
                   state.characterCardAvatarUrisByName,
@@ -293,6 +303,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             final state = _drawerConversationState.value;
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
+              activeStreamingChatIds: state.activeStreamingChatIds,
               characterGroupNamesById: state.characterGroupNamesById,
               characterCardAvatarUrisByName:
                   state.characterCardAvatarUrisByName,
@@ -314,6 +325,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             final state = _drawerConversationState.value;
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
+              activeStreamingChatIds: state.activeStreamingChatIds,
               characterGroupNamesById: state.characterGroupNamesById,
               characterCardAvatarUrisByName:
                   state.characterCardAvatarUrisByName,
@@ -332,6 +344,48 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             final state = _drawerConversationState.value;
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
+              activeStreamingChatIds: state.activeStreamingChatIds,
+              characterGroupNamesById: state.characterGroupNamesById,
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
+              currentChatId: state.currentChatId,
+              errorMessage: error.toString(),
+              loading: state.loading,
+            );
+          },
+        );
+
+    _drawerActiveStreamingChatIdsSubscription?.cancel();
+    _drawerActiveStreamingChatIdsSubscription = _clients.chatRuntimeHolderMain
+        .activeStreamingChatIdsFlow()
+        .listen(
+          (activeChatIds) {
+            if (!mounted) {
+              return;
+            }
+            final state = _drawerConversationState.value;
+            _drawerConversationState.value = DrawerConversationState(
+              histories: state.histories,
+              activeStreamingChatIds: Set<String>.unmodifiable(activeChatIds),
+              characterGroupNamesById: state.characterGroupNamesById,
+              characterCardAvatarUrisByName:
+                  state.characterCardAvatarUrisByName,
+              currentChatId: state.currentChatId,
+              errorMessage: state.errorMessage,
+              loading: state.loading,
+            );
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            debugPrint(
+              'Failed to watch drawer active chat ids: $error\n$stackTrace',
+            );
+            if (!mounted) {
+              return;
+            }
+            final state = _drawerConversationState.value;
+            _drawerConversationState.value = DrawerConversationState(
+              histories: state.histories,
+              activeStreamingChatIds: state.activeStreamingChatIds,
               characterGroupNamesById: state.characterGroupNamesById,
               characterCardAvatarUrisByName:
                   state.characterCardAvatarUrisByName,
@@ -356,6 +410,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             final state = _drawerConversationState.value;
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
+              activeStreamingChatIds: state.activeStreamingChatIds,
               characterGroupNamesById: _characterGroupNameMap(groups),
               characterCardAvatarUrisByName:
                   state.characterCardAvatarUrisByName,
@@ -374,6 +429,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             final state = _drawerConversationState.value;
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
+              activeStreamingChatIds: state.activeStreamingChatIds,
               characterGroupNamesById: state.characterGroupNamesById,
               characterCardAvatarUrisByName:
                   state.characterCardAvatarUrisByName,
@@ -471,6 +527,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     final state = _drawerConversationState.value;
     _drawerConversationState.value = DrawerConversationState(
       histories: state.histories,
+      activeStreamingChatIds: state.activeStreamingChatIds,
       characterGroupNamesById: state.characterGroupNamesById,
       characterCardAvatarUrisByName: avatarUrisByName,
       currentChatId: state.currentChatId,
@@ -504,6 +561,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     final state = _drawerConversationState.value;
     _drawerConversationState.value = DrawerConversationState(
       histories: state.histories,
+      activeStreamingChatIds: state.activeStreamingChatIds,
       characterGroupNamesById: state.characterGroupNamesById,
       characterCardAvatarUrisByName: avatarUrisByName,
       currentChatId: state.currentChatId,
@@ -523,6 +581,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     final state = _drawerConversationState.value;
     _drawerConversationState.value = DrawerConversationState(
       histories: state.histories,
+      activeStreamingChatIds: state.activeStreamingChatIds,
       characterGroupNamesById: state.characterGroupNamesById,
       characterCardAvatarUrisByName: avatarUrisByName,
       currentChatId: state.currentChatId,
@@ -540,6 +599,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     final state = _drawerConversationState.value;
     _drawerConversationState.value = DrawerConversationState(
       histories: state.histories,
+      activeStreamingChatIds: state.activeStreamingChatIds,
       characterGroupNamesById: state.characterGroupNamesById,
       characterCardAvatarUrisByName: state.characterCardAvatarUrisByName,
       currentChatId: state.currentChatId,
@@ -670,6 +730,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     );
   }
 
+  /// Terminates the Android process after the exit gesture is confirmed.
   void _handleExitBackPress() {
     final currentTime = DateTime.now().millisecondsSinceEpoch;
     if (currentTime - _backPressedTime > _backPressedIntervalMs) {
@@ -684,7 +745,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
         ),
       );
     } else {
-      SystemNavigator.pop();
+      const MethodChannel(
+        'operit/runtime',
+      ).invokeMethod<void>('terminateApplication');
     }
   }
 

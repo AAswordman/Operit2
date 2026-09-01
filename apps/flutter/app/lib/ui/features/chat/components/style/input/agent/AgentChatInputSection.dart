@@ -28,6 +28,7 @@ class AgentChatInputSection extends StatefulWidget {
     required this.focusNode,
     required this.isLoading,
     required this.inputState,
+    this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
     required this.onSendMessage,
@@ -62,6 +63,7 @@ class AgentChatInputSection extends StatefulWidget {
   final FocusNode focusNode;
   final bool isLoading;
   final core_proxy.InputProcessingState inputState;
+  final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final VoidCallback onSendMessage;
@@ -479,7 +481,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final l10n = AppLocalizations.of(context)!;
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;
@@ -488,11 +489,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     final canSendMessage = hasDraftText || widget.attachments.isNotEmpty;
     final showCancelAction = processing && !hasDraftText;
     final showQueueAction = processing && hasDraftText;
-    final processingStatus = _inputProcessingStatus(l10n, widget.inputState);
-    final showProcessingStatus =
-        themePreferenceSnapshot.showInputProcessingStatus &&
-        widget.inputState.isProcessing &&
-        processingStatus.isNotEmpty;
     final inputCardBorderRadius = _agentInputSurfaceBorderRadius(
       themePreferenceSnapshot.chatInputFloating,
     );
@@ -525,18 +521,15 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                     onSendMessage: widget.onSendPendingQueueMessage,
                   ),
                 ),
-              if (showProcessingStatus)
+              if (widget.mentionSuggestionPanel != null)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      processingStatus,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurface.withValues(alpha: 0.8),
-                      ),
-                    ),
+                  padding: EdgeInsets.fromLTRB(
+                    themePreferenceSnapshot.chatInputFloating ? 8 : 0,
+                    0,
+                    themePreferenceSnapshot.chatInputFloating ? 8 : 0,
+                    4,
                   ),
+                  child: widget.mentionSuggestionPanel!,
                 ),
               _InputSurface(
                 color: colorScheme.surfaceContainer,
@@ -1856,64 +1849,6 @@ class _DesktopEnterSendShortcuts extends StatelessWidget {
       composing: TextRange.empty,
     );
   }
-}
-
-String _inputProcessingStatus(
-  AppLocalizations l10n,
-  core_proxy.InputProcessingState state,
-) {
-  final message = _inputProcessingMessage(l10n, state.message);
-  if (message.isNotEmpty) {
-    return message;
-  }
-  return switch (state.kind) {
-    'Processing' => l10n.processingMessage,
-    'Connecting' => l10n.connectingAiService,
-    'Receiving' => l10n.receivingAiResponse,
-    'Summarizing' => l10n.summarizingMemories,
-    'ExecutingPlan' => l10n.executingPlan,
-    'ExecutingTool' => l10n.executingTool(state.toolName),
-    'ProcessingToolResult' => l10n.processingToolResult(state.toolName),
-    'ToolProgress' => _toolProgressStatus(l10n, state),
-    _ => '',
-  };
-}
-
-String _toolProgressStatus(
-  AppLocalizations l10n,
-  core_proxy.InputProcessingState state,
-) {
-  final message = _inputProcessingMessage(l10n, state.message);
-  if (message.isNotEmpty) {
-    return state.toolName.isEmpty
-        ? message
-        : l10n.toolStatusWithName(state.toolName, message);
-  }
-  if (state.toolName.isEmpty) {
-    return l10n.toolRunning;
-  }
-  return l10n.toolRunningWithName(state.toolName);
-}
-
-String _inputProcessingMessage(AppLocalizations l10n, String key) {
-  const memberReplyingPrefix = 'role_response_planner_member_replying|';
-  if (key.startsWith(memberReplyingPrefix)) {
-    return l10n.roleResponsePlannerMemberReplying(
-      key.substring(memberReplyingPrefix.length),
-    );
-  }
-  return switch (key) {
-    'enhanced_processing_input' => l10n.processingInput,
-    'enhanced_processing_message' => l10n.processingMessage,
-    'enhanced_connecting_service' => l10n.connectingAiService,
-    'enhanced_receiving_response' => l10n.receivingAiResponse,
-    'enhanced_receiving_tool_result' => l10n.receivingToolResultAiResponse,
-    'role_response_planner_planning' => l10n.roleResponsePlannerPlanning,
-    'role_response_planner_failed' => l10n.roleResponsePlannerFailed,
-    'message_processing' => l10n.processingMessage,
-    'message_summarizing' => l10n.summarizingMemories,
-    _ => key,
-  };
 }
 
 class _PopupPlacement {

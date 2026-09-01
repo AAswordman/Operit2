@@ -23,7 +23,15 @@ pub fn run_core_command(
     application: &mut operit_runtime::core::application::OperitApplication::OperitApplication,
     args: &[String],
 ) -> Result<CoreCommandOutput, String> {
+    let jsonMode = args.iter().any(|arg| arg == "--json");
+    let commandArgs = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--json")
+        .cloned()
+        .collect::<Vec<_>>();
     let mut output = CoreCommandOutput::new();
-    commands::run_core_command(application, args, &mut output)?;
+    output.setJsonMode(jsonMode);
+    commands::run_core_command(application, &commandArgs, &mut output)?;
+    output.finalizeJson()?;
     Ok(output)
 }

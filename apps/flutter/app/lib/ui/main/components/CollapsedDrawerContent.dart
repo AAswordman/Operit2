@@ -359,6 +359,7 @@ class ConversationDrawerItem extends StatelessWidget {
     required this.history,
     required this.title,
     required this.selected,
+    required this.isRunning,
     required this.appearance,
     required this.onClick,
     required this.onRename,
@@ -374,6 +375,7 @@ class ConversationDrawerItem extends StatelessWidget {
   final core_proxy.ChatHistoryListItem history;
   final String title;
   final bool selected;
+  final bool isRunning;
   final NavigationDrawerAppearance appearance;
   final VoidCallback onClick;
   final VoidCallback onRename;
@@ -386,11 +388,16 @@ class ConversationDrawerItem extends StatelessWidget {
   final bool nested;
 
   static const double _endPadding = 12;
+  static const double _runningIndicatorSize = 20;
+  static const double _runningIndicatorStrokeWidth = 2.5;
 
   @override
   Widget build(BuildContext context) {
     final itemShape = BorderRadius.circular(12);
     final windowSize = MediaQuery.sizeOf(context);
+    final contentColor = selected
+        ? appearance.selectedContentColor
+        : appearance.itemColor;
     return DragTarget<core_proxy.ChatHistoryListItem>(
       onWillAcceptWithDetails: (details) =>
           details.data.id != history.id && canAcceptDrop(details.data),
@@ -506,25 +513,38 @@ class ConversationDrawerItem extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.bodySmall
                                       ?.copyWith(
-                                        color: selected
-                                            ? appearance.selectedContentColor
-                                            : appearance.itemColor,
+                                        color: contentColor,
                                         fontWeight: selected
                                             ? FontWeight.w600
                                             : FontWeight.w400,
                                       ),
                                 ),
                               ),
+                              if (isRunning) ...<Widget>[
+                                const SizedBox(width: 6),
+                                Tooltip(
+                                  message: '正在运行',
+                                  child: SizedBox(
+                                    key: const ValueKey<String>(
+                                      'conversation-running-indicator',
+                                    ),
+                                    width: _runningIndicatorSize,
+                                    height: _runningIndicatorSize,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: _runningIndicatorStrokeWidth,
+                                      color: contentColor.withValues(
+                                        alpha: 0.65,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                               if (history.pinned) ...<Widget>[
                                 const SizedBox(width: 6),
                                 Icon(
                                   Icons.push_pin,
                                   size: 13,
-                                  color:
-                                      (selected
-                                              ? appearance.selectedContentColor
-                                              : appearance.itemColor)
-                                          .withValues(alpha: 0.65),
+                                  color: contentColor.withValues(alpha: 0.65),
                                 ),
                               ],
                               if (history.locked) ...<Widget>[
@@ -532,11 +552,7 @@ class ConversationDrawerItem extends StatelessWidget {
                                 Icon(
                                   Icons.lock,
                                   size: 13,
-                                  color:
-                                      (selected
-                                              ? appearance.selectedContentColor
-                                              : appearance.itemColor)
-                                          .withValues(alpha: 0.65),
+                                  color: contentColor.withValues(alpha: 0.65),
                                 ),
                               ],
                             ],

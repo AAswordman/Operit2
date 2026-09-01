@@ -71,7 +71,7 @@ impl Default for OpenAIProviderState {
 
 pub struct StreamingState {
     pub chunks: Vec<String>,
-    pub pending_line: String,
+    pub pending_bytes: Vec<u8>,
     pub usage: TokenCounts,
     pub chunkCount: i32,
     pub isInReasoningMode: bool,
@@ -812,7 +812,7 @@ impl OpenAIProvider {
     ) -> Result<(), AiServiceError> {
         let mut state = StreamingState {
             chunks: Vec::new(),
-            pending_line: String::new(),
+            pending_bytes: Vec::new(),
             usage: TokenCounts {
                 input: 0,
                 cached_input: 0,
@@ -855,13 +855,9 @@ impl OpenAIProvider {
                         ),
                     );
                 }
-                state
-                    .pending_line
-                    .push_str(&String::from_utf8_lossy(&bytes));
+                state.pending_bytes.extend_from_slice(&bytes);
 
-                while let Some(newline_index) = state.pending_line.find('\n') {
-                    let line = state.pending_line[..newline_index].trim().to_string();
-                    state.pending_line = state.pending_line[newline_index + 1..].to_string();
+                while let Some(line) = takeNextStreamingLine(&mut state.pending_bytes)? {
                     let emitted_before = state.chunks.len();
                     self.process_streaming_line(&line, &mut state, on_tool_invocation)?;
                     for chunk in state.chunks[emitted_before..].iter().cloned() {
@@ -871,7 +867,10 @@ impl OpenAIProvider {
                 }
             }
 
-            let pending = state.pending_line.trim().to_string();
+            let pending = String::from_utf8(std::mem::take(&mut state.pending_bytes))
+                .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?
+                .trim()
+                .to_string();
             if !pending.is_empty() {
                 let emitted_before = state.chunks.len();
                 self.process_streaming_line(&pending, &mut state, on_tool_invocation)?;
@@ -1611,6 +1610,17 @@ impl OpenAIProvider {
     }
 }
 
+/// Extracts and strictly decodes one complete UTF-8 SSE line from pending transport bytes.
+fn takeNextStreamingLine(pending_bytes: &mut Vec<u8>) -> Result<Option<String>, AiServiceError> {
+    let Some(newline_index) = pending_bytes.iter().position(|byte| *byte == b'\n') else {
+        return Ok(None);
+    };
+    let line_bytes = pending_bytes.drain(..=newline_index).collect::<Vec<u8>>();
+    String::from_utf8(line_bytes)
+        .map(|line| Some(line.trim().to_string()))
+        .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for OpenAIProvider {
@@ -2043,14 +2053,16 @@ fn emit_new_chunks(
 mod tests {
     use serde_json::json;
 
-    use super::{OpenAIProvider, StreamingState, TokenCounts, ToolCallState};
+    use super::{
+        takeNextStreamingLine, OpenAIProvider, StreamingState, TokenCounts, ToolCallState,
+    };
     use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 
     /// Creates isolated state for one OpenAI-compatible streaming response.
     fn streamingState() -> StreamingState {
         StreamingState {
             chunks: Vec::new(),
-            pending_line: String::new(),
+            pending_bytes: Vec::new(),
             usage: TokenCounts {
                 input: 0,
                 cached_input: 0,
@@ -2157,5 +2169,21 @@ mod tests {
             state.chunks,
             vec!["\"quoted\" & <literal> response".to_string()]
         );
+    }
+
+    /// Verifies an SSE line remains lossless when a UTF-8 character spans transport chunks.
+    #[test]
+    fn streamingLinePreservesSplitUtf8Characters() {
+        let mut pending_bytes = Vec::new();
+        let encoded = "data: {\"text\":\"芯片\"}\n".as_bytes();
+        pending_bytes.extend_from_slice(&encoded[..15]);
+        assert_eq!(takeNextStreamingLine(&mut pending_bytes).unwrap(), None);
+        pending_bytes.extend_from_slice(&encoded[15..]);
+
+        assert_eq!(
+            takeNextStreamingLine(&mut pending_bytes).unwrap(),
+            Some("data: {\"text\":\"芯片\"}".to_string()),
+        );
+        assert!(pending_bytes.is_empty());
     }
 }

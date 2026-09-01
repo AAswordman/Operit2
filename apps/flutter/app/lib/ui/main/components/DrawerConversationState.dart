@@ -5,6 +5,7 @@ import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 class DrawerConversationState {
   const DrawerConversationState({
     this.histories = const <core_proxy.ChatHistoryListItem>[],
+    this.activeStreamingChatIds = const <String>{},
     this.characterGroupNamesById = const <String, String>{},
     this.characterCardAvatarUrisByName = const <String, String>{},
     this.currentChatId,
@@ -13,6 +14,7 @@ class DrawerConversationState {
   });
 
   final List<core_proxy.ChatHistoryListItem> histories;
+  final Set<String> activeStreamingChatIds;
   final Map<String, String> characterGroupNamesById;
   final Map<String, String> characterCardAvatarUrisByName;
   final String? currentChatId;

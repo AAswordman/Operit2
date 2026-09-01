@@ -77,7 +77,6 @@ class ThemePreferenceSnapshot {
     required this.bubbleAiSystemFontName,
     required this.bubbleAiCustomFontPath,
     required this.showThinkingProcess,
-    required this.toolCollapseMode,
     required this.showModelProvider,
     required this.showModelName,
     required this.showRoleName,
@@ -158,7 +157,6 @@ class ThemePreferenceSnapshot {
   final String? bubbleAiSystemFontName;
   final String? bubbleAiCustomFontPath;
   final bool showThinkingProcess;
-  final String toolCollapseMode;
   final bool showModelProvider;
   final bool showModelName;
   final bool showRoleName;
@@ -211,9 +209,6 @@ class UserPreferencesManager {
   static const String SYSTEM_FONT_SANS_SERIF = 'sans-serif';
   static const String SYSTEM_FONT_MONOSPACE = 'monospace';
   static const String SYSTEM_FONT_CURSIVE = 'cursive';
-  static const String TOOL_COLLAPSE_MODE_READ_ONLY = 'read_only';
-  static const String TOOL_COLLAPSE_MODE_ALL = 'all';
-  static const String TOOL_COLLAPSE_MODE_FULL = 'full';
   static const int longPastedTextInputMinimumThreshold = 1000;
   static const int longPastedTextInputMaximumThreshold = 20000;
   static const int longPastedTextInputThresholdStep = 500;
@@ -228,7 +223,6 @@ class UserPreferencesManager {
   );
 
   static const String _fileName = 'user_preferences.preferences.json';
-  static const String _displayPreferencesFileName = 'display_preferences';
 
   static const ThemePreferenceSnapshot defaultThemePreferenceSnapshot =
       ThemePreferenceSnapshot(
@@ -302,7 +296,6 @@ class UserPreferencesManager {
         bubbleAiSystemFontName: SYSTEM_FONT_DEFAULT,
         bubbleAiCustomFontPath: null,
         showThinkingProcess: true,
-        toolCollapseMode: TOOL_COLLAPSE_MODE_ALL,
         showModelProvider: false,
         showModelName: false,
         showRoleName: true,
@@ -410,7 +403,6 @@ class UserPreferencesManager {
   static const String _BUBBLE_AI_CONTENT_PADDING_RIGHT =
       'bubble_ai_content_padding_right';
   static const String _KEY_SHOW_THINKING_PROCESS = 'show_thinking_process';
-  static const String _KEY_TOOL_COLLAPSE_MODE = 'tool_collapse_mode';
   static const String _KEY_SHOW_MODEL_PROVIDER = 'show_model_provider';
   static const String _KEY_SHOW_MODEL_NAME = 'show_model_name';
   static const String _KEY_SHOW_ROLE_NAME = 'show_role_name';
@@ -594,11 +586,6 @@ class UserPreferencesManager {
       _KEY_CUSTOM_USER_AVATAR_URI,
     ];
     final preferences = await _getStrings(keys);
-    final toolCollapseMode = await _clients.preferencesPreferenceStorageManager
-        .getPreference(
-          fileName: _displayPreferencesFileName,
-          key: _KEY_TOOL_COLLAPSE_MODE,
-        );
 
     String? stringValue(String key, {String? defaultValue}) {
       return preferences[_keyWithPrefix(key, prefix)] ?? defaultValue;
@@ -760,7 +747,6 @@ class UserPreferencesManager {
           stringValue(_BUBBLE_AI_SYSTEM_FONT_NAME) ?? SYSTEM_FONT_DEFAULT,
       bubbleAiCustomFontPath: stringValue(_BUBBLE_AI_CUSTOM_FONT_PATH),
       showThinkingProcess: booleanValue(_KEY_SHOW_THINKING_PROCESS, true),
-      toolCollapseMode: toolCollapseMode ?? TOOL_COLLAPSE_MODE_ALL,
       showModelProvider: booleanValue(_KEY_SHOW_MODEL_PROVIDER, false),
       showModelName: booleanValue(_KEY_SHOW_MODEL_NAME, false),
       showRoleName: booleanValue(_KEY_SHOW_ROLE_NAME, true),

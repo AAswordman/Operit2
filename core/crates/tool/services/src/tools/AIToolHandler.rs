@@ -32,12 +32,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::runtime_support::{ToolRuntimeDependencies, ToolRuntimeSupport};
 
-const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
-
 #[derive(Clone, Copy)]
 enum ToolExecutionAccess {
     AiPermission,
     Direct,
+}
+
+/// Classifies file-bound invocation failures as policy restrictions or invalid requests.
+#[derive(Debug, PartialEq, Eq)]
+enum WorkspaceBoundaryError {
+    RequiresApproval(String),
+    InvalidRequest(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,7 +167,7 @@ impl AIToolHandler {
         guard.unregisterMCPServerPackage(serverName)
     }
 
-    /// Returns the permission system used before write or package tool execution.
+    /// Returns the permission system used before operations that require an approval.
     #[allow(non_snake_case)]
     pub fn getToolPermissionSystem(&self) -> ToolPermissionSystem {
         self.inner
@@ -672,41 +677,54 @@ impl AIToolHandler {
                 result: stringResultData(""),
                 error: Some(error.to_string()),
             })?;
-        if !mode.allowsEffect(accessSpec.effect) {
-            return Err(ToolResult {
-                toolName: tool.name.clone(),
-                success: false,
-                result: stringResultData(""),
-                error: Some(format!(
-                    "AI permission mode {} does not allow {:?} tool execution.",
-                    mode.name(),
-                    accessSpec.effect
-                )),
-            });
-        }
-
-        if let Err(error) = Self::checkWorkspaceBoundary(&mode, tool, &accessSpec) {
-            return Err(ToolResult {
-                toolName: tool.name.clone(),
-                success: false,
-                result: stringResultData(""),
-                error: Some(error),
-            });
-        }
-
-        let usesPackagePermission =
-            tool.name == PACKAGE_PROXY_TOOL_NAME || tool.name.split_once(':').is_some();
-        let packageApprovalTool = if tool.name == PACKAGE_PROXY_TOOL_NAME {
-            let resolvedTarget = ToolExecutionManager::resolveProxyTargetTool(tool);
-            (resolvedTarget.name != tool.name).then_some(resolvedTarget)
+        let workspaceBoundary = Self::checkWorkspaceBoundary(&mode, tool, &accessSpec);
+        let policyOverrideReason = match (mode.allowsEffect(accessSpec.effect), workspaceBoundary) {
+            (_, Err(WorkspaceBoundaryError::InvalidRequest(error))) => {
+                return Err(ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error),
+                });
+            }
+            (false, _) => Some(format!(
+                "AI permission mode {} requires approval for {:?} tool execution.",
+                mode.name(),
+                accessSpec.effect
+            )),
+            (true, Err(WorkspaceBoundaryError::RequiresApproval(reason))) => Some(reason),
+            (true, Ok(())) => None,
+        };
+        let policyOverrideApproved = if let Some(reason) = policyOverrideReason.as_deref() {
+            let approved = permissionSystem
+                .checkSandboxEscapeApprovalAsync(tool)
+                .await
+                .map_err(|error| ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error.to_string()),
+                })?;
+            if !approved {
+                let error = "User cancelled the tool execution.".to_string();
+                self.notifyToolPermissionChecked(tool, false, Some(&error));
+                return Err(ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error),
+                });
+            }
+            self.notifyToolPermissionChecked(tool, true, Some(reason));
+            true
         } else {
-            tool.name.split_once(':').map(|_| tool.clone())
+            false
         };
 
         if mode == AiPermissionMode::WorkspaceWrite
             && accessSpec.effect == ToolEffect::WRITE
             && matches!(accessSpec.boundary, ToolBoundary::None)
-            && !usesPackagePermission
+            && !policyOverrideApproved
         {
             let approved = permissionSystem
                 .checkSandboxEscapeApprovalAsync(tool)
@@ -734,93 +752,90 @@ impl AIToolHandler {
             );
         }
 
-        if let Some(packageApprovalTool) = packageApprovalTool {
-            let approved = permissionSystem
-                .checkPackageToolApprovalAsync(&packageApprovalTool)
-                .await
-                .map_err(|error| ToolResult {
-                    toolName: packageApprovalTool.name.clone(),
-                    success: false,
-                    result: stringResultData(""),
-                    error: Some(error.to_string()),
-                })?;
-            if !approved {
-                let error = "User cancelled the tool execution.".to_string();
-                self.notifyToolPermissionChecked(&packageApprovalTool, false, Some(&error));
-                return Err(ToolResult {
-                    toolName: packageApprovalTool.name.clone(),
-                    success: false,
-                    result: stringResultData(""),
-                    error: Some(error),
-                });
-            }
-            self.notifyToolPermissionChecked(
-                &packageApprovalTool,
-                true,
-                Some("PackageTool approved."),
-            );
-        }
-
         Ok(accessSpec)
     }
 
-    /// Checks workspace membership for file-bound tools in workspace-scoped modes.
+    /// Restricts file writes to the current workspace in workspace-scoped modes.
     fn checkWorkspaceBoundary(
         mode: &AiPermissionMode,
         tool: &AITool,
         accessSpec: &ToolAccessSpec,
-    ) -> Result<(), String> {
+    ) -> Result<(), WorkspaceBoundaryError> {
         if *mode == AiPermissionMode::Full {
             return Ok(());
         }
         match &accessSpec.boundary {
             ToolBoundary::None => Ok(()),
-            ToolBoundary::FilePath { effect } => Self::checkWorkspacePath(tool, "path", *effect),
+            ToolBoundary::FilePath { effect } => {
+                Self::checkWorkspaceWritePath(tool, "path", *effect)
+            }
             ToolBoundary::FilePair {
                 source,
                 destination,
             } => {
-                Self::checkWorkspacePath(tool, "source", *source)?;
-                Self::checkWorkspacePath(tool, "destination", *destination)
+                Self::checkWorkspaceWritePath(tool, "source", *source)?;
+                Self::checkWorkspaceWritePath(tool, "destination", *destination)
             }
         }
     }
 
-    /// Checks that one file parameter stays inside the current workspace.
-    fn checkWorkspacePath(
+    /// Checks that one file write parameter stays inside the current workspace.
+    fn checkWorkspaceWritePath(
         tool: &AITool,
         parameterName: &str,
         effect: ToolEffect,
-    ) -> Result<(), String> {
+    ) -> Result<(), WorkspaceBoundaryError> {
+        if effect == ToolEffect::READ {
+            return Ok(());
+        }
         let path = tool
             .parameters
             .iter()
             .find(|parameter| parameter.name == parameterName)
             .map(|parameter| parameter.value.trim())
-            .ok_or_else(|| format!("{parameterName} parameter is required"))?;
+            .ok_or_else(|| {
+                WorkspaceBoundaryError::InvalidRequest(format!(
+                    "{parameterName} parameter is required"
+                ))
+            })?;
         if path.is_empty() {
-            return Err(format!("{parameterName} parameter is required"));
+            return Err(WorkspaceBoundaryError::InvalidRequest(format!(
+                "{parameterName} parameter is required"
+            )));
         }
 
-        let runtimeContext = ToolExecutionManager::currentToolRuntimeContext()
-            .ok_or_else(|| "File tool execution requires tool runtime context".to_string())?;
+        let runtimeContext =
+            ToolExecutionManager::currentToolRuntimeContext().ok_or_else(|| {
+                WorkspaceBoundaryError::RequiresApproval(
+                    "File tool execution requires tool runtime context".to_string(),
+                )
+            })?;
         let workspacePath = runtimeContext
             .workspacePath
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| "File tool execution requires a current workspace".to_string())?;
+            .ok_or_else(|| {
+                WorkspaceBoundaryError::RequiresApproval(
+                    "File tool execution requires a current workspace".to_string(),
+                )
+            })?;
 
         let paths = RuntimeStorePaths::default();
         let mapper = PathMapper::new(paths.runtime_dir().to_path_buf(), paths.workspace_dir());
-        let resolvedWorkspace = mapper.resolve(workspacePath)?;
-        let resolvedPath = mapper.resolve(path)?;
-        let relative = PathMapper::relativePath(&resolvedWorkspace.vfsPath, &resolvedPath.vfsPath)?;
+        let resolvedWorkspace = mapper
+            .resolve(workspacePath)
+            .map_err(WorkspaceBoundaryError::InvalidRequest)?;
+        let resolvedPath = mapper
+            .resolve(path)
+            .map_err(WorkspaceBoundaryError::InvalidRequest)?;
+        let relative = PathMapper::relativePath(&resolvedWorkspace.vfsPath, &resolvedPath.vfsPath)
+            .map_err(WorkspaceBoundaryError::InvalidRequest)?;
         if relative.is_none() {
-            return Err(format!(
+            return Err(WorkspaceBoundaryError::RequiresApproval(format!(
                 "{:?} file access is limited to current workspace: {}",
                 effect, resolvedWorkspace.vfsPath
-            ));
+            )));
         }
         Ok(())
     }
@@ -1554,18 +1569,38 @@ mod tests {
         assert_eq!(result, Ok(()));
     }
 
-    /// Confirms WorkspaceWrite still needs the runtime workspace context.
+    /// Confirms workspace-scoped modes allow external file reads without a runtime workspace.
     #[test]
-    fn workspaceWriteRequiresRuntimeWorkspaceForFilePaths() {
-        let result = AIToolHandler::checkWorkspaceBoundary(
+    fn workspaceScopedModesAllowExternalFileReadsWithoutRuntimeWorkspace() {
+        let readOnlyResult = AIToolHandler::checkWorkspaceBoundary(
+            &AiPermissionMode::ReadOnly,
+            &pathTool("/mnt/android/sdcard"),
+            &filePathAccessSpec(ToolEffect::READ),
+        );
+        let workspaceWriteResult = AIToolHandler::checkWorkspaceBoundary(
             &AiPermissionMode::WorkspaceWrite,
             &pathTool("/mnt/android/sdcard"),
             &filePathAccessSpec(ToolEffect::READ),
         );
 
+        assert_eq!(readOnlyResult, Ok(()));
+        assert_eq!(workspaceWriteResult, Ok(()));
+    }
+
+    /// Confirms WorkspaceWrite still requires a runtime workspace for file writes.
+    #[test]
+    fn workspaceWriteRequiresRuntimeWorkspaceForFileWrites() {
+        let result = AIToolHandler::checkWorkspaceBoundary(
+            &AiPermissionMode::WorkspaceWrite,
+            &pathTool("/mnt/android/sdcard"),
+            &filePathAccessSpec(ToolEffect::WRITE),
+        );
+
         assert_eq!(
             result,
-            Err("File tool execution requires tool runtime context".to_string())
+            Err(WorkspaceBoundaryError::RequiresApproval(
+                "File tool execution requires tool runtime context".to_string()
+            ))
         );
     }
 }

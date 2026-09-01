@@ -8,11 +8,14 @@ use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
 use serde::{Deserialize, Serialize};
 
+use crate::ui::features::chat::webview::workspace::process::GitIgnoreFilter::GitIgnoreFilter;
 use operit_host_api::HostManager::HostManager;
 use operit_store::dao::ChatDao::ChatDao;
 use operit_store::db::AppDatabase::AppDatabase;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
+
+const MAX_MENTION_FILE_SUGGESTIONS: usize = 10;
 
 /// File metadata returned when browsing a chat workspace.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +117,43 @@ impl WorkspaceService {
                 .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
         });
         Ok(workspaceEntries)
+    }
+
+    /// Lists ranked workspace file suggestions for an active @ mention.
+    #[allow(non_snake_case)]
+    pub fn listMentionWorkspaceSuggestions(
+        &self,
+        chatId: String,
+        searchQuery: String,
+    ) -> Result<Vec<WorkspaceFileEntry>, String> {
+        let workspaceRoot = self.workspaceRoot(chatId)?;
+        let vfs = self.vfsForWorkspace(&workspaceRoot);
+        let gitignoreRules = workspaceGitignoreRules(&vfs, &workspaceRoot)?;
+        let normalizedQuery = searchQuery.trim().to_ascii_lowercase();
+        let recursive = !normalizedQuery.is_empty();
+        let mut suggestions = Vec::<MentionWorkspaceSuggestion>::new();
+        collectMentionWorkspaceSuggestions(
+            &vfs,
+            &workspaceRoot,
+            "",
+            &normalizedQuery,
+            recursive,
+            &gitignoreRules,
+            &mut suggestions,
+        )?;
+        suggestions.sort_by(|left, right| {
+            left.score.cmp(&right.score).then_with(|| {
+                left.entry
+                    .relativePath
+                    .to_ascii_lowercase()
+                    .cmp(&right.entry.relativePath.to_ascii_lowercase())
+            })
+        });
+        Ok(suggestions
+            .into_iter()
+            .take(MAX_MENTION_FILE_SUGGESTIONS)
+            .map(|suggestion| suggestion.entry)
+            .collect())
     }
 
     /// Lists directories that can be selected as workspace binding targets.
@@ -346,6 +386,198 @@ fn joinRelativePath(parent: &str, child: &str) -> Result<String, String> {
     } else {
         Ok(format!("{parent}/{child}"))
     }
+}
+
+struct MentionWorkspaceSuggestion {
+    entry: WorkspaceFileEntry,
+    score: i32,
+}
+
+/// Collects workspace mention candidates from one directory.
+#[allow(non_snake_case)]
+fn collectMentionWorkspaceSuggestions(
+    vfs: &VisualFileSystem,
+    workspaceRoot: &str,
+    relativePath: &str,
+    normalizedQuery: &str,
+    recursive: bool,
+    gitignoreRules: &[String],
+    suggestions: &mut Vec<MentionWorkspaceSuggestion>,
+) -> Result<(), String> {
+    let directoryPath = PathMapper::joinVfsPath(workspaceRoot, relativePath)?;
+    for entry in vfs.listFiles(&directoryPath)? {
+        let childRelativePath = joinRelativePath(relativePath, &entry.name)?;
+        if GitIgnoreFilter::shouldIgnore(
+            &childRelativePath,
+            &entry.name,
+            entry.isDirectory,
+            gitignoreRules,
+        ) {
+            continue;
+        }
+
+        let childPath = PathMapper::joinVfsPath(workspaceRoot, &childRelativePath)?;
+        let parentPath = parentRelativePath(&childRelativePath);
+        let score = scoreMentionWorkspaceEntry(
+            &childRelativePath,
+            &entry.name,
+            &parentPath,
+            entry.isDirectory,
+            normalizedQuery,
+        );
+        if let Some(score) = score {
+            if entry.isDirectory || isTextBasedFileName(&entry.name) {
+                suggestions.push(MentionWorkspaceSuggestion {
+                    entry: WorkspaceFileEntry {
+                        name: entry.name.clone(),
+                        path: childPath.clone(),
+                        relativePath: childRelativePath.clone(),
+                        isDirectory: entry.isDirectory,
+                        size: entry.size,
+                        lastModified: entry.lastModified.clone(),
+                    },
+                    score,
+                });
+            }
+        }
+
+        if recursive && entry.isDirectory {
+            collectMentionWorkspaceSuggestions(
+                vfs,
+                workspaceRoot,
+                &childRelativePath,
+                normalizedQuery,
+                recursive,
+                gitignoreRules,
+                suggestions,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Scores one workspace entry against the active mention query.
+#[allow(non_snake_case)]
+fn scoreMentionWorkspaceEntry(
+    relativePath: &str,
+    displayName: &str,
+    parentPath: &str,
+    isDirectory: bool,
+    query: &str,
+) -> Option<i32> {
+    let normalizedName = displayName.to_ascii_lowercase();
+    let normalizedPath = relativePath.to_ascii_lowercase();
+    let normalizedParentPath = parentPath.to_ascii_lowercase();
+    let depth = relativePath
+        .chars()
+        .filter(|character| *character == '/')
+        .count() as i32;
+
+    if query.is_empty() {
+        return Some(if isDirectory { depth } else { 20 + depth });
+    }
+
+    let baseScore = if normalizedName == query {
+        0
+    } else if normalizedPath == query {
+        1
+    } else if normalizedName.starts_with(query) {
+        2
+    } else if normalizedPath.starts_with(query) {
+        3
+    } else if normalizedParentPath.find(query).is_some() {
+        4
+    } else if normalizedName.find(query).is_some() {
+        5
+    } else if normalizedPath.find(query).is_some() {
+        6
+    } else {
+        return None;
+    };
+
+    Some(if isDirectory {
+        baseScore * 2
+    } else {
+        baseScore * 2 + 1
+    })
+}
+
+/// Builds the parent path shown for a workspace mention suggestion.
+#[allow(non_snake_case)]
+fn parentRelativePath(relativePath: &str) -> String {
+    relativePath
+        .rsplit_once('/')
+        .map(|(parent, _)| parent.to_string())
+        .unwrap_or_default()
+}
+
+/// Loads workspace gitignore rules used by mention suggestions.
+#[allow(non_snake_case)]
+fn workspaceGitignoreRules(
+    vfs: &VisualFileSystem,
+    workspaceRoot: &str,
+) -> Result<Vec<String>, String> {
+    let gitignorePath = PathMapper::joinVfsPath(workspaceRoot, ".gitignore")?;
+    let gitignoreInfo = vfs.fileExists(&gitignorePath)?;
+    if gitignoreInfo.exists && !gitignoreInfo.isDirectory {
+        let content = vfs.readFile(&gitignorePath)?;
+        return Ok(GitIgnoreFilter::buildRulesFromContent(&content));
+    }
+    Ok(GitIgnoreFilter::defaultRules())
+}
+
+/// Reports whether a file name is suitable for text mention attachments.
+#[allow(non_snake_case)]
+fn isTextBasedFileName(fileName: &str) -> bool {
+    let lower = fileName.to_ascii_lowercase();
+    let extension = lower
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .unwrap_or("");
+    matches!(
+        extension,
+        "txt"
+            | "md"
+            | "markdown"
+            | "rs"
+            | "kt"
+            | "kts"
+            | "java"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "dart"
+            | "py"
+            | "json"
+            | "json5"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "xml"
+            | "html"
+            | "css"
+            | "scss"
+            | "gradle"
+            | "properties"
+            | "ini"
+            | "csv"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "ps1"
+            | "bat"
+            | "cmd"
+            | "c"
+            | "cc"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "go"
+            | "swift"
+            | "sql"
+            | "lock"
+    ) || lower.find('.').is_none()
 }
 
 /// Extracts a workspace directory name from a runtime storage path.

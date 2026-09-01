@@ -65,9 +65,6 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
     final detailText = _detailText(widget.message, themePreferenceSnapshot);
     final nodeGrouper = ThinkToolsXmlNodeGrouper(
       showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,
-      toolCollapseMode: toolCollapseModeFromPreferenceValue(
-        themePreferenceSnapshot.toolCollapseMode,
-      ),
     );
     final useCardStyle = widget.useBubbleStyle;
     final aiBubbleColor =

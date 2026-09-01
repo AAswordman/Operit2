@@ -74,6 +74,7 @@ pub(crate) async fn run_web_access_command(args: &[String]) -> Result<(), String
     }
 }
 
+/// Opens the local static web-access server.
 async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     let mut bind_address = None::<String>;
     let mut token = None::<String>;
@@ -186,7 +187,9 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
         props.insert("tokenHash".to_string(), link_token_hash(&config.token));
         props.insert("version".to_string(), "1".to_string());
         let registration = MdnsRegistration::register(port, props)?;
-        eprintln!("mDNS: this device is discoverable");
+        if !cli_json_mode() {
+            eprintln!("mDNS: this device is discoverable");
+        }
         Some(registration)
     } else {
         None
@@ -195,15 +198,21 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     write_link_host_config(&config)?;
     write_link_host_state(&state)?;
 
-    println!("webAccessUrl={}", state.base_url);
-    println!("webAccessToken={}", config.token);
-    println!(
-        "webAccessStatePath={}",
-        crate::client_paths::link_host_state_path().display()
-    );
-    println!("webRoot={}", web_root.display());
-
-    println!("runtimeMode=local");
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({
+            "baseUrl": state.base_url,
+            "token": config.token,
+            "statePath": crate::client_paths::link_host_state_path(),
+            "webRoot": web_root,
+            "runtimeMode": "local",
+        }));
+    } else {
+        println!("Web access URL: {}", state.base_url);
+        println!("Web access token: {}", config.token);
+        println!("State path: {}", crate::client_paths::link_host_state_path().display());
+        println!("Web root: {}", web_root.display());
+        println!("Runtime mode: local");
+    }
     let result = StaticWebAccessServer::serveWithListener(
         StaticWebAccessServerConfig {
             bindAddress: resolved_bind_address,
@@ -227,6 +236,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     result
 }
 
+/// Closes the running local web-access server.
 async fn run_web_access_close_command() -> Result<(), String> {
     let mut config = link_host_config_for_write()?;
     config.web_access_enabled = false;
@@ -235,8 +245,8 @@ async fn run_web_access_close_command() -> Result<(), String> {
     write_link_host_config(&config)?;
 
     let Some(state) = read_link_host_state_optional()? else {
-        println!("webAccessClosed=true");
-        println!("runningState=false");
+        if cli_json_mode() { emit_cli_json(serde_json::json!({ "closed": true, "running": false })); }
+        else { println!("Web access is closed (no running server)."); }
         return Ok(());
     };
     let client = reqwest::Client::new();
@@ -248,44 +258,45 @@ async fn run_web_access_close_command() -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .error_for_status()
         .map_err(|error| error.to_string())?;
-    println!("webAccessClosed=true");
+    if cli_json_mode() { emit_cli_json(serde_json::json!({ "closed": true, "running": false })); }
+    else { println!("Web access closed."); }
     Ok(())
 }
 
+/// Reports web-access configuration and runtime state.
 async fn run_web_access_status_command() -> Result<(), String> {
     let config_path = crate::client_paths::link_host_config_path();
-    println!("configPath={}", config_path.display());
-    match read_link_host_config()? {
-        Some(config) => {
-            println!("configured=true");
-            println!("webAccessEnabled={}", config.web_access_enabled);
-            println!("discoveryEnabled={}", config.discovery_enabled);
-            println!("portMode={}", config.port_mode.as_str());
-            println!("bindAddress={}", config.bind_address);
-            println!("token={}", config.token);
-            println!("updatedAt={}", config.updated_at);
-        }
-        None => {
-            println!("configured=false");
-        }
-    }
+    let config = read_link_host_config()?;
     let state_path = crate::client_paths::link_host_state_path();
-    println!("statePath={}", state_path.display());
-    match read_link_host_state_optional()? {
-        Some(state) => {
-            println!("runningState=true");
-            println!("deviceId={}", state.device_id);
-            println!("baseUrl={}", state.base_url);
-            println!("processId={}", state.process_id);
-            println!("startedAt={}", state.started_at);
+    let state = read_link_host_state_optional()?;
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "configPath": config_path, "config": config, "statePath": state_path, "state": state }));
+    } else {
+        println!("Configuration: {}", config_path.display());
+        match config {
+            Some(config) => {
+                println!("Enabled: {}", config.web_access_enabled);
+                println!("Discovery: {}", config.discovery_enabled);
+                println!("Port mode: {}", config.port_mode.as_str());
+                println!("Bind address: {}", config.bind_address);
+                println!("Token: {}", config.token);
+            }
+            None => println!("Configured: no"),
         }
-        None => {
-            println!("runningState=false");
+        println!("State: {}", state_path.display());
+        match state {
+            Some(state) => {
+                println!("Running: yes");
+                println!("Device: {}", state.device_id);
+                println!("Base URL: {}", state.base_url);
+            }
+            None => println!("Running: no"),
         }
     }
     Ok(())
 }
 
+/// Rotates or sets the local web-access token.
 async fn run_web_access_token_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("rotate") if args.len() == 1 => {
@@ -293,7 +304,8 @@ async fn run_web_access_token_command(args: &[String]) -> Result<(), String> {
             config.token = generate_token();
             config.updated_at = unix_millis();
             write_link_host_config(&config)?;
-            println!("webAccessToken={}", config.token);
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "token": config.token })); }
+            else { println!("Web access token: {}", config.token); }
             Ok(())
         }
         Some("set") if args.len() == 2 => {
@@ -301,7 +313,8 @@ async fn run_web_access_token_command(args: &[String]) -> Result<(), String> {
             config.token = args[1].clone();
             config.updated_at = unix_millis();
             write_link_host_config(&config)?;
-            println!("webAccessToken={}", config.token);
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "token": config.token })); }
+            else { println!("Web access token: {}", config.token); }
             Ok(())
         }
         _ => {
@@ -460,7 +473,12 @@ fn unix_millis() -> i64 {
         .as_millis() as i64
 }
 
+/// Prints web-access command usage in the selected output format.
 fn print_web_access_usage() {
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "usage": "operit2 cli web <open|close|status|token>" }));
+        return;
+    }
     println!("operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>] [--discoverable]");
     println!("operit2 cli web close");
     println!("operit2 cli web status");

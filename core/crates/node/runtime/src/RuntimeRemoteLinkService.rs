@@ -894,6 +894,42 @@ impl RuntimeRemoteLinkService {
         Ok(record)
     }
 
+    /// Bootstraps an outbound pairing from a Web Access URL token.
+    #[allow(non_snake_case)]
+    pub async fn bootstrapPairedRemote(
+        &self,
+        baseUrl: String,
+        tokenHash: String,
+        clientDeviceInfo: RemoteDeviceInfo,
+    ) -> Result<PairedRemoteSessionRecord, String> {
+        if baseUrl.trim().is_empty() {
+            return Err("paired remote base URL must not be empty".to_string());
+        }
+        if tokenHash.trim().is_empty() {
+            return Err("paired remote token hash must not be empty".to_string());
+        }
+        let client = RemoteLinkClient::new(baseUrl);
+        let hello = client.hello(&tokenHash).await?;
+        let name = format!(
+            "{}-{}-{}",
+            hello.coreDeviceInfo.platform, hello.coreDeviceInfo.model, hello.coreDeviceId
+        );
+        if self.linkAccessStore.outboundSessions()?.contains_key(&name) {
+            return Err(format!("paired remote session already exists: {name}"));
+        }
+        let identity = self.linkAccessStore.initializeIdentity(clientDeviceInfo)?;
+        let record = client
+            .pairBootstrap(&tokenHash, identity.deviceId, identity.deviceInfo)
+            .await?
+            .exportRecord();
+        if hello.coreDeviceId != record.coreDeviceId {
+            return Err("paired remote identity changed during pairing".to_string());
+        }
+        self.linkAccessStore
+            .saveOutboundSession(name, record.clone())?;
+        Ok(record)
+    }
+
     /// Persists the explicit carrier selected for one named outbound session.
     #[allow(non_snake_case)]
     pub fn setPairedRemoteTransport(

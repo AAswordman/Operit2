@@ -17,6 +17,7 @@ mod stt;
 mod tag;
 mod tool;
 mod update;
+mod usage;
 mod util;
 mod workspace;
 
@@ -59,6 +60,7 @@ pub fn run_core_command(
         "storage" => storage::run_storage_command(application, &args[1..], output),
         "stt" => stt::run_stt_command(application, &args[1..], output),
         "update" => update::run_update_command(&args[1..], output),
+        "usage" => usage::run_usage_command(application, &args[1..], output),
         _ => {
             print_core_usage(output);
             Ok(())
@@ -66,47 +68,37 @@ pub fn run_core_command(
     }
 }
 
+/// Prints top-level command usage.
 fn print_core_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 <tool|package|plugin|skill|mcp|market|host|log|local-models|stt|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|storage|update>");
-    output.push_stdout_line("operit2 tool <list|show|exec>");
-    output.push_stdout_line(
+    let lines = vec![
+        "Global option: --json  Emit machine-readable JSON.",
+        "operit2 <tool|package|plugin|skill|mcp|market|host|log|local-models|stt|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|storage|update|usage>",
+        "operit2 tool <list|show|exec>",
         "operit2 package <help|dir|list|more|load|show|import|enable|disable|use|exec>",
-    );
-    output.push_stdout_line("operit2 plugin <help|list|more|load|show|import|enable|disable>");
-    output.push_stdout_line(
+        "operit2 plugin <help|list|more|load|show|import|enable|disable>",
         "operit2 skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>",
-    );
-    output
-        .push_stdout_line("operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>");
-    output.push_stdout_line(
+        "operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>",
         "operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>",
-    );
-    output.push_stdout_line("operit2 host <show|capabilities|paths>");
-    output.push_stdout_line("operit2 log <show|package|path|clear>");
-    output.push_stdout_line(
+        "operit2 host <show|capabilities|paths>",
+        "operit2 log <show|package|path|clear>",
         "operit2 local-models <paths|catalog|show|installed|installed-show|install|verify|delete|engine-delete>",
-    );
-    output.push_stdout_line(
         "operit2 stt <provider-list|provider-model-list|config|transcribe|transcribe-config>",
-    );
-    output.push_stdout_line(
         "operit2 prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>",
-    );
-    output.push_stdout_line("operit2 approval <status|list|allow|ask|forbid|tool>");
-    output.push_stdout_line("operit2 tag <list|show|create|update|delete>");
-    output.push_stdout_line("operit2 memory <character|shared|mount|unmount>");
-    output.push_stdout_line(
+        "operit2 approval <status|read-only|workspace-write|full>",
+        "operit2 tag <list|show|create|update|delete>",
+        "operit2 memory <character|shared|mount|unmount>",
         "operit2 character <init|list|show|create|update|delete|set-active|combine|reset-default>",
-    );
-    output.push_stdout_line(
         "operit2 group <init|list|show|create|update|delete|set-active|duplicate>",
-    );
-    output.push_stdout_line(
         "operit2 active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>",
-    );
-    output.push_stdout_line("operit2 model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
-    output.push_stdout_line("operit2 chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|send>");
-    output.push_stdout_line("operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>");
-    output.push_stdout_line("operit2 storage <paths|migrate>");
-    output.push_stdout_line("operit2 update <run|check|target>");
+        "operit2 model <provider-type-list|provider-list|provider-show|provider-create|provider-set-key|provider-set-endpoint|provider-model-available-list|provider-model-add|provider-model-create|list|show|use|params|parameters|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>",
+        "operit2 chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|send>",
+        "operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>",
+        "operit2 storage <paths|migrate>",
+        "operit2 update <run|check|target>",
+        "operit2 usage <summary|records|models|clear>",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

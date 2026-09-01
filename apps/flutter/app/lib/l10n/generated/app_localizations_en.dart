@@ -146,6 +146,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get summarizingMemories => 'Summarizing memories...';
 
   @override
+  String get summaryGenerating => 'Generating summary...';
+
+  @override
+  String get chatCompressingHistory => 'Compressing history records...';
+
+  @override
   String get executingPlan => 'Executing plan...';
 
   @override
@@ -291,6 +297,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get messageSenderSummary => 'Summary';
 
   @override
+  String get historyDialogSummary => 'History Dialog Summary';
+
+  @override
+  String get confirmDeleteSummary => 'Delete Summary';
+
+  @override
+  String get confirmDeleteSummaryMessage =>
+      'Are you sure you want to delete this summary?';
+
+  @override
   String get messageSenderSystem => 'System';
 
   @override
@@ -307,6 +323,17 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String toolsGroupTitleWithCount(int count) {
     return 'Tool Calls ($count)';
+  }
+
+  @override
+  String get searchGroupTitle => 'Search';
+
+  @override
+  String get thinkingSearchGroupTitle => 'Thinking and searching';
+
+  @override
+  String thinkingSearchToolsGroupTitleWithCount(int count) {
+    return 'Thinking, searching, and calling tools ($count)';
   }
 
   @override
@@ -2466,6 +2493,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Nearby devices are grouped by device space. Expand a device space to connect directly to one of its devices.';
 
   @override
+  String get settingsRuntimeWebPairDescription =>
+      'Enter another device\'s address and pairing token to connect this browser as an active pairing client.';
+
+  @override
   String settingsRuntimeDiscoveredSpaceSummary(
     int memberCount,
     int nearbyCount,
@@ -3084,7 +3115,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDataOpenDetailedStatsDescription =>
-      'Open daily trends, input/output token changes, and usage breakdown by provider, model, and conversation.';
+      'Open daily trends, input/output token changes, heatmap intensity, and usage breakdown by provider, model, and function model.';
 
   @override
   String get settingsDataRefreshTokenStats => 'Refresh statistics';
@@ -3109,6 +3140,47 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDataDetailedStatsSourceLabel => 'Model request records';
+
+  @override
+  String get settingsDataDetailedStatsHistoricalTotal => 'Historical total';
+
+  @override
+  String get settingsDataDetailedStatsRangeAll => 'All';
+
+  @override
+  String get settingsDataDetailedStatsRangeLast7Days => '7 days';
+
+  @override
+  String get settingsDataDetailedStatsRangeLast30Days => '30 days';
+
+  @override
+  String get settingsDataDetailedStatsRangeCustom => 'Custom';
+
+  @override
+  String get settingsDataDetailedStatsCustomRangePickerTitle =>
+      'Select statistics date range';
+
+  @override
+  String get settingsDataDetailedStatsNoDataInRange => 'No data in this range';
+
+  @override
+  String get settingsDataDetailedStatsNoRankRows =>
+      'No ranking data in this range';
+
+  @override
+  String get settingsDataDetailedStatsFunctionModels => 'Function models';
+
+  @override
+  String get settingsDataDetailedStatsFunctionModelPieTitle =>
+      'Function model distribution';
+
+  @override
+  String get settingsDataDetailedStatsTopFunctionModelsTitle =>
+      'Function model ranking';
+
+  @override
+  String get settingsDataDetailedStatsTopFunctionModelsSubtitle =>
+      'Highest total token consumption by function model';
 
   @override
   String get settingsDataDetailedStatsSourceChat => 'Chat response';
@@ -3146,6 +3218,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDataDetailedStatsModels => 'Models';
 
   @override
+  String get settingsDataDetailedStatsUnknownTokenRecords =>
+      'Records with unknown tokens';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapTitle => 'Usage heatmap';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapSubtitle =>
+      'Daily token intensity across the selected range';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapTapHint =>
+      'Tap a cell to view details';
+
+  @override
+  String settingsDataDetailedStatsHeatmapDayDetail(
+    String date,
+    String tokens,
+    String requests,
+  ) {
+    return '$date used $tokens tokens · $requests requests';
+  }
+
+  @override
+  String get settingsDataDetailedStatsHeatmapLow => 'Less';
+
+  @override
+  String get settingsDataDetailedStatsHeatmapHigh => 'More';
+
+  @override
   String get settingsDataDetailedStatsDailyUsageTitle => 'Daily usage trend';
 
   @override
@@ -3178,11 +3280,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDataDetailedStatsTotalTokens => 'Total tokens';
 
   @override
-  String get settingsDataDetailedStatsTopRequestsTitle => 'Top requests';
+  String get settingsDataDetailedStatsTopRequestsTitle =>
+      'Single-request peaks';
 
   @override
   String get settingsDataDetailedStatsTopRequestsSubtitle =>
-      'Highest single-request token consumption';
+      'Highest token consumption from individual calls';
 
   @override
   String get settingsDataDetailedStatsTopChatsTitle => 'Top conversations';
@@ -3210,6 +3313,11 @@ class AppLocalizationsEn extends AppLocalizations {
     int models,
   ) {
     return '$requests requests · $models models';
+  }
+
+  @override
+  String settingsDataDetailedStatsRequestCountSummary(int requests) {
+    return '$requests requests';
   }
 
   @override

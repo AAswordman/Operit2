@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import app.operit.core.tools.system.AndroidPrivilegedCommandExecutor
 import app.operit.core.tools.system.AndroidPrivilegedCommandTarget
@@ -33,6 +34,7 @@ class AndroidPlatformChannel(
             "localRuntimeStoragePaths" -> localRuntimeStoragePaths(call, result)
             "setLocalRuntimeStorage" -> setLocalRuntimeStorage(call, result)
             "startLocalCoreService" -> startLocalCoreService(result)
+            "terminateApplication" -> terminateApplication(result)
             "localRuntimeStartupStatus" -> localRuntimeStartupStatus(result)
             "hostOnboardingPermissionSnapshot" -> hostOnboardingPermissionSnapshot(call, result)
             "hostOnboardingRequestPermission" -> hostOnboardingRequestPermission(call, result)
@@ -154,6 +156,27 @@ class AndroidPlatformChannel(
             result.success(null)
         } catch (error: Throwable) {
             result.error("CORE_SERVICE_START_ERROR", error.message, null)
+        }
+    }
+
+    /** Destroys the native Runtime and terminates the Android process cleanly. */
+    private fun terminateApplication(result: MethodChannel.Result) {
+        runtimeHost.runBackground {
+            try {
+                runtimeHost.destroy()
+                activity.stopService(
+                    Intent(activity.applicationContext, OperitCoreService::class.java),
+                )
+                activity.runOnUiThread {
+                    result.success(null)
+                    activity.finishAndRemoveTask()
+                    Process.killProcess(Process.myPid())
+                }
+            } catch (error: Throwable) {
+                activity.runOnUiThread {
+                    result.error("APPLICATION_TERMINATION_ERROR", error.message, null)
+                }
+            }
         }
     }
 

@@ -11,6 +11,7 @@ const OPERIT2_SQLITE_CURRENT_SCHEMA_VERSION: i32 = operit_store::db::AppDatabase
 enum Operit1RoomSchemaVersion {
     V10,
     V20,
+    V21,
 }
 
 impl Operit1RoomSchemaVersion {
@@ -19,6 +20,7 @@ impl Operit1RoomSchemaVersion {
         match self {
             Self::V10 => 10,
             Self::V20 => 20,
+            Self::V21 => 21,
         }
     }
 }
@@ -26,16 +28,18 @@ impl Operit1RoomSchemaVersion {
 /// Identifies one explicit Operit1 Room to Operit2 SQLite archive bridge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Operit1ToOperit2ChatArchiveBridge {
-    Operit1RoomV10ToOperit2SqliteV24,
-    Operit1RoomV20ToOperit2SqliteV24,
+    Operit1RoomV10ToOperit2SqliteV27,
+    Operit1RoomV20ToOperit2SqliteV27,
+    Operit1RoomV21ToOperit2SqliteV27,
 }
 
 impl Operit1ToOperit2ChatArchiveBridge {
     /// Returns the exact Operit2 SQLite target schema required by this bridge.
     const fn operit2TargetSchemaVersion(self) -> i32 {
         match self {
-            Self::Operit1RoomV10ToOperit2SqliteV24 => 24,
-            Self::Operit1RoomV20ToOperit2SqliteV24 => 24,
+            Self::Operit1RoomV10ToOperit2SqliteV27 => 27,
+            Self::Operit1RoomV20ToOperit2SqliteV27 => 27,
+            Self::Operit1RoomV21ToOperit2SqliteV27 => 27,
         }
     }
 }
@@ -54,18 +58,22 @@ fn selectOperit1ToOperit2ChatArchiveBridge(
     let sourceSchemaVersion = match readOperit1RoomSchemaVersion(connection)? {
         10 => Operit1RoomSchemaVersion::V10,
         20 => Operit1RoomSchemaVersion::V20,
+        21 => Operit1RoomSchemaVersion::V21,
         version => {
             return Err(format!(
-                "Unsupported Operit1 Room schema version {version}; Operit1 and Operit2 first diverge at schema version {OPERIT1_ROOM_SCHEMA_DIVERGENCE_VERSION}, and explicit archive bridges exist for schemas 10 and 20.",
+                "Unsupported Operit1 Room schema version {version}; Operit1 and Operit2 first diverge at schema version {OPERIT1_ROOM_SCHEMA_DIVERGENCE_VERSION}, and explicit archive bridges exist for schemas 10, 20, and 21.",
             ))
         }
     };
     let bridge = match sourceSchemaVersion {
         Operit1RoomSchemaVersion::V10 => {
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV24
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV27
         }
         Operit1RoomSchemaVersion::V20 => {
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV24
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV27
+        }
+        Operit1RoomSchemaVersion::V21 => {
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27
         }
     };
     let targetSchemaVersion = bridge.operit2TargetSchemaVersion();
@@ -258,16 +266,16 @@ mod tests {
 
         assert_eq!(
             bridge,
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV24
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV27
         );
-        assert_eq!(bridge.operit2TargetSchemaVersion(), 24);
+        assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
         assert_eq!(
             readOperit1RoomSchemaVersion(&mut connection).expect("schema version must be readable"),
             10
         );
     }
 
-    /// Selects the existing version-20 to version-24 bridge without rewriting its schema.
+    /// Selects the version-20 to version-26 bridge without rewriting the source schema.
     #[test]
     fn accepts_operit1_room_20() {
         let mut connection = TestSqliteConnection::new();
@@ -276,13 +284,13 @@ mod tests {
         );
 
         let bridge = prepareOperit1RoomImport(&mut connection)
-            .expect("Operit1 schema 20 must select the version-20 to version-24 bridge");
+            .expect("Operit1 schema 20 must select the version-20 to version-26 bridge");
 
         assert_eq!(
             bridge,
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV24
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV27
         );
-        assert_eq!(bridge.operit2TargetSchemaVersion(), 24);
+        assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
         assert_eq!(
             readOperit1RoomSchemaVersion(&mut connection).expect("schema version must be readable"),
             20
@@ -300,7 +308,25 @@ mod tests {
 
         assert_eq!(
             error,
-            "Unsupported Operit1 Room schema version 19; Operit1 and Operit2 first diverge at schema version 20, and explicit archive bridges exist for schemas 10 and 20."
+            "Unsupported Operit1 Room schema version 19; Operit1 and Operit2 first diverge at schema version 20, and explicit archive bridges exist for schemas 10, 20, and 21."
         );
+    }
+
+    /// Selects the explicit archive bridge for the latest Operit1 Room schema.
+    #[test]
+    fn accepts_operit1_room_21() {
+        let mut connection = TestSqliteConnection::new();
+        connection.executeBatch(
+            "CREATE TABLE chats (id TEXT NOT NULL PRIMARY KEY, pinned INTEGER NOT NULL DEFAULT 0); PRAGMA user_version = 21;",
+        );
+
+        let bridge = prepareOperit1RoomImport(&mut connection)
+            .expect("Operit1 schema 21 must select the latest explicit archive bridge");
+
+        assert_eq!(
+            bridge,
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27
+        );
+        assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
     }
 }

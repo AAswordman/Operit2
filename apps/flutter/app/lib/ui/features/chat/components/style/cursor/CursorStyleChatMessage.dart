@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'AiMessageComposable.dart';
+import '../SummaryMessageComposable.dart';
 import 'UserMessageComposable.dart';
 
 class CursorStyleChatMessage extends StatelessWidget {
@@ -14,12 +15,18 @@ class CursorStyleChatMessage extends StatelessWidget {
     required this.isStreaming,
     this.currentCharacterCardAvatarUri,
     this.splitMarkdownContent,
+    this.onDeleteMessage,
+    this.onEditSummary,
+    this.enableDialogs = true,
   });
 
   final ChatUiMessage message;
   final bool isStreaming;
   final String? currentCharacterCardAvatarUri;
   final MarkdownContentSplitter? splitMarkdownContent;
+  final Future<void> Function(int timestamp)? onDeleteMessage;
+  final ValueChanged<ChatUiMessage>? onEditSummary;
+  final bool enableDialogs;
 
   @override
   Widget build(BuildContext context) {
@@ -35,36 +42,16 @@ class CursorStyleChatMessage extends StatelessWidget {
           splitMarkdownContent: splitMarkdownContent,
         );
       case 'summary':
-        return _SummaryMessageComposable(message: message);
+        return SummaryMessageComposable(
+          message: message,
+          onDelete: onDeleteMessage == null
+              ? null
+              : () => onDeleteMessage!(message.timestamp),
+          onEdit: onEditSummary,
+          enableDialog: enableDialogs,
+        );
     }
     return _SystemMessageComposable(message: message);
-  }
-}
-
-class _SummaryMessageComposable extends StatelessWidget {
-  const _SummaryMessageComposable({required this.message});
-
-  final ChatUiMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SelectableText(
-        message.displayText,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-          height: 1.4,
-        ),
-      ),
-    );
   }
 }
 

@@ -11,6 +11,7 @@ import '../link/CoreLinkProtocol.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
 import 'LinkAccessHostConfig.dart';
+import 'WebAccessLaunchInfo.dart';
 
 const String _webAccessAssetPrefix = 'assets/web_access/';
 const String _webAccessVersionFile = 'web_access_version.json';
@@ -34,6 +35,9 @@ class LinkAccessHost extends ChangeNotifier {
   bool get isRunning => _running;
   LinkAccessHostConfig? get currentConfig => _config;
   String? get deviceId => _deviceId;
+  bool get supportsDeviceSpaceDiscovery => true;
+
+  WebAccessLaunchInfo? get webAccessLaunchInfo => null;
   String? get baseUrl {
     final config = _config;
     if (config == null || !_running) {

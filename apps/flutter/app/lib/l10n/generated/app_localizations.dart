@@ -356,6 +356,18 @@ abstract class AppLocalizations {
   /// **'Summarizing memories...'**
   String get summarizingMemories;
 
+  /// No description provided for @summaryGenerating.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating summary...'**
+  String get summaryGenerating;
+
+  /// No description provided for @chatCompressingHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'Compressing history records...'**
+  String get chatCompressingHistory;
+
   /// No description provided for @executingPlan.
   ///
   /// In en, this message translates to:
@@ -614,6 +626,24 @@ abstract class AppLocalizations {
   /// **'Summary'**
   String get messageSenderSummary;
 
+  /// No description provided for @historyDialogSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'History Dialog Summary'**
+  String get historyDialogSummary;
+
+  /// No description provided for @confirmDeleteSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete Summary'**
+  String get confirmDeleteSummary;
+
+  /// No description provided for @confirmDeleteSummaryMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to delete this summary?'**
+  String get confirmDeleteSummaryMessage;
+
   /// No description provided for @messageSenderSystem.
   ///
   /// In en, this message translates to:
@@ -643,6 +673,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Tool Calls ({count})'**
   String toolsGroupTitleWithCount(int count);
+
+  /// No description provided for @searchGroupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get searchGroupTitle;
+
+  /// No description provided for @thinkingSearchGroupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking and searching'**
+  String get thinkingSearchGroupTitle;
+
+  /// No description provided for @thinkingSearchToolsGroupTitleWithCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking, searching, and calling tools ({count})'**
+  String thinkingSearchToolsGroupTitleWithCount(int count);
 
   /// No description provided for @messageSenderOther.
   ///
@@ -4444,6 +4492,12 @@ abstract class AppLocalizations {
   /// **'Nearby devices are grouped by device space. Expand a device space to connect directly to one of its devices.'**
   String get settingsRuntimeDiscoverSpacesDescription;
 
+  /// No description provided for @settingsRuntimeWebPairDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter another device\'s address and pairing token to connect this browser as an active pairing client.'**
+  String get settingsRuntimeWebPairDescription;
+
   /// No description provided for @settingsRuntimeDiscoveredSpaceSummary.
   ///
   /// In en, this message translates to:
@@ -5596,7 +5650,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataOpenDetailedStatsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Open daily trends, input/output token changes, and usage breakdown by provider, model, and conversation.'**
+  /// **'Open daily trends, input/output token changes, heatmap intensity, and usage breakdown by provider, model, and function model.'**
   String get settingsDataOpenDetailedStatsDescription;
 
   /// No description provided for @settingsDataRefreshTokenStats.
@@ -5640,6 +5694,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Model request records'**
   String get settingsDataDetailedStatsSourceLabel;
+
+  /// No description provided for @settingsDataDetailedStatsHistoricalTotal.
+  ///
+  /// In en, this message translates to:
+  /// **'Historical total'**
+  String get settingsDataDetailedStatsHistoricalTotal;
+
+  /// No description provided for @settingsDataDetailedStatsRangeAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get settingsDataDetailedStatsRangeAll;
+
+  /// No description provided for @settingsDataDetailedStatsRangeLast7Days.
+  ///
+  /// In en, this message translates to:
+  /// **'7 days'**
+  String get settingsDataDetailedStatsRangeLast7Days;
+
+  /// No description provided for @settingsDataDetailedStatsRangeLast30Days.
+  ///
+  /// In en, this message translates to:
+  /// **'30 days'**
+  String get settingsDataDetailedStatsRangeLast30Days;
+
+  /// No description provided for @settingsDataDetailedStatsRangeCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom'**
+  String get settingsDataDetailedStatsRangeCustom;
+
+  /// No description provided for @settingsDataDetailedStatsCustomRangePickerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Select statistics date range'**
+  String get settingsDataDetailedStatsCustomRangePickerTitle;
+
+  /// No description provided for @settingsDataDetailedStatsNoDataInRange.
+  ///
+  /// In en, this message translates to:
+  /// **'No data in this range'**
+  String get settingsDataDetailedStatsNoDataInRange;
+
+  /// No description provided for @settingsDataDetailedStatsNoRankRows.
+  ///
+  /// In en, this message translates to:
+  /// **'No ranking data in this range'**
+  String get settingsDataDetailedStatsNoRankRows;
+
+  /// No description provided for @settingsDataDetailedStatsFunctionModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Function models'**
+  String get settingsDataDetailedStatsFunctionModels;
+
+  /// No description provided for @settingsDataDetailedStatsFunctionModelPieTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Function model distribution'**
+  String get settingsDataDetailedStatsFunctionModelPieTitle;
+
+  /// No description provided for @settingsDataDetailedStatsTopFunctionModelsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Function model ranking'**
+  String get settingsDataDetailedStatsTopFunctionModelsTitle;
+
+  /// No description provided for @settingsDataDetailedStatsTopFunctionModelsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Highest total token consumption by function model'**
+  String get settingsDataDetailedStatsTopFunctionModelsSubtitle;
 
   /// No description provided for @settingsDataDetailedStatsSourceChat.
   ///
@@ -5707,6 +5833,52 @@ abstract class AppLocalizations {
   /// **'Models'**
   String get settingsDataDetailedStatsModels;
 
+  /// No description provided for @settingsDataDetailedStatsUnknownTokenRecords.
+  ///
+  /// In en, this message translates to:
+  /// **'Records with unknown tokens'**
+  String get settingsDataDetailedStatsUnknownTokenRecords;
+
+  /// No description provided for @settingsDataDetailedStatsHeatmapTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Usage heatmap'**
+  String get settingsDataDetailedStatsHeatmapTitle;
+
+  /// No description provided for @settingsDataDetailedStatsHeatmapSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily token intensity across the selected range'**
+  String get settingsDataDetailedStatsHeatmapSubtitle;
+
+  /// No description provided for @settingsDataDetailedStatsHeatmapTapHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap a cell to view details'**
+  String get settingsDataDetailedStatsHeatmapTapHint;
+
+  /// No description provided for @settingsDataDetailedStatsHeatmapDayDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'{date} used {tokens} tokens · {requests} requests'**
+  String settingsDataDetailedStatsHeatmapDayDetail(
+    String date,
+    String tokens,
+    String requests,
+  );
+
+  /// No description provided for @settingsDataDetailedStatsHeatmapLow.
+  ///
+  /// In en, this message translates to:
+  /// **'Less'**
+  String get settingsDataDetailedStatsHeatmapLow;
+
+  /// No description provided for @settingsDataDetailedStatsHeatmapHigh.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get settingsDataDetailedStatsHeatmapHigh;
+
   /// No description provided for @settingsDataDetailedStatsDailyUsageTitle.
   ///
   /// In en, this message translates to:
@@ -5764,13 +5936,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataDetailedStatsTopRequestsTitle.
   ///
   /// In en, this message translates to:
-  /// **'Top requests'**
+  /// **'Single-request peaks'**
   String get settingsDataDetailedStatsTopRequestsTitle;
 
   /// No description provided for @settingsDataDetailedStatsTopRequestsSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Highest single-request token consumption'**
+  /// **'Highest token consumption from individual calls'**
   String get settingsDataDetailedStatsTopRequestsSubtitle;
 
   /// No description provided for @settingsDataDetailedStatsTopChatsTitle.
@@ -5807,6 +5979,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{requests} requests · {models} models'**
   String settingsDataDetailedStatsRequestModelSummary(int requests, int models);
+
+  /// No description provided for @settingsDataDetailedStatsRequestCountSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'{requests} requests'**
+  String settingsDataDetailedStatsRequestCountSummary(int requests);
 
   /// No description provided for @settingsDataDetailedStatsUnlabeledProvider.
   ///

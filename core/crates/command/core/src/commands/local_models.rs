@@ -9,6 +9,7 @@ use operit_util::RuntimeStorageLayout::{
     RUNTIME_LOCAL_ENGINES_DIR_PATH, RUNTIME_LOCAL_MODELS_DIR_PATH,
     RUNTIME_LOCAL_MODEL_REGISTRY_PATH, RUNTIME_ROOT_PATH_PREFIX,
 };
+use serde_json::json;
 
 /// Runs local model repository and installation commands.
 pub fn run_local_models_command(
@@ -58,19 +59,21 @@ fn print_local_model_paths(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let runtime_root = runtime_root_dir(application)?;
-    output.push_stdout_line(format!("runtimeRoot={}", runtime_root.display()));
-    output.push_stdout_line(format!(
-        "localModelsDir={}",
-        runtime_layout_path(&runtime_root, RUNTIME_LOCAL_MODELS_DIR_PATH)?.display()
-    ));
-    output.push_stdout_line(format!(
-        "localEnginesDir={}",
-        runtime_layout_path(&runtime_root, RUNTIME_LOCAL_ENGINES_DIR_PATH)?.display()
-    ));
-    output.push_stdout_line(format!(
-        "registryPath={}",
-        runtime_layout_path(&runtime_root, RUNTIME_LOCAL_MODEL_REGISTRY_PATH)?.display()
-    ));
+    let local_models_dir = runtime_layout_path(&runtime_root, RUNTIME_LOCAL_MODELS_DIR_PATH)?;
+    let local_engines_dir = runtime_layout_path(&runtime_root, RUNTIME_LOCAL_ENGINES_DIR_PATH)?;
+    let registry_path = runtime_layout_path(&runtime_root, RUNTIME_LOCAL_MODEL_REGISTRY_PATH)?;
+
+    output.push_stdout_line("Local model paths");
+    output.push_stdout_line(format!("Runtime root: {}", runtime_root.display()));
+    output.push_stdout_line(format!("Models: {}", local_models_dir.display()));
+    output.push_stdout_line(format!("Engines: {}", local_engines_dir.display()));
+    output.push_stdout_line(format!("Registry: {}", registry_path.display()));
+    output.setJsonStdout(json!({
+        "runtimeRoot": runtime_root.display().to_string(),
+        "localModelsDir": local_models_dir.display().to_string(),
+        "localEnginesDir": local_engines_dir.display().to_string(),
+        "registryPath": registry_path.display().to_string()
+    }));
     Ok(())
 }
 
@@ -86,13 +89,15 @@ fn print_catalog(
             .registryKey()
             .cmp(&right.manifest.registryKey())
     });
-    for status in statuses {
+    output.push_stdout_line(format!("Catalog models: {}", statuses.len()));
+    for status in &statuses {
         print_catalog_row(&status, output);
     }
+    output.setJsonStdout(serde_json::to_value(&statuses).map_err(|error| error.to_string())?);
     Ok(())
 }
 
-/// Prints one catalog status record as JSON.
+/// Prints one catalog status record.
 fn print_catalog_status(
     application: &OperitApplication,
     model_id: &str,
@@ -100,9 +105,9 @@ fn print_catalog_status(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let status = find_catalog_status(application, model_id, version)?;
-    output.push_stdout_line(
-        serde_json::to_string_pretty(&status).map_err(|error| error.to_string())?,
-    );
+    output.push_stdout_line("Catalog model");
+    print_catalog_row(&status, output);
+    output.setJsonStdout(serde_json::to_value(&status).map_err(|error| error.to_string())?);
     Ok(())
 }
 
@@ -120,17 +125,27 @@ fn print_installed(
     registry
         .installedEngines
         .sort_by_key(InstalledLocalEngine::registryKey);
-    output.push_stdout_line(format!("target={}", target.storageSegment()));
-    for model in registry.installedModels {
+    output.push_stdout_line(format!(
+        "Installed local models for {}",
+        target.storageSegment()
+    ));
+    output.push_stdout_line(format!("Models: {}", registry.installedModels.len()));
+    for model in &registry.installedModels {
         print_installed_model_row(&model, output);
     }
-    for engine in registry.installedEngines {
+    output.push_stdout_line(format!("Engines: {}", registry.installedEngines.len()));
+    for engine in &registry.installedEngines {
         print_installed_engine_row(&engine, output);
     }
+    output.setJsonStdout(json!({
+        "target": target.storageSegment(),
+        "installedModels": registry.installedModels,
+        "installedEngines": registry.installedEngines
+    }));
     Ok(())
 }
 
-/// Prints one installed local model registry record as JSON.
+/// Prints one installed local model registry record.
 fn print_installed_model(
     application: &OperitApplication,
     model_id: &str,
@@ -141,9 +156,9 @@ fn print_installed_model(
     let installed = registry
         .getInstalledModel(model_id, version)
         .ok_or_else(|| format!("installed local model not found: {model_id}@{version}"))?;
-    output.push_stdout_line(
-        serde_json::to_string_pretty(installed).map_err(|error| error.to_string())?,
-    );
+    output.push_stdout_line("Installed local model");
+    print_installed_model_row(installed, output);
+    output.setJsonStdout(serde_json::to_value(installed).map_err(|error| error.to_string())?);
     Ok(())
 }
 
@@ -157,36 +172,44 @@ fn install_local_model(
     let result = local_model_service(application)?
         .installModel(model_id.to_string(), version.to_string())?;
     output.push_stdout_line(format!(
-        "installedModel={}@{}\tmodelBytes={}\tmodelStoragePath={}",
-        result.installedModel.manifest.id,
-        result.installedModel.manifest.version,
-        result.modelDownloadedBytes,
+        "Installed model {}@{}",
+        result.installedModel.manifest.id, result.installedModel.manifest.version
+    ));
+    output.push_stdout_line(format!("Model bytes: {}", result.modelDownloadedBytes,));
+    output.push_stdout_line(format!(
+        "Model storage: {}",
         result.installedModel.storagePath
     ));
     output.push_stdout_line(format!(
-        "installedEngine={}@{}\ttarget={}\tengineBytes={}\tengineStoragePath={}",
+        "Installed engine {}@{} ({})",
         result.installedEngine.manifest.id,
         result.installedEngine.manifest.version,
-        result.installedEngine.artifact.target.storageSegment(),
-        result.engineDownloadedBytes,
+        result.installedEngine.artifact.target.storageSegment()
+    ));
+    output.push_stdout_line(format!("Engine bytes: {}", result.engineDownloadedBytes,));
+    output.push_stdout_line(format!(
+        "Engine storage: {}",
         result.installedEngine.storagePath
     ));
+    output.setJsonStdout(serde_json::to_value(&result).map_err(|error| error.to_string())?);
     Ok(())
 }
 
-/// Prints every retained local model installation operation as JSON.
+/// Prints every retained local model installation operation.
 fn print_install_statuses(
     application: &OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let statuses = local_model_service(application)?.getInstallStatuses()?;
-    output.push_stdout_line(
-        serde_json::to_string_pretty(&statuses).map_err(|error| error.to_string())?,
-    );
+    output.push_stdout_line(format!("Install operations: {}", statuses.len()));
+    for status in &statuses {
+        print_install_status_row(status, output);
+    }
+    output.setJsonStdout(serde_json::to_value(&statuses).map_err(|error| error.to_string())?);
     Ok(())
 }
 
-/// Prints one local model installation operation as JSON.
+/// Prints one local model installation operation.
 fn print_install_status(
     application: &OperitApplication,
     model_id: &str,
@@ -197,9 +220,9 @@ fn print_install_status(
     let status = local_model_service(application)?
         .getInstallStatus(model_id.to_string(), version.to_string())?
         .ok_or_else(|| format!("local model install operation not found: {operation_id}"))?;
-    output.push_stdout_line(
-        serde_json::to_string_pretty(&status).map_err(|error| error.to_string())?,
-    );
+    output.push_stdout_line("Install operation");
+    print_install_status_row(&status, output);
+    output.setJsonStdout(serde_json::to_value(&status).map_err(|error| error.to_string())?);
     Ok(())
 }
 
@@ -212,9 +235,9 @@ fn cancel_local_model_install(
 ) -> Result<(), String> {
     let status = local_model_service(application)?
         .cancelInstall(model_id.to_string(), version.to_string())?;
-    output.push_stdout_line(
-        serde_json::to_string_pretty(&status).map_err(|error| error.to_string())?,
-    );
+    output.push_stdout_line("Install cancellation requested");
+    print_install_status_row(&status, output);
+    output.setJsonStdout(serde_json::to_value(&status).map_err(|error| error.to_string())?);
     Ok(())
 }
 
@@ -228,9 +251,18 @@ fn verify_installed_model(
     let status =
         local_model_service(application)?.verifyModel(model_id.to_string(), version.to_string())?;
     output.push_stdout_line(format!(
-        "verifiedModel={}@{}\tmodel=true\tengine=true",
+        "Verified local model {}@{}",
         status.manifest.id, status.manifest.version
     ));
+    output.push_stdout_line("Model file: verified");
+    output.push_stdout_line("Engine file: verified");
+    output.setJsonStdout(json!({
+        "modelId": model_id,
+        "version": version,
+        "verifiedModel": true,
+        "verifiedEngine": true,
+        "status": status
+    }));
     Ok(())
 }
 
@@ -242,7 +274,12 @@ fn delete_installed_model(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     local_model_service(application)?.deleteModel(model_id.to_string(), version.to_string())?;
-    output.push_stdout_line(format!("deletedModel={model_id}@{version}"));
+    output.push_stdout_line(format!("Deleted local model {model_id}@{version}"));
+    output.setJsonStdout(json!({
+        "modelId": model_id,
+        "version": version,
+        "deletedModel": true
+    }));
     Ok(())
 }
 
@@ -254,7 +291,12 @@ fn delete_installed_engine(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     local_model_service(application)?.deleteEngine(engine_id.to_string(), version.to_string())?;
-    output.push_stdout_line(format!("deletedEngine={engine_id}@{version}"));
+    output.push_stdout_line(format!("Deleted local engine {engine_id}@{version}"));
+    output.setJsonStdout(json!({
+        "engineId": engine_id,
+        "version": version,
+        "deletedEngine": true
+    }));
     Ok(())
 }
 
@@ -296,31 +338,28 @@ fn find_catalog_status(
         .ok_or_else(|| format!("local model catalog entry not found: {model_id}@{version}"))
 }
 
-/// Prints one built-in model status as a tab-separated row.
+/// Prints one built-in model status as a readable row.
 fn print_catalog_row(status: &LocalModelCatalogStatus, output: &mut CoreCommandOutput) {
     let manifest = &status.manifest;
-    let engine = match manifest.engineRequirement.as_ref() {
-        Some(requirement) => format!("{}@{}", requirement.engineId, requirement.version),
-        None => "not-declared".to_string(),
-    };
+    let engine = catalog_engine_label(status);
     output.push_stdout_line(format!(
-        "{}\tversion={}\tkind={}\tengine={}\tbytes={}\tlicense={}\tcompatible={}\tmodelInstalled={}\tengineInstalled={}",
+        "- {}@{} | {} | {} bytes | license: {} | engine: {} | compatible: {} | model installed: {} | engine installed: {}",
         manifest.id,
         manifest.version,
         local_model_kind_name(&manifest.kind),
-        engine,
         manifest.declaredByteSize(),
         manifest.license,
+        engine,
         status.platformCompatible,
         status.installedModel.is_some(),
         status.installedEngine.is_some()
     ));
 }
 
-/// Prints one installed model as a tab-separated row.
+/// Prints one installed model as a readable row.
 fn print_installed_model_row(model: &InstalledLocalModel, output: &mut CoreCommandOutput) {
     output.push_stdout_line(format!(
-        "model={}@{}\tkind={}\tbytes={}\tinstalledAtMs={}\tverifiedAtMs={}\tstoragePath={}",
+        "- model {}@{} | {} | {} bytes | installed: {} | verified: {} | {}",
         model.manifest.id,
         model.manifest.version,
         local_model_kind_name(&model.manifest.kind),
@@ -331,10 +370,10 @@ fn print_installed_model_row(model: &InstalledLocalModel, output: &mut CoreComma
     ));
 }
 
-/// Prints one installed engine as a tab-separated row.
+/// Prints one installed engine as a readable row.
 fn print_installed_engine_row(engine: &InstalledLocalEngine, output: &mut CoreCommandOutput) {
     output.push_stdout_line(format!(
-        "engine={}@{}\ttarget={}\tbytes={}\tinstalledAtMs={}\tverifiedAtMs={}\tstoragePath={}",
+        "- engine {}@{} | {} | {} bytes | installed: {} | verified: {} | {}",
         engine.manifest.id,
         engine.manifest.version,
         engine.artifact.target.storageSegment(),
@@ -345,11 +384,43 @@ fn print_installed_engine_row(engine: &InstalledLocalEngine, output: &mut CoreCo
     ));
 }
 
+/// Prints one installation operation as a readable row.
+fn print_install_status_row(
+    status: &operit_runtime::services::LocalModelService::LocalModelInstallStatus,
+    output: &mut CoreCommandOutput,
+) {
+    output.push_stdout_line(format!(
+        "- {} | phase: {:?} | {}/{} bytes | file: {} | error: {}",
+        status.operationId,
+        status.phase,
+        status.downloadedBytes,
+        status.totalBytes,
+        optional_text(status.currentFile.as_deref()),
+        optional_text(status.error.as_deref())
+    ));
+}
+
+/// Formats a catalog engine requirement for readable command output.
+fn catalog_engine_label(status: &LocalModelCatalogStatus) -> String {
+    match status.manifest.engineRequirement.as_ref() {
+        Some(requirement) => format!("{}@{}", requirement.engineId, requirement.version),
+        None => "none declared".to_string(),
+    }
+}
+
 /// Formats an optional verification timestamp for CLI output.
 fn optional_timestamp(value: Option<i64>) -> String {
     match value {
         Some(timestamp) => timestamp.to_string(),
         None => "not-verified".to_string(),
+    }
+}
+
+/// Formats optional text for readable command output.
+fn optional_text(value: Option<&str>) -> &str {
+    match value {
+        Some(text) => text,
+        None => "-",
     }
 }
 
@@ -365,16 +436,22 @@ fn local_model_kind_name(kind: &LocalModelKind) -> &'static str {
 
 /// Prints local model repository command usage.
 fn print_local_models_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 local-models paths");
-    output.push_stdout_line("operit2 local-models catalog");
-    output.push_stdout_line("operit2 local-models show <model-id> <version>");
-    output.push_stdout_line("operit2 local-models installed");
-    output.push_stdout_line("operit2 local-models installed-show <model-id> <version>");
-    output.push_stdout_line("operit2 local-models install <model-id> <version>");
-    output.push_stdout_line("operit2 local-models install-statuses");
-    output.push_stdout_line("operit2 local-models install-status <model-id> <version>");
-    output.push_stdout_line("operit2 local-models install-cancel <model-id> <version>");
-    output.push_stdout_line("operit2 local-models verify <model-id> <version>");
-    output.push_stdout_line("operit2 local-models delete <model-id> <version>");
-    output.push_stdout_line("operit2 local-models engine-delete <engine-id> <version>");
+    let lines = [
+        "operit2 local-models paths",
+        "operit2 local-models catalog",
+        "operit2 local-models show <model-id> <version>",
+        "operit2 local-models installed",
+        "operit2 local-models installed-show <model-id> <version>",
+        "operit2 local-models install <model-id> <version>",
+        "operit2 local-models install-statuses",
+        "operit2 local-models install-status <model-id> <version>",
+        "operit2 local-models install-cancel <model-id> <version>",
+        "operit2 local-models verify <model-id> <version>",
+        "operit2 local-models delete <model-id> <version>",
+        "operit2 local-models engine-delete <engine-id> <version>",
+    ];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
 }

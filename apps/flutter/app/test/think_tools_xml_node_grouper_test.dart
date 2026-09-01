@@ -50,50 +50,52 @@ void main() {
   });
 
   group('ThinkToolsXmlNodeGrouper.group', () {
-    test(
-      'all mode collapses a thinking block with at least two tool calls',
-      () {
-        final items =
-            const ThinkToolsXmlNodeGrouper(
-              showThinkingProcess: true,
-              toolCollapseMode: ToolCollapseMode.all,
-            ).group(<MarkdownNodeStable>[
-              _xml('<think>plan</think>'),
-              _xml('<tool name="read_file"></tool>'),
-              _xml('<tool_result name="read_file"></tool_result>'),
-              _xml('<tool name="grep_code"></tool>'),
-              _xml('<tool_result name="grep_code"></tool_result>'),
-            ], 'renderer');
+    test('collapses a thinking block with two tool calls', () {
+      final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
+          .group(<MarkdownNodeStable>[
+            _xml('<think>plan</think>'),
+            _xml('<tool name="read_file"></tool>'),
+            _xml('<tool_result name="read_file"></tool_result>'),
+            _xml('<tool name="grep_code"></tool>'),
+            _xml('<tool_result name="grep_code"></tool_result>'),
+          ], 'renderer');
 
-        expect(items, hasLength(1));
-        final group = items.single as MarkdownGroupItem;
-        expect(group.startIndex, 0);
-        expect(group.endIndexInclusive, 4);
-        expect(group.stableKey, 'think-tools-0');
-      },
-    );
+      expect(items, hasLength(1));
+      final group = items.single as MarkdownGroupItem;
+      expect(group.startIndex, 0);
+      expect(group.endIndexInclusive, 4);
+      expect(group.stableKey, 'think-tools-0');
+    });
 
-    test('all mode keeps a single tool call expanded', () {
-      final items =
-          const ThinkToolsXmlNodeGrouper(
-            showThinkingProcess: true,
-            toolCollapseMode: ToolCollapseMode.all,
-          ).group(<MarkdownNodeStable>[
+    test('collapses a thinking block with one tool call', () {
+      final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
+          .group(<MarkdownNodeStable>[
             _xml('<think>plan</think>'),
             _xml('<tool name="read_file"></tool>'),
             _xml('<tool_result name="read_file"></tool_result>'),
           ], 'renderer');
 
-      expect(items, hasLength(3));
+      expect(items, hasLength(1));
+      final group = items.single as MarkdownGroupItem;
+      expect(group.startIndex, 0);
+      expect(group.endIndexInclusive, 2);
+      expect(group.stableKey, 'think-tools-0');
+    });
+
+    test('keeps a single tool-only call expanded', () {
+      final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
+          .group(<MarkdownNodeStable>[
+            _xml('<tool name="read_file"></tool>'),
+            _xml('<tool_result name="read_file"></tool_result>'),
+          ], 'renderer');
+
+      expect(items, hasLength(2));
       expect(items, everyElement(isA<MarkdownSingleItem>()));
     });
 
-    test('full mode collapses even one tool call', () {
-      final items =
-          const ThinkToolsXmlNodeGrouper(
-            showThinkingProcess: true,
-            toolCollapseMode: ToolCollapseMode.full,
-          ).group(<MarkdownNodeStable>[
+    test('collapses a thinking block with a write tool call', () {
+      final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
+          .group(<MarkdownNodeStable>[
             _xml('<think>plan</think>'),
             _xml('<tool name="edit_file"></tool>'),
             _xml('<tool_result name="edit_file"></tool_result>'),
@@ -103,33 +105,7 @@ void main() {
       final group = items.single as MarkdownGroupItem;
       expect(group.startIndex, 0);
       expect(group.endIndexInclusive, 2);
-    });
-
-    test('readOnly mode groups readonly tools but stops at write tools', () {
-      final readonlyItems =
-          const ThinkToolsXmlNodeGrouper(
-            showThinkingProcess: true,
-            toolCollapseMode: ToolCollapseMode.readOnly,
-          ).group(<MarkdownNodeStable>[
-            _xml('<think>plan</think>'),
-            _xml('<tool name="read_file"></tool>'),
-            _xml('<tool_result name="read_file"></tool_result>'),
-            _xml('<tool name="grep_code"></tool>'),
-            _xml('<tool_result name="grep_code"></tool_result>'),
-          ], 'renderer');
-      expect(readonlyItems.single, isA<MarkdownGroupItem>());
-
-      final writeItems =
-          const ThinkToolsXmlNodeGrouper(
-            showThinkingProcess: true,
-            toolCollapseMode: ToolCollapseMode.readOnly,
-          ).group(<MarkdownNodeStable>[
-            _xml('<think>plan</think>'),
-            _xml('<tool name="edit_file"></tool>'),
-            _xml('<tool_result name="edit_file"></tool_result>'),
-          ], 'renderer');
-      expect(writeItems, hasLength(3));
-      expect(writeItems, everyElement(isA<MarkdownSingleItem>()));
+      expect(group.stableKey, 'think-tools-0');
     });
   });
 
@@ -151,11 +127,9 @@ void main() {
               backgroundColor: Colors.white,
               nodeGrouper: const ThinkToolsXmlNodeGrouper(
                 showThinkingProcess: true,
-                toolCollapseMode: ToolCollapseMode.full,
               ),
               showThinkingProcess: true,
-              splitMarkdownContent: (_) async =>
-                  const <MarkdownStreamEvent>[],
+              splitMarkdownContent: (_) async => const <MarkdownStreamEvent>[],
             ),
           ),
         ),
@@ -204,11 +178,9 @@ void main() {
               backgroundColor: Colors.white,
               nodeGrouper: const ThinkToolsXmlNodeGrouper(
                 showThinkingProcess: true,
-                toolCollapseMode: ToolCollapseMode.full,
               ),
               showThinkingProcess: true,
-              splitMarkdownContent: (_) async =>
-                  const <MarkdownStreamEvent>[],
+              splitMarkdownContent: (_) async => const <MarkdownStreamEvent>[],
             ),
           ),
         ),
@@ -261,11 +233,9 @@ void main() {
               backgroundColor: Colors.white,
               nodeGrouper: const ThinkToolsXmlNodeGrouper(
                 showThinkingProcess: true,
-                toolCollapseMode: ToolCollapseMode.all,
               ),
               showThinkingProcess: true,
-              splitMarkdownContent: (_) async =>
-                  const <MarkdownStreamEvent>[],
+              splitMarkdownContent: (_) async => const <MarkdownStreamEvent>[],
             ),
           ),
         ),

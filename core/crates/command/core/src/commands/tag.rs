@@ -3,6 +3,7 @@ use operit_host_api::HostManager::HostManager;
 use operit_model::PromptTag::{PromptTag, TagType};
 use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 
+/// Runs prompt tag management commands.
 pub fn run_tag_command(
     _context: HostManager,
     args: &[String],
@@ -15,16 +16,18 @@ pub fn run_tag_command(
     let manager = PromptTagManager::getInstance();
     match args[0].as_str() {
         "list" => {
-            for tag in manager.getAllTags().map_err(|error| error.to_string())? {
+            let tags = manager.getAllTags().map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("Prompt tags: {}", tags.len()));
+            for tag in &tags {
                 output.push_stdout_line(format!(
-                    "{}\t{}\t{}\t{}\t{}",
+                    "- {} ({}) [{}] {}",
                     tag.id,
                     tag.name,
                     tagTypeName(&tag.tagType),
-                    tag.description,
-                    tag.promptContent.replace('\n', "\\n")
+                    tag.description
                 ));
             }
+            output.setJsonStdout(serde_json::to_value(tags).map_err(|error| error.to_string())?);
             Ok(())
         }
         "show" => {
@@ -37,7 +40,7 @@ pub fn run_tag_command(
                 .into_iter()
                 .find(|tag| tag.id == *id)
                 .ok_or_else(|| format!("tag not found: {id}"))?;
-            print_tag(&tag, output);
+            print_tag(&tag, output)?;
             Ok(())
         }
         "create" => {
@@ -54,7 +57,8 @@ pub fn run_tag_command(
             let id = manager
                 .createPromptTag(name, description, promptContent, tagType)
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(id);
+            output.push_stdout_line(format!("Prompt tag created: {id}"));
+            output.setJsonStdout(serde_json::json!({"id": id, "created": true}));
             Ok(())
         }
         "update" => {
@@ -82,7 +86,8 @@ pub fn run_tag_command(
             manager
                 .updatePromptTag(id, name, description, promptContent, tagType)
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("updated: {id}"));
+            output.push_stdout_line(format!("Prompt tag updated: {id}"));
+            output.setJsonStdout(serde_json::json!({"id": id, "updated": true}));
             Ok(())
         }
         "delete" => {
@@ -92,7 +97,8 @@ pub fn run_tag_command(
             manager
                 .deletePromptTag(id)
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("deleted: {id}"));
+            output.push_stdout_line(format!("Prompt tag deleted: {id}"));
+            output.setJsonStdout(serde_json::json!({"id": id, "deleted": true}));
             Ok(())
         }
         _ => {
@@ -102,16 +108,20 @@ pub fn run_tag_command(
     }
 }
 
-fn print_tag(tag: &PromptTag, output: &mut CoreCommandOutput) {
-    output.push_stdout_line(format!("id={}", tag.id));
-    output.push_stdout_line(format!("name={}", tag.name));
-    output.push_stdout_line(format!("description={}", tag.description));
-    output.push_stdout_line(format!("promptContent={}", tag.promptContent));
-    output.push_stdout_line(format!("tagType={}", tagTypeName(&tag.tagType)));
-    output.push_stdout_line(format!("createdAt={}", tag.createdAt));
-    output.push_stdout_line(format!("updatedAt={}", tag.updatedAt));
+/// Prints one prompt tag and records its JSON object.
+fn print_tag(tag: &PromptTag, output: &mut CoreCommandOutput) -> Result<(), String> {
+    output.push_stdout_line(format!("Prompt tag: {}", tag.name));
+    output.push_stdout_line(format!("ID: {}", tag.id));
+    output.push_stdout_line(format!("Type: {}", tagTypeName(&tag.tagType)));
+    output.push_stdout_line(format!("Description: {}", tag.description));
+    output.push_stdout_line(format!("Prompt content: {}", tag.promptContent));
+    output.push_stdout_line(format!("Created at: {}", tag.createdAt));
+    output.push_stdout_line(format!("Updated at: {}", tag.updatedAt));
+    output.setJsonStdout(serde_json::to_value(tag).map_err(|error| error.to_string())?);
+    Ok(())
 }
 
+/// Parses a prompt tag type from a command argument.
 fn parseTagType(value: Option<&str>) -> Result<TagType, String> {
     match value {
         Some("TONE") => Ok(TagType::TONE),
@@ -124,6 +134,7 @@ fn parseTagType(value: Option<&str>) -> Result<TagType, String> {
     }
 }
 
+/// Formats a prompt tag type for command output.
 fn tagTypeName(tagType: &TagType) -> &'static str {
     match tagType {
         TagType::TONE => "TONE",
@@ -133,10 +144,17 @@ fn tagTypeName(tagType: &TagType) -> &'static str {
     }
 }
 
+/// Prints prompt tag command usage.
 fn print_tag_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 tag list");
-    output.push_stdout_line("operit2 tag show <id>");
-    output.push_stdout_line("operit2 tag create <name> [prompt-content] [description] [tag-type]");
-    output.push_stdout_line("operit2 tag update <id> <field> <value>");
-    output.push_stdout_line("operit2 tag delete <id>");
+    let lines = vec![
+        "operit2 tag list",
+        "operit2 tag show <id>",
+        "operit2 tag create <name> [prompt-content] [description] [tag-type]",
+        "operit2 tag update <id> <field> <value>",
+        "operit2 tag delete <id>",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

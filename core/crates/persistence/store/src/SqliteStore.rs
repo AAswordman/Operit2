@@ -286,6 +286,12 @@ impl FromSqliteValue for i64 {
     }
 }
 
+impl FromSqliteValue for f64 {
+    fn fromSqliteValue(value: &SqliteValue) -> Result<Self, SqliteStoreError> {
+        Ok(value.asF64()?)
+    }
+}
+
 impl FromSqliteValue for i32 {
     fn fromSqliteValue(value: &SqliteValue) -> Result<Self, SqliteStoreError> {
         Ok(value.asI64()? as i32)
@@ -351,6 +357,12 @@ impl ToSqliteValue for String {
 impl ToSqliteValue for i64 {
     fn toSqliteValue(&self) -> SqliteValue {
         SqliteValue::Integer(*self)
+    }
+}
+
+impl ToSqliteValue for f64 {
+    fn toSqliteValue(&self) -> SqliteValue {
+        SqliteValue::Real(*self)
     }
 }
 

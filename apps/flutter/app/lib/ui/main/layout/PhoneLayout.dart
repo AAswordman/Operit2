@@ -145,6 +145,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
               selectedRouteId: widget.selectedRouteId,
               appearance: appearance,
               histories: drawerState.histories,
+              activeStreamingChatIds: drawerState.activeStreamingChatIds,
               characterGroupNamesById: drawerState.characterGroupNamesById,
               characterCardAvatarUrisByName:
                   drawerState.characterCardAvatarUrisByName,

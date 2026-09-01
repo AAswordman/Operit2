@@ -33,7 +33,6 @@ class WorkspacePanel extends StatefulWidget {
     required this.onOpenWorkspaceFile,
     required this.onCreateDefaultWorkspace,
     required this.onBindWorkspace,
-    required this.onRevealRequested,
   });
 
   final bool hasBoundWorkspace;
@@ -49,7 +48,6 @@ class WorkspacePanel extends StatefulWidget {
   final Future<void> Function(String path) onOpenWorkspaceFile;
   final Future<void> Function(String? projectType) onCreateDefaultWorkspace;
   final Future<void> Function(String workspace) onBindWorkspace;
-  final VoidCallback onRevealRequested;
 
   @override
   State<WorkspacePanel> createState() => _WorkspacePanelState();
@@ -246,7 +244,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     if (!mounted) {
       return;
     }
-    widget.onRevealRequested();
     final existingIndex = _tabs.indexWhere(
       (item) => item.kind == WorkspaceTabKind.browser,
     );
@@ -267,7 +264,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   Future<WebVisitResponse> _openWebVisitTab(WebVisitRequest request) {
-    widget.onRevealRequested();
     final completer = Completer<WebVisitResponse>();
     _webVisitCompleters[request.requestId] = completer;
     final tab = WorkspaceTab(
@@ -316,8 +312,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onCreateDefaultWorkspace: widget.onCreateDefaultWorkspace,
       onBindWorkspace: widget.onBindWorkspace,
       onChooseExistingWorkspace: _openWorkspaceBindingPickerTab,
-      splitMarkdownContent: (content) => _coreClients
-          .chatRuntimeHolderMain
+      splitMarkdownContent: (content) => _coreClients.chatRuntimeHolderMain
           .splitMarkdownContent(content: content),
     );
   }
@@ -831,7 +826,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     if (index < 0) {
       return;
     }
-    widget.onRevealRequested();
     setState(() {
       _selectedIndex = index;
     });

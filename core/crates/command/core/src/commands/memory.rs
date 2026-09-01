@@ -9,7 +9,9 @@ use operit_runtime::data::preferences::SharedMemoryStoreManager::SharedMemorySto
 use operit_store::repository::MemoryRepository::MemoryRepository;
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
+use serde_json::json;
 
+/// Runs memory commands for character stores, shared stores, and shared mounts.
 pub fn run_memory_command(
     context: HostManager,
     args: &[String],
@@ -35,6 +37,7 @@ pub fn run_memory_command(
     }
 }
 
+/// Runs memory commands scoped to one character owner.
 fn run_character_memory_command(
     storageHost: &std::sync::Arc<dyn RuntimeStorageHost>,
     args: &[String],
@@ -60,6 +63,7 @@ fn run_character_memory_command(
     }
 }
 
+/// Runs memory commands scoped to shared memory stores.
 fn run_shared_memory_command(
     storageHost: &std::sync::Arc<dyn RuntimeStorageHost>,
     args: &[String],
@@ -71,12 +75,15 @@ fn run_shared_memory_command(
     }
     match args[0].as_str() {
         "list" => {
-            for store in SharedMemoryStoreManager::getInstance().getAllSharedMemoryStores()? {
+            let stores = SharedMemoryStoreManager::getInstance().getAllSharedMemoryStores()?;
+            output.push_stdout_line(format!("Shared memory stores: {}", stores.len()));
+            for store in &stores {
                 output.push_stdout_line(format!(
-                    "{}\t{}\t{}\t{}",
+                    "- {} | {} | created: {} | updated: {}",
                     store.id, store.name, store.createdAt, store.updatedAt
                 ));
             }
+            output.setJsonStdout(serde_json::to_value(&stores).map_err(|error| error.to_string())?);
             Ok(())
         }
         "create" => {
@@ -85,7 +92,9 @@ fn run_shared_memory_command(
                 .ok_or_else(|| "usage: operit2 memory shared create <name>".to_string())?
                 .clone();
             let store = SharedMemoryStoreManager::getInstance().createSharedMemoryStore(name)?;
-            output.push_stdout_line(format!("created={}", store.id));
+            output.push_stdout_line(format!("Created shared memory store {}", store.id));
+            output.push_stdout_line(format!("Name: {}", store.name));
+            output.setJsonStdout(serde_json::to_value(&store).map_err(|error| error.to_string())?);
             Ok(())
         }
         "rename" => {
@@ -100,7 +109,9 @@ fn run_shared_memory_command(
                 .clone();
             let store =
                 SharedMemoryStoreManager::getInstance().renameSharedMemoryStore(id, name)?;
-            output.push_stdout_line(format!("renamed={}", store.id));
+            output.push_stdout_line(format!("Renamed shared memory store {}", store.id));
+            output.push_stdout_line(format!("Name: {}", store.name));
+            output.setJsonStdout(serde_json::to_value(&store).map_err(|error| error.to_string())?);
             Ok(())
         }
         "delete" => {
@@ -108,8 +119,14 @@ fn run_shared_memory_command(
                 .get(1)
                 .ok_or_else(|| "usage: operit2 memory shared delete <shared-id>".to_string())?;
             let deleted = SharedMemoryStoreManager::getInstance().deleteSharedMemoryStore(id)?;
-            remove_shared_memory_mount_from_all_characters(id)?;
-            output.push_stdout_line(format!("deleted={deleted}"));
+            let cleanedCharacters = remove_shared_memory_mount_from_all_characters(id)?;
+            output.push_stdout_line(format!("Deleted shared memory store {id}: {deleted}"));
+            output.push_stdout_line(format!("Characters cleaned: {cleanedCharacters}"));
+            output.setJsonStdout(json!({
+                "sharedId": id,
+                "deleted": deleted,
+                "cleanedCharacters": cleanedCharacters
+            }));
             Ok(())
         }
         sharedId => {
@@ -130,11 +147,10 @@ fn run_shared_memory_command(
     }
 }
 
+/// Mounts one shared memory store to one character.
 fn run_mount_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
     if args.len() < 2 {
-        output.push_stdout_line(
-            "operit2 memory mount <character-id> <shared-id> --read <true|false> --write <true|false>",
-        );
+        print_mount_usage(output);
         return Ok(());
     }
     let characterId = args[0].clone();
@@ -150,23 +166,31 @@ fn run_mount_command(args: &[String], output: &mut CoreCommandOutput) -> Result<
         .map_err(|error| error.to_string())?;
     card.sharedMemoryMounts
         .retain(|mount| mount.sharedMemoryId != sharedId);
-    card.sharedMemoryMounts.push(CharacterSharedMemoryMount {
+    let mount = CharacterSharedMemoryMount {
         sharedMemoryId: sharedId.clone(),
         readable,
         writable,
-    });
+    };
+    card.sharedMemoryMounts.push(mount.clone());
     manager
         .updateCharacterCard(card)
         .map_err(|error| error.to_string())?;
-    output.push_stdout_line(format!(
-        "mounted={characterId}:{sharedId}:read={readable}:write={writable}"
-    ));
+    output.push_stdout_line(format!("Mounted shared memory {sharedId} on {characterId}"));
+    output.push_stdout_line(format!("Readable: {readable}"));
+    output.push_stdout_line(format!("Writable: {writable}"));
+    output.setJsonStdout(json!({
+        "characterId": characterId,
+        "sharedId": sharedId,
+        "mount": mount,
+        "mounted": true
+    }));
     Ok(())
 }
 
+/// Removes one shared memory mount from one character.
 fn run_unmount_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
     if args.len() < 2 {
-        output.push_stdout_line("operit2 memory unmount <character-id> <shared-id>");
+        print_unmount_usage(output);
         return Ok(());
     }
     let characterId = args[0].clone();
@@ -178,21 +202,22 @@ fn run_unmount_command(args: &[String], output: &mut CoreCommandOutput) -> Resul
     let originalLen = card.sharedMemoryMounts.len();
     card.sharedMemoryMounts
         .retain(|mount| mount.sharedMemoryId != sharedId);
+    let removed = originalLen != card.sharedMemoryMounts.len();
     manager
         .updateCharacterCard(card)
         .map_err(|error| error.to_string())?;
     output.push_stdout_line(format!(
-        "unmounted={}",
-        originalLen
-            != CharacterCardManager::getInstance()
-                .getCharacterCard(&characterId)
-                .map_err(|error| error.to_string())?
-                .sharedMemoryMounts
-                .len()
+        "Unmounted shared memory {sharedId} from {characterId}: {removed}"
     ));
+    output.setJsonStdout(json!({
+        "characterId": characterId,
+        "sharedId": sharedId,
+        "unmounted": removed
+    }));
     Ok(())
 }
 
+/// Runs USER.md commands for one memory owner.
 fn run_user_command(
     storageHost: &std::sync::Arc<dyn RuntimeStorageHost>,
     ownerKey: &str,
@@ -206,7 +231,12 @@ fn run_user_command(
     let repository = UserMarkdownRepository::new(ownerKey, storageHost.clone());
     match args[0].as_str() {
         "show" => {
-            output.push_stdout(repository.readUserMarkdown()?);
+            let content = repository.readUserMarkdown()?;
+            output.push_stdout(content.clone());
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "content": content
+            }));
             Ok(())
         }
         "write" => {
@@ -214,12 +244,22 @@ fn run_user_command(
                 .get(1)
                 .ok_or_else(|| "usage: operit2 memory <owner> user write <content>".to_string())?
                 .clone();
-            repository.writeUserMarkdown(content)?;
-            output.push_stdout_line(format!("updated={ownerKey}/USER.md"));
+            repository.writeUserMarkdown(content.clone())?;
+            output.push_stdout_line(format!("Updated {ownerKey}/USER.md"));
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "contentLength": content.len(),
+                "updated": true
+            }));
             Ok(())
         }
         "path" => {
-            output.push_stdout_line(repository.userMarkdownPath()?.display().to_string());
+            let path = repository.userMarkdownPath()?.display().to_string();
+            output.push_stdout_line(format!("USER.md path: {path}"));
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "path": path
+            }));
             Ok(())
         }
         _ => {
@@ -229,6 +269,7 @@ fn run_user_command(
     }
 }
 
+/// Runs memory item commands for one memory owner.
 fn run_item_command(
     ownerKey: &str,
     args: &[String],
@@ -240,20 +281,34 @@ fn run_item_command(
     }
     match args[0].as_str() {
         "list" => {
-            for memory in memory_repository(ownerKey).searchMemories("*", None, 0.0, None, None)? {
-                print_memory_item_line(&memory, output);
+            let memories =
+                memory_repository(ownerKey).searchMemories("*", None, 0.0, None, None)?;
+            output.push_stdout_line(format!("Memory items: {}", memories.len()));
+            for memory in &memories {
+                print_memory_item_line(memory, output);
             }
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "items": memories
+            }));
             Ok(())
         }
         "search" => {
             let query = args
                 .get(1)
                 .ok_or_else(|| "usage: operit2 memory <owner> item search <query>".to_string())?;
-            for memory in
-                memory_repository(ownerKey).searchMemories(query, None, 0.0, None, None)?
-            {
-                print_memory_item_line(&memory, output);
+            let memories =
+                memory_repository(ownerKey).searchMemories(query, None, 0.0, None, None)?;
+            output.push_stdout_line(format!("Memory search results: {}", memories.len()));
+            output.push_stdout_line(format!("Query: {query}"));
+            for memory in &memories {
+                print_memory_item_line(memory, output);
             }
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "query": query,
+                "items": memories
+            }));
             Ok(())
         }
         "show" => {
@@ -264,6 +319,10 @@ fn run_item_command(
                 .findMemoryByTitle(title)?
                 .ok_or_else(|| format!("memory item not found: {title}"))?;
             print_memory_item(&memory, output);
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "item": memory
+            }));
             Ok(())
         }
         "create" => {
@@ -291,7 +350,13 @@ fn run_item_command(
                 folder,
                 tags,
             )?;
-            output.push_stdout_line(format!("created={}", memory.id));
+            output.push_stdout_line(format!("Created memory item {}", memory.id));
+            output.push_stdout_line(format!("Title: {}", memory.title));
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "item": memory,
+                "created": true
+            }));
             Ok(())
         }
         "delete" => {
@@ -299,10 +364,13 @@ fn run_item_command(
                 args.get(1),
                 "usage: operit2 memory <owner> item delete <id>",
             )?;
-            output.push_stdout_line(format!(
-                "deleted={}",
-                memory_repository(ownerKey).deleteMemory(id)?
-            ));
+            let deleted = memory_repository(ownerKey).deleteMemory(id)?;
+            output.push_stdout_line(format!("Deleted memory item {id}: {deleted}"));
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "id": id,
+                "deleted": deleted
+            }));
             Ok(())
         }
         "move" => {
@@ -322,10 +390,15 @@ fn run_item_command(
             let folder = args.get(2).ok_or_else(|| {
                 "usage: operit2 memory <owner> item move <ids-csv> <folder>".to_string()
             })?;
-            output.push_stdout_line(format!(
-                "moved={}",
-                memory_repository(ownerKey).moveMemoriesToFolder(&ids, folder)?
-            ));
+            let moved = memory_repository(ownerKey).moveMemoriesToFolder(&ids, folder)?;
+            output.push_stdout_line(format!("Moved memory items: {moved}"));
+            output.push_stdout_line(format!("Folder: {folder}"));
+            output.setJsonStdout(json!({
+                "ownerKey": ownerKey,
+                "ids": ids,
+                "folder": folder,
+                "moved": moved
+            }));
             Ok(())
         }
         _ => {
@@ -335,17 +408,25 @@ fn run_item_command(
     }
 }
 
+/// Prints the memory graph for one memory owner.
 fn run_graph_command(ownerKey: &str, output: &mut CoreCommandOutput) -> Result<(), String> {
     let graph = memory_repository(ownerKey).getMemoryGraph()?;
-    output
-        .push_stdout_line(serde_json::to_string_pretty(&graph).map_err(|error| error.to_string())?);
+    output.push_stdout_line(format!("Memory graph for {ownerKey}"));
+    output.push_stdout_line(format!("Nodes: {}", graph.nodes.len()));
+    output.push_stdout_line(format!("Edges: {}", graph.edges.len()));
+    output.setJsonStdout(json!({
+        "ownerKey": ownerKey,
+        "graph": graph
+    }));
     Ok(())
 }
 
+/// Creates a memory repository for one owner key.
 fn memory_repository(ownerKey: &str) -> MemoryRepository {
     MemoryRepository::new(ownerKey)
 }
 
+/// Parses a named boolean flag from command arguments.
 fn parse_named_bool(args: &[String], name: &str) -> Result<bool, String> {
     let index = args
         .iter()
@@ -361,8 +442,10 @@ fn parse_named_bool(args: &[String], name: &str) -> Result<bool, String> {
     }
 }
 
-fn remove_shared_memory_mount_from_all_characters(sharedId: &str) -> Result<(), String> {
+/// Removes one shared memory id from every character card mount list.
+fn remove_shared_memory_mount_from_all_characters(sharedId: &str) -> Result<usize, String> {
     let manager = CharacterCardManager::getInstance();
+    let mut changedCards = 0usize;
     for mut card in manager
         .getAllCharacterCards()
         .map_err(|error| error.to_string())?
@@ -371,89 +454,145 @@ fn remove_shared_memory_mount_from_all_characters(sharedId: &str) -> Result<(), 
         card.sharedMemoryMounts
             .retain(|mount| mount.sharedMemoryId != sharedId);
         if originalLen != card.sharedMemoryMounts.len() {
+            changedCards += 1;
             manager
                 .updateCharacterCard(card)
                 .map_err(|error| error.to_string())?;
         }
     }
-    Ok(())
+    Ok(changedCards)
 }
 
+/// Prints one memory item as a compact list row.
 fn print_memory_item_line(memory: &Memory, output: &mut CoreCommandOutput) {
-    let folderPath = memory.folderPath.clone().unwrap_or_default();
     output.push_stdout_line(format!(
-        "{}\t{}\t{}\t{}",
+        "- {} | {} | folder: {} | tags: {}",
         memory.id,
         memory.title,
-        folderPath,
-        memory
-            .tags
-            .iter()
-            .map(|tag| tag.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
+        optional_text(memory.folderPath.as_deref()),
+        memory_tag_names(memory)
     ));
 }
 
+/// Prints one memory item in detail.
 fn print_memory_item(memory: &Memory, output: &mut CoreCommandOutput) {
-    let folderPath = memory.folderPath.clone().unwrap_or_default();
-    output.push_stdout_line(format!("id={}", memory.id));
-    output.push_stdout_line(format!("uuid={}", memory.uuid));
-    output.push_stdout_line(format!("title={}", memory.title));
-    output.push_stdout_line(format!("content={}", memory.content));
-    output.push_stdout_line(format!("contentType={}", memory.contentType));
-    output.push_stdout_line(format!("source={}", memory.source));
-    output.push_stdout_line(format!("credibility={}", memory.credibility));
-    output.push_stdout_line(format!("importance={}", memory.importance));
-    output.push_stdout_line(format!("folderPath={folderPath}"));
-    output.push_stdout_line(format!("createdAt={}", memory.createdAt));
-    output.push_stdout_line(format!("updatedAt={}", memory.updatedAt));
-    output.push_stdout_line(format!("lastAccessedAt={}", memory.lastAccessedAt));
+    output.push_stdout_line(format!("Memory item {}", memory.id));
+    output.push_stdout_line(format!("UUID: {}", memory.uuid));
+    output.push_stdout_line(format!("Title: {}", memory.title));
+    output.push_stdout_line(format!("Content: {}", memory.content));
+    output.push_stdout_line(format!("Content type: {}", memory.contentType));
+    output.push_stdout_line(format!("Source: {}", memory.source));
+    output.push_stdout_line(format!("Credibility: {}", memory.credibility));
+    output.push_stdout_line(format!("Importance: {}", memory.importance));
     output.push_stdout_line(format!(
-        "tags={}",
-        memory
-            .tags
-            .iter()
-            .map(|tag| tag.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
+        "Folder: {}",
+        optional_text(memory.folderPath.as_deref())
     ));
+    output.push_stdout_line(format!("Created at: {}", memory.createdAt));
+    output.push_stdout_line(format!("Updated at: {}", memory.updatedAt));
+    output.push_stdout_line(format!("Last accessed at: {}", memory.lastAccessedAt));
+    output.push_stdout_line(format!("Tags: {}", memory_tag_names(memory)));
 }
 
+/// Formats memory tag names for readable command output.
+fn memory_tag_names(memory: &Memory) -> String {
+    memory
+        .tags
+        .iter()
+        .map(|tag| tag.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Formats optional text for readable command output.
+fn optional_text(value: Option<&str>) -> &str {
+    match value {
+        Some(text) => text,
+        None => "-",
+    }
+}
+
+/// Prints top-level memory command usage.
 fn print_memory_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory <character|shared|mount|unmount>");
+    let lines = ["operit2 memory <character|shared|mount|unmount>"];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
 }
 
+/// Prints character memory command usage.
 fn print_character_memory_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory character <character-id> user <show|write|path>");
-    output.push_stdout_line(
+    let lines = [
+        "operit2 memory character <character-id> user <show|write|path>",
         "operit2 memory character <character-id> item <list|search|show|create|delete|move>",
-    );
-    output.push_stdout_line("operit2 memory character <character-id> graph");
+        "operit2 memory character <character-id> graph",
+    ];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
 }
 
+/// Prints shared memory command usage.
 fn print_shared_memory_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory shared <list|create|rename|delete>");
-    output.push_stdout_line("operit2 memory shared <shared-id> user <show|write|path>");
-    output.push_stdout_line(
+    let lines = [
+        "operit2 memory shared <list|create|rename|delete>",
+        "operit2 memory shared <shared-id> user <show|write|path>",
         "operit2 memory shared <shared-id> item <list|search|show|create|delete|move>",
-    );
-    output.push_stdout_line("operit2 memory shared <shared-id> graph");
+        "operit2 memory shared <shared-id> graph",
+    ];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
 }
 
+/// Prints shared memory mount command usage.
+fn print_mount_usage(output: &mut CoreCommandOutput) {
+    let lines = [
+        "operit2 memory mount <character-id> <shared-id> --read <true|false> --write <true|false>",
+    ];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
+}
+
+/// Prints shared memory unmount command usage.
+fn print_unmount_usage(output: &mut CoreCommandOutput) {
+    let lines = ["operit2 memory unmount <character-id> <shared-id>"];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
+}
+
+/// Prints USER.md command usage.
 fn print_user_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory <owner> user show");
-    output.push_stdout_line("operit2 memory <owner> user write <content>");
-    output.push_stdout_line("operit2 memory <owner> user path");
+    let lines = [
+        "operit2 memory <owner> user show",
+        "operit2 memory <owner> user write <content>",
+        "operit2 memory <owner> user path",
+    ];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
 }
 
+/// Prints memory item command usage.
 fn print_item_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 memory <owner> item list");
-    output.push_stdout_line("operit2 memory <owner> item search <query>");
-    output.push_stdout_line("operit2 memory <owner> item show <title>");
-    output.push_stdout_line(
+    let lines = [
+        "operit2 memory <owner> item list",
+        "operit2 memory <owner> item search <query>",
+        "operit2 memory <owner> item show <title>",
         "operit2 memory <owner> item create <title> <content> [folder] [tags-csv]",
-    );
-    output.push_stdout_line("operit2 memory <owner> item delete <id>");
-    output.push_stdout_line("operit2 memory <owner> item move <ids-csv> <folder>");
+        "operit2 memory <owner> item delete <id>",
+        "operit2 memory <owner> item move <ids-csv> <folder>",
+    ];
+    for line in lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(json!({ "usage": lines }));
 }

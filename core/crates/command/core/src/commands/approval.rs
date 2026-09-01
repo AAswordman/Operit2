@@ -17,7 +17,8 @@ pub fn run_approval_command(
             let mode = permissionSystem
                 .getAiPermissionMode()
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("mode={}", mode.name()));
+            output.push_stdout_line(format!("Approval mode: {}", mode.name()));
+            output.setJsonStdout(serde_json::json!({"mode": mode.name()}));
             Ok(())
         }
         "read-only" | "workspace-write" | "full" => {
@@ -25,7 +26,8 @@ pub fn run_approval_command(
             permissionSystem
                 .saveAiPermissionMode(mode.clone())
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("mode={}", mode.name()));
+            output.push_stdout_line(format!("Approval mode updated: {}", mode.name()));
+            output.setJsonStdout(serde_json::json!({"mode": mode.name(), "updated": true}));
             Ok(())
         }
         _ => {
@@ -35,6 +37,7 @@ pub fn run_approval_command(
     }
 }
 
+/// Parses an AI permission mode from a command argument.
 fn parse_ai_permission_mode_arg(value: Option<&str>) -> Result<AiPermissionMode, String> {
     match value {
         Some("read-only") | Some("READ_ONLY") | Some("ReadOnly") => Ok(AiPermissionMode::ReadOnly),
@@ -46,7 +49,14 @@ fn parse_ai_permission_mode_arg(value: Option<&str>) -> Result<AiPermissionMode,
     }
 }
 
+/// Prints approval command usage.
 fn print_approval_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 approval status");
-    output.push_stdout_line("operit2 approval <read-only|workspace-write|full>");
+    let lines = vec![
+        "operit2 approval status",
+        "operit2 approval <read-only|workspace-write|full>",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

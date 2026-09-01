@@ -6,11 +6,13 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../data/preferences/UserPreferencesManager.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import '../tts/TtsPlaybackController.dart';
 import 'ChatArea.dart';
+import 'ChatLayoutMetrics.dart';
 import 'ChatMultiSelectBar.dart';
 import 'ChatScrollNavigator.dart';
 import 'ChatToastHost.dart';
@@ -19,6 +21,7 @@ import 'share/ChatShareImageGenerator.dart';
 import 'share/ChatShareImagePreviewDialog.dart';
 import 'style/input/agent/AgentChatInputSection.dart';
 import 'style/input/classic/ClassicChatInputSection.dart';
+import 'style/input/common/InputProcessingStatusLane.dart';
 import 'style/input/common/PendingQueueMessageItem.dart';
 
 class ChatScreenContent extends StatelessWidget {
@@ -31,6 +34,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.inputFocusNode,
     required this.scrollController,
     required this.inputProcessingState,
+    this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
     required this.currentCharacterCardAvatarUri,
@@ -47,6 +51,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onDeleteMessage,
     required this.onDeleteMessagesFrom,
     required this.onDeleteMessageVariant,
+    required this.onSelectMessageVariant,
     required this.onRollbackToMessage,
     required this.onSelectMessageToEdit,
     required this.onRegenerateMessage,
@@ -98,6 +103,7 @@ class ChatScreenContent extends StatelessWidget {
   final FocusNode inputFocusNode;
   final ScrollController scrollController;
   final core_proxy.InputProcessingState inputProcessingState;
+  final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final String? currentCharacterCardAvatarUri;
@@ -114,6 +120,7 @@ class ChatScreenContent extends StatelessWidget {
   final MessageTimestampAction onDeleteMessage;
   final MessageTimestampBoolAction onDeleteMessagesFrom;
   final MessageVariantAction onDeleteMessageVariant;
+  final MessageVariantAction onSelectMessageVariant;
   final MessageTimestampSelectionAction onRollbackToMessage;
   final MessageSelectionAction onSelectMessageToEdit;
   final MessageTimestampAction onRegenerateMessage;
@@ -159,9 +166,22 @@ class ChatScreenContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final inputStyle = OperitTheme.of(
+    final theme = Theme.of(context);
+    final themePreferenceSnapshot = OperitTheme.of(
       context,
-    ).themePreferenceSnapshot.inputStyle;
+    ).themePreferenceSnapshot;
+    final inputStyle = themePreferenceSnapshot.inputStyle;
+    final statusLaneInset = _inputProcessingStatusLaneInset(
+      themePreferenceSnapshot,
+    );
+    final processingStatus = inputProcessingStatusText(
+      AppLocalizations.of(context)!,
+      inputProcessingState,
+    );
+    final showProcessingStatus =
+        statusLaneInset > 0 &&
+        inputProcessingState.isProcessing &&
+        processingStatus.isNotEmpty;
     return Stack(
       alignment: Alignment.topCenter,
       children: <Widget>[
@@ -175,10 +195,24 @@ class ChatScreenContent extends StatelessWidget {
                     ignoring: isPreparingChatSwitch,
                     child: Opacity(
                       opacity: isPreparingChatSwitch ? 0 : 1,
-                      child: _buildChatArea(context),
+                      child: _buildChatArea(
+                        context,
+                        bottomContentInset: statusLaneInset,
+                      ),
                     ),
                   ),
                   if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
+                  if (statusLaneInset > 0)
+                    _buildInputProcessingStatusLane(
+                      themePreferenceSnapshot,
+                      visible: showProcessingStatus,
+                      status: processingStatus,
+                      textStyle: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.8,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -207,8 +241,7 @@ class ChatScreenContent extends StatelessWidget {
                       ? null
                       : () => _confirmDeleteSelected(context),
                 )
-              else
-                _buildChatInputSection(inputStyle),
+              else ...<Widget>[_buildChatInputSection(inputStyle)],
             ],
           ],
         ),
@@ -239,6 +272,7 @@ class ChatScreenContent extends StatelessWidget {
         focusNode: inputFocusNode,
         isLoading: loading,
         inputState: inputProcessingState,
+        mentionSuggestionPanel: mentionSuggestionPanel,
         viewModel: viewModel,
         currentChatId: currentChatId,
         onSendMessage: onSendMessage,
@@ -271,6 +305,7 @@ class ChatScreenContent extends StatelessWidget {
         focusNode: inputFocusNode,
         isLoading: loading,
         inputState: inputProcessingState,
+        mentionSuggestionPanel: mentionSuggestionPanel,
         viewModel: viewModel,
         currentChatId: currentChatId,
         onSendMessage: onSendMessage,
@@ -303,7 +338,10 @@ class ChatScreenContent extends StatelessWidget {
   }
 
   /// Builds the scrollable chat area with message-level actions.
-  Widget _buildChatArea(BuildContext context) {
+  Widget _buildChatArea(
+    BuildContext context, {
+    required double bottomContentInset,
+  }) {
     return ChatArea(
       messages: messages,
       isLoading: loading,
@@ -324,6 +362,7 @@ class ChatScreenContent extends StatelessWidget {
       onDeleteMessage: onDeleteMessage,
       onDeleteMessagesFrom: onDeleteMessagesFrom,
       onDeleteMessageVariant: onDeleteMessageVariant,
+      onSelectMessageVariant: onSelectMessageVariant,
       onRollbackToMessage: onRollbackToMessage,
       onSelectMessageToEdit: onSelectMessageToEdit,
       onRegenerateMessage: onRegenerateMessage,
@@ -337,6 +376,41 @@ class ChatScreenContent extends StatelessWidget {
       onRefreshRequested: onRefreshRequested,
       isMultiSelectMode: isMultiSelectMode,
       selectedMessageTimestamps: selectedMessageTimestamps,
+      bottomContentInset: bottomContentInset,
+    );
+  }
+
+  /// Resolves the transcript space reserved for the status overlay.
+  double _inputProcessingStatusLaneInset(ThemePreferenceSnapshot snapshot) {
+    if (isPreparingChatSwitch ||
+        isMultiSelectMode ||
+        !snapshot.showInputProcessingStatus) {
+      return 0;
+    }
+    return inputProcessingStatusLaneHeight;
+  }
+
+  /// Builds the status lane floating over the bottom of the transcript.
+  Widget _buildInputProcessingStatusLane(
+    ThemePreferenceSnapshot snapshot, {
+    required bool visible,
+    required String status,
+    required TextStyle? textStyle,
+  }) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: snapshot.bubbleWideLayoutEnabled
+              ? chatWideContentMaxWidth
+              : chatContentMaxWidth,
+        ),
+        child: InputProcessingStatusLane(
+          visible: visible,
+          status: status,
+          textStyle: textStyle,
+        ),
+      ),
     );
   }
 
@@ -411,7 +485,9 @@ class ChatScreenContent extends StatelessWidget {
   /// Resolves selected visible messages in display order.
   List<ChatUiMessage> get _selectedVisibleMessages {
     return messages
-        .where((message) => selectedMessageTimestamps.contains(message.timestamp))
+        .where(
+          (message) => selectedMessageTimestamps.contains(message.timestamp),
+        )
         .toList(growable: false);
   }
 

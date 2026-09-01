@@ -28,8 +28,14 @@ fn print_storage_paths(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let config = storage_root_config(application)?;
-    output.push_stdout_line(format!("runtimeRoot={}", config.runtime_root.display()));
-    output.push_stdout_line(format!("workspaceRoot={}", config.workspace_root.display()));
+    let runtimeRoot = config.runtime_root.display().to_string();
+    let workspaceRoot = config.workspace_root.display().to_string();
+    output.push_stdout_line(format!("Runtime root: {runtimeRoot}"));
+    output.push_stdout_line(format!("Workspace root: {workspaceRoot}"));
+    output.setJsonStdout(serde_json::json!({
+        "runtimeRoot": runtimeRoot,
+        "workspaceRoot": workspaceRoot,
+    }));
     Ok(())
 }
 
@@ -42,22 +48,30 @@ fn migrate_storage_roots(
     let plan = parse_migrate_args(args)?;
     let current = storage_root_config(application)?;
 
-    migrate_named_root(
+    let runtimeOperation = migrate_named_root(
         RUNTIME_ROOT_DIR_PATH,
         &current.runtime_root,
         &plan.runtime_root,
         output,
     )?;
-    migrate_named_root(
+    let workspaceOperation = migrate_named_root(
         "workspace",
         &current.workspace_root,
         &plan.workspace_root,
         output,
     )?;
 
-    output.push_stdout_line(format!("runtimeRoot={}", plan.runtime_root.display()));
-    output.push_stdout_line(format!("workspaceRoot={}", plan.workspace_root.display()));
-    output.push_stdout_line("storageConfig=updated");
+    let runtimeRoot = plan.runtime_root.display().to_string();
+    let workspaceRoot = plan.workspace_root.display().to_string();
+    output.push_stdout_line(format!("Runtime root: {runtimeRoot}"));
+    output.push_stdout_line(format!("Workspace root: {workspaceRoot}"));
+    output.push_stdout_line("Storage config updated.");
+    output.setJsonStdout(serde_json::json!({
+        "runtimeRoot": runtimeRoot,
+        "workspaceRoot": workspaceRoot,
+        "storageConfig": "updated",
+        "operations": [runtimeOperation, workspaceOperation],
+    }));
     Ok(())
 }
 
@@ -132,15 +146,27 @@ fn migrate_named_root(
     source: &Path,
     target: &Path,
     output: &mut CoreCommandOutput,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
+    let sourcePath = source.display().to_string();
+    let targetPath = target.display().to_string();
     if source == target {
-        output.push_stdout_line(format!("{name}=unchanged\t{}", target.display()));
-        return Ok(());
+        output.push_stdout_line(format!("{name}: already using {targetPath}"));
+        return Ok(serde_json::json!({
+            "name": name,
+            "status": "unchanged",
+            "source": sourcePath,
+            "target": targetPath,
+        }));
     }
     if !source.exists() {
         fs::create_dir_all(target).map_err(|error| error.to_string())?;
-        output.push_stdout_line(format!("{name}=created\t{}", target.display()));
-        return Ok(());
+        output.push_stdout_line(format!("{name}: created {targetPath}"));
+        return Ok(serde_json::json!({
+            "name": name,
+            "status": "created",
+            "source": sourcePath,
+            "target": targetPath,
+        }));
     }
     if source.is_file() {
         return Err(format!(
@@ -150,12 +176,13 @@ fn migrate_named_root(
     }
     fs::create_dir_all(target).map_err(|error| error.to_string())?;
     copy_directory_contents(source, target)?;
-    output.push_stdout_line(format!(
-        "{name}=migrated\t{}\t{}",
-        source.display(),
-        target.display()
-    ));
-    Ok(())
+    output.push_stdout_line(format!("{name}: migrated {sourcePath} -> {targetPath}"));
+    Ok(serde_json::json!({
+        "name": name,
+        "status": "migrated",
+        "source": sourcePath,
+        "target": targetPath,
+    }))
 }
 
 /// Copies every entry under one directory into another directory.
@@ -191,6 +218,12 @@ fn copy_storage_entry(source: &Path, target: &Path) -> Result<(), String> {
 
 /// Prints storage command usage.
 fn print_storage_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 storage paths");
-    output.push_stdout_line("operit2 storage migrate --runtime <path> --workspace <path>");
+    let lines = vec![
+        "operit2 storage paths",
+        "operit2 storage migrate --runtime <path> --workspace <path>",
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

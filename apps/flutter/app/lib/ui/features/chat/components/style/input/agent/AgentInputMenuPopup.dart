@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
+import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
 class AgentInputMenuPopup extends StatefulWidget {
@@ -92,13 +93,16 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
         );
     return _AgentInputMenuData(
       enableMemoryAutoUpdate: await _clients.preferencesApiPreferences
-          .enableMemoryAutoUpdateFlow().first,
+          .enableMemoryAutoUpdateFlow()
+          .first,
       permissionMode: await _clients.permissionsToolPermissionSystem
           .getAiPermissionMode(),
       disableStreamOutput: await _clients.preferencesApiPreferences
-          .disableStreamOutputFlow().first,
+          .disableStreamOutputFlow()
+          .first,
       disableUserPreferenceDescription: await _clients.preferencesApiPreferences
-          .disableUserPreferenceDescriptionFlow().first,
+          .disableUserPreferenceDescriptionFlow()
+          .first,
       pluginToggles: pluginToggles,
     );
   }
@@ -450,6 +454,16 @@ class _SwitchRow extends StatelessWidget {
         ? colorScheme.primary
         : colorScheme.onSurfaceVariant;
     final iconName = materialIconName?.trim();
+    final resolvedIcon = iconName == null || iconName.isEmpty
+        ? icon
+        : MaterialIconNameResolver.resolveOrNull(iconName);
+    if (resolvedIcon == null) {
+      throw ArgumentError.value(
+        materialIconName,
+        'materialIconName',
+        'Unknown Material icon name',
+      );
+    }
     return InkWell(
       onTap: enabled ? onTap : null,
       child: ConstrainedBox(
@@ -458,13 +472,7 @@ class _SwitchRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: <Widget>[
-              iconName == null || iconName.isEmpty
-                  ? Icon(icon, size: 16, color: iconColor)
-                  : _MaterialIconLigature(
-                      iconName: iconName,
-                      size: 16,
-                      color: iconColor,
-                    ),
+              Icon(resolvedIcon, size: 16, color: iconColor),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -500,81 +508,6 @@ class _SwitchRow extends StatelessWidget {
       ),
     );
   }
-}
-
-class _MaterialIconLigature extends StatelessWidget {
-  const _MaterialIconLigature({
-    required this.iconName,
-    required this.size,
-    required this.color,
-  });
-
-  final String iconName;
-  final double size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox.square(
-      dimension: size,
-      child: Center(
-        child: FittedBox(
-          fit: BoxFit.contain,
-          child: Text(
-            _materialIconLigatureName(iconName),
-            overflow: TextOverflow.clip,
-            softWrap: false,
-            style: TextStyle(
-              fontFamily: 'MaterialIcons',
-              height: 1,
-              color: color,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-String _materialIconLigatureName(String iconName) {
-  final buffer = StringBuffer();
-  var wroteSeparator = false;
-  var previousWasLowerOrDigit = false;
-
-  for (final codeUnit in iconName.trim().codeUnits) {
-    final isUpper = codeUnit >= 65 && codeUnit <= 90;
-    final isLower = codeUnit >= 97 && codeUnit <= 122;
-    final isDigit = codeUnit >= 48 && codeUnit <= 57;
-
-    if (isUpper || isLower || isDigit) {
-      if (isUpper && previousWasLowerOrDigit && !wroteSeparator) {
-        buffer.write('_');
-      }
-      buffer.writeCharCode(isUpper ? codeUnit + 32 : codeUnit);
-      wroteSeparator = false;
-      previousWasLowerOrDigit = isLower || isDigit;
-      continue;
-    }
-
-    if (!wroteSeparator && buffer.isNotEmpty) {
-      buffer.write('_');
-      wroteSeparator = true;
-      previousWasLowerOrDigit = false;
-    }
-  }
-
-  var result = buffer.toString();
-  while (result.endsWith('_')) {
-    result = result.substring(0, result.length - 1);
-  }
-  return _materialIconNameHasStyle(result) ? result : '${result}_baseline';
-}
-
-bool _materialIconNameHasStyle(String iconName) {
-  return iconName.endsWith('_baseline') ||
-      iconName.endsWith('_outlined') ||
-      iconName.endsWith('_rounded') ||
-      iconName.endsWith('_sharp');
 }
 
 class _PermissionModeSelector extends StatelessWidget {

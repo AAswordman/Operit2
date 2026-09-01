@@ -23,6 +23,7 @@ class StructuredMessagePartRenderer extends StatefulWidget {
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
     this.splitMarkdownContent,
+    required this.nodeGrouper,
   });
 
   final List<core_proxy.MessagePart> parts;
@@ -35,6 +36,7 @@ class StructuredMessagePartRenderer extends StatefulWidget {
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
   final MarkdownContentSplitter? splitMarkdownContent;
+  final MarkdownNodeGrouper nodeGrouper;
 
   /// Creates readiness-tracking state for static Markdown parts.
   @override
@@ -77,15 +79,65 @@ class _StructuredMessagePartRendererState
   Widget build(BuildContext context) {
     final orderedParts = widget.parts.toList(growable: false)
       ..sort((left, right) => left.sequence.compareTo(right.sequence));
+    final rendererId = '${widget.rendererId ?? 'structured-message'}-parts';
+    final nodes = _structuredNodesForParts(orderedParts);
+    final groupedItems = widget.nodeGrouper.group(nodes, rendererId);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        for (final part in orderedParts)
-          KeyedSubtree(
-            key: ValueKey<String>(part.partId),
-            child: _partWidget(part),
-          ),
+        for (final item in groupedItems)
+          if (item is MarkdownSingleItem)
+            _singlePartWidget(orderedParts[item.index])
+          else if (item is MarkdownGroupItem)
+            _partGroupWidget(group: item, nodes: nodes, rendererId: rendererId),
       ],
+    );
+  }
+
+  /// Builds one keyed semantic message part widget.
+  Widget _singlePartWidget(core_proxy.MessagePart part) {
+    return KeyedSubtree(
+      key: ValueKey<String>(part.partId),
+      child: _partWidget(part),
+    );
+  }
+
+  /// Builds one grouped semantic message part sequence.
+  Widget _partGroupWidget({
+    required MarkdownGroupItem group,
+    required List<MarkdownNodeStable> nodes,
+    required String rendererId,
+  }) {
+    return widget.nodeGrouper.renderGroup(
+      group: group,
+      nodes: nodes,
+      rendererId: rendererId,
+      isVisible: true,
+      isLastNode: group.endIndexInclusive == nodes.length - 1,
+      textColor: widget.textColor,
+      xmlRenderer:
+          ({
+            required String xmlContent,
+            required bool isStreaming,
+            required Color textColor,
+            Stream<String>? xmlStream,
+            Stream<Object>? xmlMarkdownEventStream,
+            String? renderInstanceKey,
+          }) {
+            return _renderStructuredXmlContent(
+              xmlContent: xmlContent,
+              isStreaming: isStreaming,
+              textColor: textColor,
+              xmlStream: xmlStream,
+              xmlMarkdownEventStream: xmlMarkdownEventStream,
+              renderInstanceKey: renderInstanceKey,
+            );
+          },
+      xmlStreamResolver: (_) => null,
+      xmlMarkdownEventStreamResolver: (_) => null,
+      onLinkClick: widget.onLinkClick,
+      fillMaxWidth: true,
+      textStyle: Theme.of(context).textTheme.bodyMedium!,
     );
   }
 
@@ -98,6 +150,7 @@ class _StructuredMessagePartRendererState
           isStreaming: false,
           textColor: widget.textColor,
           backgroundColor: widget.backgroundColor,
+          nodeGrouper: widget.nodeGrouper,
           rendererId: '${widget.rendererId ?? 'message'}-${part.partId}',
           onLinkClick: widget.onLinkClick,
           onContentReady: () => _markPartReady(part.partId),
@@ -113,10 +166,31 @@ class _StructuredMessagePartRendererState
 
   /// Renders one non-Markdown part through the original XML renderer.
   Widget _renderStructuredXmlPart(core_proxy.MessagePart part) {
-    return CustomXmlRenderer(
+    return _renderStructuredXmlContent(
       xmlContent: _structuredPartMarkup(part),
       isStreaming: false,
       textColor: widget.textColor,
+    );
+  }
+
+  /// Renders one XML payload through the original XML renderer.
+  Widget _renderStructuredXmlContent({
+    required String xmlContent,
+    required bool isStreaming,
+    required Color textColor,
+    Stream<String>? xmlStream,
+    Stream<Object>? xmlMarkdownEventStream,
+    String? renderInstanceKey,
+  }) {
+    return CustomXmlRenderer(
+      key: renderInstanceKey == null
+          ? null
+          : ValueKey<String>(renderInstanceKey),
+      xmlContent: xmlContent,
+      isStreaming: isStreaming,
+      textColor: textColor,
+      xmlStream: xmlStream,
+      xmlMarkdownEventStream: xmlMarkdownEventStream,
       showThinkingProcess: widget.showThinkingProcess,
       initialThinkingExpanded: widget.initialThinkingExpanded,
       allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
@@ -338,6 +412,7 @@ class _StreamingStructuredMessageRendererState
         initialThinkingExpanded: widget.initialThinkingExpanded,
         allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
         splitMarkdownContent: widget.splitMarkdownContent,
+        nodeGrouper: widget.nodeGrouper,
       ),
     );
   }
@@ -435,6 +510,43 @@ Map<String, String> _markdownContentByPartId(
       if (part.kind == core_proxy.MessagePartKind.markdown &&
           part.content.trim().isNotEmpty)
         part.partId: part.content,
+  };
+}
+
+/// Creates render nodes from canonical semantic message parts.
+List<MarkdownNodeStable> _structuredNodesForParts(
+  List<core_proxy.MessagePart> parts,
+) {
+  return <MarkdownNodeStable>[
+    for (final part in parts)
+      MarkdownNodeStable(
+        type: _nodeTypeForPart(part),
+        content: _nodeContentForPart(part),
+        isStreaming: false,
+        stableKey: part.partId,
+      ),
+  ];
+}
+
+/// Returns the markdown node type used for one semantic message part.
+MarkdownNodeType _nodeTypeForPart(core_proxy.MessagePart part) {
+  return switch (part.kind) {
+    core_proxy.MessagePartKind.markdown => MarkdownNodeType.plainText,
+    core_proxy.MessagePartKind.thinking ||
+    core_proxy.MessagePartKind.toolCall ||
+    core_proxy.MessagePartKind.toolResult ||
+    core_proxy.MessagePartKind.status => MarkdownNodeType.xmlBlock,
+  };
+}
+
+/// Returns the render source used for one semantic message part.
+String _nodeContentForPart(core_proxy.MessagePart part) {
+  return switch (part.kind) {
+    core_proxy.MessagePartKind.markdown => part.content,
+    core_proxy.MessagePartKind.thinking ||
+    core_proxy.MessagePartKind.toolCall ||
+    core_proxy.MessagePartKind.toolResult ||
+    core_proxy.MessagePartKind.status => _structuredPartMarkup(part),
   };
 }
 

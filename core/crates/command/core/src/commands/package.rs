@@ -6,6 +6,7 @@ use operit_tools::tools::AIToolHandler::AIToolHandler;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+/// Runs package management commands.
 pub fn run_package_command(
     application: &OperitApplication,
     args: &[String],
@@ -27,7 +28,9 @@ pub fn run_package_command(
             let guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
-            output.push_stdout_line(guard.getExternalPackagesPath());
+            let path = guard.getExternalPackagesPath();
+            output.push_stdout_line(format!("Package directory: {path}"));
+            output.setJsonStdout(serde_json::json!({"packageDirectory": path}));
             Ok(())
         }
         "list" => list_packages(tool_handler, output),
@@ -47,7 +50,11 @@ pub fn run_package_command(
             let mut guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
-            output.push_stdout_line(guard.addPackageFileFromExternalStorage(path));
+            let result = guard.addPackageFileFromExternalStorageResult(path)?;
+            output.push_stdout_line(format!("Package imported: {}", result.packageName));
+            output.push_stdout_line(format!("Format: {}", result.packageFormat));
+            output.push_stdout_line(format!("Stored: {}", result.storedPath));
+            output.setJsonStdout(serde_json::json!({ "path": path, "result": result }));
             Ok(())
         }
         "load" => {
@@ -72,7 +79,14 @@ pub fn run_package_command(
             let mut guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
-            output.push_stdout_line(guard.usePackage(name));
+            let message = guard.usePackage(name);
+            output.push_stdout_line(format!("Package ready: {name}"));
+            output.push_stdout_line(message.clone());
+            output.setJsonStdout(serde_json::json!({
+                "name": name,
+                "message": message,
+                "ready": true,
+            }));
             Ok(())
         }
         "exec" => {
@@ -124,19 +138,22 @@ fn list_input_menu_definitions(
         }
         std::thread::sleep(Duration::from_millis(25));
     };
+    let mut items = Vec::new();
+    output.push_stdout_line(format!("Input menu toggles: {}", definitions.len()));
     for definition in definitions {
+        let title = definition.title.clone().unwrap_or_default();
+        let slot = definition.slot.clone().unwrap_or_default();
         output.push_stdout_line(format!(
-            "{}\ttitle={}\tchecked={}\tenabled={}\tslot={}",
-            definition.id,
-            definition.title.unwrap_or_default(),
-            definition.isChecked,
-            definition.isEnabled,
-            definition.slot.unwrap_or_default(),
+            "- {} — {} — checked: {} — enabled: {} — slot: {}",
+            definition.id, title, definition.isChecked, definition.isEnabled, slot,
         ));
+        items.push(serde_json::to_value(definition).map_err(|error| error.to_string())?);
     }
+    output.setJsonStdout(serde_json::Value::Array(items));
     Ok(())
 }
 
+/// Lists loaded packages as readable rows and JSON objects.
 fn list_packages(
     tool_handler: AIToolHandler,
     output: &mut CoreCommandOutput,
@@ -147,18 +164,38 @@ fn list_packages(
         .expect("package manager mutex poisoned");
     let enabled = guard.getEnabledPackageNames();
     let packages = guard.getAvailablePackages();
+    let mut items = Vec::new();
+    output.push_stdout_line(format!("Packages: {}", packages.len()));
     for (name, package) in packages {
+        let isEnabled = enabled.contains(&name);
+        let description = package.description.resolve(false);
         output.push_stdout_line(format!(
-            "{}\tenabled={}\t{}\ttools={}",
+            "- {} — {} tools — {}{}",
             name,
-            enabled.contains(&name),
-            package.description.resolve(false),
-            package.tools.len()
+            package.tools.len(),
+            description,
+            if isEnabled {
+                " (enabled)"
+            } else {
+                " (disabled)"
+            }
         ));
+        items.push(serde_json::json!({
+            "name": name,
+            "displayName": package.display_name.resolve(false),
+            "description": description,
+            "category": package.category,
+            "enabled": isEnabled,
+            "enabledByDefault": package.enabled_by_default,
+            "isBuiltIn": package.is_built_in,
+            "tools": package.tools.len(),
+        }));
     }
+    output.setJsonStdout(serde_json::Value::Array(items));
     Ok(())
 }
 
+/// Lists bundled packages available to load.
 fn list_more_packages(
     tool_handler: AIToolHandler,
     output: &mut CoreCommandOutput,
@@ -167,12 +204,18 @@ fn list_more_packages(
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
-    for candidate in guard.getBundledExternalPackageCandidates() {
+    let candidates = guard.getBundledExternalPackageCandidates();
+    let mut items = Vec::new();
+    output.push_stdout_line(format!("Bundled packages: {}", candidates.len()));
+    for candidate in candidates {
         output.push_stdout_line(format_bundled_external_candidate(&candidate));
+        items.push(bundled_external_candidate_json(&candidate));
     }
+    output.setJsonStdout(serde_json::Value::Array(items));
     Ok(())
 }
 
+/// Shows a loaded package with its tools and parameters.
 fn show_package(
     tool_handler: AIToolHandler,
     name: &str,
@@ -185,39 +228,66 @@ fn show_package(
     let package = guard
         .getPackageTools(name)
         .ok_or_else(|| format!("package not found: {name}"))?;
-    output.push_stdout_line(format!("name={}", package.name));
+    output.push_stdout_line(format!("Package: {}", package.name));
     output.push_stdout_line(format!(
-        "displayName={}",
+        "Display name: {}",
         package.display_name.resolve(false)
     ));
     output.push_stdout_line(format!(
-        "description={}",
+        "Description: {}",
         package.description.resolve(false)
     ));
-    output.push_stdout_line(format!("category={}", package.category));
-    output.push_stdout_line(format!("enabledByDefault={}", package.enabled_by_default));
-    output.push_stdout_line(format!("isBuiltIn={}", package.is_built_in));
-    output.push_stdout_line(format!("tools={}", package.tools.len()));
-    for tool in package.tools {
+    output.push_stdout_line(format!("Category: {}", package.category));
+    output.push_stdout_line(format!(
+        "Enabled by default: {}",
+        package.enabled_by_default
+    ));
+    output.push_stdout_line(format!("Built in: {}", package.is_built_in));
+    output.push_stdout_line(format!("Tools: {}", package.tools.len()));
+    let mut tools = Vec::new();
+    for tool in &package.tools {
         output.push_stdout_line(format!(
-            "- {}\tadvice={}\t{}",
+            "- {} — advice: {} — {}",
             tool.name,
             tool.advice,
             tool.description.resolve(false)
         ));
-        for parameter in tool.parameters {
+        let mut parameters = Vec::new();
+        for parameter in &tool.parameters {
             output.push_stdout_line(format!(
-                "  - {}\t{}\trequired={}\t{}",
+                "  - {} — type: {} — required: {} — {}",
                 parameter.name,
                 parameter.parameter_type,
                 parameter.required,
                 parameter.description.resolve(false)
             ));
+            parameters.push(serde_json::json!({
+                "name": parameter.name,
+                "description": parameter.description.resolve(false),
+                "parameterType": parameter.parameter_type,
+                "required": parameter.required,
+            }));
         }
+        tools.push(serde_json::json!({
+            "name": tool.name,
+            "description": tool.description.resolve(false),
+            "advice": tool.advice,
+            "parameters": parameters,
+        }));
     }
+    output.setJsonStdout(serde_json::json!({
+        "name": package.name,
+        "displayName": package.display_name.resolve(false),
+        "description": package.description.resolve(false),
+        "category": package.category,
+        "enabledByDefault": package.enabled_by_default,
+        "isBuiltIn": package.is_built_in,
+        "tools": tools,
+    }));
     Ok(())
 }
 
+/// Loads one bundled package into user package storage.
 fn load_more_package(
     tool_handler: AIToolHandler,
     name: &str,
@@ -227,10 +297,18 @@ fn load_more_package(
     let mut guard = package_manager
         .lock()
         .expect("package manager mutex poisoned");
-    output.push_stdout_line(guard.importBundledExternalPackage(name));
+    let message = guard.importBundledExternalPackage(name);
+    output.push_stdout_line(format!("Package loaded: {name}"));
+    output.push_stdout_line(message.clone());
+    output.setJsonStdout(serde_json::json!({
+        "name": name,
+        "message": message,
+        "loaded": true,
+    }));
     Ok(())
 }
 
+/// Deletes one package from external package storage.
 fn delete_package(
     tool_handler: AIToolHandler,
     name: &str,
@@ -243,10 +321,12 @@ fn delete_package(
     if !guard.deletePackage(name) {
         return Err(format!("Failed to delete package: {name}"));
     }
-    output.push_stdout_line(format!("deleted={name}"));
+    output.push_stdout_line(format!("Package deleted: {name}"));
+    output.setJsonStdout(serde_json::json!({"name": name, "deleted": true}));
     Ok(())
 }
 
+/// Sets the enabled state for one package.
 fn set_package_enabled(
     tool_handler: AIToolHandler,
     name: Option<&String>,
@@ -269,10 +349,17 @@ fn set_package_enabled(
     } else {
         guard.disablePackage(name)
     };
-    output.push_stdout_line(message);
+    output.push_stdout_line(format!("Package {}: {name}", enabled_status(enabled)));
+    output.push_stdout_line(message.clone());
+    output.setJsonStdout(serde_json::json!({
+        "name": name,
+        "enabled": enabled,
+        "message": message,
+    }));
     Ok(())
 }
 
+/// Returns the runtime package manager from the tool handler.
 fn package_manager(
     tool_handler: &AIToolHandler,
 ) -> std::sync::Arc<
@@ -281,44 +368,59 @@ fn package_manager(
     tool_handler.getOrCreatePackageManager()
 }
 
+/// Formats one bundled package candidate for CLI text.
 fn format_bundled_external_candidate(candidate: &BundledExternalPackageCandidate) -> String {
     format!(
-        "{}\ttype={}\tloaded=false\t{}\ttools={}\tsubpackages={}",
+        "- {} — type: {} — loaded: false — tools: {} — subpackages: {} — {}",
         candidate.packageName,
         candidate.packageKind,
-        candidate.description.resolve(false),
         candidate.toolCount,
-        candidate.subpackageCount
+        candidate.subpackageCount,
+        candidate.description.resolve(false)
     )
 }
 
+/// Builds a JSON object for one bundled package candidate.
+fn bundled_external_candidate_json(
+    candidate: &BundledExternalPackageCandidate,
+) -> serde_json::Value {
+    serde_json::json!({
+        "name": candidate.packageName,
+        "type": candidate.packageKind,
+        "loaded": false,
+        "description": candidate.description.resolve(false),
+        "tools": candidate.toolCount,
+        "subpackages": candidate.subpackageCount,
+    })
+}
+
+/// Formats an enabled state as CLI text.
+fn enabled_status(enabled: bool) -> &'static str {
+    if enabled {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+/// Prints package command usage.
 fn print_package_usage(output: &mut CoreCommandOutput) {
-    output.push_stdout_line("operit2 package help");
-    output.push_stdout_line(
+    let lines = vec![
+        "operit2 package help",
         "operit2 package dir                                  Show user package directory.",
-    );
-    output.push_stdout_line("operit2 package list                                 List loaded script packages and ToolPkg subpackages.");
-    output.push_stdout_line("operit2 package more                                 List app-bundled official extras not loaded yet; type=script/toolpkg.");
-    output.push_stdout_line("operit2 package load <name>                          Load one item from 'package more' into the user package directory.");
-    output.push_stdout_line(
+        "operit2 package list                                 List loaded script packages and ToolPkg subpackages.",
+        "operit2 package more                                 List app-bundled official extras not loaded yet; type=script/toolpkg.",
+        "operit2 package load <name>                          Load one item from 'package more' into the user package directory.",
         "operit2 package show <name>                          Show a loaded package.",
-    );
-    output.push_stdout_line(
         "operit2 package import <js-ts-hjson-toolpkg-path>    Import a package file.",
-    );
-    output.push_stdout_line(
         "operit2 package delete <name>                        Delete an external package.",
-    );
-    output.push_stdout_line(
         "operit2 package enable <name>                        Enable a loaded package.",
-    );
-    output.push_stdout_line(
         "operit2 package disable <name>                       Disable a loaded package.",
-    );
-    output.push_stdout_line(
         "operit2 package use <name>                           Enable a package for execution.",
-    );
-    output.push_stdout_line(
         "operit2 package exec <package:tool> <params-json>    Execute one package tool.",
-    );
+    ];
+    for line in &lines {
+        output.push_stdout_line(line);
+    }
+    output.setJsonStdout(serde_json::json!({"usage": lines}));
 }

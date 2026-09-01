@@ -773,7 +773,6 @@ ThemePreferenceSnapshot _themePreferenceSnapshotWith(
     bubbleAiSystemFontName: snapshot.bubbleAiSystemFontName,
     bubbleAiCustomFontPath: snapshot.bubbleAiCustomFontPath,
     showThinkingProcess: snapshot.showThinkingProcess,
-    toolCollapseMode: snapshot.toolCollapseMode,
     showModelProvider: snapshot.showModelProvider,
     showModelName: snapshot.showModelName,
     showRoleName: snapshot.showRoleName,

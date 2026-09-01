@@ -437,7 +437,7 @@ impl AIMessageManager {
                     continue;
                 }
                 let displayContent = if message.sender == "ai" {
-                    condenseAssistantForReview(&cleanedContent)
+                    condenseAssistantMessageForReview(message)
                 } else {
                     condenseUserForReview(&cleanedContent)
                 };
@@ -462,7 +462,7 @@ impl AIMessageManager {
                     let cleanedContent = cleanSummarySourceMessage(message);
                     if !cleanedContent.trim().is_empty() {
                         let displayContent = if role == "assistant" {
-                            condenseAssistantForReview(&cleanedContent)
+                            condenseAssistantMessageForReview(message)
                         } else {
                             condenseUserForReview(&cleanedContent)
                         };
@@ -1081,15 +1081,89 @@ fn condenseUserForReview(text: &str) -> String {
     condense_head_tail(&strip_xml_tags(&pruned), 240, 96)
 }
 
+/// Condenses structured assistant parts without exposing full tool payloads in the review.
 #[allow(non_snake_case)]
-fn condenseAssistantForReview(text: &str) -> String {
-    let cleaned = strip_xml_tags(&remove_thinking_content(text));
-    let condensed = condense_head_tail(&cleaned, 280, 120);
-    if condensed.trim().is_empty() {
-        "[Empty]".to_string()
-    } else {
-        condensed
+fn condenseAssistantMessageForReview(message: &ChatMessage) -> String {
+    let mut segments = Vec::<String>::new();
+    for part in MessagePartCodec::orderedParts(&message.parts) {
+        let segment = match part.kind {
+            MessagePartKind::Markdown | MessagePartKind::Status => {
+                let cleaned = strip_xml_tags(&strip_media_links(&strip_tag_blocks(
+                    &part.content,
+                    "memory",
+                )));
+                let condensed = condense_head_tail(&cleaned, 120, 48);
+                (!condensed.trim().is_empty()).then_some(condensed)
+            }
+            MessagePartKind::Thinking => None,
+            MessagePartKind::ToolCall => {
+                let tool_name = part
+                    .toolName
+                    .as_deref()
+                    .expect("tool-call parts require a tool name");
+                let params = part
+                    .attributes
+                    .iter()
+                    .take(8)
+                    .map(|(name, value)| {
+                        format!(
+                            "{}={}",
+                            name,
+                            condense_head_tail(&strip_xml_tags(value), 72, 32)
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let params_text = if params.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", params.join("; "))
+                };
+                Some(format!("[工具: {tool_name}]{params_text}"))
+            }
+            MessagePartKind::ToolResult => {
+                let tool_name = part
+                    .toolName
+                    .as_deref()
+                    .expect("tool-result parts require a tool name");
+                let status = part
+                    .attributes
+                    .get("status")
+                    .map(|value| match value.to_ascii_lowercase().as_str() {
+                        "success" => "成功",
+                        "error" => "失败",
+                        _ => value.as_str(),
+                    })
+                    .unwrap_or("");
+                let result = condense_head_tail(&strip_xml_tags(&part.content), 140, 56);
+                let status_text = if status.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {status}")
+                };
+                let result_text = if result.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {result}")
+                };
+                Some(format!("[结果: {tool_name}{status_text}]{result_text}"))
+            }
+        };
+        if let Some(segment) = segment {
+            segments.push(segment);
+        }
     }
+
+    if segments.is_empty() {
+        return "[Empty]".to_string();
+    }
+    if segments.len() > 25 {
+        let omitted = segments.len() - 22;
+        let mut bounded = segments[..12].to_vec();
+        bounded.push(format!("[...省略{omitted}段...]"));
+        bounded.extend_from_slice(&segments[segments.len() - 10..]);
+        segments = bounded;
+    }
+    segments.join(" ").trim().to_string()
 }
 
 fn condense_head_tail(text: &str, head_chars: usize, tail_chars: usize) -> String {
@@ -1244,5 +1318,30 @@ mod tests {
             .starts_with("<tool_result name=\"switch_core\""));
         assert_eq!(turns[2].tool_name.as_deref(), Some("switch_core"));
         assert_eq!(turns[3].content, "after");
+    }
+
+    /// Verifies summary review condenses structured tool results instead of dumping payloads.
+    #[test]
+    fn summary_review_condenses_structured_tool_result() {
+        let message = ChatMessage::new_with_parts(
+            "ai".to_string(),
+            vec![
+                MessagePart::markdown("part-0".to_string(), 0, "已检查设备".to_string()),
+                MessagePart::toolResult(
+                    "part-1".to_string(),
+                    1,
+                    Some("call-1".to_string()),
+                    "system_info".to_string(),
+                    "success".to_string(),
+                    format!("{{\"nodes\":[{}]}}", "{\"nodeId\":\"core\"},".repeat(80)),
+                ),
+            ],
+        );
+
+        let review = condenseAssistantMessageForReview(&message);
+
+        assert!(review.contains("[结果: system_info 成功]"));
+        assert!(review.contains("..."));
+        assert!(review.len() < 500);
     }
 }

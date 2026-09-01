@@ -57,6 +57,8 @@
   },
   "roleResponsePlannerFailed": "群组规划失败",
   "summarizingMemories": "正在总结记忆...",
+  "summaryGenerating": "正在生成总结...",
+  "chatCompressingHistory": "正在压缩历史记录...",
   "executingPlan": "正在执行计划...",
   "executingTool": "正在执行工具: {toolName}",
   "@executingTool": {
@@ -154,7 +156,10 @@
   },
   "messageLocatorNoMatches": "没有匹配的消息",
   "messageSenderUser": "用户",
-  "messageSenderSummary": "摘要",
+  "messageSenderSummary": "总结",
+  "historyDialogSummary": "历史对话摘要",
+  "confirmDeleteSummary": "删除摘要",
+  "confirmDeleteSummaryMessage": "确定要删除这条摘要吗？",
   "messageSenderSystem": "系统",
   "messageSenderThinking": "思考",
   "thinkingProcess": "思考过程",
@@ -168,6 +173,16 @@
   },
   "toolsGroupTitleWithCount": "工具调用（{count}）",
   "@toolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "searchGroupTitle": "搜索",
+  "thinkingSearchGroupTitle": "思考并搜索",
+  "thinkingSearchToolsGroupTitleWithCount": "思考、搜索并调用工具（{count}）",
+  "@thinkingSearchToolsGroupTitleWithCount": {
     "placeholders": {
       "count": {
         "type": "int"
@@ -1240,6 +1255,7 @@
   "settingsRuntimeDeviceInCurrentSpace": "已在当前设备空间",
   "settingsRuntimeDiscoverSpaces": "发现设备空间",
   "settingsRuntimeDiscoverSpacesDescription": "附近设备会按设备空间归并；展开设备空间后，可以选择其中一台设备直接连接。",
+  "settingsRuntimeWebPairDescription": "输入其他设备的地址和配对令牌，让此浏览器作为主动配对方连接。",
   "settingsRuntimeDiscoveredSpaceSummary": "共 {memberCount} 台设备 · 附近可连接 {nearbyCount} 台",
   "@settingsRuntimeDiscoveredSpaceSummary": {
     "placeholders": {
@@ -1503,7 +1519,7 @@
   "settingsDataInputTokens": "输入",
   "settingsDataOutputTokens": "输出",
   "settingsDataOpenDetailedStats": "查看详细统计",
-  "settingsDataOpenDetailedStatsDescription": "打开每日趋势、输入输出 Token 变化，以及按供应商、模型、会话分类的使用明细。",
+  "settingsDataOpenDetailedStatsDescription": "打开每日趋势、输入输出 Token 变化、使用热力图，以及按供应商、模型、功能模型分类的使用明细。",
   "settingsDataRefreshTokenStats": "刷新统计",
   "settingsDataResetTokenStats": "重置统计",
   "settingsDataDetailedStatsTitle": "详细统计",
@@ -1521,6 +1537,18 @@
     }
   },
   "settingsDataDetailedStatsSourceLabel": "模型请求明细",
+  "settingsDataDetailedStatsHistoricalTotal": "历史累计",
+  "settingsDataDetailedStatsRangeAll": "全部",
+  "settingsDataDetailedStatsRangeLast7Days": "近 7 天",
+  "settingsDataDetailedStatsRangeLast30Days": "近 30 天",
+  "settingsDataDetailedStatsRangeCustom": "自定义",
+  "settingsDataDetailedStatsCustomRangePickerTitle": "选择统计时间范围",
+  "settingsDataDetailedStatsNoDataInRange": "当前范围暂无数据",
+  "settingsDataDetailedStatsNoRankRows": "当前范围暂无排行数据",
+  "settingsDataDetailedStatsFunctionModels": "功能模型数",
+  "settingsDataDetailedStatsFunctionModelPieTitle": "功能模型分布",
+  "settingsDataDetailedStatsTopFunctionModelsTitle": "功能模型排行",
+  "settingsDataDetailedStatsTopFunctionModelsSubtitle": "按功能模型累计 Token 消耗排序",
   "settingsDataDetailedStatsSourceChat": "对话回复",
   "settingsDataDetailedStatsSourceToolResult": "工具结果续写",
   "settingsDataDetailedStatsSourceSummary": "摘要生成",
@@ -1532,6 +1560,26 @@
   "settingsDataDetailedStatsChats": "会话数",
   "settingsDataDetailedStatsProviders": "供应商数",
   "settingsDataDetailedStatsModels": "模型数",
+  "settingsDataDetailedStatsUnknownTokenRecords": "含未知 Token 的记录",
+  "settingsDataDetailedStatsHeatmapTitle": "使用热力图",
+  "settingsDataDetailedStatsHeatmapSubtitle": "所选时间范围内每日 Token 消耗强度",
+  "settingsDataDetailedStatsHeatmapTapHint": "点击方格查看详细数据",
+  "settingsDataDetailedStatsHeatmapDayDetail": "{date} 使用了 {tokens} Token · {requests} 次请求",
+  "@settingsDataDetailedStatsHeatmapDayDetail": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      },
+      "tokens": {
+        "type": "String"
+      },
+      "requests": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsHeatmapLow": "少",
+  "settingsDataDetailedStatsHeatmapHigh": "多",
   "settingsDataDetailedStatsDailyUsageTitle": "每日使用趋势",
   "settingsDataDetailedStatsDailyUsageSubtitle": "按天统计请求次数",
   "settingsDataDetailedStatsRequestsSeries": "请求数",
@@ -1541,8 +1589,8 @@
   "settingsDataDetailedStatsModelPieTitle": "模型分布",
   "settingsDataDetailedStatsChatPieTitle": "会话分布",
   "settingsDataDetailedStatsTotalTokens": "总 Token",
-  "settingsDataDetailedStatsTopRequestsTitle": "单项请求排行",
-  "settingsDataDetailedStatsTopRequestsSubtitle": "单次请求 Token 消耗最高的记录",
+  "settingsDataDetailedStatsTopRequestsTitle": "单次请求峰值",
+  "settingsDataDetailedStatsTopRequestsSubtitle": "单次调用中 Token 消耗最高的记录",
   "settingsDataDetailedStatsTopChatsTitle": "会话排行",
   "settingsDataDetailedStatsTopChatsSubtitle": "按会话累计 Token 消耗排序",
   "settingsDataDetailedStatsOther": "其他",
@@ -1570,6 +1618,14 @@
         "type": "int"
       },
       "models": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataDetailedStatsRequestCountSummary": "{requests} 次请求",
+  "@settingsDataDetailedStatsRequestCountSummary": {
+    "placeholders": {
+      "requests": {
         "type": "int"
       }
     }
