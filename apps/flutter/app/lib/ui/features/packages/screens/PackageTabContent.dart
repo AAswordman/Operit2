@@ -11,6 +11,7 @@ import '../components/PackageListItem.dart';
 import '../utils/PackageDisplayUtils.dart';
 
 class PackageTabContent extends StatelessWidget {
+  /// Creates the package tab content.
   const PackageTabContent({
     super.key,
     required this.packages,
@@ -31,6 +32,7 @@ class PackageTabContent extends StatelessWidget {
   final void Function(core_proxy.ToolPackage package, bool enabled)
   onPackageEnabledChanged;
 
+  /// Builds the package tab with a lazily rendered expandable list.
   @override
   Widget build(BuildContext context) {
     if (packages.isEmpty && isLoading) {
@@ -52,42 +54,57 @@ class PackageTabContent extends StatelessWidget {
 
     return Stack(
       children: <Widget>[
-        ListView(
+        CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-          children: <Widget>[
-            if (!isSearchActive) ...<Widget>[
-              _QuickPluginCreatorEntry(onTap: onQuickPluginCreatorClick),
-              const SizedBox(height: 12),
-            ],
+          slivers: <Widget>[
+            if (!isSearchActive)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: _QuickPluginCreatorEntry(
+                    onTap: onQuickPluginCreatorClick,
+                  ),
+                ),
+              ),
+            if (!isSearchActive)
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
             if (packages.isEmpty)
-              EmptyState(
-                icon: Icons.inventory_2_outlined,
-                title: '没有包',
-                message: isSearchActive ? '没有匹配的包。' : '当前没有可显示的工具包。',
-                scrollable: false,
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                sliver: SliverToBoxAdapter(
+                  child: EmptyState(
+                    icon: Icons.inventory_2_outlined,
+                    title: '没有包',
+                    message: isSearchActive ? '没有匹配的包。' : '当前没有可显示的工具包。',
+                    scrollable: false,
+                  ),
+                ),
               ),
             if (packages.isNotEmpty)
-              PackageInlineGrid(
-                itemCount: orderedPackages.length,
-                itemBuilder: (context, index) {
-                  final package = orderedPackages[index];
-                  return PackageListItem(
-                    icon: packageCategoryIcon(package.category),
-                    title: toolPackageDisplayName(package),
-                    subtitle: localizedText(package.description),
-                    metadata: <String>[
-                      package.name,
-                      package.category,
-                      '${package.tools.length} 工具',
-                      package.isBuiltIn ? '内置' : '外部',
-                    ],
-                    enabled: enabledPackageNames.contains(package.name),
-                    onTap: () => onPackageTap(package),
-                    onEnabledChanged: (enabled) =>
-                        onPackageEnabledChanged(package, enabled),
-                  );
-                },
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                sliver: PackageSliverList(
+                  itemCount: orderedPackages.length,
+                  itemBuilder: (context, index) {
+                    final package = orderedPackages[index];
+                    return PackageListItem(
+                      key: ValueKey<String>('package:${package.name}'),
+                      icon: packageCategoryIcon(package.category),
+                      title: toolPackageDisplayName(package),
+                      subtitle: localizedText(package.description),
+                      metadata: <String>[
+                        package.name,
+                        package.category,
+                        '${package.tools.length} 工具',
+                        package.isBuiltIn ? '内置' : '外部',
+                      ],
+                      enabled: enabledPackageNames.contains(package.name),
+                      onDetails: () => onPackageTap(package),
+                      onEnabledChanged: (enabled) =>
+                          onPackageEnabledChanged(package, enabled),
+                    );
+                  },
+                ),
               ),
           ],
         ),
@@ -99,10 +116,12 @@ class PackageTabContent extends StatelessWidget {
 }
 
 class _QuickPluginCreatorEntry extends StatelessWidget {
+  /// Creates the quick plugin creator entry.
   const _QuickPluginCreatorEntry({required this.onTap});
 
   final VoidCallback onTap;
 
+  /// Builds the quick plugin creator entry card.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;

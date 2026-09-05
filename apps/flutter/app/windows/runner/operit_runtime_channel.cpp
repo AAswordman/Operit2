@@ -4,6 +4,8 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
+#include <gdiplus.h>
+#include <objidl.h>
 #include <shellapi.h>
 #include <algorithm>
 #include <atomic>
@@ -11,8 +13,10 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <cwchar>
 #include <deque>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -71,6 +75,9 @@ std::mutex g_watch_channel_pump_mutex;
 std::thread g_watch_channel_pump_thread;
 std::deque<flutter::EncodableMap> g_pending_notification_activations;
 bool g_notification_activation_receiver_ready = false;
+std::once_flag g_gdiplus_start_once;
+Gdiplus::Status g_gdiplus_start_status = Gdiplus::GenericError;
+ULONG_PTR g_gdiplus_token = 0;
 
 constexpr UINT kOperitRuntimePlatformTaskMessage = WM_APP + 0x520;
 
@@ -347,6 +354,163 @@ flutter::EncodableValue WindowsStoragePaths(const std::string& runtime_root,
   paths[flutter::EncodableValue("workspaceRoot")] =
       flutter::EncodableValue(workspace_root);
   return flutter::EncodableValue(paths);
+}
+
+/// Starts GDI+ for clipboard bitmap encoding.
+bool EnsureGdiplus(std::string* error) {
+  std::call_once(g_gdiplus_start_once, []() {
+    Gdiplus::GdiplusStartupInput input;
+    g_gdiplus_start_status =
+        Gdiplus::GdiplusStartup(&g_gdiplus_token, &input, nullptr);
+  });
+  if (g_gdiplus_start_status != Gdiplus::Ok) {
+    if (error != nullptr) {
+      *error = "GDI+ could not start for clipboard image encoding";
+    }
+    return false;
+  }
+  return true;
+}
+
+/// Resolves the GDI+ PNG encoder identifier.
+bool PngEncoderClsid(CLSID* clsid, std::string* error) {
+  if (clsid == nullptr) {
+    if (error != nullptr) {
+      *error = "PNG encoder output is required";
+    }
+    return false;
+  }
+  UINT encoder_count = 0;
+  UINT encoder_size = 0;
+  if (Gdiplus::GetImageEncodersSize(&encoder_count, &encoder_size) !=
+          Gdiplus::Ok ||
+      encoder_size == 0) {
+    if (error != nullptr) {
+      *error = "PNG encoder metadata was not available";
+    }
+    return false;
+  }
+  std::vector<uint8_t> buffer(encoder_size);
+  auto* encoders =
+      reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
+  if (Gdiplus::GetImageEncoders(
+          encoder_count, encoder_size, encoders) != Gdiplus::Ok) {
+    if (error != nullptr) {
+      *error = "PNG encoder metadata could not be read";
+    }
+    return false;
+  }
+  for (UINT index = 0; index < encoder_count; ++index) {
+    if (std::wcscmp(encoders[index].MimeType, L"image/png") == 0) {
+      *clsid = encoders[index].Clsid;
+      return true;
+    }
+  }
+  if (error != nullptr) {
+    *error = "PNG encoder was not found";
+  }
+  return false;
+}
+
+/// Encodes one Windows bitmap handle into PNG bytes.
+bool PngBytesFromBitmap(HBITMAP bitmap,
+                        std::vector<uint8_t>* png,
+                        std::string* error) {
+  if (bitmap == nullptr || png == nullptr) {
+    if (error != nullptr) {
+      *error = "Windows clipboard bitmap is required";
+    }
+    return false;
+  }
+  if (!EnsureGdiplus(error)) {
+    return false;
+  }
+  CLSID png_encoder{};
+  if (!PngEncoderClsid(&png_encoder, error)) {
+    return false;
+  }
+  IStream* stream = nullptr;
+  HRESULT stream_status = ::CreateStreamOnHGlobal(nullptr, TRUE, &stream);
+  if (FAILED(stream_status) || stream == nullptr) {
+    if (error != nullptr) {
+      *error = "PNG output stream could not be created";
+    }
+    return false;
+  }
+  Gdiplus::Bitmap image(bitmap, nullptr);
+  if (image.GetLastStatus() != Gdiplus::Ok ||
+      image.Save(stream, &png_encoder, nullptr) != Gdiplus::Ok) {
+    stream->Release();
+    if (error != nullptr) {
+      *error = "Windows clipboard bitmap could not be encoded";
+    }
+    return false;
+  }
+  STATSTG stats{};
+  if (FAILED(stream->Stat(&stats, STATFLAG_NONAME)) ||
+      stats.cbSize.QuadPart == 0 ||
+      stats.cbSize.QuadPart >
+          static_cast<ULONGLONG>(std::numeric_limits<ULONG>::max())) {
+    stream->Release();
+    if (error != nullptr) {
+      *error = "PNG output stream length was invalid";
+    }
+    return false;
+  }
+  LARGE_INTEGER origin{};
+  stream->Seek(origin, STREAM_SEEK_SET, nullptr);
+  png->resize(static_cast<size_t>(stats.cbSize.QuadPart));
+  ULONG read = 0;
+  const HRESULT read_status =
+      stream->Read(png->data(), static_cast<ULONG>(png->size()), &read);
+  stream->Release();
+  if (FAILED(read_status) || read != png->size()) {
+    if (error != nullptr) {
+      *error = "PNG output stream could not be read";
+    }
+    return false;
+  }
+  return true;
+}
+
+/// Reads PNG byte payloads from the Windows clipboard.
+bool ReadWindowsClipboardImages(HWND window,
+                                flutter::EncodableValue* output,
+                                std::string* error) {
+  if (output == nullptr) {
+    if (error != nullptr) {
+      *error = "clipboard output is required";
+    }
+    return false;
+  }
+  flutter::EncodableList images;
+  if (!::OpenClipboard(window)) {
+    if (error != nullptr) {
+      *error = "Windows clipboard could not be opened";
+    }
+    return false;
+  }
+  struct ClipboardClose {
+    /// Closes the Win32 clipboard opened by this scope.
+    ~ClipboardClose() { ::CloseClipboard(); }
+  } close_clipboard;
+  if (!::IsClipboardFormatAvailable(CF_BITMAP)) {
+    *output = flutter::EncodableValue(images);
+    return true;
+  }
+  HBITMAP bitmap = static_cast<HBITMAP>(::GetClipboardData(CF_BITMAP));
+  std::vector<uint8_t> png;
+  if (!PngBytesFromBitmap(bitmap, &png, error)) {
+    return false;
+  }
+  flutter::EncodableMap item;
+  item[flutter::EncodableValue("mimeType")] =
+      flutter::EncodableValue("image/png");
+  item[flutter::EncodableValue("bytes")] =
+      flutter::EncodableValue(std::move(png));
+  images.emplace_back(std::move(item));
+  *output = flutter::EncodableValue(std::move(images));
+  return true;
 }
 
 class OperitRuntimePlatformTask {
@@ -1265,10 +1429,30 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           result->Success();
           return;
         }
+        if (method_call.method_name().compare("restartApplication") == 0) {
+          if (g_operit_runtime_window == nullptr ||
+              ::PostMessage(g_operit_runtime_window, WM_CLOSE, 0, 0) == 0) {
+            result->Error("APPLICATION_TERMINATION_ERROR",
+                          "Windows application close request failed");
+            return;
+          }
+          result->Success();
+          return;
+        }
         if (method_call.method_name().compare(
                 "applicationIsForeground") == 0) {
           result->Success(
               flutter::EncodableValue(IsOperitApplicationForeground()));
+          return;
+        }
+        if (method_call.method_name().compare("readClipboardImages") == 0) {
+          flutter::EncodableValue images;
+          if (!ReadWindowsClipboardImages(
+                  channel_owner->window, &images, &error)) {
+            result->Error("CLIPBOARD_IMAGE_READ_ERROR", error);
+            return;
+          }
+          result->Success(images);
           return;
         }
         if (method_call.method_name().compare(

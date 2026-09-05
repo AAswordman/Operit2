@@ -11,9 +11,9 @@ use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
-use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 use operit_store::SyncOperationStore::SyncClock;
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN};
 use std::collections::HashMap;
@@ -21,6 +21,19 @@ use std::sync::{Arc, Mutex};
 
 /// Number of persisted messages loaded per display-window query.
 pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 80;
+/// Number of user or summary messages that close one display page.
+const DISPLAY_PAGE_TRIGGER_COUNT: usize = 5;
+/// Number of display pages kept visible around locator jumps.
+const MAX_DISPLAY_PAGE_COUNT: usize = 2;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Defines one timestamp range used by the chat locator display window.
+struct DisplayPageRange {
+    startIndex: usize,
+    endIndexExclusive: usize,
+    startTimestampInclusive: i64,
+    endTimestampInclusive: i64,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 /// Defines whether chat selection follows global persisted state or stays local.
@@ -120,6 +133,76 @@ fn preserveLiveMessageStreams(previous: &[ChatMessage], loaded: &mut [ChatMessag
         message.completedAt = previousMessage.completedAt;
         message.completedExecutionGeneration = previousMessage.completedExecutionGeneration;
     }
+}
+
+/// Splits locator previews into timestamp ranges from oldest to newest.
+fn resolveDisplayPageRanges(messages: &[ChatMessageLocatorPreview]) -> Vec<DisplayPageRange> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    let mut pageStartIndicesNewestFirst = Vec::<usize>::new();
+    let mut cursor = messages.len() as isize - 1;
+
+    while cursor >= 0 {
+        let mut pageStartIndex = 0usize;
+        let mut triggerCountInCurrentPage = 0usize;
+        let mut pageClosed = false;
+
+        while cursor >= 0 && !pageClosed {
+            let messageIndex = cursor as usize;
+            let message = &messages[messageIndex];
+            if isDisplayPageTriggerMessage(&message.sender) {
+                triggerCountInCurrentPage += 1;
+
+                if message.sender == "summary" {
+                    pageStartIndex = messageIndex;
+                    cursor -= 1;
+                    pageClosed = true;
+                }
+
+                if !pageClosed && triggerCountInCurrentPage >= DISPLAY_PAGE_TRIGGER_COUNT {
+                    pageStartIndex = messageIndex;
+                    cursor -= 1;
+                    pageClosed = true;
+                }
+            }
+
+            if !pageClosed {
+                cursor -= 1;
+            }
+        }
+
+        if !pageClosed {
+            pageStartIndex = 0;
+            cursor = -1;
+        }
+
+        pageStartIndicesNewestFirst.push(pageStartIndex);
+    }
+
+    pageStartIndicesNewestFirst.reverse();
+    pageStartIndicesNewestFirst
+        .iter()
+        .enumerate()
+        .map(|(index, pageStartIndex)| {
+            let pageEndExclusive = pageStartIndicesNewestFirst
+                .get(index + 1)
+                .copied()
+                .unwrap_or(messages.len());
+            DisplayPageRange {
+                startIndex: *pageStartIndex,
+                endIndexExclusive: pageEndExclusive,
+                startTimestampInclusive: messages[*pageStartIndex].timestamp,
+                endTimestampInclusive: messages[pageEndExclusive - 1].timestamp,
+            }
+        })
+        .collect()
+}
+
+/// Returns whether the sender closes display pages while navigating history.
+fn isDisplayPageTriggerMessage(sender: &str) -> bool {
+    sender == "user" || sender == "summary"
 }
 
 /// Coordinates chat history persistence, current-chat state, and display-window updates.
@@ -778,14 +861,21 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Reloads the newest indexed display window for the supplied chat id.
+    /// Reloads the current indexed display window for the supplied chat id.
     pub fn reloadCurrentChatDisplayHistory(&mut self, chatId: String) -> Vec<ChatMessage> {
         let previousMessages = self
             .openedChatMessageFlowSnapshot(&chatId)
             .unwrap_or_default();
         let currentSummary = chat_flow_trace_summary(&previousMessages);
-        let mut messages =
-            self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
+        let displayEndTimestamp = previousMessages
+            .last()
+            .filter(|_| self.currentChatWindow.hasNewerDisplayHistory)
+            .map(|message| message.timestamp);
+        let mut messages = self.collectNewestDisplayPages(
+            chatId.clone(),
+            self.displayWindowQueryLimit(),
+            displayEndTimestamp,
+        );
         preserveLiveMessageStreams(&previousMessages, &mut messages);
         let loadedSummary = chat_flow_trace_summary(&messages);
         let hasOlder = messages
@@ -930,8 +1020,83 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Returns whether the target timestamp is already visible in the active chat.
+    /// Reveals the target message inside the active chat display window.
     pub fn revealMessageForCurrentChat(&mut self, targetTimestamp: i64) -> bool {
+        if self
+            .currentChatMessagesSnapshot()
+            .iter()
+            .any(|message| message.timestamp == targetTimestamp)
+        {
+            return true;
+        }
+
+        let Some(chatId) = self.currentChatIdFlow.value() else {
+            return false;
+        };
+        if self.isLoadingDisplayWindow {
+            return false;
+        }
+
+        self.isLoadingDisplayWindow = true;
+        self.currentChatWindow.isLoadingDisplayWindow = true;
+        self.emitDisplayWindowState();
+
+        let locatorEntries = self
+            .chatHistoryManager
+            .loadChatMessageLocatorPreviews(chatId.clone(), String::new())
+            .expect("ChatHistoryManager.loadChatMessageLocatorPreviews must succeed");
+        let pageRanges = resolveDisplayPageRanges(&locatorEntries);
+        let Some(targetPageIndex) = pageRanges.iter().position(|range| {
+            targetTimestamp >= range.startTimestampInclusive
+                && targetTimestamp <= range.endTimestampInclusive
+        }) else {
+            self.isLoadingDisplayWindow = false;
+            self.currentChatWindow.isLoadingDisplayWindow = false;
+            self.emitDisplayWindowState();
+            return false;
+        };
+
+        let windowStartPageIndex = if targetPageIndex + 1 < pageRanges.len() {
+            targetPageIndex
+        } else {
+            targetPageIndex.saturating_sub(MAX_DISPLAY_PAGE_COUNT - 1)
+        };
+        let windowEndPageIndex =
+            (windowStartPageIndex + MAX_DISPLAY_PAGE_COUNT - 1).min(pageRanges.len() - 1);
+        let startTimestamp = pageRanges[windowStartPageIndex].startTimestampInclusive;
+        let endTimestamp = pageRanges[windowEndPageIndex].endTimestampInclusive;
+        let mut revealedMessages = self
+            .chatHistoryManager
+            .loadChatMessagesWindow(chatId.clone(), startTimestamp, endTimestamp)
+            .expect("ChatHistoryManager.loadChatMessagesWindow must succeed");
+        let previousMessages = self
+            .openedChatMessageFlowSnapshot(&chatId)
+            .unwrap_or_default();
+        preserveLiveMessageStreams(&previousMessages, &mut revealedMessages);
+        let hasOlder = self
+            .chatHistoryManager
+            .hasMessagesBefore(chatId.clone(), startTimestamp)
+            .expect("ChatHistoryManager.hasMessagesBefore must succeed");
+        let hasNewer = self
+            .chatHistoryManager
+            .hasMessagesAfter(chatId.clone(), endTimestamp)
+            .expect("ChatHistoryManager.hasMessagesAfter must succeed");
+        AppLogger::trace(
+            "ChatFlowTrace",
+            &format!(
+                "reveal_locator chatId={} target={} pages={}..{} loaded={} hasOlder={} hasNewer={}",
+                chatId,
+                targetTimestamp,
+                windowStartPageIndex,
+                windowEndPageIndex,
+                chat_flow_trace_summary(&revealedMessages),
+                hasOlder,
+                hasNewer
+            ),
+        );
+        self.isLoadingDisplayWindow = false;
+        self.currentChatWindow.isLoadingDisplayWindow = false;
+        self.applyCurrentChatDisplayWindowWithFlags(chatId, revealedMessages, hasOlder, hasNewer);
         self.currentChatMessagesSnapshot()
             .iter()
             .any(|message| message.timestamp == targetTimestamp)
@@ -1765,7 +1930,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Adds a variant to a message and refreshes the active display when applicable.
+    /// Adds a variant to a message and refreshes the active display.
     pub fn addMessageVariant(
         &mut self,
         timestamp: i64,
@@ -1775,17 +1940,13 @@ impl ChatHistoryDelegate {
         let chatId = chatIdOverride
             .or_else(|| self.currentChatIdFlow.value())
             .expect("No active chat");
-        let mut publishedMessage = message;
         let selectedVariantIndex = self
             .chatHistoryManager
-            .addMessageVariant(chatId.clone(), timestamp, publishedMessage.clone())
+            .addMessageVariant(chatId.clone(), timestamp, message)
             .expect("ChatHistoryManager.addMessageVariant must succeed");
-        publishedMessage.timestamp = timestamp;
-        publishedMessage.selectedVariantIndex = selectedVariantIndex;
-        self.updateOpenedChatMessage(&chatId, timestamp, |message| {
-            publishedMessage.variantCount = message.variantCount + 1;
-            *message = publishedMessage.clone();
-        });
+        if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
+            self.reloadCurrentChatDisplayHistory(chatId.clone());
+        }
         ChainLogger::verbose(
             MESSAGE_STORE_CHAIN,
             "message.store.variant",

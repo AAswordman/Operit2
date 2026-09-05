@@ -70,7 +70,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
   Offset? _longPressStartPosition;
   int? _longPressPointer;
   Timer? _longPressTimer;
-  bool _isPressing = false;
   final MessagePressShieldController _pressShieldController =
       MessagePressShieldController();
 
@@ -100,7 +99,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
                 }
               : null,
           onSecondaryTap: _isActionable ? _showContextMenu : null,
-          child: _PressFeedback(isPressing: _isPressing, child: widget.child),
+          child: widget.child,
         ),
       ),
     );
@@ -122,7 +121,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         _longPressStartPosition = null;
         return;
       }
-      _setPressing(true);
       _longPressTimer?.cancel();
       _longPressTimer = Timer(_longPressDuration, () {
         _longPressTimer = null;
@@ -155,16 +153,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     _longPressTimer = null;
     _longPressStartPosition = null;
     _longPressPointer = null;
-    _setPressing(false);
-  }
-
-  void _setPressing(bool value) {
-    if (_isPressing == value || !mounted) {
-      return;
-    }
-    setState(() {
-      _isPressing = value;
-    });
   }
 
   Future<void> _showContextMenu() async {
@@ -425,38 +413,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
           ],
         );
       },
-    );
-  }
-}
-
-class _PressFeedback extends StatelessWidget {
-  const _PressFeedback({required this.isPressing, required this.child});
-
-  final bool isPressing;
-  final Widget child;
-
-  /// Builds the long-press visual feedback using only the color overlay.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Stack(
-      children: <Widget>[
-        child,
-        Positioned.fill(
-          child: IgnorePointer(
-            child: AnimatedOpacity(
-              opacity: isPressing ? 1 : 0,
-              duration: const Duration(milliseconds: 80),
-              curve: Curves.easeOut,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: colorScheme.onSurface.withValues(alpha: 0.06),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

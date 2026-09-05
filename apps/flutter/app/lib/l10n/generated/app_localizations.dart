@@ -3236,11 +3236,11 @@ abstract class AppLocalizations {
   /// **'Import JSON'**
   String get settingsCharactersImportJson;
 
-  /// No description provided for @settingsCharactersCopyJson.
+  /// No description provided for @settingsCharactersExportJson.
   ///
   /// In en, this message translates to:
-  /// **'Copy JSON'**
-  String get settingsCharactersCopyJson;
+  /// **'Export JSON'**
+  String get settingsCharactersExportJson;
 
   /// No description provided for @settingsCharactersImportTavernJson.
   ///
@@ -3248,35 +3248,11 @@ abstract class AppLocalizations {
   /// **'Import Tavern JSON'**
   String get settingsCharactersImportTavernJson;
 
-  /// No description provided for @settingsCharactersCopyTavernJson.
+  /// No description provided for @settingsCharactersExportTavernJson.
   ///
   /// In en, this message translates to:
-  /// **'Copy Tavern JSON'**
-  String get settingsCharactersCopyTavernJson;
-
-  /// No description provided for @settingsCharactersJsonInput.
-  ///
-  /// In en, this message translates to:
-  /// **'JSON content'**
-  String get settingsCharactersJsonInput;
-
-  /// No description provided for @settingsCharactersTavernJsonInput.
-  ///
-  /// In en, this message translates to:
-  /// **'Tavern JSON content'**
-  String get settingsCharactersTavernJsonInput;
-
-  /// No description provided for @settingsCharactersJsonCopied.
-  ///
-  /// In en, this message translates to:
-  /// **'Copied JSON for “{name}”.'**
-  String settingsCharactersJsonCopied(String name);
-
-  /// No description provided for @settingsCharactersTavernJsonCopied.
-  ///
-  /// In en, this message translates to:
-  /// **'Copied Tavern JSON for “{name}”.'**
-  String settingsCharactersTavernJsonCopied(String name);
+  /// **'Export Tavern JSON'**
+  String get settingsCharactersExportTavernJson;
 
   /// No description provided for @settingsCharactersImportCardJson.
   ///
@@ -3320,11 +3296,17 @@ abstract class AppLocalizations {
   /// **'Tavern JSON import failed: {error}'**
   String settingsCharactersImportTavernJsonError(String error);
 
-  /// No description provided for @settingsCharactersTavernJsonCopyError.
+  /// No description provided for @settingsCharactersExportJsonError.
   ///
   /// In en, this message translates to:
-  /// **'Tavern JSON copy failed: {error}'**
-  String settingsCharactersTavernJsonCopyError(String error);
+  /// **'JSON export failed: {error}'**
+  String settingsCharactersExportJsonError(String error);
+
+  /// No description provided for @settingsCharactersExportTavernJsonError.
+  ///
+  /// In en, this message translates to:
+  /// **'Tavern JSON export failed: {error}'**
+  String settingsCharactersExportTavernJsonError(String error);
 
   /// No description provided for @settingsCharactersTagsSection.
   ///
@@ -6064,29 +6046,17 @@ abstract class AppLocalizations {
   /// **'{count} items'**
   String settingsDataBackupCount(int count);
 
-  /// No description provided for @settingsDataCopyBackupJson.
+  /// No description provided for @settingsDataExportBackupJson.
   ///
   /// In en, this message translates to:
-  /// **'Copy backup'**
-  String get settingsDataCopyBackupJson;
+  /// **'Export backup'**
+  String get settingsDataExportBackupJson;
 
   /// No description provided for @settingsDataImportBackupJson.
   ///
   /// In en, this message translates to:
   /// **'Restore data'**
   String get settingsDataImportBackupJson;
-
-  /// No description provided for @settingsDataBackupJsonInput.
-  ///
-  /// In en, this message translates to:
-  /// **'Restore content'**
-  String get settingsDataBackupJsonInput;
-
-  /// No description provided for @settingsDataBackupCopied.
-  ///
-  /// In en, this message translates to:
-  /// **'Copied backup for “{name}”.'**
-  String settingsDataBackupCopied(String name);
 
   /// No description provided for @settingsDataBackupImportResult.
   ///
@@ -6104,11 +6074,11 @@ abstract class AppLocalizations {
   /// **'Restore failed: {error}'**
   String settingsDataBackupImportError(String error);
 
-  /// No description provided for @settingsDataBackupCopyError.
+  /// No description provided for @settingsDataBackupExportError.
   ///
   /// In en, this message translates to:
-  /// **'Copy failed: {error}'**
-  String settingsDataBackupCopyError(String error);
+  /// **'Export failed: {error}'**
+  String settingsDataBackupExportError(String error);
 
   /// No description provided for @settingsDataSnapshotBackupTitle.
   ///

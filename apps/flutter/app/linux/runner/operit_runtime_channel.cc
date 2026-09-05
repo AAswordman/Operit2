@@ -1,6 +1,7 @@
 #include "operit_runtime_channel.h"
 
 #include <dlfcn.h>
+#include <gtk/gtk.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -528,6 +529,39 @@ FlValue* linux_root_requirement_snapshot() {
   return result;
 }
 
+/// Reads one PNG payload from the Linux GTK clipboard.
+FlValue* linux_clipboard_images(std::string* error) {
+  FlValue* images = fl_value_new_list();
+  GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+  if (clipboard == nullptr) {
+    return images;
+  }
+  g_autoptr(GdkPixbuf) pixbuf = gtk_clipboard_wait_for_image(clipboard);
+  if (pixbuf == nullptr) {
+    return images;
+  }
+  g_autofree gchar* png = nullptr;
+  gsize png_size = 0;
+  g_autoptr(GError) save_error = nullptr;
+  if (!gdk_pixbuf_save_to_buffer(
+          pixbuf, &png, &png_size, "png", &save_error, nullptr)) {
+    if (error != nullptr) {
+      *error = save_error != nullptr && save_error->message != nullptr
+                   ? save_error->message
+                   : "Linux clipboard image encoding failed";
+    }
+    fl_value_unref(images);
+    return nullptr;
+  }
+  FlValue* item = fl_value_new_map();
+  fl_value_set_string_take(item, "mimeType", fl_value_new_string("image/png"));
+  fl_value_set_string_take(
+      item, "bytes",
+      fl_value_new_uint8_list(reinterpret_cast<const uint8_t*>(png), png_size));
+  fl_value_append_take(images, item);
+  return images;
+}
+
 void dispatch_watch_channel_event(std::vector<uint8_t> frame) {
   g_main_context_invoke(
       nullptr,
@@ -640,6 +674,26 @@ void operit_runtime_method_call_cb(FlMethodChannel* channel,
   (void)user_data;
   const gchar* method = fl_method_call_get_name(method_call);
   std::string error;
+  if (strcmp(method, "restartApplication") == 0) {
+    GApplication* application = g_application_get_default();
+    if (application == nullptr) {
+      respond_error(method_call, "APPLICATION_TERMINATION_ERROR",
+                    "Linux application close request failed");
+      return;
+    }
+    respond_success_value(method_call, nullptr);
+    g_application_quit(application);
+    return;
+  }
+  if (strcmp(method, "readClipboardImages") == 0) {
+    g_autoptr(FlValue) result = linux_clipboard_images(&error);
+    if (result == nullptr) {
+      respond_error(method_call, "CLIPBOARD_IMAGE_READ_ERROR", error);
+      return;
+    }
+    respond_success_value(method_call, result);
+    return;
+  }
   if (strcmp(method, "localRuntimeStorageDefaults") == 0) {
     std::string runtime_root;
     std::string workspace_root;

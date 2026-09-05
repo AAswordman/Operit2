@@ -2,15 +2,18 @@
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
+import '../../data/preferences/UserPreferencesManager.dart';
 import 'OperitWindowArguments.dart';
 import 'OperitWindowPlatform.dart';
 
 class DetachedChatWindowLauncher {
   const DetachedChatWindowLauncher._();
 
+  /// Opens a chat in a new desktop window with its visible theme state.
   static Future<void> openChat({
     required String chatId,
     required String title,
+    required ThemePreferenceSnapshot themePreferenceSnapshot,
   }) async {
     if (!operitSupportsDesktopMultiWindow) {
       throw UnsupportedError(
@@ -25,6 +28,7 @@ class DetachedChatWindowLauncher {
           slotId: slotId,
           chatId: chatId,
           title: title,
+          themePreferenceSnapshot: themePreferenceSnapshot,
         ).encode(),
       ),
     );

@@ -140,8 +140,7 @@ async fn rollback_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<
 
 /// Reads the active chat id used by timestamp-scoped message commands.
 async fn current_chat_id_with_core(core: &mut CliCore) -> Result<String, String> {
-    core
-        .chat_runtime_holder_main()
+    core.chat_runtime_holder_main()
         .currentChatIdFlowSnapshot()
         .await
         .map_err(|error| error.to_string())?
@@ -563,7 +562,7 @@ async fn run_shell_command_with_core(core: &mut CliCore, args: &[String]) -> Res
     let mut queuedAttachmentPaths = Vec::<String>::new();
     let initialChatId = initialize_shell_chat_with_core(core, &shellArgs).await?;
     println!("interactive shell ready");
-            println!("Chat: {initialChatId}");
+    println!("Chat: {initialChatId}");
     println!("type /help for commands");
     loop {
         let currentChatId = current_shell_chat_id_with_core(core).await?;
@@ -1092,6 +1091,7 @@ async fn wait_for_committed_ai_message_with_core(
     }
 }
 
+/// Builds one attachment descriptor from a local filesystem path.
 pub(crate) fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String> {
     let metadata = fs::metadata(path)
         .map_err(|error| format!("attachment metadata failed: {path}: {error}"))?;
@@ -1100,16 +1100,27 @@ pub(crate) fn build_attachment_info(path: &str) -> Result<AttachmentInfo, String
         .and_then(|value| value.to_str())
         .ok_or_else(|| format!("attachment file name invalid: {path}"))?
         .to_string();
-    let content = fs::read_to_string(path).unwrap_or_default();
+    let mimeType = guess_mime_type(path).to_string();
+    let content = attachment_text_content(path, &mimeType)?;
     Ok(AttachmentInfo {
         filePath: path.to_string(),
         fileName,
-        mimeType: guess_mime_type(path).to_string(),
+        mimeType,
         fileSize: metadata.len() as i64,
         content,
     })
 }
 
+/// Reads text attachment content for MIME types carried inline by the CLI.
+fn attachment_text_content(path: &str, mimeType: &str) -> Result<String, String> {
+    match mimeType {
+        "text/plain" => fs::read_to_string(path)
+            .map_err(|error| format!("attachment text read failed: {path}: {error}")),
+        _ => Ok(String::new()),
+    }
+}
+
+/// Returns the MIME type associated with a local attachment path.
 pub(crate) fn guess_mime_type(path: &str) -> &'static str {
     match Path::new(path)
         .extension()

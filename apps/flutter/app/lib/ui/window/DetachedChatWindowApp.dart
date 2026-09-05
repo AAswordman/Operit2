@@ -21,8 +21,9 @@ class DetachedChatWindowApp extends StatefulWidget {
 
 class _DetachedChatWindowAppState extends State<DetachedChatWindowApp> {
   late final GeneratedChatRuntimeHolderMainCoreProxy _chatCore =
-      const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge())
-          .chatRuntimeHolderMain;
+      const GeneratedCoreProxyClients(
+        ProxyCoreRuntimeBridge(),
+      ).chatRuntimeHolderMain;
   late final TopBarController _topBarController = TopBarController();
   late final MainLayoutController _mainLayoutController =
       MainLayoutController();
@@ -64,6 +65,8 @@ class _DetachedChatWindowAppState extends State<DetachedChatWindowApp> {
   @override
   Widget build(BuildContext context) {
     return OperitTheme(
+      initialThemePreferenceSnapshot: widget.arguments.themePreferenceSnapshot,
+      initialThemeIsReady: true,
       hostInteractionHostsEnabled: false,
       child: MainLayoutScope(
         controller: _mainLayoutController,

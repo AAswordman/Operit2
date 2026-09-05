@@ -113,6 +113,8 @@ final class AppleRuntimeChannel: NSObject {
       closeWatchStream(call: call, result: result)
     case "startWebAccessServer":
       startWebAccessServer(call: call, result: result)
+    case "restartApplication":
+      restartApplication(result: result)
     case "localRuntimeStorageDefaults":
       localRuntimeStorageDefaults(result: result)
     case "runtimeBootstrapRead":
@@ -123,6 +125,8 @@ final class AppleRuntimeChannel: NSObject {
       localRuntimeStoragePaths(call: call, result: result)
     case "setLocalRuntimeStorage":
       setLocalRuntimeStorage(call: call, result: result)
+    case "readClipboardImages":
+      readClipboardImages(result: result)
     case "notificationActivationInitial":
       result(Self.takePendingNotificationActivation())
     case "notificationActivationReady":
@@ -151,6 +155,21 @@ final class AppleRuntimeChannel: NSObject {
       ownerTtsPlayback(call: call, result: result)
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+
+  /// Releases runtime resources and terminates the macOS host application.
+  private func restartApplication(result: @escaping FlutterResult) {
+    workQueue.async {
+      self.stopWatchPump()
+      if let handle = self.handle {
+        operit_flutter_bridge_destroy(handle)
+        self.handle = nil
+      }
+      DispatchQueue.main.async {
+        result(nil)
+        NSApp.terminate(nil)
+      }
     }
   }
 
@@ -356,6 +375,34 @@ final class AppleRuntimeChannel: NSObject {
       "runtimeRoot": roots.runtime.path,
       "workspaceRoot": roots.workspace.path,
     ])
+  }
+
+  /// Reads PNG byte payloads from the macOS pasteboard.
+  private func readClipboardImages(result: @escaping FlutterResult) {
+    DispatchQueue.main.async {
+      let objects = NSPasteboard.general.readObjects(forClasses: [NSImage.self], options: nil)
+      var payloads: [[String: Any]] = []
+      if let images = objects as? [NSImage] {
+        for image in images {
+          if let data = self.pngData(from: image) {
+            payloads.append([
+              "mimeType": "image/png",
+              "bytes": FlutterStandardTypedData(bytes: data),
+            ])
+          }
+        }
+      }
+      result(payloads)
+    }
+  }
+
+  /// Converts one AppKit image to PNG bytes.
+  private func pngData(from image: NSImage) -> Data? {
+    guard let tiffData = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiffData) else {
+      return nil
+    }
+    return bitmap.representation(using: .png, properties: [:])
   }
 
   /// Reads the client bootstrap record through the Rust startup Host.

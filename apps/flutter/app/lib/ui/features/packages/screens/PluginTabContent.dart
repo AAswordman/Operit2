@@ -10,6 +10,7 @@ import '../components/PackageListItem.dart';
 import '../utils/PackageDisplayUtils.dart';
 
 class PluginTabContent extends StatelessWidget {
+  /// Creates the plugin tab content.
   const PluginTabContent({
     super.key,
     required this.plugins,
@@ -35,6 +36,7 @@ class PluginTabContent extends StatelessWidget {
   final void Function(core_proxy.ToolPkgContainerRuntime plugin, bool enabled)
   onPluginEnabledChanged;
 
+  /// Builds the plugin tab with lazily rendered expandable sections.
   @override
   Widget build(BuildContext context) {
     if (plugins.isEmpty && morePlugins.isEmpty && isLoading) {
@@ -42,108 +44,144 @@ class PluginTabContent extends StatelessWidget {
     }
     return Stack(
       children: <Widget>[
-        ListView(
+        CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-          children: <Widget>[
+          slivers: <Widget>[
             if (plugins.isEmpty && morePlugins.isEmpty)
-              EmptyState(
-                icon: Icons.extension_off_outlined,
-                title: '没有插件',
-                message: isSearchActive ? '没有匹配的插件。' : '当前没有可显示的 ToolPkg 插件。',
-                scrollable: false,
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
+                sliver: SliverToBoxAdapter(
+                  child: EmptyState(
+                    icon: Icons.extension_off_outlined,
+                    title: '没有插件',
+                    message: isSearchActive
+                        ? '没有匹配的插件。'
+                        : '当前没有可显示的 ToolPkg 插件。',
+                    scrollable: false,
+                  ),
+                ),
               )
             else ...<Widget>[
-              const _PluginSectionHeader(title: '当前插件'),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: const SliverToBoxAdapter(
+                  child: _PluginSectionHeader(title: '当前插件'),
+                ),
+              ),
               if (plugins.isEmpty)
-                _PluginSectionEmpty(
-                  message: isSearchActive ? '没有匹配的当前插件。' : '当前没有可显示的插件。',
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  sliver: SliverToBoxAdapter(
+                    child: _PluginSectionEmpty(
+                      message: isSearchActive ? '没有匹配的当前插件。' : '当前没有可显示的插件。',
+                    ),
+                  ),
                 )
               else
-                PackageInlineGrid(
-                  itemCount: plugins.length,
-                  itemBuilder: (context, index) {
-                    final plugin = plugins[index];
-                    return PackageListItem(
-                      icon: Icons.extension_outlined,
-                      title: toolPkgContainerDisplayName(plugin),
-                      subtitle: localizedText(plugin.description),
-                      metadata: <String>[
-                        plugin.packageName,
-                        'v${plugin.version}',
-                        '${plugin.subpackages.length} 子包',
-                      ],
-                      enabled: enabledPluginNames.contains(plugin.packageName),
-                      onTap: () => onPluginTap(plugin),
-                      onEnabledChanged: (enabled) =>
-                          onPluginEnabledChanged(plugin, enabled),
-                      trailingActions: toolPkgHasUi(plugin)
-                          ? <Widget>[
-                              IconButton(
-                                tooltip:
-                                    enabledPluginNames.contains(
-                                      plugin.packageName,
-                                    )
-                                    ? '打开'
-                                    : '启用后打开',
-                                onPressed:
-                                    enabledPluginNames.contains(
-                                      plugin.packageName,
-                                    )
-                                    ? () => onOpenPluginUi(plugin)
-                                    : null,
-                                icon: const Icon(Icons.open_in_new_outlined),
-                              ),
-                            ]
-                          : const <Widget>[],
-                    );
-                  },
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  sliver: PackageSliverList(
+                    itemCount: plugins.length,
+                    itemBuilder: (context, index) {
+                      final plugin = plugins[index];
+                      return PackageListItem(
+                        key: ValueKey<String>('plugin:${plugin.packageName}'),
+                        icon: Icons.extension_outlined,
+                        title: toolPkgContainerDisplayName(plugin),
+                        subtitle: localizedText(plugin.description),
+                        metadata: <String>[
+                          plugin.packageName,
+                          'v${plugin.version}',
+                          '${plugin.subpackages.length} 子包',
+                        ],
+                        enabled: enabledPluginNames.contains(
+                          plugin.packageName,
+                        ),
+                        onDetails: () => onPluginTap(plugin),
+                        onEnabledChanged: (enabled) =>
+                            onPluginEnabledChanged(plugin, enabled),
+                        trailingActions: toolPkgHasUi(plugin)
+                            ? <Widget>[
+                                IconButton(
+                                  tooltip:
+                                      enabledPluginNames.contains(
+                                        plugin.packageName,
+                                      )
+                                      ? '打开'
+                                      : '启用后打开',
+                                  onPressed:
+                                      enabledPluginNames.contains(
+                                        plugin.packageName,
+                                      )
+                                      ? () => onOpenPluginUi(plugin)
+                                      : null,
+                                  icon: const Icon(Icons.open_in_new_outlined),
+                                ),
+                              ]
+                            : const <Widget>[],
+                      );
+                    },
+                  ),
                 ),
               if (morePlugins.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 16),
-                const _PluginSectionHeader(
-                  title: '更多插件',
-                  subtitle: 'App 自带的官方额外插件，加载后进入当前插件。',
+                const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  sliver: const SliverToBoxAdapter(
+                    child: _PluginSectionHeader(
+                      title: '更多插件',
+                      subtitle: 'App 自带的官方额外插件，加载后进入当前插件。',
+                    ),
+                  ),
                 ),
-                PackageInlineGrid(
-                  itemCount: morePlugins.length,
-                  itemBuilder: (context, index) {
-                    final plugin = morePlugins[index];
-                    final kindLabel = plugin.isToolPkg ? 'ToolPkg' : '脚本包';
-                    return PackageListItem(
-                      icon: plugin.isToolPkg
-                          ? Icons.extension_outlined
-                          : Icons.inventory_2_outlined,
-                      title: bundledExternalPackageDisplayName(plugin),
-                      subtitle: localizedText(plugin.description),
-                      metadata: <String>[
-                        plugin.packageName,
-                        kindLabel,
-                        if (plugin.version.trim().isNotEmpty)
-                          'v${plugin.version}',
-                        '${plugin.toolCount} 工具',
-                        if (plugin.subpackageCount > 0)
-                          '${plugin.subpackageCount} 子包',
-                        '官方额外',
-                      ],
-                      enabled: false,
-                      onEnabledChanged: (_) {},
-                      showEnabledSwitch: false,
-                      trailingActions: <Widget>[
-                        FilledButton.tonalIcon(
-                          onPressed: () => onLoadMorePlugin(plugin),
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text('加载'),
-                          style: FilledButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                          ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                  sliver: PackageSliverList(
+                    itemCount: morePlugins.length,
+                    itemBuilder: (context, index) {
+                      final plugin = morePlugins[index];
+                      final kindLabel = plugin.isToolPkg ? 'ToolPkg' : '脚本包';
+                      return PackageListItem(
+                        key: ValueKey<String>(
+                          'bundled-plugin:${plugin.packageName}',
                         ),
-                      ],
-                    );
-                  },
+                        icon: plugin.isToolPkg
+                            ? Icons.extension_outlined
+                            : Icons.inventory_2_outlined,
+                        title: bundledExternalPackageDisplayName(plugin),
+                        subtitle: localizedText(plugin.description),
+                        metadata: <String>[
+                          plugin.packageName,
+                          kindLabel,
+                          if (plugin.version.trim().isNotEmpty)
+                            'v${plugin.version}',
+                          '${plugin.toolCount} 工具',
+                          if (plugin.subpackageCount > 0)
+                            '${plugin.subpackageCount} 子包',
+                          '官方额外',
+                        ],
+                        enabled: false,
+                        onEnabledChanged: (_) {},
+                        showEnabledSwitch: false,
+                        trailingActions: <Widget>[
+                          FilledButton.tonalIcon(
+                            onPressed: () => onLoadMorePlugin(plugin),
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('加载'),
+                            style: FilledButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
-              ],
+              ] else
+                const SliverToBoxAdapter(child: SizedBox(height: 120)),
             ],
           ],
         ),
@@ -155,11 +193,13 @@ class PluginTabContent extends StatelessWidget {
 }
 
 class _PluginSectionHeader extends StatelessWidget {
+  /// Creates a package section heading.
   const _PluginSectionHeader({required this.title, this.subtitle});
 
   final String title;
   final String? subtitle;
 
+  /// Builds a section heading for a package group.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -191,10 +231,12 @@ class _PluginSectionHeader extends StatelessWidget {
 }
 
 class _PluginSectionEmpty extends StatelessWidget {
+  /// Creates a package section empty state.
   const _PluginSectionEmpty({required this.message});
 
   final String message;
 
+  /// Builds the empty state shown for a package section.
   @override
   Widget build(BuildContext context) {
     return Padding(

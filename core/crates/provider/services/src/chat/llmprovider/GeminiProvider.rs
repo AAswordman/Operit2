@@ -1,17 +1,18 @@
 use async_trait::async_trait;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
-use serde_json::{json, Map, Value};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use serde_json::{Map, Value, json};
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::chat::llmprovider::AIService::{
-    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
-    SendMessageRequest, TokenCounts,
+    AIService, AiServiceError, SendMessageRequest, TokenCounts, response_stream_from_chunks,
+    retry_error_text, retry_message,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
+use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_model::ModelConfigData::{
@@ -20,11 +21,11 @@ use operit_model::ModelConfigData::{
 use operit_model::ModelParameter::{ModelParameter, ParameterCategory};
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
+use operit_util::ChatMarkupRegex::{ChatMarkupRegex, attr_value, tag_ranges};
 use operit_util::stream::RevisableTextStream::{
-    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
+    RevisableTextStreamLike, empty_revisable_event_channel, with_event_channel,
 };
 use operit_util::stream::Stream::FnStream;
-use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 #[derive(Clone)]
 pub struct GeminiProvider {
@@ -436,8 +437,27 @@ impl GeminiProvider {
         Ok((contents_array, system_instruction, token_count))
     }
 
+    /// Builds Gemini content parts from text and registered image links.
     fn build_parts_array(&self, text: &str) -> Vec<Value> {
-        vec![json!({"text": text})]
+        if !MediaLinkParser::has_image_links(text) {
+            return vec![json!({"text": text})];
+        }
+
+        let image_links = MediaLinkParser::extract_image_links(text);
+        let text_without_links = MediaLinkParser::remove_image_links(text).trim().to_string();
+        let mut parts = Vec::new();
+        for link in image_links {
+            parts.push(json!({
+                "inline_data": {
+                    "mime_type": link.mime_type,
+                    "data": link.base64_data,
+                },
+            }));
+        }
+        if !text_without_links.is_empty() {
+            parts.push(json!({"text": text_without_links}));
+        }
+        parts
     }
 
     fn parse_xml_tool_calls(&self, content: &str) -> GeminiFunctionCallPayload {
@@ -1286,4 +1306,50 @@ fn xml_unescape(text: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
         .replace("&amp;", "&")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GeminiProvider;
+    use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
+    use operit_model::ModelConfigData::ModelBuiltinTool;
+    use operit_util::ImagePoolManager::ImagePoolManager;
+
+    /// Creates a Gemini provider for content-part conversion tests.
+    fn test_provider() -> GeminiProvider {
+        GeminiProvider::new(
+            "http://localhost".to_string(),
+            String::new(),
+            "gemini-test".to_string(),
+            "GEMINI".to_string(),
+            Vec::new(),
+            Vec::<ModelBuiltinTool>::new(),
+            true,
+        )
+    }
+
+    /// Verifies image media links become Gemini inline_data parts.
+    #[test]
+    fn imageLinksBecomeGeminiInlineDataParts() {
+        ImagePoolManager::clear();
+        let image_id = ImagePoolManager::add_image_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01",
+            Some("image/png"),
+            None,
+        );
+        let prompt = format!("look {}", MediaLinkBuilder::image(&image_id));
+        let provider = test_provider();
+
+        let parts = provider.build_parts_array(&prompt);
+
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
+        assert!(
+            !parts[0]["inline_data"]["data"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty()
+        );
+        assert_eq!(parts[1]["text"], "look");
+    }
 }

@@ -341,6 +341,9 @@ class _DrawerContentState extends State<DrawerContent> {
         await DetachedChatWindowLauncher.openChat(
           chatId: history.id,
           title: history.title,
+          themePreferenceSnapshot: OperitTheme.of(
+            context,
+          ).themePreferenceSnapshot,
         );
       case ConversationAction.rename:
         await _showRenameConversationDialog(history);
@@ -1010,6 +1013,9 @@ class _DrawerContentState extends State<DrawerContent> {
                               DetachedChatWindowLauncher.openChat(
                                 chatId: history.id,
                                 title: history.title,
+                                themePreferenceSnapshot: OperitTheme.of(
+                                  context,
+                                ).themePreferenceSnapshot,
                               ).catchError((
                                 Object error,
                                 StackTrace stackTrace,

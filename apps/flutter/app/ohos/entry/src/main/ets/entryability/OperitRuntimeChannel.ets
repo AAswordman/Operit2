@@ -19,6 +19,7 @@ import image from '@ohos.multimedia.image';
 import audio from '@ohos.multimedia.audio';
 import media from '@ohos.multimedia.media';
 import notificationManager from '@ohos.notificationManager';
+import pasteboard from '@ohos.pasteboard';
 import connection from '@ohos.net.connection';
 import promptAction from '@ohos.promptAction';
 import taskpool from '@ohos.taskpool';
@@ -73,6 +74,11 @@ interface SystemOperationResponse {
 
 interface SystemCaptureScreenshotResponse {
   path: string;
+}
+
+interface ClipboardImagePayload {
+  mimeType: string;
+  bytes: ArrayBuffer;
 }
 
 interface JsonPayload {
@@ -424,6 +430,15 @@ export class OperitRuntimeChannel {
           this.ensureRuntimeHandle();
           result.success(null);
           return;
+        case 'restartApplication':
+          this.restartApplication()
+            .then((): void => {
+              result.success(null);
+            })
+            .catch((error: Object): void => {
+              result.error('APPLICATION_TERMINATION_ERROR', `${error}`, null);
+            });
+          return;
         case 'call': {
           const handle = this.ensureRuntimeHandle();
           const request = this.requiredArrayBuffer(call, call.method);
@@ -463,6 +478,15 @@ export class OperitRuntimeChannel {
           return;
         case 'ownerSystemLanguageCode':
           result.success(this.ownerSystemLanguageCode());
+          return;
+        case 'readClipboardImages':
+          this.readClipboardImages()
+            .then((response: Array<ClipboardImagePayload>) => {
+              result.success(response);
+            })
+            .catch((error: Object) => {
+              result.error('CLIPBOARD_IMAGE_READ_ERROR', `${error}`, null);
+            });
           return;
         case 'ownerSystemCaptureScreenshot':
           this.ownerSystemCaptureScreenshot()
@@ -588,6 +612,12 @@ export class OperitRuntimeChannel {
       nativeBridge.destroy(this.runtimeHandle);
       this.runtimeHandle = BigInt(0);
     }
+  }
+
+  /// Releases runtime resources and terminates the OpenHarmony ability.
+  private async restartApplication(): Promise<void> {
+    this.destroy();
+    await this.context.terminateSelf();
   }
 
   /// Returns default OpenHarmony runtime storage paths.
@@ -1044,6 +1074,40 @@ export class OperitRuntimeChannel {
     return {
       languageCode: i18n.System.getSystemLocale()
     };
+  }
+
+  /// Reads PixelMap records from the OpenHarmony pasteboard as PNG payloads.
+  private async readClipboardImages(): Promise<Array<ClipboardImagePayload>> {
+    const data = await pasteboard.getSystemPasteboard().getData();
+    const images = new Array<ClipboardImagePayload>();
+    const recordCount = data.getRecordCount();
+    for (let index = 0; index < recordCount; index += 1) {
+      const record = data.getRecord(index);
+      if (record.mimeType !== pasteboard.MIMETYPE_PIXELMAP) {
+        continue;
+      }
+      images.push({
+        mimeType: 'image/png',
+        bytes: await this.packPasteboardPixelMap(record)
+      });
+    }
+    return images;
+  }
+
+  /// Packs one OpenHarmony pasteboard PixelMap record into PNG bytes.
+  private async packPasteboardPixelMap(record: pasteboard.PasteDataRecord): Promise<ArrayBuffer> {
+    const pixelMap = record.pixelMap;
+    const packer = image.createImagePacker();
+    try {
+      return await packer.packing(pixelMap, {
+        format: 'image/png',
+        quality: 100,
+        bufferSize: 20 * 1024 * 1024
+      });
+    } finally {
+      await packer.release();
+      await pixelMap.release();
+    }
   }
 
   /// Captures the active OpenHarmony window into a PNG file.

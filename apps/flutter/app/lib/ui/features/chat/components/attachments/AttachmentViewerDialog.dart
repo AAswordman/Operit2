@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../common/components/OperitDialog.dart';
+import '../style/input/common/ChatAttachmentImagePreview.dart';
 
 class ChatAttachment {
   const ChatAttachment({
@@ -75,6 +76,20 @@ class _AttachmentPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (attachment.mimeType.startsWith('image/')) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 420),
+          child: ChatAttachmentImagePreview(
+            attachmentPath: attachment.id,
+            fileName: attachment.filename,
+            fit: BoxFit.contain,
+          ),
+        ),
+      );
+    }
+
     if (isTextLike || attachment.content.isNotEmpty) {
       return SelectableText(
         attachment.content,

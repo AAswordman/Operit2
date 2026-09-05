@@ -17,6 +17,8 @@ import '../../../../../../theme/OperitTheme.dart';
 import '../../../../../packages/utils/PackageDisplayUtils.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../ChatLayoutMetrics.dart';
+import '../common/ChatAttachmentImagePreview.dart';
+import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
 import 'AgentInputMenuPopup.dart';
 import 'AgentModelSelectorPopup.dart';
@@ -31,6 +33,8 @@ class AgentChatInputSection extends StatefulWidget {
     this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
+    required this.currentCharacterCardName,
+    required this.currentCharacterCardAvatarUri,
     required this.onSendMessage,
     required this.onQueueMessage,
     required this.onCancelMessage,
@@ -51,6 +55,7 @@ class AgentChatInputSection extends StatefulWidget {
     this.onAttachMemory,
     this.onAttachFile,
     this.onAttachFiles,
+    this.onPasteImages,
     this.onAttachScreenContent,
     this.onAttachNotifications,
     this.onAttachLocation,
@@ -66,6 +71,8 @@ class AgentChatInputSection extends StatefulWidget {
   final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
+  final String? currentCharacterCardName;
+  final String? currentCharacterCardAvatarUri;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
   final VoidCallback onCancelMessage;
@@ -86,6 +93,7 @@ class AgentChatInputSection extends StatefulWidget {
   final VoidCallback? onAttachMemory;
   final VoidCallback? onAttachFile;
   final ValueChanged<List<String>>? onAttachFiles;
+  final ValueChanged<List<PastedImageAttachmentPayload>>? onPasteImages;
   final VoidCallback? onAttachScreenContent;
   final VoidCallback? onAttachNotifications;
   final VoidCallback? onAttachLocation;
@@ -103,9 +111,11 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   final LayerLink _inputMenuPopupLink = LayerLink();
   final GlobalKey _modelPopupTargetKey = GlobalKey();
   final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
+  final GlobalKey _mentionPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
+  OverlayEntry? _mentionPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
   StreamSubscription<
     Map<core_proxy.FunctionType, core_proxy.FunctionModelBinding>
@@ -122,6 +132,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_handleInputChanged);
     _watchCurrentModelLabel();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncMentionSuggestionPopup();
+    });
   }
 
   @override
@@ -131,6 +144,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
       oldWidget.controller.removeListener(_handleInputChanged);
       widget.controller.addListener(_handleInputChanged);
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncMentionSuggestionPopup();
+    });
   }
 
   void _handleInputChanged() {
@@ -152,7 +168,64 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   void _markOpenPopupsForBuild() {
     _modelPopupEntry?.markNeedsBuild();
     _inputMenuPopupEntry?.markNeedsBuild();
+    _mentionPopupEntry?.markNeedsBuild();
     _attachmentPopupEntry?.markNeedsBuild();
+  }
+
+  /// Synchronizes the mention suggestion overlay with the active input token.
+  void _syncMentionSuggestionPopup() {
+    if (!mounted) {
+      return;
+    }
+    if (widget.mentionSuggestionPanel == null) {
+      _dismissMentionSuggestionPopup();
+      return;
+    }
+    if (_mentionPopupEntry == null) {
+      _showMentionSuggestionPopup();
+    } else {
+      _mentionPopupEntry!.markNeedsBuild();
+    }
+  }
+
+  /// Shows the mention suggestion panel above the rendered input surface.
+  void _showMentionSuggestionPopup() {
+    final overlay = Overlay.of(context);
+    _mentionPopupEntry = OverlayEntry(
+      builder: (context) {
+        final placement = _popupPlacement(
+          context,
+          targetKey: _mentionPopupTargetKey,
+          alignEnd: false,
+          maxWidth: 700,
+        );
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _dismissMentionSuggestionPopup,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            Positioned(
+              left: placement.left,
+              bottom: placement.bottom,
+              width: placement.width,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {},
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: placement.maxHeight),
+                  child: widget.mentionSuggestionPanel!,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    overlay.insert(_mentionPopupEntry!);
   }
 
   /// Toggles the input height while preserving the active draft and focus.
@@ -269,6 +342,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                   child: AgentInputMenuPopup(
                     viewModel: widget.viewModel,
                     currentChatId: widget.currentChatId,
+                    currentCharacterCardName: widget.currentCharacterCardName,
+                    currentCharacterCardAvatarUri:
+                        widget.currentCharacterCardAvatarUri,
                     onDismiss: _dismissInputMenuPopup,
                   ),
                 ),
@@ -460,6 +536,12 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     _inputMenuPopupEntry = null;
   }
 
+  /// Removes the mention suggestion popup.
+  void _dismissMentionSuggestionPopup() {
+    _mentionPopupEntry?.remove();
+    _mentionPopupEntry = null;
+  }
+
   void _dismissAttachmentPopup() {
     _attachmentPopupEntry?.remove();
     _attachmentPopupEntry = null;
@@ -473,6 +555,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     _modelBindingSubscription?.cancel();
     _dismissModelSettingsPopup();
     _dismissInputMenuPopup();
+    _dismissMentionSuggestionPopup();
     _dismissAttachmentPopup();
     super.dispose();
   }
@@ -521,60 +604,54 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                     onSendMessage: widget.onSendPendingQueueMessage,
                   ),
                 ),
-              if (widget.mentionSuggestionPanel != null)
-                Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    themePreferenceSnapshot.chatInputFloating ? 8 : 0,
-                    0,
-                    themePreferenceSnapshot.chatInputFloating ? 8 : 0,
-                    4,
+              KeyedSubtree(
+                key: _mentionPopupTargetKey,
+                child: _InputSurface(
+                  color: colorScheme.surfaceContainer,
+                  shape: inputCardShape,
+                  borderRadius: inputCardBorderRadius,
+                  transparentSurface:
+                      themePreferenceSnapshot.transparentSurfaceEnabled,
+                  width: double.infinity,
+                  margin: _agentInputSurfaceMargin(
+                    themePreferenceSnapshot.chatInputFloating,
                   ),
-                  child: widget.mentionSuggestionPanel!,
-                ),
-              _InputSurface(
-                color: colorScheme.surfaceContainer,
-                shape: inputCardShape,
-                borderRadius: inputCardBorderRadius,
-                transparentSurface:
-                    themePreferenceSnapshot.transparentSurfaceEnabled,
-                width: double.infinity,
-                margin: _agentInputSurfaceMargin(
-                  themePreferenceSnapshot.chatInputFloating,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
-                  child: _InputBody(
-                    controller: widget.controller,
-                    focusNode: widget.focusNode,
-                    inputState: widget.inputState,
-                    modelLabel: _modelLabel,
-                    modelSelectorLink: _modelPopupLink,
-                    modelSelectorKey: _modelPopupTargetKey,
-                    settingsLink: _inputMenuPopupLink,
-                    settingsKey: _inputMenuPopupTargetKey,
-                    attachmentKey: _attachmentPopupTargetKey,
-                    processing: processing,
-                    hasDraftText: hasDraftText,
-                    canSendMessage: canSendMessage,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    onSendMessage: widget.onSendMessage,
-                    onQueueMessage: widget.onQueueMessage,
-                    onCancelMessage: widget.onCancelMessage,
-                    isSpeechRecording: widget.isSpeechRecording,
-                    isSpeechTranscribing: widget.isSpeechTranscribing,
-                    onSpeechInput: widget.onSpeechInput,
-                    inputExpanded: _inputExpanded,
-                    onToggleInputExpansion: _toggleInputExpansion,
-                    attachments: widget.attachments,
-                    onRemoveAttachment: widget.onRemoveAttachment,
-                    onInsertAttachment: widget.onInsertAttachment,
-                    onAttachFiles: widget.onAttachFiles,
-                    draggingFiles: _draggingFiles,
-                    onDraggingFilesChanged: _setDraggingFiles,
-                    onAttach: _openAttachmentPopup,
-                    onSettings: _openInputMenuPopup,
-                    onModelSelector: _toggleSettingsPopup,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+                    child: _InputBody(
+                      controller: widget.controller,
+                      focusNode: widget.focusNode,
+                      inputState: widget.inputState,
+                      modelLabel: _modelLabel,
+                      modelSelectorLink: _modelPopupLink,
+                      modelSelectorKey: _modelPopupTargetKey,
+                      settingsLink: _inputMenuPopupLink,
+                      settingsKey: _inputMenuPopupTargetKey,
+                      attachmentKey: _attachmentPopupTargetKey,
+                      processing: processing,
+                      hasDraftText: hasDraftText,
+                      canSendMessage: canSendMessage,
+                      showCancelAction: showCancelAction,
+                      showQueueAction: showQueueAction,
+                      onSendMessage: widget.onSendMessage,
+                      onQueueMessage: widget.onQueueMessage,
+                      onCancelMessage: widget.onCancelMessage,
+                      isSpeechRecording: widget.isSpeechRecording,
+                      isSpeechTranscribing: widget.isSpeechTranscribing,
+                      onSpeechInput: widget.onSpeechInput,
+                      inputExpanded: _inputExpanded,
+                      onToggleInputExpansion: _toggleInputExpansion,
+                      attachments: widget.attachments,
+                      onRemoveAttachment: widget.onRemoveAttachment,
+                      onInsertAttachment: widget.onInsertAttachment,
+                      onAttachFiles: widget.onAttachFiles,
+                      onPasteImages: widget.onPasteImages,
+                      draggingFiles: _draggingFiles,
+                      onDraggingFilesChanged: _setDraggingFiles,
+                      onAttach: _openAttachmentPopup,
+                      onSettings: _openInputMenuPopup,
+                      onModelSelector: _toggleSettingsPopup,
+                    ),
                   ),
                 ),
               ),
@@ -736,6 +813,7 @@ class _InputBody extends StatelessWidget {
     required this.onRemoveAttachment,
     required this.onInsertAttachment,
     required this.onAttachFiles,
+    required this.onPasteImages,
     required this.draggingFiles,
     required this.onDraggingFilesChanged,
     required this.onAttach,
@@ -769,12 +847,14 @@ class _InputBody extends StatelessWidget {
   final ValueChanged<String>? onRemoveAttachment;
   final ValueChanged<AttachmentInfo>? onInsertAttachment;
   final ValueChanged<List<String>>? onAttachFiles;
+  final ValueChanged<List<PastedImageAttachmentPayload>>? onPasteImages;
   final bool draggingFiles;
   final ValueChanged<bool> onDraggingFilesChanged;
   final VoidCallback? onAttach;
   final VoidCallback? onSettings;
   final VoidCallback? onModelSelector;
 
+  /// Builds the Agent composer with animated input expansion.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -793,41 +873,68 @@ class _InputBody extends StatelessWidget {
           controller: controller,
           canSendMessage: canSendMessage,
           onSendMessage: onSendMessage,
-          child: TextField(
-            key: const ValueKey<String>('chat.input'),
-            controller: controller,
+          child: ChatPastedImageHandler(
             focusNode: focusNode,
-            minLines: inputExpanded ? 10 : 1,
-            maxLines: inputExpanded ? 16 : 6,
-            enabled: true,
-            readOnly: isSpeechRecording || isSpeechTranscribing,
-            textInputAction: TextInputAction.newline,
-            style: theme.textTheme.bodyMedium?.copyWith(height: 20 / 14),
-            decoration: InputDecoration(
-              hintText: l10n.askOperitHint,
-              hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+            enabled: !isSpeechRecording && !isSpeechTranscribing,
+            onPasteImages: onPasteImages,
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              reverseDuration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.bottomCenter,
+              child: Stack(
+                children: <Widget>[
+                  TextField(
+                    key: const ValueKey<String>('chat.input'),
+                    controller: controller,
+                    focusNode: focusNode,
+                    minLines: inputExpanded ? 10 : 1,
+                    maxLines: inputExpanded ? 16 : 6,
+                    enabled: true,
+                    readOnly: isSpeechRecording || isSpeechTranscribing,
+                    textInputAction: TextInputAction.newline,
+                    contentInsertionConfiguration:
+                        chatPastedImageContentInsertionConfiguration(
+                          onPasteImages: onPasteImages,
+                        ),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      height: 20 / 14,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: l10n.askOperitHint,
+                      hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      filled: false,
+                      fillColor: Colors.transparent,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: const EdgeInsets.fromLTRB(16, 10, 48, 8),
+                    ),
+                    onSubmitted: (_) {
+                      if (canSendMessage) {
+                        onSendMessage();
+                      }
+                    },
+                  ),
+                  PositionedDirectional(
+                    top: 0,
+                    end: 4,
+                    child: _IconTapTarget(
+                      icon: inputExpanded
+                          ? Icons.fullscreen_exit
+                          : Icons.fullscreen,
+                      color: colorScheme.onSurfaceVariant,
+                      onTap: onToggleInputExpansion,
+                      tooltip: inputExpanded
+                          ? l10n.collapseInput
+                          : l10n.expandInput,
+                    ),
+                  ),
+                ],
               ),
-              filled: false,
-              fillColor: Colors.transparent,
-              suffixIcon: IconButton(
-                onPressed: onToggleInputExpansion,
-                icon: Icon(
-                  inputExpanded ? Icons.fullscreen_exit : Icons.fullscreen,
-                ),
-                color: colorScheme.onSurfaceVariant,
-                tooltip: inputExpanded ? l10n.collapseInput : l10n.expandInput,
-              ),
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
             ),
-            onSubmitted: (_) {
-              if (canSendMessage) {
-                onSendMessage();
-              }
-            },
           ),
         ),
         const SizedBox(height: 8),
@@ -1638,8 +1745,11 @@ class _AttachmentStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final hasImageAttachment = attachments.any(
+      (attachment) => _isAttachmentImage(attachment.mimeType),
+    );
     return SizedBox(
-      height: 32,
+      height: hasImageAttachment ? 58 : 32,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
@@ -1674,6 +1784,48 @@ class _AttachmentChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (_isAttachmentImage(attachment.mimeType)) {
+      return Tooltip(
+        message: attachment.fileName,
+        child: SizedBox(
+          width: 52,
+          height: 52,
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: Material(
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.7,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: onInsertAttachment == null
+                        ? null
+                        : () => onInsertAttachment!(attachment),
+                    child: ChatAttachmentImagePreview(
+                      attachmentPath: attachment.filePath,
+                      fileName: attachment.fileName,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 3,
+                right: 3,
+                child: _AttachmentImageRemoveButton(
+                  tooltip: AppLocalizations.of(context)!.close,
+                  onTap: onRemoveAttachment == null
+                      ? null
+                      : () => onRemoveAttachment!(attachment.filePath),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Tooltip(
       message: attachment.fileName,
       child: Material(
@@ -1756,6 +1908,39 @@ class _AttachmentRemoveButton extends StatelessWidget {
   }
 }
 
+class _AttachmentImageRemoveButton extends StatelessWidget {
+  const _AttachmentImageRemoveButton({
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  /// Builds the overlaid remove button for an image attachment preview.
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.55),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkResponse(
+          onTap: onTap,
+          radius: 9,
+          containedInkWell: true,
+          child: const SizedBox(
+            width: 18,
+            height: 18,
+            child: Icon(Icons.close, size: 10, color: Colors.white),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _QueueIconAction extends StatelessWidget {
   const _QueueIconAction({
     required this.icon,
@@ -1786,8 +1971,13 @@ class _QueueIconAction extends StatelessWidget {
   }
 }
 
+/// Returns whether one attachment MIME type represents an image.
+bool _isAttachmentImage(String mimeType) {
+  return mimeType.startsWith('image/');
+}
+
 IconData _attachmentIcon(String mimeType) {
-  if (mimeType.startsWith('image/')) {
+  if (_isAttachmentImage(mimeType)) {
     return Icons.image;
   }
   return Icons.description;

@@ -23,14 +23,19 @@ import '../permissions/ToolApprovalHost.dart';
 import 'OperitThemeAssets.dart';
 
 class OperitTheme extends StatefulWidget {
+  /// Creates one themed Flutter application root.
   const OperitTheme({
     super.key,
     required this.child,
+    required this.initialThemePreferenceSnapshot,
+    required this.initialThemeIsReady,
     this.hostInteractionHostsEnabled = true,
     this.unconfiguredChildEnabled = false,
   });
 
   final Widget child;
+  final ThemePreferenceSnapshot initialThemePreferenceSnapshot;
+  final bool initialThemeIsReady;
   final bool hostInteractionHostsEnabled;
   final bool unconfiguredChildEnabled;
 
@@ -60,6 +65,7 @@ class _OperitThemeState extends State<OperitTheme> {
   Future<void>? _runtimeStartFuture;
   Object? _runtimeStartupError;
   bool _runtimeUiReady = false;
+  bool _runtimeStartCompleted = false;
   bool _preserveUnconfiguredChild = false;
   int _runtimeGeneration = 0;
   Timer? _runtimeStartupStatusTimer;
@@ -74,6 +80,11 @@ class _OperitThemeState extends State<OperitTheme> {
     _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
     _preserveUnconfiguredChild =
         widget.unconfiguredChildEnabled && !_runtimeManager.runtimeConfigured;
+    _controller.setInitialThemePreferenceSnapshot(
+      widget.initialThemePreferenceSnapshot,
+    );
+    _runtimeUiReady =
+        widget.initialThemeIsReady && _runtimeManager.runtimeConfigured;
     if (_runtimeManager.runtimeConfigured) {
       unawaited(_startRuntimeUi());
     }
@@ -96,6 +107,7 @@ class _OperitThemeState extends State<OperitTheme> {
       _controller.dispose();
       setState(() {
         _runtimeUiReady = false;
+        _runtimeStartCompleted = false;
         _runtimeStartupError = null;
         _runtimeStartFuture = null;
         _preserveUnconfiguredChild = widget.unconfiguredChildEnabled;
@@ -108,7 +120,7 @@ class _OperitThemeState extends State<OperitTheme> {
 
   /// Starts core-backed theme state after the runtime is configured.
   Future<void> _startRuntimeUi() async {
-    if (_runtimeUiReady ||
+    if (_runtimeStartCompleted ||
         _runtimeStartFuture != null ||
         !_runtimeManager.runtimeConfigured) {
       return;
@@ -126,6 +138,7 @@ class _OperitThemeState extends State<OperitTheme> {
       }
       setState(() {
         _runtimeUiReady = true;
+        _runtimeStartCompleted = true;
         _runtimeStartupError = null;
       });
     } catch (error, stackTrace) {
@@ -294,6 +307,7 @@ class _OperitMaterialApp extends StatelessWidget {
 }
 
 class OperitThemeController {
+  /// Creates the controller that owns the effective application theme.
   OperitThemeController({
     required VoidCallback onChanged,
     UserPreferencesManager preferencesManager = const UserPreferencesManager(),
@@ -329,6 +343,24 @@ class OperitThemeController {
   bool get hasActiveThemeTarget =>
       _activeCharacterGroupId != null || _activeCharacterCardId != null;
   bool get isActiveThemeTargetGroup => _activeCharacterGroupId != null;
+
+  /// Returns the currently active character card or group theme target.
+  core_proxy.ActivePrompt get activeThemeTarget {
+    final groupId = _activeCharacterGroupId;
+    if (groupId != null) {
+      return core_proxy.ActivePrompt.characterGroup(id: groupId);
+    }
+    final cardId = _activeCharacterCardId;
+    if (cardId != null) {
+      return core_proxy.ActivePrompt.characterCard(id: cardId);
+    }
+    throw StateError('No active theme target');
+  }
+
+  /// Applies the known first-frame theme state before asynchronous startup.
+  void setInitialThemePreferenceSnapshot(ThemePreferenceSnapshot snapshot) {
+    _themePreferenceSnapshot = snapshot;
+  }
 
   /// Starts core-backed theme preferences and active prompt subscriptions.
   Future<void> start() async {
@@ -550,6 +582,42 @@ class OperitThemeController {
       bubbleAiCustomFontPath: bubbleAiCustomFontPath,
     );
     await _reloadThemePreferenceSnapshot();
+  }
+
+  /// Loads every character card available as a theme target.
+  Future<List<core_proxy.CharacterCard>> loadThemeCharacterCards() {
+    return _clients.preferencesCharacterCardManager.getAllCharacterCards();
+  }
+
+  /// Loads every character group available as a theme target.
+  Future<List<core_proxy.CharacterGroupCard>> loadThemeCharacterGroups() {
+    return _clients.preferencesCharacterGroupCardManager
+        .getAllCharacterGroupCards();
+  }
+
+  /// Activates the selected character card or group as the current theme target.
+  Future<void> setActiveThemeTarget(core_proxy.ActivePrompt prompt) async {
+    final id = prompt.id.trim();
+    if (id.isEmpty) {
+      throw ArgumentError.value(
+        prompt.id,
+        'prompt.id',
+        'empty theme target id',
+      );
+    }
+    final normalizedPrompt = switch (prompt.tag) {
+      'CharacterCard' => core_proxy.ActivePrompt.characterCard(id: id),
+      'CharacterGroup' => core_proxy.ActivePrompt.characterGroup(id: id),
+      _ => throw ArgumentError.value(
+        prompt.tag,
+        'prompt.tag',
+        'invalid theme target tag',
+      ),
+    };
+    await _clients.preferencesActivePromptManager.setActivePrompt(
+      prompt: normalizedPrompt,
+    );
+    await _handleActivePromptChange(normalizedPrompt);
   }
 
   /// Persists the global user avatar shown by the active theme.
@@ -784,6 +852,7 @@ ThemePreferenceSnapshot _themePreferenceSnapshotWith(
   );
 }
 
+/// Builds Material theme data for the effective user theme state.
 ThemeData _themeData(
   ColorScheme colorScheme,
   ThemePreferenceSnapshot themePreferenceSnapshot,
@@ -791,6 +860,14 @@ ThemeData _themeData(
   final typography = Typography.material2021();
   final fontFamily = _fontFamily(themePreferenceSnapshot);
   final fontFamilyFallback = _fontFamilyFallback(themePreferenceSnapshot);
+  final backgroundVisible =
+      themePreferenceSnapshot.useBackgroundImage &&
+      themePreferenceSnapshot.backgroundImageUri != null &&
+      themePreferenceSnapshot.backgroundImageUri!.isNotEmpty;
+  final appBarBackgroundColor =
+      backgroundVisible || themePreferenceSnapshot.transparentSurfaceEnabled
+      ? Colors.transparent
+      : colorScheme.surface;
   final textTheme =
       (colorScheme.brightness == Brightness.dark
               ? typography.white
@@ -811,9 +888,10 @@ ThemeData _themeData(
     // ignore: deprecated_member_use
     progressIndicatorTheme: const ProgressIndicatorThemeData(year2023: false),
     appBarTheme: AppBarTheme(
-      backgroundColor: colorScheme.surface,
+      backgroundColor: appBarBackgroundColor,
       foregroundColor: colorScheme.onSurface,
       surfaceTintColor: Colors.transparent,
+      systemOverlayStyle: _systemUiOverlayStyle(colorScheme),
       elevation: 0,
       scrolledUnderElevation: 0,
       centerTitle: false,

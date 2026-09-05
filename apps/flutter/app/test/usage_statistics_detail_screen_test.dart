@@ -6,6 +6,7 @@ import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/features/settings/data/UsageStatisticsDetailScreen.dart';
 import 'package:operit2/ui/theme/OperitGlassSurface.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
@@ -93,6 +94,9 @@ Future<Size> _pumpDashboard(
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     OperitTheme(
+      initialThemePreferenceSnapshot:
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+      initialThemeIsReady: false,
       unconfiguredChildEnabled: true,
       hostInteractionHostsEnabled: false,
       child: UsageStatisticsDetailScreen(

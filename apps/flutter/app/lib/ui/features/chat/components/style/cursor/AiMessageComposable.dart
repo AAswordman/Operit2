@@ -34,22 +34,23 @@ class AiMessageComposable extends StatefulWidget {
 
 class _AiMessageComposableState extends State<AiMessageComposable> {
   late StreamMarkdownRendererState _rendererState;
-  late int _messageTimestamp;
+  late String _renderIdentity;
 
   /// Creates persistent Markdown renderer state for this message widget.
   @override
   void initState() {
     super.initState();
-    _messageTimestamp = widget.message.timestamp;
+    _renderIdentity = _messageRenderIdentity(widget.message);
     _rendererState = StreamMarkdownRendererState();
   }
 
-  /// Resets renderer state when the widget is reused for another message.
+  /// Resets renderer state when the visible message variant changes.
   @override
   void didUpdateWidget(covariant AiMessageComposable oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.message.timestamp != _messageTimestamp) {
-      _messageTimestamp = widget.message.timestamp;
+    final renderIdentity = _messageRenderIdentity(widget.message);
+    if (renderIdentity != _renderIdentity) {
+      _renderIdentity = renderIdentity;
       _rendererState = StreamMarkdownRendererState();
     }
   }
@@ -120,6 +121,7 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
             renderMode: themePreferenceSnapshot.bubbleAiImageRenderMode,
           )
         : null;
+    final renderIdentity = _messageRenderIdentity(widget.message);
     final messageBody = Theme(
       data: messageTheme,
       child: DefaultTextStyle.merge(
@@ -128,7 +130,7 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
           fontFamilyFallback: messageFontFamilyFallback,
         ),
         child: KeyedSubtree(
-          key: ValueKey<int>(widget.message.timestamp),
+          key: ValueKey<String>(renderIdentity),
           child: StreamingStructuredMessageRenderer(
             parts: widget.message.parts,
             contentStream: widget.message.contentStream,
@@ -137,6 +139,7 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
             backgroundColor: useCardStyle ? aiBubbleColor : colorScheme.surface,
             nodeGrouper: nodeGrouper,
             streamState: _rendererState,
+            rendererId: 'cursor-ai-$renderIdentity',
             showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,
             splitMarkdownContent: widget.splitMarkdownContent,
           ),
@@ -226,6 +229,11 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
       ),
     );
   }
+}
+
+/// Builds the renderer identity for one visible AI response variant.
+String _messageRenderIdentity(ChatUiMessage message) {
+  return '${message.timestamp}-v${message.selectedVariantIndex}';
 }
 
 Color? _optionalColor(int? value) {

@@ -2,6 +2,7 @@ package app.operit
 
 import android.Manifest
 import android.app.AppOpsManager
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,6 +16,8 @@ import app.operit.core.tools.system.AndroidPrivilegedCommandExecutor
 import app.operit.core.tools.system.AndroidPrivilegedCommandTarget
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
+import java.util.Locale
 import rikka.shizuku.Shizuku
 
 class AndroidPlatformChannel(
@@ -34,13 +37,64 @@ class AndroidPlatformChannel(
             "localRuntimeStoragePaths" -> localRuntimeStoragePaths(call, result)
             "setLocalRuntimeStorage" -> setLocalRuntimeStorage(call, result)
             "startLocalCoreService" -> startLocalCoreService(result)
+            "restartApplication",
             "terminateApplication" -> terminateApplication(result)
             "localRuntimeStartupStatus" -> localRuntimeStartupStatus(result)
+            "readClipboardImages" -> readClipboardImages(result)
             "hostOnboardingPermissionSnapshot" -> hostOnboardingPermissionSnapshot(call, result)
             "hostOnboardingRequestPermission" -> hostOnboardingRequestPermission(call, result)
             else -> return false
         }
         return true
+    }
+
+    /** Reads image byte payloads from the Android clipboard. */
+    private fun readClipboardImages(result: MethodChannel.Result) {
+        try {
+            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = clipboard.primaryClip
+            val images = mutableListOf<Map<String, Any>>()
+            if (clip != null) {
+                for (index in 0 until clip.itemCount) {
+                    val uri = clip.getItemAt(index).uri
+                    if (uri != null) {
+                        val mimeType = imageMimeTypeForUri(uri)
+                        if (mimeType != null) {
+                            images.add(
+                                mapOf(
+                                    "mimeType" to mimeType,
+                                    "bytes" to readUriBytes(uri),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            result.success(images)
+        } catch (error: Throwable) {
+            result.error("CLIPBOARD_IMAGE_READ_ERROR", error.message, null)
+        }
+    }
+
+    /** Resolves an Android content URI to a supported image MIME type. */
+    private fun imageMimeTypeForUri(uri: Uri): String? {
+        val mimeType = activity.contentResolver.getType(uri)?.trim()?.lowercase(Locale.US)
+        if (mimeType == null || !mimeType.startsWith("image/")) {
+            return null
+        }
+        return mimeType
+    }
+
+    /** Reads one Android content URI into a byte array. */
+    private fun readUriBytes(uri: Uri): ByteArray {
+        val stream =
+            activity.contentResolver.openInputStream(uri)
+                ?: throw IllegalStateException("Unable to open clipboard image: $uri")
+        stream.use { input ->
+            val output = ByteArrayOutputStream()
+            input.copyTo(output)
+            return output.toByteArray()
+        }
     }
 
     /** Returns Android onboarding authorization states for the requested host. */

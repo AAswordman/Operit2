@@ -37,12 +37,14 @@ class ChatScreenContent extends StatelessWidget {
     this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
+    required this.currentCharacterCardName,
     required this.currentCharacterCardAvatarUri,
     required this.autoScrollToBottomListenable,
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
     required this.isLoadingDisplayWindow,
     required this.loadLocatorEntries,
+    required this.onRevealMessageForLocator,
     required this.onAutoScrollToBottomChanged,
     required this.onLoadOlderDisplayWindow,
     required this.onLoadNewerDisplayWindow,
@@ -80,6 +82,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onAttachMemory,
     required this.onAttachFile,
     required this.onAttachFiles,
+    required this.onPasteImages,
     required this.onAttachScreenContent,
     required this.onAttachNotifications,
     required this.onAttachLocation,
@@ -106,12 +109,14 @@ class ChatScreenContent extends StatelessWidget {
   final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
+  final String? currentCharacterCardName;
   final String? currentCharacterCardAvatarUri;
   final ValueListenable<bool> autoScrollToBottomListenable;
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
   final bool isLoadingDisplayWindow;
   final LoadMessageLocatorEntries loadLocatorEntries;
+  final RevealMessageForLocator onRevealMessageForLocator;
   final ValueChanged<bool> onAutoScrollToBottomChanged;
   final Future<void> Function() onLoadOlderDisplayWindow;
   final Future<void> Function() onLoadNewerDisplayWindow;
@@ -149,6 +154,7 @@ class ChatScreenContent extends StatelessWidget {
   final VoidCallback onAttachMemory;
   final VoidCallback onAttachFile;
   final ValueChanged<List<String>> onAttachFiles;
+  final ValueChanged<List<PastedImageAttachmentPayload>> onPasteImages;
   final VoidCallback onAttachScreenContent;
   final VoidCallback onAttachNotifications;
   final VoidCallback onAttachLocation;
@@ -185,65 +191,71 @@ class ChatScreenContent extends StatelessWidget {
     return Stack(
       alignment: Alignment.topCenter,
       children: <Widget>[
-        Column(
-          children: <Widget>[
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  IgnorePointer(
-                    ignoring: isPreparingChatSwitch,
-                    child: Opacity(
-                      opacity: isPreparingChatSwitch ? 0 : 1,
-                      child: _buildChatArea(
-                        context,
-                        bottomContentInset: statusLaneInset,
-                      ),
-                    ),
-                  ),
-                  if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
-                  if (statusLaneInset > 0)
-                    _buildInputProcessingStatusLane(
-                      themePreferenceSnapshot,
-                      visible: showProcessingStatus,
-                      status: processingStatus,
-                      textStyle: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withValues(
-                          alpha: 0.8,
+        Positioned.fill(
+          child: Column(
+            children: <Widget>[
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    IgnorePointer(
+                      ignoring: isPreparingChatSwitch,
+                      child: Opacity(
+                        opacity: isPreparingChatSwitch ? 0 : 1,
+                        child: _buildChatArea(
+                          context,
+                          bottomContentInset: statusLaneInset,
                         ),
                       ),
                     ),
-                ],
+                    if (!isPreparingChatSwitch && statusLaneInset > 0)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: _buildInputProcessingStatusLane(
+                          themePreferenceSnapshot,
+                          visible: showProcessingStatus,
+                          status: processingStatus,
+                          textStyle: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.8,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (isPreparingChatSwitch) const M3LoadingPane(size: 42),
+                  ],
+                ),
               ),
-            ),
-            if (!isPreparingChatSwitch) ...<Widget>[
-              if (isMultiSelectMode)
-                ChatMultiSelectBar(
-                  selectedCount: selectedMessageTimestamps.length,
-                  allSelected:
-                      _selectableMessageTimestamps.isNotEmpty &&
-                      _selectableMessageTimestamps.length ==
-                          selectedMessageTimestamps.length,
-                  onClose: onExitMultiSelectMode,
-                  onToggleSelectAll:
-                      _selectableMessageTimestamps.isNotEmpty &&
-                          _selectableMessageTimestamps.length ==
-                              selectedMessageTimestamps.length
-                      ? onClearMessageSelection
-                      : onSelectAllMessages,
-                  onCopy: selectedMessageTimestamps.isEmpty
-                      ? null
-                      : () => _copySelectedMessages(context),
-                  onShareImage: selectedMessageTimestamps.isEmpty
-                      ? null
-                      : () => _generateShareImage(context),
-                  onDelete: selectedMessageTimestamps.isEmpty
-                      ? null
-                      : () => _confirmDeleteSelected(context),
-                )
-              else ...<Widget>[_buildChatInputSection(inputStyle)],
+              if (!isPreparingChatSwitch)
+                isMultiSelectMode
+                    ? ChatMultiSelectBar(
+                        selectedCount: selectedMessageTimestamps.length,
+                        allSelected:
+                            _selectableMessageTimestamps.isNotEmpty &&
+                            _selectableMessageTimestamps.length ==
+                                selectedMessageTimestamps.length,
+                        onClose: onExitMultiSelectMode,
+                        onToggleSelectAll:
+                            _selectableMessageTimestamps.isNotEmpty &&
+                                _selectableMessageTimestamps.length ==
+                                    selectedMessageTimestamps.length
+                            ? onClearMessageSelection
+                            : onSelectAllMessages,
+                        onCopy: selectedMessageTimestamps.isEmpty
+                            ? null
+                            : () => _copySelectedMessages(context),
+                        onShareImage: selectedMessageTimestamps.isEmpty
+                            ? null
+                            : () => _generateShareImage(context),
+                        onDelete: selectedMessageTimestamps.isEmpty
+                            ? null
+                            : () => _confirmDeleteSelected(context),
+                      )
+                    : _buildChatInputSection(inputStyle),
             ],
-          ],
+          ),
         ),
         SafeArea(
           child: Padding(
@@ -275,6 +287,8 @@ class ChatScreenContent extends StatelessWidget {
         mentionSuggestionPanel: mentionSuggestionPanel,
         viewModel: viewModel,
         currentChatId: currentChatId,
+        currentCharacterCardName: currentCharacterCardName,
+        currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
         onSendMessage: onSendMessage,
         onQueueMessage: onQueueMessage,
         onCancelMessage: onCancelMessage,
@@ -290,6 +304,7 @@ class ChatScreenContent extends StatelessWidget {
         onAttachMemory: onAttachMemory,
         onAttachFile: onAttachFile,
         onAttachFiles: onAttachFiles,
+        onPasteImages: onPasteImages,
         onAttachScreenContent: onAttachScreenContent,
         onAttachNotifications: onAttachNotifications,
         onAttachLocation: onAttachLocation,
@@ -308,6 +323,8 @@ class ChatScreenContent extends StatelessWidget {
         mentionSuggestionPanel: mentionSuggestionPanel,
         viewModel: viewModel,
         currentChatId: currentChatId,
+        currentCharacterCardName: currentCharacterCardName,
+        currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
         onSendMessage: onSendMessage,
         onQueueMessage: onQueueMessage,
         onCancelMessage: onCancelMessage,
@@ -323,6 +340,7 @@ class ChatScreenContent extends StatelessWidget {
         onAttachMemory: onAttachMemory,
         onAttachFile: onAttachFile,
         onAttachFiles: onAttachFiles,
+        onPasteImages: onPasteImages,
         onAttachScreenContent: onAttachScreenContent,
         onAttachNotifications: onAttachNotifications,
         onAttachLocation: onAttachLocation,
@@ -354,6 +372,7 @@ class ChatScreenContent extends StatelessWidget {
       hasNewerDisplayHistory: hasNewerDisplayHistory,
       isLoadingDisplayWindow: isLoadingDisplayWindow,
       loadLocatorEntries: loadLocatorEntries,
+      onRevealMessageForLocator: onRevealMessageForLocator,
       onAutoScrollToBottomChanged: onAutoScrollToBottomChanged,
       onLoadOlderDisplayWindow: onLoadOlderDisplayWindow,
       onLoadNewerDisplayWindow: onLoadNewerDisplayWindow,

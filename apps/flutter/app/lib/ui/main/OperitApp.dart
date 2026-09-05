@@ -12,6 +12,7 @@ import '../../core/logging/ClientLogger.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/runtime/RuntimeBootstrapManager.dart';
+import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgComposeDslWebView.dart';
 import '../theme/OperitTheme.dart';
@@ -86,6 +87,9 @@ class _OperitAppState extends State<OperitApp> {
   @override
   Widget build(BuildContext context) {
     return OperitTheme(
+      initialThemePreferenceSnapshot:
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+      initialThemeIsReady: false,
       unconfiguredChildEnabled: true,
       child: _AppDialogHost(
         startupWebAccessError: _startupWebAccessError,

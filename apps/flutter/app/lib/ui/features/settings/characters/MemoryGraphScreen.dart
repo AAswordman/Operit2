@@ -2,14 +2,13 @@
 
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../../core/host/FileSaveService.dart';
-import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
@@ -19,6 +18,18 @@ const XTypeGroup _memoryJsonFileTypeGroup = XTypeGroup(
   label: 'Operit memory JSON',
   extensions: <String>['json'],
 );
+
+const double _memoryFolderDrawerMaxWidth = 320;
+const double _memoryFolderDrawerWidthFactor = 0.82;
+
+/// Returns the Material drawer width for the memory folder picker.
+double _memoryFolderDrawerWidth(BuildContext context) {
+  final viewportWidth = MediaQuery.sizeOf(context).width;
+  return math.min(
+    _memoryFolderDrawerMaxWidth,
+    viewportWidth * _memoryFolderDrawerWidthFactor,
+  );
+}
 
 class MemoryGraphScreen extends StatefulWidget {
   /// Creates the owner-scoped memory management graph page.
@@ -66,12 +77,12 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   int? _selectedEdgeId;
   Future<core_proxy.Memory?>? _selectedMemoryFuture;
   String _folderPath = '';
-  bool _folderPanelOpen = false;
   bool _busy = false;
   bool _linkMode = false;
   String? _linkSourceNodeId;
-  late final GeneratedCoreProxyClients _clients =
-      GeneratedCoreProxyClients(widget.bridge);
+  late final GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
+    widget.bridge,
+  );
   double _scale = 1;
   Offset _offset = Offset.zero;
   double _startScale = 1;
@@ -204,6 +215,12 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       _selectedMemoryFuture = null;
       _linkSourceNodeId = null;
     });
+  }
+
+  /// Closes the folder drawer and applies the selected folder filter.
+  void _selectFolderFromDrawer(String folderPath) {
+    Navigator.of(context).pop();
+    _selectFolder(folderPath);
   }
 
   /// Recomputes the graph layout when data or size changed.
@@ -541,26 +558,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     }
   }
 
-  /// Copies exported memory JSON to the clipboard.
-  Future<void> _copyJson() async {
-    setState(() => _busy = true);
-    try {
-      final jsonText = await _repository.exportMemoriesToJson();
-      await Clipboard.setData(ClipboardData(text: jsonText));
-      if (mounted) {
-        _showSnack('记忆 JSON 已复制');
-      }
-    } catch (error) {
-      if (mounted) {
-        _showSnack('复制失败：$error');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
   /// Imports memory JSON from a user-selected file.
   Future<void> _importJson() async {
     final file = await openFile(
@@ -642,6 +639,38 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Builds the Material drawer layer for memory folder filtering.
+  Widget _buildFolderDrawer(ColorScheme colorScheme) {
+    return Drawer(
+      width: _memoryFolderDrawerWidth(context),
+      backgroundColor: colorScheme.surfaceContainerLow,
+      surfaceTintColor: Colors.transparent,
+      shadowColor: colorScheme.shadow.withValues(alpha: 0.22),
+      elevation: 12,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(right: Radius.circular(20)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: FutureBuilder<_MemoryGraphData>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+          }
+          final data = snapshot.data;
+          if (data == null) {
+            return const M3LoadingPane();
+          }
+          return _MemoryFolderPanel(
+            folders: data.folders,
+            selectedFolderPath: _folderPath,
+            onSelected: _selectFolderFromDrawer,
+          );
+        },
+      ),
+    );
+  }
+
   /// Builds the page scaffold and graph canvas.
   @override
   Widget build(BuildContext context) {
@@ -668,17 +697,14 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
             icon: const Icon(Icons.download_outlined),
           ),
           IconButton(
-            tooltip: '复制 JSON',
-            onPressed: _busy ? null : _copyJson,
-            icon: const Icon(Icons.copy_all_outlined),
-          ),
-          IconButton(
             tooltip: l10n.refresh,
             onPressed: _busy ? null : _refresh,
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
+      drawer: _buildFolderDrawer(colorScheme),
+      drawerScrimColor: colorScheme.scrim.withValues(alpha: 0.32),
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -713,168 +739,139 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
           if (data == null) {
             return const M3LoadingPane();
           }
-          final graph = data.displayGraph;
           return Column(
             children: <Widget>[
-              _MemoryToolbar(
-                controller: _searchController,
-                folderPath: _folderPath,
-                linkMode: _linkMode,
-                busy: _busy,
-                onSearch: _runSearch,
-                onClearSearch: _clearSearch,
-                onToggleFolders: () {
-                  setState(() => _folderPanelOpen = !_folderPanelOpen);
+              Builder(
+                builder: (toolbarContext) {
+                  return _MemoryToolbar(
+                    controller: _searchController,
+                    busy: _busy,
+                    onSearch: _runSearch,
+                    onClearSearch: _clearSearch,
+                    onOpenFolders: Scaffold.of(toolbarContext).openDrawer,
+                  );
                 },
               ),
               if (_busy) const LinearProgressIndicator(minHeight: 2),
-              Expanded(
-                child: Row(
-                  children: <Widget>[
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 180),
-                      curve: Curves.easeOutCubic,
-                      alignment: Alignment.centerLeft,
-                      child: SizedBox(
-                        width: _folderPanelOpen ? 260 : 0,
-                        child: _folderPanelOpen
-                            ? _MemoryFolderPanel(
-                                folders: data.folders,
-                                selectedFolderPath: _folderPath,
-                                onSelected: _selectFolder,
-                              )
-                            : const SizedBox.shrink(),
-                      ),
-                    ),
-                    Expanded(
-                      child: graph.nodes.isEmpty
-                          ? _MemoryEmptyState(
-                              query: data.query,
-                              folderPath: data.folderPath,
-                              colorScheme: colorScheme,
-                              textTheme: textTheme,
-                            )
-                          : LayoutBuilder(
-                              builder: (context, constraints) {
-                                final size = Size(
-                                  constraints.maxWidth,
-                                  constraints.maxHeight,
-                                );
-                                _ensureLayout(graph, size);
-                                final layout = _layout;
-                                if (layout == null) {
-                                  return const M3LoadingPane();
-                                }
-                                final selectedNode = _selectedNodeId == null
-                                    ? null
-                                    : graph.nodes
-                                          .where(
-                                            (node) =>
-                                                node.id == _selectedNodeId,
-                                          )
-                                          .firstOrNull;
-                                final selectedEdge = _selectedEdgeId == null
-                                    ? null
-                                    : graph.edges
-                                          .where(
-                                            (edge) =>
-                                                edge.id == _selectedEdgeId,
-                                          )
-                                          .firstOrNull;
-                                return Stack(
-                                  children: <Widget>[
-                                    GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onScaleStart: (details) {
-                                        _startScale = _scale;
-                                        _startOffset = _offset;
-                                      },
-                                      onScaleUpdate: (details) {
-                                        setState(() {
-                                          final nextScale =
-                                              (_startScale * details.scale)
-                                                  .clamp(0.2, 5.0)
-                                                  .toDouble();
-                                          final focal = details.localFocalPoint;
-                                          _offset =
-                                              (_startOffset - focal) *
-                                                  (nextScale / _startScale) +
-                                              focal +
-                                              details.focalPointDelta;
-                                          _scale = nextScale;
-                                        });
-                                      },
-                                      onTapUp: (details) =>
-                                          _handleTap(details, data, layout),
-                                      child: CustomPaint(
-                                        painter: _MemoryGraphPainter(
-                                          graph: graph,
-                                          layout: layout,
-                                          scale: _scale,
-                                          offset: _offset,
-                                          colorScheme: colorScheme,
-                                          textTheme: textTheme,
-                                          selectedNodeId: _selectedNodeId,
-                                          selectedEdgeId: _selectedEdgeId,
-                                          linkSourceNodeId: _linkSourceNodeId,
-                                        ),
-                                        size: Size.infinite,
-                                      ),
-                                    ),
-                                    Positioned(
-                                      left: 16,
-                                      top: 12,
-                                      child: _MemoryGraphCounter(
-                                        text:
-                                            '${graph.nodes.length} 节点 · ${graph.edges.length} 关系',
-                                      ),
-                                    ),
-                                    if (_linkMode)
-                                      Positioned(
-                                        right: 16,
-                                        top: 12,
-                                        child: _MemoryGraphCounter(
-                                          text: _linkSourceNodeId == null
-                                              ? '关系模式：选择起点'
-                                              : '关系模式：选择终点',
-                                        ),
-                                      ),
-                                    if (selectedNode != null ||
-                                        selectedEdge != null)
-                                      Positioned(
-                                        left: 16,
-                                        right: 16,
-                                        bottom: 16,
-                                        child: _MemoryGraphSelectionCard(
-                                          node: selectedNode,
-                                          edge: selectedEdge,
-                                          graph: graph,
-                                          memoryFuture: _selectedMemoryFuture,
-                                          folders: data.folders,
-                                          onClose: () {
-                                            setState(() {
-                                              _selectedNodeId = null;
-                                              _selectedEdgeId = null;
-                                              _selectedMemoryFuture = null;
-                                            });
-                                          },
-                                          onEditMemory: _editMemory,
-                                          onDeleteMemory: _deleteMemory,
-                                          onDeleteEdge: _deleteEdge,
-                                        ),
-                                      ),
-                                  ],
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
+              Expanded(child: _buildGraphCanvas(data, colorScheme, textTheme)),
             ],
           );
         },
       ),
+    );
+  }
+
+  /// Builds the memory graph body below the toolbar.
+  Widget _buildGraphCanvas(
+    _MemoryGraphData data,
+    ColorScheme colorScheme,
+    TextTheme textTheme,
+  ) {
+    final graph = data.displayGraph;
+    if (graph.nodes.isEmpty) {
+      return _MemoryEmptyState(
+        query: data.query,
+        folderPath: data.folderPath,
+        colorScheme: colorScheme,
+        textTheme: textTheme,
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        _ensureLayout(graph, size);
+        final layout = _layout;
+        if (layout == null) {
+          return const M3LoadingPane();
+        }
+        final selectedNode = _selectedNodeId == null
+            ? null
+            : graph.nodes
+                  .where((node) => node.id == _selectedNodeId)
+                  .firstOrNull;
+        final selectedEdge = _selectedEdgeId == null
+            ? null
+            : graph.edges
+                  .where((edge) => edge.id == _selectedEdgeId)
+                  .firstOrNull;
+        return Stack(
+          children: <Widget>[
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onScaleStart: (details) {
+                _startScale = _scale;
+                _startOffset = _offset;
+              },
+              onScaleUpdate: (details) {
+                setState(() {
+                  final nextScale = (_startScale * details.scale)
+                      .clamp(0.2, 5.0)
+                      .toDouble();
+                  final focal = details.localFocalPoint;
+                  _offset =
+                      (_startOffset - focal) * (nextScale / _startScale) +
+                      focal +
+                      details.focalPointDelta;
+                  _scale = nextScale;
+                });
+              },
+              onTapUp: (details) => _handleTap(details, data, layout),
+              child: CustomPaint(
+                painter: _MemoryGraphPainter(
+                  graph: graph,
+                  layout: layout,
+                  scale: _scale,
+                  offset: _offset,
+                  colorScheme: colorScheme,
+                  textTheme: textTheme,
+                  selectedNodeId: _selectedNodeId,
+                  selectedEdgeId: _selectedEdgeId,
+                  linkSourceNodeId: _linkSourceNodeId,
+                ),
+                size: Size.infinite,
+              ),
+            ),
+            Positioned(
+              left: 16,
+              top: 12,
+              child: _MemoryGraphCounter(
+                text: '${graph.nodes.length} 节点 · ${graph.edges.length} 关系',
+              ),
+            ),
+            if (_linkMode)
+              Positioned(
+                right: 16,
+                top: 12,
+                child: _MemoryGraphCounter(
+                  text: _linkSourceNodeId == null ? '关系模式：选择起点' : '关系模式：选择终点',
+                ),
+              ),
+            if (selectedNode != null || selectedEdge != null)
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 16,
+                child: _MemoryGraphSelectionCard(
+                  node: selectedNode,
+                  edge: selectedEdge,
+                  graph: graph,
+                  memoryFuture: _selectedMemoryFuture,
+                  folders: data.folders,
+                  onClose: () {
+                    setState(() {
+                      _selectedNodeId = null;
+                      _selectedEdgeId = null;
+                      _selectedMemoryFuture = null;
+                    });
+                  },
+                  onEditMemory: _editMemory,
+                  onDeleteMemory: _deleteMemory,
+                  onDeleteEdge: _deleteEdge,
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1205,21 +1202,17 @@ class _MemoryToolbar extends StatelessWidget {
   /// Creates the top filter and action toolbar.
   const _MemoryToolbar({
     required this.controller,
-    required this.folderPath,
-    required this.linkMode,
     required this.busy,
     required this.onSearch,
     required this.onClearSearch,
-    required this.onToggleFolders,
+    required this.onOpenFolders,
   });
 
   final TextEditingController controller;
-  final String folderPath;
-  final bool linkMode;
   final bool busy;
   final VoidCallback onSearch;
   final VoidCallback onClearSearch;
-  final VoidCallback onToggleFolders;
+  final VoidCallback onOpenFolders;
 
   /// Builds the top memory toolbar.
   @override
@@ -1234,7 +1227,7 @@ class _MemoryToolbar extends StatelessWidget {
           children: <Widget>[
             IconButton(
               tooltip: '文件夹',
-              onPressed: busy ? null : onToggleFolders,
+              onPressed: busy ? null : onOpenFolders,
               icon: const Icon(Icons.folder_outlined),
             ),
             const SizedBox(width: 6),
@@ -1258,17 +1251,6 @@ class _MemoryToolbar extends StatelessWidget {
                   border: const OutlineInputBorder(),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            FilledButton.icon(
-              onPressed: busy ? null : onSearch,
-              icon: const Icon(Icons.search, size: 18),
-              label: const Text('搜索'),
-            ),
-            const SizedBox(width: 10),
-            _MemoryStatusChip(
-              icon: linkMode ? Icons.link : Icons.account_tree_outlined,
-              text: linkMode ? '关系模式' : _folderLabel(folderPath),
             ),
           ],
         ),
@@ -1392,44 +1374,6 @@ class _MemoryGraphCounter extends StatelessWidget {
             color: colorScheme.onSurfaceVariant,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _MemoryStatusChip extends StatelessWidget {
-  /// Creates a compact status chip.
-  const _MemoryStatusChip({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  /// Builds the compact status chip.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: colorScheme.secondaryContainer.withValues(alpha: 0.62),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(icon, size: 17, color: colorScheme.onSecondaryContainer),
-          const SizedBox(width: 6),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 180),
-            child: Text(
-              text,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: colorScheme.onSecondaryContainer,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

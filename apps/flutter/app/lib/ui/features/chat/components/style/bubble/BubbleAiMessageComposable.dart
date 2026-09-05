@@ -66,24 +66,28 @@ class BubbleAiMessageComposable extends StatefulWidget {
 
 class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
   late StreamMarkdownRendererState _rendererState;
-  late int _messageTimestamp;
+  late String _renderIdentity;
 
+  /// Creates persistent Markdown renderer state for this message widget.
   @override
   void initState() {
     super.initState();
-    _messageTimestamp = widget.message.timestamp;
+    _renderIdentity = _messageRenderIdentity(widget.message);
     _rendererState = StreamMarkdownRendererState();
   }
 
+  /// Resets renderer state when the visible message variant changes.
   @override
   void didUpdateWidget(covariant BubbleAiMessageComposable oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.message.timestamp != _messageTimestamp) {
-      _messageTimestamp = widget.message.timestamp;
+    final renderIdentity = _messageRenderIdentity(widget.message);
+    if (renderIdentity != _renderIdentity) {
+      _renderIdentity = renderIdentity;
       _rendererState = StreamMarkdownRendererState();
     }
   }
 
+  /// Builds the AI bubble with the active variant renderer identity.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -131,6 +135,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
       12,
     );
     final imageUrl = _singleMarkdownImageUrl(widget.message);
+    final renderIdentity = _messageRenderIdentity(widget.message);
 
     final messageBody = Theme(
       data: messageTheme,
@@ -140,7 +145,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
           fontFamilyFallback: messageFontFamilyFallback,
         ),
         child: KeyedSubtree(
-          key: ValueKey<int>(widget.message.timestamp),
+          key: ValueKey<String>(renderIdentity),
           child: StreamingStructuredMessageRenderer(
             parts: widget.message.parts,
             contentStream: widget.message.contentStream,
@@ -150,7 +155,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
             nodeGrouper: nodeGrouper,
             streamState: _rendererState,
             onLinkClick: widget.enableDialogs ? widget.onLinkClick : null,
-            rendererId: 'bubble-ai-${widget.message.timestamp}',
+            rendererId: 'bubble-ai-$renderIdentity',
             showThinkingProcess: showThinkingProcess,
             initialThinkingExpanded: widget.initialThinkingExpanded,
             allowExpandedThinkingFullHeight:
@@ -214,6 +219,11 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
     }
     return () => widget.onAvatarLongPressMention!(roleName);
   }
+}
+
+/// Builds the renderer identity for one visible AI response variant.
+String _messageRenderIdentity(ChatUiMessage message) {
+  return '${message.timestamp}-v${message.selectedVariantIndex}';
 }
 
 class _AnimatedAiBubbleVisibility extends StatelessWidget {

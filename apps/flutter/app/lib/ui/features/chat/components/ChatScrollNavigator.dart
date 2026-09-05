@@ -6,8 +6,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
-import '../../../common/components/OperitDialog.dart';
-import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../viewmodel/ChatViewModel.dart';
 
 typedef LoadMessageLocatorEntries =
@@ -17,8 +15,13 @@ typedef LoadMessageLocatorEntries =
     );
 typedef ToggleFavoriteMessage =
     Future<void> Function(int timestamp, bool isFavorite);
+typedef RevealMessageForLocator = Future<bool> Function(int timestamp);
 
 const double _navigatorRightInset = 16;
+const double _locatorDialogWidthFactor = 0.92;
+const double _locatorDialogMaxWidth = 720;
+const double _locatorDialogMaxHeight = 560;
+const double _locatorDialogListMaxHeight = 420;
 
 class ChatScrollMessageAnchor {
   const ChatScrollMessageAnchor({
@@ -49,6 +52,7 @@ class ChatScrollNavigator extends StatefulWidget {
     required this.loadLocatorEntries,
     required this.onRequestLatestMessages,
     required this.onAutoScrollToBottomChanged,
+    required this.onJumpToMessageTimestamp,
     required this.onJumpToMessage,
     required this.onToggleFavoriteMessage,
     required this.onRequestScrollToBottom,
@@ -66,6 +70,7 @@ class ChatScrollNavigator extends StatefulWidget {
   final LoadMessageLocatorEntries loadLocatorEntries;
   final Future<void> Function() onRequestLatestMessages;
   final ValueChanged<bool> onAutoScrollToBottomChanged;
+  final ValueChanged<int> onJumpToMessageTimestamp;
   final ValueChanged<int> onJumpToMessage;
   final ToggleFavoriteMessage onToggleFavoriteMessage;
   final VoidCallback onRequestScrollToBottom;
@@ -184,7 +189,14 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
           onToggleFavoriteMessage: widget.onToggleFavoriteMessage,
           onJumpToMessage: (timestamp) {
             Navigator.of(dialogContext).pop();
-            widget.onJumpToMessage(timestamp);
+            final targetIndex = widget.messages.indexWhere(
+              (message) => message.timestamp == timestamp,
+            );
+            if (targetIndex >= 0) {
+              widget.onJumpToMessage(targetIndex);
+            } else {
+              widget.onJumpToMessageTimestamp(timestamp);
+            }
           },
         );
       },
@@ -525,21 +537,14 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
         .map((preview) => messageContentLength(l10n, preview))
         .fold<int>(1, (max, value) => math.max(max, value));
     final dialogIsLoading = widget.isLoading || _isLoadingSearchEntries;
-    final useTabletLayout = useTabletLayoutForContext(context);
+    final locatorPositionText = l10n.messageLocatorCurrent(
+      (currentMessageIndex + 1).clamp(0, widget.locatorEntries.length),
+      widget.locatorEntries.length,
+    );
     final bodyContent = Column(
       mainAxisSize: MainAxisSize.max,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          l10n.messageLocatorCurrent(
-            (currentMessageIndex + 1).clamp(0, widget.locatorEntries.length),
-            widget.locatorEntries.length,
-          ),
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 12),
         Row(
           children: <Widget>[
             Expanded(
@@ -581,86 +586,26 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
           ),
         const SizedBox(height: 8),
         Flexible(
-          child: useTabletLayout
-              ? SizedBox(
-                  height: 420,
-                  child: _buildEntryList(
-                    context,
-                    dialogIsLoading,
-                    filteredEntries,
-                    currentMessageIndex,
-                    maxMessageLength,
-                  ),
-                )
-              : _buildEntryList(
-                  context,
-                  dialogIsLoading,
-                  filteredEntries,
-                  currentMessageIndex,
-                  maxMessageLength,
-                ),
-        ),
-      ],
-    );
-    final dialogContent = Material(
-      color: theme.colorScheme.surface.withValues(alpha: 0.95),
-      clipBehavior: Clip.antiAlias,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.max,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: <Widget>[
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        l10n.messageLocatorTitle,
-                        style: theme.textTheme.titleMedium,
-                      ),
-                      Text(
-                        l10n.messageLocatorCurrent(
-                          (currentMessageIndex + 1).clamp(
-                            0,
-                            widget.locatorEntries.length,
-                          ),
-                          widget.locatorEntries.length,
-                        ),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                  TextButton(
-                    onPressed: widget.onDismiss,
-                    child: Text(l10n.close),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Expanded(child: bodyContent),
-            ],
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxHeight: _locatorDialogListMaxHeight,
+            ),
+            child: _buildEntryList(
+              context,
+              dialogIsLoading,
+              filteredEntries,
+              currentMessageIndex,
+              maxMessageLength,
+            ),
           ),
         ),
-      ),
-    );
-
-    if (!useTabletLayout) {
-      return Dialog.fullscreen(child: dialogContent);
-    }
-
-    return OperitDialogScaffold(
-      title: l10n.messageLocatorTitle,
-      maxWidth: 720,
-      maxHeight: 560,
-      actions: <Widget>[
-        TextButton(onPressed: widget.onDismiss, child: Text(l10n.close)),
       ],
+    );
+    return _ChatMessageLocatorDialogFrame(
+      title: l10n.messageLocatorTitle,
+      subtitle: locatorPositionText,
+      closeLabel: l10n.close,
+      onDismiss: widget.onDismiss,
       child: bodyContent,
     );
   }
@@ -717,6 +662,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     );
   }
 
+  /// Updates the locator search query and schedules one search request.
   void _onSearchChanged(String value) {
     setState(() {
       _searchQuery = value;
@@ -735,6 +681,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     });
   }
 
+  /// Loads search results for the active locator query.
   Future<void> _loadSearchEntries(String normalizedSearchQuery) async {
     final chatId = widget.currentChatId;
     if (chatId == null || chatId.trim().isEmpty) {
@@ -771,6 +718,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     }
   }
 
+  /// Toggles the favorite state for one locator row.
   Future<void> _toggleFavorite(
     ChatMessageLocatorPreview preview,
     bool isFavorite,
@@ -783,6 +731,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     await widget.onToggleFavoriteMessage(preview.timestamp, nextFavorite);
   }
 
+  /// Returns the initial scroll offset that centers near the current message.
   double _initialRowOffset() {
     final currentMessageIndex = widget.locatorEntries.indexWhere(
       (entry) => entry.timestamp == widget.currentMessageTimestamp,
@@ -797,6 +746,7 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
     return (target * 56).toDouble();
   }
 
+  /// Scrolls search results near the currently visible chat message.
   void _scrollToClosestSearchRow() {
     final currentMessageIndex = widget.locatorEntries.indexWhere(
       (entry) => entry.timestamp == widget.currentMessageTimestamp,
@@ -816,6 +766,97 @@ class _ChatMessageLocatorDialogState extends State<ChatMessageLocatorDialog> {
         .reduce((left, right) => left.value <= right.value ? left : right)
         .key;
     _scrollController.jumpTo(target * 56);
+  }
+}
+
+class _ChatMessageLocatorDialogFrame extends StatelessWidget {
+  const _ChatMessageLocatorDialogFrame({
+    required this.title,
+    required this.subtitle,
+    required this.closeLabel,
+    required this.onDismiss,
+    required this.child,
+  });
+
+  final String title;
+  final String subtitle;
+  final String closeLabel;
+  final VoidCallback onDismiss;
+  final Widget child;
+
+  /// Builds the centered locator dialog shell used by the chat navigator.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(vertical: 24),
+      child: FractionallySizedBox(
+        widthFactor: _locatorDialogWidthFactor,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: _locatorDialogMaxWidth,
+            maxHeight: _locatorDialogMaxHeight,
+          ),
+          child: Material(
+            color: colorScheme.surface.withValues(alpha: 0.95),
+            surfaceTintColor: Colors.transparent,
+            shadowColor: colorScheme.shadow.withValues(alpha: 0.18),
+            elevation: 8,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 18,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.max,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: <Widget>[
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                title,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                              Text(
+                                subtitle,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: onDismiss,
+                          child: Text(closeLabel),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(child: child),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -14,12 +14,12 @@ class _CharacterCardEditorSave extends _CharacterCardEditorResult {
   final _PromptTagChangeSet tagChanges;
 }
 
-class _CharacterCardEditorCopyJson extends _CharacterCardEditorResult {
-  const _CharacterCardEditorCopyJson();
+class _CharacterCardEditorExportJson extends _CharacterCardEditorResult {
+  const _CharacterCardEditorExportJson();
 }
 
-class _CharacterCardEditorCopyTavernJson extends _CharacterCardEditorResult {
-  const _CharacterCardEditorCopyTavernJson();
+class _CharacterCardEditorExportTavernJson extends _CharacterCardEditorResult {
+  const _CharacterCardEditorExportTavernJson();
 }
 
 class _CharacterCardEditorDelete extends _CharacterCardEditorResult {
@@ -548,9 +548,9 @@ class _CharacterCardEditorDialogState
     }
     switch (action) {
       case _CharacterCardExportAction.nativeJson:
-        Navigator.of(context).pop(const _CharacterCardEditorCopyJson());
+        Navigator.of(context).pop(const _CharacterCardEditorExportJson());
       case _CharacterCardExportAction.tavernJson:
-        Navigator.of(context).pop(const _CharacterCardEditorCopyTavernJson());
+        Navigator.of(context).pop(const _CharacterCardEditorExportTavernJson());
     }
   }
 
@@ -749,6 +749,28 @@ class _CharacterCardEditorDialogState
                                     }
                                   });
                                 },
+                          footerChildren: <Widget>[
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              children: <Widget>[
+                                _BindingTogglePill(
+                                  label: '读取记忆',
+                                  selected: !_disableUserPreferenceDescription,
+                                  onTap: () => _setPreferenceDescription(
+                                    _disableUserPreferenceDescription,
+                                  ),
+                                ),
+                                _BindingTogglePill(
+                                  label: '写入记忆',
+                                  selected: _enableMemoryAutoUpdate,
+                                  onTap: () => _setMemoryAutoUpdate(
+                                    !_enableMemoryAutoUpdate,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           children: <Widget>[
                             if (widget.sharedMemoryStores.isEmpty)
                               const Padding(
@@ -779,28 +801,6 @@ class _CharacterCardEditorDialogState
                                   labelText: '共享记忆库',
                                 ),
                               ),
-                          ],
-                          footerChildren: <Widget>[
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              children: <Widget>[
-                                _BindingTogglePill(
-                                  label: '读取记忆',
-                                  selected: !_disableUserPreferenceDescription,
-                                  onTap: () => _setPreferenceDescription(
-                                    _disableUserPreferenceDescription,
-                                  ),
-                                ),
-                                _BindingTogglePill(
-                                  label: '写入记忆',
-                                  selected: _enableMemoryAutoUpdate,
-                                  onTap: () => _setMemoryAutoUpdate(
-                                    !_enableMemoryAutoUpdate,
-                                  ),
-                                ),
-                              ],
-                            ),
                           ],
                         ),
                         _BindingSwitchSection(

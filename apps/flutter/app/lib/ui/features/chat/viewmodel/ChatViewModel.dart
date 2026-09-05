@@ -17,6 +17,41 @@ typedef ChatResponseStreamEvent = core_proxy.MarkdownStreamEvent;
 typedef AttachmentInfo = core_proxy.AttachmentInfo;
 
 const String _pastedTextAttachmentPrefix = 'pasted_text:';
+const String _pastedImageAttachmentPrefix = 'pasted_image:';
+
+class PastedImageAttachmentPayload {
+  /// Creates a base64 image payload for a virtual chat attachment.
+  const PastedImageAttachmentPayload({
+    required this.fileName,
+    required this.mimeType,
+    required this.fileSize,
+    required this.base64Content,
+  });
+
+  /// Creates a base64 image payload from pasted image bytes.
+  factory PastedImageAttachmentPayload.fromBytes({
+    required String fileName,
+    required String mimeType,
+    required Uint8List bytes,
+  }) {
+    return PastedImageAttachmentPayload(
+      fileName: fileName,
+      mimeType: mimeType,
+      fileSize: bytes.length,
+      base64Content: base64Encode(bytes),
+    );
+  }
+
+  final String fileName;
+  final String mimeType;
+  final int fileSize;
+  final String base64Content;
+
+  /// Encodes this payload for the runtime attachment boundary.
+  String toAttachmentPath() {
+    return '$_pastedImageAttachmentPrefix${jsonEncode(<String, Object>{'fileName': fileName, 'mimeType': mimeType, 'fileSize': fileSize, 'base64Content': base64Content})}';
+  }
+}
 
 class ChatInputSubmitDecision {
   const ChatInputSubmitDecision({
@@ -224,6 +259,11 @@ class ChatViewModel {
     return handleAttachment('$_pastedTextAttachmentPrefix$text');
   }
 
+  /// Adds a pasted image through the runtime's virtual image attachment path.
+  Future<void> attachPastedImage(PastedImageAttachmentPayload payload) {
+    return handleAttachment(payload.toAttachmentPath());
+  }
+
   Future<void> removeAttachment(String filePath) {
     return _chat.removeAttachment(filePath: filePath);
   }
@@ -265,6 +305,11 @@ class ChatViewModel {
     String query,
   ) {
     return _chat.loadChatMessageLocatorPreviews(chatId: chatId, query: query);
+  }
+
+  /// Reveals one message inside the current chat display window.
+  Future<bool> revealMessageForCurrentChat(int targetTimestamp) {
+    return _chat.revealMessageForCurrentChat(targetTimestamp: targetTimestamp);
   }
 
   Future<void> setMessageFavorite(int timestamp, bool isFavorite) {

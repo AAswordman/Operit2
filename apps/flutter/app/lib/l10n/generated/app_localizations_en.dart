@@ -1757,29 +1757,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCharactersImportJson => 'Import JSON';
 
   @override
-  String get settingsCharactersCopyJson => 'Copy JSON';
+  String get settingsCharactersExportJson => 'Export JSON';
 
   @override
   String get settingsCharactersImportTavernJson => 'Import Tavern JSON';
 
   @override
-  String get settingsCharactersCopyTavernJson => 'Copy Tavern JSON';
-
-  @override
-  String get settingsCharactersJsonInput => 'JSON content';
-
-  @override
-  String get settingsCharactersTavernJsonInput => 'Tavern JSON content';
-
-  @override
-  String settingsCharactersJsonCopied(String name) {
-    return 'Copied JSON for “$name”.';
-  }
-
-  @override
-  String settingsCharactersTavernJsonCopied(String name) {
-    return 'Copied Tavern JSON for “$name”.';
-  }
+  String get settingsCharactersExportTavernJson => 'Export Tavern JSON';
 
   @override
   String get settingsCharactersImportCardJson => 'Import character card JSON';
@@ -1808,8 +1792,13 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String settingsCharactersTavernJsonCopyError(String error) {
-    return 'Tavern JSON copy failed: $error';
+  String settingsCharactersExportJsonError(String error) {
+    return 'JSON export failed: $error';
+  }
+
+  @override
+  String settingsCharactersExportTavernJsonError(String error) {
+    return 'Tavern JSON export failed: $error';
   }
 
   @override
@@ -3366,18 +3355,10 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsDataCopyBackupJson => 'Copy backup';
+  String get settingsDataExportBackupJson => 'Export backup';
 
   @override
   String get settingsDataImportBackupJson => 'Restore data';
-
-  @override
-  String get settingsDataBackupJsonInput => 'Restore content';
-
-  @override
-  String settingsDataBackupCopied(String name) {
-    return 'Copied backup for “$name”.';
-  }
 
   @override
   String settingsDataBackupImportResult(
@@ -3394,8 +3375,8 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String settingsDataBackupCopyError(String error) {
-    return 'Copy failed: $error';
+  String settingsDataBackupExportError(String error) {
+    return 'Export failed: $error';
   }
 
   @override

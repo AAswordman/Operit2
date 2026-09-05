@@ -9,6 +9,7 @@ import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
@@ -1041,6 +1042,9 @@ Widget _chatArea({
   double bottomContentInset = 0,
 }) {
   return OperitTheme(
+    initialThemePreferenceSnapshot:
+        UserPreferencesManager.defaultThemePreferenceSnapshot,
+    initialThemeIsReady: false,
     unconfiguredChildEnabled: true,
     hostInteractionHostsEnabled: false,
     child: Scaffold(
@@ -1060,6 +1064,7 @@ Widget _chatArea({
         hasNewerDisplayHistory: false,
         isLoadingDisplayWindow: false,
         loadLocatorEntries: (chatId, query) async => const [],
+        onRevealMessageForLocator: (timestamp) async => false,
         onAutoScrollToBottomChanged: (_) {},
         onLoadOlderDisplayWindow: () async {},
         onLoadNewerDisplayWindow: () async {},

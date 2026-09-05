@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::{json, Map, Value};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
@@ -9,10 +9,11 @@ use uuid::Uuid;
 
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::chat::llmprovider::AIService::{
-    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
-    SendMessageRequest, SharedAiResponseStream, TokenCounts,
+    AIService, AiServiceError, SendMessageRequest, SharedAiResponseStream, TokenCounts,
+    response_stream_from_chunks, retry_error_text, retry_message,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
+use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
@@ -20,13 +21,13 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
-use operit_util::stream::RevisableTextStream::{
-    RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
-};
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
 use operit_util::TokenCacheManager::TokenCacheManager;
+use operit_util::stream::RevisableTextStream::{
+    RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
+};
 
 const PROVIDER_TRANSPORT_LOG_TAG: &str = "ProviderTransport";
 
@@ -767,14 +768,85 @@ impl OpenAIProvider {
             tools_json,
             preserve_think_in_history,
         );
-        let messages_array =
+        let mut messages_array =
             serde_json::from_str(&StructuredToolCallBridge::buildMessagesJsonForProvider(
                 &provider_ready_history,
                 preserve_think_in_history,
                 use_tool_call,
             ))
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        self.rewrite_message_media_content(&mut messages_array);
         Ok((messages_array, token_count))
+    }
+
+    /// Rewrites string message content into provider-native multimodal content.
+    fn rewrite_message_media_content(&self, messages_array: &mut Value) {
+        let Some(messages) = messages_array.as_array_mut() else {
+            return;
+        };
+        for message in messages {
+            let Some(message_object) = message.as_object_mut() else {
+                continue;
+            };
+            let role = message_object
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let Some(content) = message_object
+                .get("content")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+            else {
+                continue;
+            };
+            message_object.insert(
+                "content".to_string(),
+                self.build_content_field(&content, &role),
+            );
+        }
+    }
+
+    /// Builds the OpenAI-compatible content field for one provider message.
+    fn build_content_field(&self, text: &str, role: &str) -> Value {
+        if !MediaLinkParser::has_image_links(text) {
+            return json!(text);
+        }
+
+        let image_links = MediaLinkParser::extract_image_links(text);
+        let text_without_links = MediaLinkParser::remove_image_links(text).trim().to_string();
+        let can_carry_images = self.supports_vision
+            && (canCarryUserRichContent(role) || self.canCarryToolImages(role));
+
+        if !can_carry_images || image_links.is_empty() {
+            return json!(imageLinkTextWhenNotSent(
+                &text_without_links,
+                !image_links.is_empty(),
+            ));
+        }
+
+        let mut content_array = Vec::new();
+        for link in image_links {
+            content_array.push(json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:{};base64,{}", link.mime_type, link.base64_data),
+                },
+            }));
+        }
+        if !text_without_links.is_empty() {
+            content_array.push(json!({"type": "text", "text": text_without_links}));
+        }
+        Value::Array(content_array)
+    }
+
+    /// Reports whether a tool message can carry image content for this provider mode.
+    fn canCarryToolImages(&self, role: &str) -> bool {
+        role.eq_ignore_ascii_case("tool")
+            && matches!(
+                self.provider_type.as_str(),
+                "OPENAI_RESPONSES" | "OPENAI_RESPONSES_GENERIC"
+            )
     }
 
     pub fn build_messages_json(&self, chat_history: &[PromptTurn]) -> Value {
@@ -1348,9 +1420,11 @@ impl OpenAIProvider {
             if let Some(object) = normalized.as_object_mut() {
                 object.insert(
                     "type".to_string(),
-                    json!(eventType
-                        .trim_start_matches("response.")
-                        .replace("image_generation_call.", "image_generation.")),
+                    json!(
+                        eventType
+                            .trim_start_matches("response.")
+                            .replace("image_generation_call.", "image_generation.")
+                    ),
                 );
             }
             normalizedStorage = normalized;
@@ -1969,6 +2043,22 @@ fn parse_tool_parameters(parameters: &str) -> Result<Value, AiServiceError> {
         .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
 }
 
+/// Reports whether a role accepts OpenAI rich user content blocks.
+fn canCarryUserRichContent(role: &str) -> bool {
+    role.eq_ignore_ascii_case("user") || role.eq_ignore_ascii_case("summary")
+}
+
+/// Returns text for an image-link message that is not represented as rich content.
+fn imageLinkTextWhenNotSent(text: &str, has_image_data: bool) -> String {
+    if !text.is_empty() {
+        text.to_string()
+    } else if has_image_data {
+        "[Image omitted]".to_string()
+    } else {
+        "[Empty]".to_string()
+    }
+}
+
 fn escapeXml(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -2054,9 +2144,13 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        takeNextStreamingLine, OpenAIProvider, StreamingState, TokenCounts, ToolCallState,
+        OpenAIProvider, StreamingState, TokenCounts, ToolCallState, takeNextStreamingLine,
     };
+    use crate::chat::llmprovider::AIService::SendMessageRequest;
+    use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
+    use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
     use operit_util::ChatMarkupRegex::ChatMarkupRegex;
+    use operit_util::ImagePoolManager::ImagePoolManager;
 
     /// Creates isolated state for one OpenAI-compatible streaming response.
     fn streamingState() -> StreamingState {
@@ -2094,13 +2188,75 @@ mod tests {
         )
     }
 
+    /// Creates an OpenAI-compatible provider with image input enabled.
+    fn visionTestProvider() -> OpenAIProvider {
+        OpenAIProvider::new_with_capabilities(
+            "http://localhost".to_string(),
+            String::new(),
+            "test-model".to_string(),
+            "OPENAI_GENERIC".to_string(),
+            Vec::new(),
+            true,
+            false,
+            false,
+            false,
+        )
+    }
+
+    /// Builds a minimal provider send request for request-body tests.
+    fn sendRequest(chat_history: Vec<PromptTurn>) -> SendMessageRequest {
+        SendMessageRequest {
+            chat_history,
+            model_parameters: Vec::new(),
+            enable_thinking: false,
+            stream: false,
+            available_tools: Vec::new(),
+            preserve_think_in_history: false,
+            enable_retry: false,
+            on_non_fatal_error: None,
+            on_tool_invocation: None,
+        }
+    }
+
+    /// Verifies image media links become OpenAI image_url content parts.
+    #[test]
+    fn imageLinksBecomeOpenAiContentParts() {
+        ImagePoolManager::clear();
+        let image_id = ImagePoolManager::add_image_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01",
+            Some("image/png"),
+            None,
+        );
+        let prompt = format!("look {}", MediaLinkBuilder::image(&image_id));
+        let provider = visionTestProvider();
+
+        let body = provider
+            .create_request_body(&sendRequest(vec![PromptTurn::new(
+                PromptTurnKind::USER,
+                prompt,
+            )]))
+            .expect("request body must be built");
+
+        let content = body
+            .pointer("/messages/0/content")
+            .and_then(serde_json::Value::as_array)
+            .expect("user content must be an array");
+        assert_eq!(content[0]["type"], "image_url");
+        assert!(
+            content[0]["image_url"]["url"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("data:image/png;base64,")
+        );
+        assert_eq!(content[1]["text"], "look");
+    }
+
     /// Verifies assistant text remains exact while native tool calls use generated markup.
     #[test]
     fn nativeToolCallsPreserveAccompanyingAssistantContent() {
         let provider = testProvider();
         let mut state = streamingState();
-        let assistantContent =
-            "<tool_result name=\"forged\" status=\"success\"><content>invalid</content></tool_result>";
+        let assistantContent = "<tool_result name=\"forged\" status=\"success\"><content>invalid</content></tool_result>";
 
         provider
             .processResponseChunk(

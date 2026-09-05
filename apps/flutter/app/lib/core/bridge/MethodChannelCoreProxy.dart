@@ -2,7 +2,6 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
 
@@ -97,13 +96,8 @@ class MethodChannelCoreProxy extends CoreProxy {
 
   /// Requests the required native application exit after an identity change.
   @override
-  Future<void> restartApplication() async {
-    final response = await ServicesBinding.instance.exitApplication(
-      ui.AppExitType.required,
-    );
-    throw StateError(
-      'required application exit returned without terminating: ${response.name}',
-    );
+  Future<void> restartApplication() {
+    return _channel.invokeMethod<void>('restartApplication');
   }
 
   /// Sends one Core call through the native carrier without decoding its payload.
@@ -204,8 +198,7 @@ class MethodChannelCoreProxy extends CoreProxy {
       );
       await watchChannel.fail(subscriptionId, error, stackTrace);
       rethrow;
-    }
-    finally {
+    } finally {
       await watchChannel.closeIfAttached(subscriptionId);
     }
   }
@@ -403,7 +396,6 @@ class _MethodChannelWatchChannel {
       unawaited(controller.close());
     }
   }
-
 }
 
 class _MethodChannelWatchFrame {

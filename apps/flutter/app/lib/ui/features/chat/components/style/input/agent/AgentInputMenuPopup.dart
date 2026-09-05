@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
+import '../../../../../../common/CharacterAvatar.dart';
 import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
@@ -15,12 +16,16 @@ class AgentInputMenuPopup extends StatefulWidget {
     super.key,
     required this.viewModel,
     required this.currentChatId,
+    required this.currentCharacterCardName,
+    required this.currentCharacterCardAvatarUri,
     required this.onDismiss,
     this.leadingChildren = const <Widget>[],
   });
 
   final ChatViewModel viewModel;
   final String? currentChatId;
+  final String? currentCharacterCardName;
+  final String? currentCharacterCardAvatarUri;
   final VoidCallback onDismiss;
   final List<Widget> leadingChildren;
 
@@ -189,6 +194,14 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
+                    _ChatSessionSummarySection(
+                      viewModel: widget.viewModel,
+                      currentCharacterCardName: widget.currentCharacterCardName,
+                      currentCharacterCardAvatarUri:
+                          widget.currentCharacterCardAvatarUri,
+                      onDismiss: widget.onDismiss,
+                    ),
+                    const Divider(height: 1),
                     ...widget.leadingChildren,
                     _MenuSection(
                       icon: Icons.data_object_outlined,
@@ -236,7 +249,10 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                       },
                       children: <Widget>[
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 3,
+                          ),
                           child: _PermissionModeSelector(
                             selectedMode: data.toolPermissionMode,
                             onSelected: _setPermissionMode,
@@ -294,6 +310,627 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
             },
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ChatSessionSummarySection extends StatefulWidget {
+  const _ChatSessionSummarySection({
+    required this.viewModel,
+    required this.currentCharacterCardName,
+    required this.currentCharacterCardAvatarUri,
+    required this.onDismiss,
+  });
+
+  final ChatViewModel viewModel;
+  final String? currentCharacterCardName;
+  final String? currentCharacterCardAvatarUri;
+  final VoidCallback onDismiss;
+
+  /// Creates the state for the current chat summary section.
+  @override
+  State<_ChatSessionSummarySection> createState() =>
+      _ChatSessionSummarySectionState();
+}
+
+class _ChatSessionSummarySectionState
+    extends State<_ChatSessionSummarySection> {
+  StreamSubscription<int>? _currentWindowSizeSubscription;
+  StreamSubscription<int>? _inputTokenCountSubscription;
+  StreamSubscription<int>? _outputTokenCountSubscription;
+  Future<double>? _maxContextLengthFuture;
+  int _currentWindowSize = 0;
+  int _inputTokenCount = 0;
+  int _outputTokenCount = 0;
+  bool _statsExpanded = false;
+
+  GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
+
+  /// Starts token statistic streams and loads the active model context size.
+  @override
+  void initState() {
+    super.initState();
+    _maxContextLengthFuture = _loadMaxContextLength();
+    _subscribeToTokenStatistics();
+  }
+
+  /// Opens the character card selector above the chat surface.
+  void _showCharacterCardSelector() {
+    final dialogFuture = showDialog<void>(
+      context: context,
+      builder: (context) {
+        return _CharacterCardSelectorDialog(viewModel: widget.viewModel);
+      },
+    );
+    widget.onDismiss();
+    unawaited(dialogFuture);
+  }
+
+  /// Loads the context limit of the currently selected chat model.
+  Future<double> _loadMaxContextLength() async {
+    final binding = await _clients.preferencesFunctionalConfigManager
+        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
+    final config = await _clients.preferencesModelConfigManager
+        .getResolvedModelConfig(
+          providerId: binding.providerId,
+          modelId: binding.modelId,
+        );
+    return config.context.maxContextLength;
+  }
+
+  /// Subscribes to the runtime-owned token statistic streams.
+  void _subscribeToTokenStatistics() {
+    final holder = _clients.chatRuntimeHolderMain;
+    _currentWindowSizeSubscription = holder.currentWindowSizeFlow().listen((
+      value,
+    ) {
+      if (mounted) {
+        setState(() {
+          _currentWindowSize = value;
+        });
+      }
+    });
+    _inputTokenCountSubscription = holder.inputTokenCountFlow().listen((value) {
+      if (mounted) {
+        setState(() {
+          _inputTokenCount = value;
+        });
+      }
+    });
+    _outputTokenCountSubscription = holder.outputTokenCountFlow().listen((
+      value,
+    ) {
+      if (mounted) {
+        setState(() {
+          _outputTokenCount = value;
+        });
+      }
+    });
+  }
+
+  /// Stops token statistic streams when the menu closes.
+  @override
+  void dispose() {
+    unawaited(_currentWindowSizeSubscription?.cancel());
+    unawaited(_inputTokenCountSubscription?.cancel());
+    unawaited(_outputTokenCountSubscription?.cancel());
+    super.dispose();
+  }
+
+  /// Builds the current character and token summary rows.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return FutureBuilder<double>(
+      future: _maxContextLengthFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+        }
+        final maxContextLength = snapshot.data;
+        final maxContextTokens = maxContextLength == null
+            ? null
+            : (maxContextLength * 1024).round();
+        final contextUsagePercentage = maxContextTokens == null
+            ? null
+            : _contextUsagePercentage(maxContextTokens);
+        final totalTokenCount = _inputTokenCount + _outputTokenCount;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            InkWell(
+              onTap: _showCharacterCardSelector,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: ClipOval(
+                          child: CharacterAvatarImage(
+                            avatarUri: widget.currentCharacterCardAvatarUri,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Text(
+                              '当前角色卡',
+                              style: textTheme.labelSmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            Text(
+                              widget.currentCharacterCardName ?? '未绑定',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurface,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right,
+                        size: 20,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            InkWell(
+              onTap: () {
+                setState(() {
+                  _statsExpanded = !_statsExpanded;
+                });
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 40),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.data_usage_outlined,
+                        size: 17,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 12),
+                      Text('统计', style: textTheme.bodySmall),
+                      const Spacer(),
+                      Text(
+                        contextUsagePercentage == null
+                            ? '加载中...'
+                            : '${contextUsagePercentage.toStringAsFixed(0)}%',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        _statsExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        size: 20,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (_statsExpanded)
+              ColoredBox(
+                color: colorScheme.surface.withValues(alpha: 0.42),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(40, 6, 12, 8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _ChatStatValueRow(
+                        label: '上下文窗口',
+                        value: _contextWindowLabel(
+                          currentWindowSize: _currentWindowSize,
+                          maxContextTokens: maxContextTokens,
+                        ),
+                      ),
+                      _ChatStatValueRow(
+                        label: '输入 Token',
+                        value: _formatTokenCount(_inputTokenCount),
+                      ),
+                      _ChatStatValueRow(
+                        label: '输出 Token',
+                        value: _formatTokenCount(_outputTokenCount),
+                      ),
+                      _ChatStatValueRow(
+                        label: '总 Token',
+                        value: _formatTokenCount(totalTokenCount),
+                        highlighted: true,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Calculates the current context usage percentage for the summary row.
+  double _contextUsagePercentage(int maxContextTokens) {
+    if (maxContextTokens <= 0) {
+      return 0;
+    }
+    return (_currentWindowSize / maxContextTokens * 100).clamp(0, 999);
+  }
+
+  /// Formats the context window values used in the expanded statistics.
+  String _contextWindowLabel({
+    required int currentWindowSize,
+    required int? maxContextTokens,
+  }) {
+    final maxTokens = maxContextTokens;
+    if (maxTokens == null) {
+      return '加载中...';
+    }
+    return '${_formatTokenCount(currentWindowSize)} / ${_formatTokenCount(maxTokens)}';
+  }
+
+  /// Formats token counts with compact thousands separators.
+  String _formatTokenCount(int value) {
+    return value.toString().replaceAllMapped(
+      RegExp(r'(?<=\d)(?=(\d{3})+$)'),
+      (match) => ',',
+    );
+  }
+}
+
+class _CharacterCardSelectorDialog extends StatefulWidget {
+  const _CharacterCardSelectorDialog({required this.viewModel});
+
+  final ChatViewModel viewModel;
+
+  /// Creates the state for the character card selector dialog.
+  @override
+  State<_CharacterCardSelectorDialog> createState() =>
+      _CharacterCardSelectorDialogState();
+}
+
+class _CharacterCardSelectorDialogState
+    extends State<_CharacterCardSelectorDialog> {
+  StreamSubscription<core_proxy.ActivePrompt>? _activePromptSubscription;
+  Future<List<core_proxy.CharacterCard>>? _cardsFuture;
+  core_proxy.ActivePrompt? _activePrompt;
+  String? _switchingCharacterCardId;
+
+  GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
+
+  /// Starts loading cards and observing the active prompt.
+  @override
+  void initState() {
+    super.initState();
+    _cardsFuture = _loadCharacterCards();
+    _activePromptSubscription = _clients.preferencesActivePromptManager
+        .activePromptFlow()
+        .listen((prompt) {
+          if (mounted) {
+            setState(() {
+              _activePrompt = prompt;
+            });
+          }
+        });
+    unawaited(_loadActivePrompt());
+  }
+
+  /// Loads the character cards shown in the selector dialog.
+  Future<List<core_proxy.CharacterCard>> _loadCharacterCards() {
+    return _clients.preferencesCharacterCardManager.getAllCharacterCards();
+  }
+
+  /// Reads the active prompt for the initial selection marker.
+  Future<void> _loadActivePrompt() async {
+    final prompt = await _clients.preferencesActivePromptManager
+        .getActivePrompt();
+    if (mounted) {
+      setState(() {
+        _activePrompt = prompt;
+      });
+    }
+  }
+
+  /// Switches the runtime to the selected character card and closes the dialog.
+  Future<void> _selectCharacterCard(core_proxy.CharacterCard card) async {
+    if (_switchingCharacterCardId != null) {
+      return;
+    }
+    setState(() {
+      _switchingCharacterCardId = card.id;
+    });
+    try {
+      await _clients.chatRuntimeHolderMain.switchActiveCharacterCardTarget(
+        characterCardId: card.id,
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _switchingCharacterCardId = null;
+        });
+      }
+    }
+  }
+
+  /// Returns the active card id when the runtime targets a character card.
+  String? get _activeCharacterCardId {
+    final prompt = _activePrompt;
+    return prompt?.tag == 'CharacterCard' ? prompt?.id : null;
+  }
+
+  /// Stops the active prompt subscription when the dialog closes.
+  @override
+  void dispose() {
+    unawaited(_activePromptSubscription?.cancel());
+    super.dispose();
+  }
+
+  /// Builds the character card selector dialog.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: 360,
+          minHeight: 420,
+          maxHeight: 420,
+        ),
+        child: FutureBuilder<List<core_proxy.CharacterCard>>(
+          future: _cardsFuture,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+            }
+            final cards = snapshot.data;
+            if (cards == null) {
+              return const SizedBox.expand(
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              );
+            }
+            return Column(
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          '切换角色卡',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${cards.length} 个',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      IconButton(
+                        tooltip: '关闭',
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close, size: 18),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                if (cards.isEmpty)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
+                        child: Text(
+                          '暂无角色卡',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: Scrollbar(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                        itemCount: cards.length,
+                        separatorBuilder: (context, index) => Divider(
+                          height: 1,
+                          color: colorScheme.outlineVariant.withValues(
+                            alpha: 0.45,
+                          ),
+                        ),
+                        itemBuilder: (context, index) {
+                          final card = cards[index];
+                          return _CharacterCardOption(
+                            card: card,
+                            active: card.id == _activeCharacterCardId,
+                            switching: card.id == _switchingCharacterCardId,
+                            enabled: _switchingCharacterCardId == null,
+                            onTap: () => _selectCharacterCard(card),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _CharacterCardOption extends StatelessWidget {
+  const _CharacterCardOption({
+    required this.card,
+    required this.active,
+    required this.switching,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final core_proxy.CharacterCard card;
+  final bool active;
+  final bool switching;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  /// Builds one selectable character card row.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final titleColor = enabled
+        ? colorScheme.onSurface
+        : colorScheme.onSurfaceVariant.withValues(alpha: 0.65);
+    final descriptionColor = enabled
+        ? colorScheme.onSurfaceVariant
+        : colorScheme.onSurfaceVariant.withValues(alpha: 0.5);
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
+        child: Row(
+          children: <Widget>[
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: ClipOval(
+                child: CharacterAvatarImage(
+                  avatarUri: card.avatarUri,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    card.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: active ? colorScheme.primary : titleColor,
+                      fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+                    ),
+                  ),
+                  if (card.description.isNotEmpty)
+                    Text(
+                      card.description,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.labelSmall?.copyWith(
+                        color: descriptionColor,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: switching
+                  ? const Padding(
+                      padding: EdgeInsets.all(2),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      active ? Icons.check : Icons.circle_outlined,
+                      size: active ? 18 : 16,
+                      color: active
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.45,
+                            ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatStatValueRow extends StatelessWidget {
+  const _ChatStatValueRow({
+    required this.label,
+    required this.value,
+    this.highlighted = false,
+  });
+
+  final String label;
+  final String value;
+  final bool highlighted;
+
+  /// Builds one value row in the expanded chat statistics section.
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: <Widget>[
+          Expanded(child: Text(label, style: textTheme.labelSmall)),
+          Text(
+            value,
+            style: textTheme.labelSmall?.copyWith(
+              color: highlighted
+                  ? colorScheme.primary
+                  : colorScheme.onSurfaceVariant,
+              fontWeight: highlighted ? FontWeight.w700 : FontWeight.normal,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -368,6 +1005,7 @@ class _MenuSection extends StatelessWidget {
   final VoidCallback onTap;
   final List<Widget> children;
 
+  /// Builds a menu section with a softly grouped expanded content area.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -378,12 +1016,16 @@ class _MenuSection extends StatelessWidget {
         InkWell(
           onTap: onTap,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 40),
+            constraints: const BoxConstraints(minHeight: 36),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
                 children: <Widget>[
-                  Icon(icon, size: 17, color: colorScheme.onSurfaceVariant),
+                  Icon(
+                    icon,
+                    size: 16,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                  ),
                   const SizedBox(width: 12),
                   Text(title, style: textTheme.bodySmall),
                   const SizedBox(width: 8),
@@ -413,11 +1055,17 @@ class _MenuSection extends StatelessWidget {
           ),
         ),
         if (expanded)
-          ColoredBox(
-            color: colorScheme.surface.withValues(alpha: 0.42),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(mainAxisSize: MainAxisSize.min, children: children),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 8, 6),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: ColoredBox(
+                color: colorScheme.surface.withValues(alpha: 0.42),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: children,
+                ),
+              ),
             ),
           ),
       ],
@@ -444,6 +1092,7 @@ class _SwitchRow extends StatelessWidget {
   final bool enabled;
   final VoidCallback onTap;
 
+  /// Builds a compact switch row using the model row metrics.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -492,11 +1141,12 @@ class _SwitchRow extends StatelessWidget {
                   color: enabled
                       ? colorScheme.primary
                       : colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(width: 8),
               Transform.scale(
-                scale: 0.66,
+                scale: 0.65,
                 child: Switch(
                   value: checked,
                   onChanged: enabled ? (_) => onTap() : null,
@@ -519,6 +1169,7 @@ class _PermissionModeSelector extends StatelessWidget {
   final _ToolPermissionMode selectedMode;
   final ValueChanged<_ToolPermissionMode> onSelected;
 
+  /// Builds the compact three-way permission mode selector.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -528,10 +1179,10 @@ class _PermissionModeSelector extends StatelessWidget {
         for (final mode in _ToolPermissionMode.values) ...[
           Expanded(
             child: InkWell(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(6),
               onTap: () => onSelected(mode),
               child: Container(
-                height: 34,
+                height: 30,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: mode == selectedMode
@@ -542,7 +1193,7 @@ class _PermissionModeSelector extends StatelessWidget {
                         ? colorScheme.primary
                         : colorScheme.outline.withValues(alpha: 0.35),
                   ),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   mode.label,

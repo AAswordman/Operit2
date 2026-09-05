@@ -42,6 +42,7 @@ target_link_libraries(${BINARY_NAME} PRIVATE "propsys.lib" "shell32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "advapi32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "wtsapi32.lib" "iphlpapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "gdiplus.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 set(OPERIT_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../")

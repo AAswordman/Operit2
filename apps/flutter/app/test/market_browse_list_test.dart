@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/errors/UnhandledErrorReporter.dart';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/features/packages/market/MarketBrowseList.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
@@ -16,6 +17,9 @@ void main() {
 
     await tester.pumpWidget(
       OperitTheme(
+        initialThemePreferenceSnapshot:
+            UserPreferencesManager.defaultThemePreferenceSnapshot,
+        initialThemeIsReady: false,
         unconfiguredChildEnabled: true,
         hostInteractionHostsEnabled: false,
         child: Scaffold(

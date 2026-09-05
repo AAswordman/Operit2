@@ -1,10 +1,10 @@
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
-    ChatInputHookContext, ChatInputHookResult, ToolPkgChatInputHookBridge,
-    CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMITTED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
+    CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED, CHAT_INPUT_EVENT_SUBMITTED,
     CHAT_INPUT_SUBMIT_ACTION_ALLOW, CHAT_INPUT_SUBMIT_ACTION_BLOCK,
-    CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE,
+    CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE, ChatInputHookContext,
+    ChatInputHookResult, ToolPkgChatInputHookBridge,
 };
 use crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
@@ -17,6 +17,8 @@ use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use operit_host_api::FileSystemHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{
@@ -35,19 +37,19 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PendingQueueMessageItem::PendingQueueMessageItem;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_store::repository::ChatHistoryManager::ChatImportResult;
-use operit_store::repository::UsageStatisticsStore::UsageStatisticsStore;
 use operit_store::PreferencesDataStore::{
-    combine2, combine3, mutableStateFlow, MutableStateFlow, StateFlow,
+    MutableStateFlow, StateFlow, combine2, combine3, mutableStateFlow,
 };
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use operit_store::repository::ChatHistoryManager::ChatImportResult;
+use operit_store::repository::UsageStatisticsStore::UsageStatisticsStore;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::runtime_support::CoreRouteResumeContext;
-use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_util::AppLogger::AppLogger;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
@@ -60,6 +62,7 @@ use url::Url;
 
 const PACKAGE_ATTACHMENT_PREFIX: &str = "package_attach:";
 const PASTED_TEXT_ATTACHMENT_PREFIX: &str = "pasted_text:";
+const PASTED_IMAGE_ATTACHMENT_PREFIX: &str = "pasted_image:";
 const WORKSPACE_MENTION_ATTACHMENT_PREFIX: &str = "workspace_mention:";
 const OCR_INLINE_INSTRUCTION: &str = "Do not read the file, answer the user's question directly based on the attachment content and the user's question.";
 pub trait ChatServiceUiBridge {}
@@ -67,6 +70,15 @@ pub trait ChatServiceUiBridge {}
 pub struct EmptyChatServiceUiBridge;
 
 impl ChatServiceUiBridge for EmptyChatServiceUiBridge {}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PastedImageAttachmentPayload {
+    file_name: String,
+    mime_type: String,
+    file_size: i64,
+    base64_content: String,
+}
 
 /// Serializes a ToolPkg chat input result into the proxy-facing JSON shape.
 #[allow(non_snake_case)]
@@ -284,6 +296,7 @@ impl ChatServiceCore {
         self.chatHistoryDelegate = ChatHistoryDelegate::new(self.selectionMode.clone());
         self.chatHistoryDelegate.initialize();
         self.messageProcessingDelegate = MessageProcessingDelegate::default();
+        self.messageProcessingDelegate.fileSystemHost = Some(self.fileSystemHost.clone());
         let messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
         self.messageCoordinationDelegate = Some(MessageCoordinationDelegate::new(
             self.chatHistoryDelegate.clone_for_core(),
@@ -1421,10 +1434,14 @@ impl ChatServiceCore {
         }
     }
 
-    /// Adds a file, pasted text, package, screen capture, notification capture, or location capture as an attachment.
+    /// Adds a file, pasted text, pasted image, package, screen capture, notification capture, or location capture as an attachment.
     pub fn handleAttachment(&mut self, _filePath: String) {
         if let Some(content) = _filePath.strip_prefix(PASTED_TEXT_ATTACHMENT_PREFIX) {
             self.attachPastedText(content.to_string());
+            return;
+        }
+        if let Some(payloadJson) = _filePath.strip_prefix(PASTED_IMAGE_ATTACHMENT_PREFIX) {
+            self.attachPastedImage(payloadJson);
             return;
         }
 
@@ -1501,6 +1518,72 @@ impl ChatServiceCore {
         self.attachments.push(attachmentInfo);
         self.messageProcessingDelegate
             .showToast("已添加粘贴文本附件".to_string());
+    }
+
+    /// Adds the supplied pasted image as a clean-on-exit file attachment.
+    #[allow(non_snake_case)]
+    fn attachPastedImage(&mut self, payloadJson: &str) {
+        let payload: PastedImageAttachmentPayload = match serde_json::from_str(payloadJson) {
+            Ok(value) => value,
+            Err(error) => {
+                self.messageProcessingDelegate
+                    .showToast(format!("添加粘贴图片失败: {error}"));
+                return;
+            }
+        };
+        let fileName = payload.file_name.trim().replace('"', "'");
+        if fileName.is_empty() {
+            self.messageProcessingDelegate
+                .showToast("添加粘贴图片失败: 文件名为空".to_string());
+            return;
+        }
+        let mimeType = payload.mime_type.trim().to_ascii_lowercase();
+        if !mimeType.starts_with("image/") {
+            self.messageProcessingDelegate
+                .showToast(format!("添加粘贴图片失败: 不支持的类型 {mimeType}"));
+            return;
+        }
+        let decoded = match STANDARD.decode(payload.base64_content.trim().as_bytes()) {
+            Ok(bytes) if !bytes.is_empty() => bytes,
+            Ok(_) => {
+                self.messageProcessingDelegate
+                    .showToast("添加粘贴图片失败: 图片内容为空".to_string());
+                return;
+            }
+            Err(error) => {
+                self.messageProcessingDelegate
+                    .showToast(format!("添加粘贴图片失败: {error}"));
+                return;
+            }
+        };
+        let fileSize = decoded.len() as i64;
+        if payload.file_size > 0 && payload.file_size != fileSize {
+            self.messageProcessingDelegate
+                .showToast("添加粘贴图片失败: 图片大小不一致".to_string());
+            return;
+        }
+        let tempFile = match createTempFileFromBytes(
+            self.fileSystemHost.as_ref(),
+            &fileName,
+            &decoded,
+            self.attachments.len(),
+        ) {
+            Ok(value) => value,
+            Err(message) => {
+                self.messageProcessingDelegate.showToast(message);
+                return;
+            }
+        };
+        let attachmentInfo = AttachmentInfo {
+            filePath: tempFile.to_string_lossy().into_owned(),
+            fileName,
+            mimeType,
+            fileSize,
+            content: String::new(),
+        };
+        self.attachments.push(attachmentInfo);
+        self.messageProcessingDelegate
+            .showToast("已添加粘贴图片附件".to_string());
     }
 
     #[allow(non_snake_case)]
@@ -2198,6 +2281,13 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.showLatestMessagesForCurrentChat();
     }
 
+    /// Reveals one message inside the current chat display window.
+    #[allow(non_snake_case)]
+    pub fn revealMessageForCurrentChat(&mut self, targetTimestamp: i64) -> bool {
+        self.chatHistoryDelegate
+            .revealMessageForCurrentChat(targetTimestamp)
+    }
+
     /// Searches a chat and returns lightweight message previews for navigation.
     #[allow(non_snake_case)]
     pub fn loadChatMessageLocatorPreviews(
@@ -2438,6 +2528,46 @@ fn createTempFileFromPath(
         .map_err(|error| format!("无法读取附件临时文件: {}", error.message))?;
     if !copied.exists || copied.isDirectory || copied.size == 0 {
         return Err(format!("无法添加附件: {}", sourcePath.display()));
+    }
+    Ok(tempFile)
+}
+
+/// Writes pasted image bytes into clean-on-exit storage through the supplied file-system host.
+#[allow(non_snake_case)]
+fn createTempFileFromBytes(
+    fileSystemHost: &dyn FileSystemHost,
+    fileName: &str,
+    bytes: &[u8],
+    slot: usize,
+) -> Result<PathBuf, String> {
+    let fileExtension = fileName
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .filter(|extension| !extension.trim().is_empty())
+        .ok_or_else(|| format!("无法添加粘贴图片: {fileName}"))?;
+    let externalDir = OperitPaths::cleanOnExitDir()?;
+    let externalDirText = externalDir.to_string_lossy();
+    fileSystemHost
+        .makeDirectory(&externalDirText, true)
+        .map_err(|error| format!("无法创建附件临时目录: {}", error.message))?;
+    let noMediaFile = externalDir.join(".nomedia");
+    fileSystemHost
+        .writeFile(&noMediaFile.to_string_lossy(), "", false)
+        .map_err(|error| format!("无法创建附件媒体标记: {}", error.message))?;
+    let tempFile = externalDir.join(format!(
+        "pasted_image_{}_{}.{}",
+        currentTimeMillis(),
+        slot,
+        fileExtension
+    ));
+    fileSystemHost
+        .writeFileBytes(&tempFile.to_string_lossy(), bytes)
+        .map_err(|error| format!("无法保存粘贴图片: {}", error.message))?;
+    let saved = fileSystemHost
+        .fileExists(&tempFile.to_string_lossy())
+        .map_err(|error| format!("无法读取粘贴图片: {}", error.message))?;
+    if !saved.exists || saved.isDirectory || saved.size == 0 {
+        return Err(format!("无法添加粘贴图片: {fileName}"));
     }
     Ok(tempFile)
 }

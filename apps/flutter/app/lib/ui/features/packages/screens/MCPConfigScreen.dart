@@ -13,6 +13,7 @@ import '../dialogs/MCPDetailsDialog.dart';
 import '../utils/MCPCommandRunner.dart';
 
 class MCPConfigScreen extends StatefulWidget {
+  /// Creates the MCP configuration screen.
   const MCPConfigScreen({
     super.key,
     required this.clients,
@@ -24,6 +25,7 @@ class MCPConfigScreen extends StatefulWidget {
   final String searchQuery;
   final int reloadRevision;
 
+  /// Creates the MCP configuration state.
   @override
   State<MCPConfigScreen> createState() => _MCPConfigScreenState();
 }
@@ -42,12 +44,14 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
   GeneratedPermissionsMcpRuntimeMcpLocalServerCoreProxy get _localServer =>
       widget.clients.permissionsMcpRuntimeMcpLocalServer;
 
+  /// Initializes the MCP configuration state.
   @override
   void initState() {
     super.initState();
     _loadMcp();
   }
 
+  /// Reloads MCP data when the parent requests a revision.
   @override
   void didUpdateWidget(covariant MCPConfigScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -56,6 +60,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     }
   }
 
+  /// Loads MCP servers, metadata, and runtime statuses.
   Future<void> _loadMcp() async {
     setState(() {
       _loading = true;
@@ -90,6 +95,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     }
   }
 
+  /// Persists an MCP server enabled state and refreshes its lifecycle.
   Future<void> _setServerEnabled(String serverId, bool enabled) async {
     final current = _servers[serverId];
     final previous = current != null && !current.disabled;
@@ -156,6 +162,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     }
   }
 
+  /// Opens the details dialog for an MCP server.
   Future<void> _showDetails(String serverId) async {
     final metadata = _metadata[serverId];
     final server = _servers[serverId];
@@ -178,6 +185,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     );
   }
 
+  /// Builds the MCP screen with a lazily rendered expandable list.
   @override
   Widget build(BuildContext context) {
     final error = _errorMessage;
@@ -202,53 +210,70 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
       children: <Widget>[
         RefreshIndicator(
           onRefresh: _loadMcp,
-          child: ListView(
+          child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-            children: <Widget>[
-              _MCPHeaderCard(directory: _configDirectory, onRefresh: _loadMcp),
-              const SizedBox(height: 12),
+            slivers: <Widget>[
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: _MCPHeaderCard(
+                    directory: _configDirectory,
+                    onRefresh: _loadMcp,
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
               if (ids.isEmpty)
-                EmptyState(
-                  icon: Icons.extension_outlined,
-                  title: '没有 MCP',
-                  message: widget.searchQuery.trim().isEmpty
-                      ? '当前没有可显示的 MCP 服务。'
-                      : '没有匹配的 MCP 服务。',
-                  scrollable: false,
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                  sliver: SliverToBoxAdapter(
+                    child: EmptyState(
+                      icon: Icons.extension_outlined,
+                      title: '没有 MCP',
+                      message: widget.searchQuery.trim().isEmpty
+                          ? '当前没有可显示的 MCP 服务。'
+                          : '没有匹配的 MCP 服务。',
+                      scrollable: false,
+                    ),
+                  ),
                 )
               else
-                PackageInlineGrid(
-                  itemCount: ids.length,
-                  itemBuilder: (context, index) {
-                    final serverId = ids[index];
-                    final server = _servers[serverId];
-                    final metadata = _metadata[serverId];
-                    final status = _statuses[serverId];
-                    final enabled = server != null && !server.disabled;
-                    final toolCount = status?.cachedTools?.length;
-                    final hasError = status?.errorMessage != null;
-                    return PackageListItem(
-                      icon: Icons.extension_outlined,
-                      title: metadata?.name.trim().isNotEmpty == true
-                          ? metadata!.name
-                          : serverId,
-                      subtitle: metadata?.description.trim().isNotEmpty == true
-                          ? metadata!.description
-                          : serverId,
-                      metadata: <String>[
-                        serverId,
-                        if (metadata?.version.trim().isNotEmpty == true)
-                          metadata!.version,
-                        if (toolCount != null) '$toolCount 工具',
-                        if (hasError) '错误',
-                      ],
-                      enabled: enabled,
-                      onTap: () => _showDetails(serverId),
-                      onEnabledChanged: (value) =>
-                          _setServerEnabled(serverId, value),
-                    );
-                  },
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                  sliver: PackageSliverList(
+                    itemCount: ids.length,
+                    itemBuilder: (context, index) {
+                      final serverId = ids[index];
+                      final server = _servers[serverId];
+                      final metadata = _metadata[serverId];
+                      final status = _statuses[serverId];
+                      final enabled = server != null && !server.disabled;
+                      final toolCount = status?.cachedTools?.length;
+                      final hasError = status?.errorMessage != null;
+                      return PackageListItem(
+                        key: ValueKey<String>('mcp:$serverId'),
+                        icon: Icons.cloud_outlined,
+                        title: metadata?.name.trim().isNotEmpty == true
+                            ? metadata!.name
+                            : serverId,
+                        subtitle:
+                            metadata?.description.trim().isNotEmpty == true
+                            ? metadata!.description
+                            : serverId,
+                        metadata: <String>[
+                          serverId,
+                          if (metadata?.version.trim().isNotEmpty == true)
+                            metadata!.version,
+                          if (toolCount != null) '$toolCount 工具',
+                          if (hasError) '错误',
+                        ],
+                        enabled: enabled,
+                        onDetails: () => _showDetails(serverId),
+                        onEnabledChanged: (value) =>
+                            _setServerEnabled(serverId, value),
+                      );
+                    },
+                  ),
                 ),
             ],
           ),
@@ -259,6 +284,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
     );
   }
 
+  /// Returns MCP server identifiers matching the current search query.
   List<String> get _filteredServerIds {
     final allIds = <String>{
       ..._servers.keys,
@@ -288,6 +314,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
         .toList(growable: false);
   }
 
+  /// Resolves the display name used for an MCP server.
   String _displayName(String serverId) {
     final metadata = _metadata[serverId];
     if (metadata != null && metadata.name.trim().isNotEmpty) {
@@ -298,11 +325,14 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
 }
 
 class _MCPHeaderCard extends StatelessWidget {
+  /// Creates the MCP directory header card.
   const _MCPHeaderCard({required this.directory, required this.onRefresh});
 
   final String directory;
   final VoidCallback onRefresh;
 
+  /// Builds the MCP directory header card.
+  /// Builds the MCP directory header card.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;

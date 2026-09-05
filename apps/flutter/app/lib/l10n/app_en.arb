@@ -826,27 +826,9 @@
   "settingsCharactersImport": "Import",
   "settingsCharactersExport": "Export",
   "settingsCharactersImportJson": "Import JSON",
-  "settingsCharactersCopyJson": "Copy JSON",
+  "settingsCharactersExportJson": "Export JSON",
   "settingsCharactersImportTavernJson": "Import Tavern JSON",
-  "settingsCharactersCopyTavernJson": "Copy Tavern JSON",
-  "settingsCharactersJsonInput": "JSON content",
-  "settingsCharactersTavernJsonInput": "Tavern JSON content",
-  "settingsCharactersJsonCopied": "Copied JSON for “{name}”.",
-  "@settingsCharactersJsonCopied": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTavernJsonCopied": "Copied Tavern JSON for “{name}”.",
-  "@settingsCharactersTavernJsonCopied": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
+  "settingsCharactersExportTavernJson": "Export Tavern JSON",
   "settingsCharactersImportCardJson": "Import character card JSON",
   "settingsCharactersImportCardJsonDone": "Character card imported.",
   "settingsCharactersImportTavernJsonDone": "Tavern character card imported.",
@@ -868,8 +850,16 @@
       }
     }
   },
-  "settingsCharactersTavernJsonCopyError": "Tavern JSON copy failed: {error}",
-  "@settingsCharactersTavernJsonCopyError": {
+  "settingsCharactersExportJsonError": "JSON export failed: {error}",
+  "@settingsCharactersExportJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersExportTavernJsonError": "Tavern JSON export failed: {error}",
+  "@settingsCharactersExportTavernJsonError": {
     "placeholders": {
       "error": {
         "type": "String"
@@ -1650,17 +1640,8 @@
       }
     }
   },
-  "settingsDataCopyBackupJson": "Copy backup",
+  "settingsDataExportBackupJson": "Export backup",
   "settingsDataImportBackupJson": "Restore data",
-  "settingsDataBackupJsonInput": "Restore content",
-  "settingsDataBackupCopied": "Copied backup for “{name}”.",
-  "@settingsDataBackupCopied": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
   "settingsDataBackupImportResult": "Restore complete: {newCount} new, {updatedCount} updated, {skippedCount} skipped.",
   "@settingsDataBackupImportResult": {
     "placeholders": {
@@ -1683,8 +1664,8 @@
       }
     }
   },
-  "settingsDataBackupCopyError": "Copy failed: {error}",
-  "@settingsDataBackupCopyError": {
+  "settingsDataBackupExportError": "Export failed: {error}",
+  "@settingsDataBackupExportError": {
     "placeholders": {
       "error": {
         "type": "String"

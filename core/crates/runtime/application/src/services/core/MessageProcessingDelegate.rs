@@ -3,19 +3,20 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::core::chat::AIMessageManager::{
-    logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
-    SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
+    AIMessageManager, BuildUserMessageContentRequest, SendMessageRequest as AIMessageSendRequest,
+    StableContextWindowRequest, logMessageTiming, messageTimingNow,
 };
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::services::RuntimeHostInteractionService::{
+    RuntimeHostInteractionAppNotificationPayload, publishOwnerAppNotification,
+};
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
-use crate::services::RuntimeHostInteractionService::{
-    publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
-};
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
+use operit_host_api::FileSystemHost;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_link::{
@@ -34,21 +35,21 @@ use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::{AssistantMarkupStreamState, MessagePartCodec};
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::PromptTurn;
-use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
 };
-use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
+use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use operit_tools::tools::ToolProgressBus::ToolProgressBus;
+use operit_util::AppLogger::AppLogger;
+use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::stream::RevisableTextStream::{
     RenderableTextStream, ResponseStreamItem, RevisableTextStream,
 };
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
-use operit_util::AppLogger::AppLogger;
-use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
-use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 
 /// Maximum text length used when preparing automatic speech previews.
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
@@ -369,6 +370,7 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
 pub struct MessageProcessingDelegate {
     pub functionalConfigManager: FunctionalConfigManager,
     pub modelConfigManager: ModelConfigManager,
+    pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     executionStateByChatIdFlow: MutableStateFlow<HashMap<String, ChatExecutionState>>,
     pub scrollToBottomEvent: Vec<()>,
     pub nonFatalErrorEvent: Vec<String>,
@@ -407,6 +409,7 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager,
             modelConfigManager,
+            fileSystemHost: None,
             executionStateByChatIdFlow: mutableStateFlow(HashMap::new()),
             scrollToBottomEvent: Vec::new(),
             nonFatalErrorEvent: Vec::new(),
@@ -431,6 +434,7 @@ impl MessageProcessingDelegate {
         Self {
             functionalConfigManager: FunctionalConfigManager::new(rootDir.clone()),
             modelConfigManager: ModelConfigManager::new(rootDir),
+            fileSystemHost: self.fileSystemHost.clone(),
             executionStateByChatIdFlow: self.executionStateByChatIdFlow.clone(),
             scrollToBottomEvent: self.scrollToBottomEvent.clone(),
             nonFatalErrorEvent: self.nonFatalErrorEvent.clone(),
@@ -962,6 +966,7 @@ impl MessageProcessingDelegate {
                 messageText: request.messageText,
                 proxySenderName: request.proxySenderNameOverride,
                 attachments: request.attachments,
+                fileSystemHost: self.fileSystemHost.clone(),
                 workspacePath: request.workspacePath,
                 replyToMessage: request.replyToMessage,
                 enableDirectImageProcessing,
@@ -970,7 +975,7 @@ impl MessageProcessingDelegate {
                 chatId: Some(request.chatId.clone()),
                 roleCardId: Some(request.roleCardId),
                 onHookTimeout: Some(onHookTimeout),
-            });
+            })?;
         logMessageTiming(
             "delegate.buildUserMessageContent",
             buildUserMessageStartTime,

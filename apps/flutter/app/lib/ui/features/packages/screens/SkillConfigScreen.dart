@@ -12,6 +12,7 @@ import '../components/PackageGrid.dart';
 import '../components/PackageListItem.dart';
 
 class SkillConfigScreen extends StatefulWidget {
+  /// Creates the skill configuration screen.
   const SkillConfigScreen({
     super.key,
     required this.clients,
@@ -23,6 +24,7 @@ class SkillConfigScreen extends StatefulWidget {
   final String searchQuery;
   final int reloadRevision;
 
+  /// Creates the skill configuration state.
   @override
   State<SkillConfigScreen> createState() => _SkillConfigScreenState();
 }
@@ -41,12 +43,14 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
   GeneratedApplicationSkillRepositoryCoreProxy get _repository =>
       widget.clients.application.skillRepository();
 
+  /// Initializes the skill configuration state.
   @override
   void initState() {
     super.initState();
     _loadSkills();
   }
 
+  /// Reloads skills when the parent requests a revision.
   @override
   void didUpdateWidget(covariant SkillConfigScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -55,6 +59,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
     }
   }
 
+  /// Loads installed and bundled skills from the repository.
   Future<void> _loadSkills() async {
     setState(() {
       _loading = true;
@@ -108,6 +113,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
     }
   }
 
+  /// Persists whether a skill is visible to the assistant.
   Future<void> _setSkillVisible(String skillName, bool visible) async {
     final previous = _visibleSkillNames.contains(skillName);
     setState(() {
@@ -147,6 +153,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
     }
   }
 
+  /// Opens the full content dialog for an installed skill.
   Future<void> _showSkillDetails(core_proxy.SkillPackage skill) async {
     showDialog<void>(
       context: context,
@@ -199,6 +206,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
     );
   }
 
+  /// Builds the skill screen with lazily rendered expandable lists.
   @override
   Widget build(BuildContext context) {
     final error = _errorMessage;
@@ -225,85 +233,118 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
       children: <Widget>[
         RefreshIndicator(
           onRefresh: _loadSkills,
-          child: ListView(
+          child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-            children: <Widget>[
-              _SkillHeaderCard(
-                directory: _skillsDirectory,
-                errorCount: _loadErrors.length,
-                onRefresh: _loadSkills,
-                onShowErrors: _loadErrors.isEmpty
-                    ? null
-                    : () => _showLoadErrors(_loadErrors),
+            slivers: <Widget>[
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: _SkillHeaderCard(
+                    directory: _skillsDirectory,
+                    errorCount: _loadErrors.length,
+                    onRefresh: _loadSkills,
+                    onShowErrors: _loadErrors.isEmpty
+                        ? null
+                        : () => _showLoadErrors(_loadErrors),
+                  ),
+                ),
               ),
-              const SizedBox(height: 12),
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
               if (displayedSkills.isEmpty && displayedMoreSkills.isEmpty)
-                EmptyState(
-                  icon: Icons.build_outlined,
-                  title: '没有技能',
-                  message: searchActive ? '没有匹配的技能。' : '当前没有可显示的技能。',
-                  scrollable: false,
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                  sliver: SliverToBoxAdapter(
+                    child: EmptyState(
+                      icon: Icons.build_outlined,
+                      title: '没有技能',
+                      message: searchActive ? '没有匹配的技能。' : '当前没有可显示的技能。',
+                      scrollable: false,
+                    ),
+                  ),
                 )
               else ...<Widget>[
-                const _SkillSectionHeader(title: '当前技能'),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  sliver: const SliverToBoxAdapter(
+                    child: _SkillSectionHeader(title: '当前技能'),
+                  ),
+                ),
                 if (displayedSkills.isEmpty)
-                  _SkillSectionEmpty(
-                    message: searchActive ? '没有匹配的当前技能。' : '当前没有可显示的技能。',
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: _SkillSectionEmpty(
+                        message: searchActive ? '没有匹配的当前技能。' : '当前没有可显示的技能。',
+                      ),
+                    ),
                   )
                 else
-                  PackageInlineGrid(
-                    itemCount: displayedSkills.length,
-                    itemBuilder: (context, index) {
-                      final skill = displayedSkills[index];
-                      final visible = _visibleSkillNames.contains(skill.name);
-                      return PackageListItem(
-                        icon: Icons.build_outlined,
-                        title: skill.name,
-                        subtitle: skill.description,
-                        metadata: <String>[visible ? 'AI 可见' : 'AI 隐藏'],
-                        enabled: visible,
-                        onTap: () => _showSkillDetails(skill),
-                        onEnabledChanged: (value) =>
-                            _setSkillVisible(skill.name, value),
-                      );
-                    },
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                    sliver: PackageSliverList(
+                      itemCount: displayedSkills.length,
+                      itemBuilder: (context, index) {
+                        final skill = displayedSkills[index];
+                        final visible = _visibleSkillNames.contains(skill.name);
+                        return PackageListItem(
+                          key: ValueKey<String>('skill:${skill.name}'),
+                          icon: Icons.build_outlined,
+                          title: skill.name,
+                          subtitle: skill.description,
+                          metadata: <String>[visible ? 'AI 可见' : 'AI 隐藏'],
+                          enabled: visible,
+                          onDetails: () => _showSkillDetails(skill),
+                          onEnabledChanged: (value) =>
+                              _setSkillVisible(skill.name, value),
+                        );
+                      },
+                    ),
                   ),
                 if (displayedMoreSkills.isNotEmpty) ...<Widget>[
-                  const SizedBox(height: 16),
-                  const _SkillSectionHeader(
-                    title: '更多技能',
-                    subtitle: 'App 自带的官方额外技能，加载后进入当前技能。',
+                  const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                    sliver: const SliverToBoxAdapter(
+                      child: _SkillSectionHeader(
+                        title: '更多技能',
+                        subtitle: 'App 自带的官方额外技能，加载后进入当前技能。',
+                      ),
+                    ),
                   ),
-                  PackageInlineGrid(
-                    itemCount: displayedMoreSkills.length,
-                    itemBuilder: (context, index) {
-                      final skill = displayedMoreSkills[index];
-                      return PackageListItem(
-                        icon: Icons.build_outlined,
-                        title: skill.name,
-                        subtitle: skill.description,
-                        metadata: const <String>['官方额外'],
-                        enabled: false,
-                        onEnabledChanged: (_) {},
-                        showEnabledSwitch: false,
-                        trailingActions: <Widget>[
-                          FilledButton.tonalIcon(
-                            onPressed: () => _loadBundledSkill(skill),
-                            icon: const Icon(Icons.add, size: 18),
-                            label: const Text('加载'),
-                            style: FilledButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                    sliver: PackageSliverList(
+                      itemCount: displayedMoreSkills.length,
+                      itemBuilder: (context, index) {
+                        final skill = displayedMoreSkills[index];
+                        return PackageListItem(
+                          key: ValueKey<String>('bundled-skill:${skill.name}'),
+                          icon: Icons.build_outlined,
+                          title: skill.name,
+                          subtitle: skill.description,
+                          metadata: const <String>['官方额外'],
+                          enabled: false,
+                          onEnabledChanged: (_) {},
+                          showEnabledSwitch: false,
+                          trailingActions: <Widget>[
+                            FilledButton.tonalIcon(
+                              onPressed: () => _loadBundledSkill(skill),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: const Text('加载'),
+                              style: FilledButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      );
-                    },
+                          ],
+                        );
+                      },
+                    ),
                   ),
-                ],
+                ] else
+                  const SliverToBoxAdapter(child: SizedBox(height: 120)),
               ],
             ],
           ),
@@ -314,6 +355,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
     );
   }
 
+  /// Returns installed skills matching the current search query.
   List<core_proxy.SkillPackage> get _filteredSkills {
     final query = widget.searchQuery.trim().toLowerCase();
     final items = _skills.values.toList()
@@ -331,6 +373,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
         .toList(growable: false);
   }
 
+  /// Returns bundled skills matching the current search query.
   List<core_proxy.BundledExternalSkillCandidate> get _filteredMoreSkills {
     final query = widget.searchQuery.trim().toLowerCase();
     final items = _moreSkills.toList()
@@ -347,6 +390,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
         .toList(growable: false);
   }
 
+  /// Imports a bundled skill and refreshes the installed list.
   Future<void> _loadBundledSkill(
     core_proxy.BundledExternalSkillCandidate skill,
   ) async {
@@ -367,6 +411,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
     }
   }
 
+  /// Opens the dialog containing skill load errors.
   void _showLoadErrors(Map<String, String> errors) {
     showDialog<void>(
       context: context,
@@ -404,6 +449,7 @@ class _SkillConfigScreenState extends State<SkillConfigScreen> {
 }
 
 class _SkillSectionHeader extends StatelessWidget {
+  /// Creates a skill section heading.
   const _SkillSectionHeader({required this.title, this.subtitle});
 
   final String title;
@@ -440,6 +486,7 @@ class _SkillSectionHeader extends StatelessWidget {
 }
 
 class _SkillSectionEmpty extends StatelessWidget {
+  /// Creates a skill section empty state.
   const _SkillSectionEmpty({required this.message});
 
   final String message;
@@ -459,6 +506,7 @@ class _SkillSectionEmpty extends StatelessWidget {
 }
 
 class _SkillHeaderCard extends StatelessWidget {
+  /// Creates the skill directory header card.
   const _SkillHeaderCard({
     required this.directory,
     required this.errorCount,
@@ -531,6 +579,7 @@ class _SkillHeaderCard extends StatelessWidget {
 }
 
 class _SkillDetailsDialog extends StatelessWidget {
+  /// Creates the skill details dialog.
   const _SkillDetailsDialog({
     required this.skill,
     required this.content,

@@ -16,6 +16,10 @@ import '../../../theme/OperitThemeAssets.dart';
 import '../../packages/screens/GitHubOAuthLoginDialog.dart';
 import 'UserProfileSummaryTile.dart';
 
+const double _profileOverviewAvatarSize = 56;
+const double _profileTileAvatarSize = 36;
+const double _githubAvatarRadius = 18;
+
 class UserProfileSettingsPanel extends StatefulWidget {
   const UserProfileSettingsPanel({super.key, this.onProfileChanged});
 
@@ -61,21 +65,29 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
     final avatarUri = OperitTheme.of(
       context,
     ).themePreferenceSnapshot.customUserAvatarUri;
+    final textTheme = Theme.of(context).textTheme;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
       children: <Widget>[
         _ProfileOverview(
           avatarUri: avatarUri,
           name: runtimeIdentityDisplayName(activeIdentity, l10n),
           githubStatus: _githubStatus(l10n),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         _ProfileSection(
           title: l10n.settingsUserProfileOverview,
           children: <Widget>[
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: UserProfileAvatar(storagePath: avatarUri, size: 44),
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              minLeadingWidth: _profileTileAvatarSize,
+              horizontalTitleGap: 10,
+              leading: UserProfileAvatar(
+                storagePath: avatarUri,
+                size: _profileTileAvatarSize,
+              ),
               title: Text(l10n.settingsUserProfileAvatar),
               subtitle: Text(
                 avatarUri == null || avatarUri.trim().isEmpty
@@ -89,27 +101,40 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
               children: <Widget>[
                 FilledButton.tonalIcon(
                   onPressed: _chooseAvatar,
-                  icon: const Icon(Icons.image_outlined),
+                  style: _profileActionButtonStyle(),
+                  icon: const Icon(Icons.image_outlined, size: 18),
                   label: Text(l10n.settingsUserProfileChooseAvatar),
                 ),
                 OutlinedButton.icon(
                   onPressed: avatarUri == null || avatarUri.trim().isEmpty
                       ? null
                       : _clearAvatar,
-                  icon: const Icon(Icons.person_off_outlined),
+                  style: _profileActionButtonStyle(),
+                  icon: const Icon(Icons.person_off_outlined, size: 18),
                   label: Text(l10n.settingsUserProfileClearAvatar),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.badge_outlined),
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              minLeadingWidth: _profileTileAvatarSize,
+              horizontalTitleGap: 10,
+              leading: const Icon(Icons.badge_outlined, size: 22),
               title: Text(l10n.settingsUserProfileName),
               subtitle: Text(runtimeIdentityDisplayName(activeIdentity, l10n)),
               trailing: IconButton(
                 tooltip: l10n.settingsUserProfileEditName,
                 onPressed: () => _renameIdentity(activeIdentity),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 32,
+                  height: 32,
+                ),
+                padding: EdgeInsets.zero,
+                iconSize: 20,
                 icon: const Icon(Icons.edit_outlined),
               ),
             ),
@@ -121,13 +146,23 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
             for (final identity in manager.identities)
               ListTile(
                 contentPadding: EdgeInsets.zero,
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                minLeadingWidth: _profileTileAvatarSize,
+                horizontalTitleGap: 10,
                 selected: identity.id == activeIdentity.id,
                 leading: Icon(
                   identity.id == activeIdentity.id
                       ? Icons.radio_button_checked
                       : Icons.radio_button_unchecked,
+                  size: 22,
                 ),
-                title: Text(runtimeIdentityDisplayName(identity, l10n)),
+                title: Text(
+                  runtimeIdentityDisplayName(identity, l10n),
+                  style: textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 subtitle: identity.id == activeIdentity.id
                     ? Text(l10n.runtimeIdentityCurrent)
                     : null,
@@ -137,6 +172,13 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
                 trailing: IconButton(
                   tooltip: l10n.runtimeIdentityRename,
                   onPressed: () => _renameIdentity(identity),
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 32,
+                    height: 32,
+                  ),
+                  padding: EdgeInsets.zero,
+                  iconSize: 20,
                   icon: const Icon(Icons.edit_outlined),
                 ),
               ),
@@ -144,7 +186,8 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
               alignment: Alignment.centerLeft,
               child: FilledButton.tonalIcon(
                 onPressed: _createIdentity,
-                icon: const Icon(Icons.person_add_alt_1_outlined),
+                style: _profileActionButtonStyle(),
+                icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
                 label: Text(l10n.runtimeIdentityCreate),
               ),
             ),
@@ -155,12 +198,12 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
           children: <Widget>[
             if (_loadingGitHub)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
+                padding: EdgeInsets.symmetric(vertical: 10),
                 child: LinearProgressIndicator(),
               )
             else if (_githubError != null)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 child: SelectableText(
                   l10n.settingsUserProfileGitHubStatusError(
                     _githubError.toString(),
@@ -170,6 +213,10 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
             else
               ListTile(
                 contentPadding: EdgeInsets.zero,
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                minLeadingWidth: _profileTileAvatarSize,
+                horizontalTitleGap: 10,
                 leading: _GitHubAvatar(user: _githubUser),
                 title: Text(
                   _loggedIn
@@ -182,11 +229,13 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
                 trailing: _loggedIn
                     ? OutlinedButton.icon(
                         onPressed: _logoutGitHub,
+                        style: _profileActionButtonStyle(),
                         icon: const Icon(Icons.logout, size: 18),
                         label: Text(l10n.settingsUserProfileLogout),
                       )
                     : FilledButton.tonalIcon(
                         onPressed: _loginGitHub,
+                        style: _profileActionButtonStyle(),
                         icon: const Icon(Icons.login, size: 18),
                         label: Text(l10n.settingsUserProfileLogin),
                       ),
@@ -277,9 +326,8 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
       final renamingActiveIdentity = identity.id == manager.activeIdentity.id;
       await manager.renameIdentity(identity.id, name);
       if (renamingActiveIdentity) {
-        await _clients.server.runtimeRemoteLinkService.updateCurrentDeviceUserName(
-          userName: name,
-        );
+        await _clients.server.runtimeRemoteLinkService
+            .updateCurrentDeviceUserName(userName: name);
       }
     } catch (error, stackTrace) {
       _showError(error, stackTrace);
@@ -416,6 +464,18 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
   }
 }
 
+/// Builds the compact action button style used by profile settings rows.
+ButtonStyle _profileActionButtonStyle() {
+  return ButtonStyle(
+    visualDensity: VisualDensity.compact,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    minimumSize: const WidgetStatePropertyAll<Size>(Size(0, 32)),
+    padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+      EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+    ),
+  );
+}
+
 class _ProfileOverview extends StatelessWidget {
   const _ProfileOverview({
     required this.avatarUri,
@@ -431,17 +491,24 @@ class _ProfileOverview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final backgroundColor = Color.alphaBlend(
+      colorScheme.primary.withValues(alpha: 0.08),
+      colorScheme.surfaceContainerHighest,
+    ).withValues(alpha: 0.42);
     return OperitGlassSurface(
-      color: colorScheme.primaryContainer.withValues(alpha: 0.52),
+      color: backgroundColor,
       layer: OperitGlassSurfaceLayer.card,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: colorScheme.primary.withValues(alpha: 0.22)),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: colorScheme.primary.withValues(alpha: 0.24)),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(12),
         child: Row(
           children: <Widget>[
-            UserProfileAvatar(storagePath: avatarUri, size: 72),
-            const SizedBox(width: 16),
+            UserProfileAvatar(
+              storagePath: avatarUri,
+              size: _profileOverviewAvatarSize,
+            ),
+            const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -450,20 +517,18 @@ class _ProfileOverview extends StatelessWidget {
                     name,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: colorScheme.onPrimaryContainer,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: colorScheme.onSurface,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 3),
                   Text(
                     githubStatus,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onPrimaryContainer.withValues(
-                        alpha: 0.72,
-                      ),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -487,16 +552,16 @@ class _ProfileSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 10),
       child: OperitGlassSurface(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
         layer: OperitGlassSurfaceLayer.card,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -504,9 +569,9 @@ class _ProfileSection extends StatelessWidget {
                 title,
                 style: Theme.of(
                   context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               ...children,
             ],
           ),
@@ -526,10 +591,19 @@ class _GitHubAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final currentUser = user;
     if (currentUser == null) {
-      return const CircleAvatar(radius: 22, child: Icon(Icons.code_outlined));
+      final colorScheme = Theme.of(context).colorScheme;
+      return CircleAvatar(
+        radius: _githubAvatarRadius,
+        backgroundColor: colorScheme.secondaryContainer.withValues(alpha: 0.72),
+        child: Icon(
+          Icons.code_outlined,
+          size: 20,
+          color: colorScheme.onSecondaryContainer,
+        ),
+      );
     }
     return CircleAvatar(
-      radius: 22,
+      radius: _githubAvatarRadius,
       backgroundImage: NetworkImage(currentUser.avatarUrl),
     );
   }

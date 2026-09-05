@@ -2,6 +2,8 @@
 
 import 'dart:convert';
 
+import '../../data/preferences/UserPreferencesManager.dart';
+
 sealed class OperitWindowArguments {
   const OperitWindowArguments();
 
@@ -39,23 +41,30 @@ class MainWindowArguments extends OperitWindowArguments {
 }
 
 class DetachedChatWindowArguments extends OperitWindowArguments {
+  /// Creates the launch contract for a detached chat window.
   const DetachedChatWindowArguments({
     required this.slotId,
     required this.chatId,
     required this.title,
+    required this.themePreferenceSnapshot,
   });
 
+  /// Decodes the launch contract supplied to a detached Flutter engine.
   factory DetachedChatWindowArguments.fromJson(Map<String, Object?> json) {
     return DetachedChatWindowArguments(
       slotId: json['slotId'] as String,
       chatId: json['chatId'] as String,
       title: json['title'] as String,
+      themePreferenceSnapshot: ThemePreferenceSnapshot.fromJson(
+        (json['themePreferenceSnapshot'] as Map).cast<String, Object?>(),
+      ),
     );
   }
 
   final String slotId;
   final String chatId;
   final String title;
+  final ThemePreferenceSnapshot themePreferenceSnapshot;
 
   @override
   String get kind => OperitWindowArguments.detachedChatKind;
@@ -66,6 +75,7 @@ class DetachedChatWindowArguments extends OperitWindowArguments {
       'slotId': slotId,
       'chatId': chatId,
       'title': title,
+      'themePreferenceSnapshot': themePreferenceSnapshot.toJson(),
     };
   }
 }

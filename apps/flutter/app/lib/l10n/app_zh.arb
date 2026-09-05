@@ -826,27 +826,9 @@
   "settingsCharactersImport": "导入",
   "settingsCharactersExport": "导出",
   "settingsCharactersImportJson": "导入 JSON",
-  "settingsCharactersCopyJson": "复制 JSON",
+  "settingsCharactersExportJson": "导出 JSON",
   "settingsCharactersImportTavernJson": "导入 Tavern JSON",
-  "settingsCharactersCopyTavernJson": "复制 Tavern JSON",
-  "settingsCharactersJsonInput": "JSON 内容",
-  "settingsCharactersTavernJsonInput": "Tavern JSON 内容",
-  "settingsCharactersJsonCopied": "已复制“{name}”的 JSON。",
-  "@settingsCharactersJsonCopied": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTavernJsonCopied": "已复制“{name}”的 Tavern JSON。",
-  "@settingsCharactersTavernJsonCopied": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
+  "settingsCharactersExportTavernJson": "导出 Tavern JSON",
   "settingsCharactersImportCardJson": "导入角色卡 JSON",
   "settingsCharactersImportCardJsonDone": "已导入角色卡。",
   "settingsCharactersImportTavernJsonDone": "已导入 Tavern 角色卡。",
@@ -868,8 +850,16 @@
       }
     }
   },
-  "settingsCharactersTavernJsonCopyError": "复制 Tavern JSON 失败：{error}",
-  "@settingsCharactersTavernJsonCopyError": {
+  "settingsCharactersExportJsonError": "导出 JSON 失败：{error}",
+  "@settingsCharactersExportJsonError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsCharactersExportTavernJsonError": "导出 Tavern JSON 失败：{error}",
+  "@settingsCharactersExportTavernJsonError": {
     "placeholders": {
       "error": {
         "type": "String"
@@ -1650,17 +1640,8 @@
       }
     }
   },
-  "settingsDataCopyBackupJson": "复制备份",
+  "settingsDataExportBackupJson": "导出备份",
   "settingsDataImportBackupJson": "恢复数据",
-  "settingsDataBackupJsonInput": "恢复内容",
-  "settingsDataBackupCopied": "已复制“{name}”备份。",
-  "@settingsDataBackupCopied": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
   "settingsDataBackupImportResult": "恢复完成：新增 {newCount}，更新 {updatedCount}，跳过 {skippedCount}。",
   "@settingsDataBackupImportResult": {
     "placeholders": {
@@ -1683,8 +1664,8 @@
       }
     }
   },
-  "settingsDataBackupCopyError": "复制失败：{error}",
-  "@settingsDataBackupCopyError": {
+  "settingsDataBackupExportError": "导出失败：{error}",
+  "@settingsDataBackupExportError": {
     "placeholders": {
       "error": {
         "type": "String"

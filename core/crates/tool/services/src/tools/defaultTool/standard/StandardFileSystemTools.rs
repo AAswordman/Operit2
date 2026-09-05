@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use operit_host_api::{
     FileEntry, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HttpHost,
     HttpRequestData, RuntimeStorageHost, SystemOperationHost,
@@ -13,21 +13,22 @@ use crate::runtime_support::{
     RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
 };
 use operit_host_api::HostManager::HostManager;
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
-use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
-use operit_tools::tools::ToolResultDataClasses::{
-    stringResultData, BinaryFileContentData, DirectoryListingData, FileApplyResultData,
-    FileContentData, FileEntry as ToolFileEntry, FileExistsData, FileInfoData, FileOperationData,
-    FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,
-    ToolResultData,
-};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolParameter,
     ToolValidationResult,
 };
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
+use operit_tools::tools::ToolResultDataClasses::{
+    BinaryFileContentData, DirectoryListingData, FileApplyResultData, FileContentData,
+    FileEntry as ToolFileEntry, FileExistsData, FileInfoData, FileOperationData,
+    FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,
+    ToolResultData, stringResultData,
+};
+use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
 use operit_util::RuntimeStorageLayout::{
     EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, RUNTIME_ROOT_PATH_PREFIX, RUNTIME_SYNC_DIR_PATH,
@@ -262,7 +263,11 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
+    /// Reads image files using the requested direct-image mode or the standard OCR mode.
     fn handleImageFileRead(&self, tool: &AITool, vfs: &VisualFileSystem, path: &str) -> ToolResult {
+        if parameterBool(tool, "direct_image") {
+            return self.handleDirectImageFileRead(tool, vfs, path);
+        }
         let physicalPath = match vfs.resolvePath(path) {
             Ok(resolved) => resolved.physicalPath,
             Err(error) => return toolError(tool, String::new(), error),
@@ -283,6 +288,45 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
+    /// Reads an image file into the process image pool and returns its media-link tag.
+    fn handleDirectImageFileRead(
+        &self,
+        tool: &AITool,
+        vfs: &VisualFileSystem,
+        path: &str,
+    ) -> ToolResult {
+        let bytes = match vfs.readFileBytes(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return toolError(
+                    tool,
+                    String::new(),
+                    format!("Error reading image file: {error}"),
+                );
+            }
+        };
+        let imageId =
+            ImagePoolManager::add_image_bytes(&bytes, Some(imageMimeTypeFromPath(path)), None);
+        if imageId == "error" {
+            return toolError(
+                tool,
+                String::new(),
+                format!("Error registering image file: {path}"),
+            );
+        }
+        let content = buildImageMediaLink(&imageId);
+        successData(
+            tool,
+            ToolResultData::FileContentData(FileContentData {
+                path: path.to_string(),
+                size: content.len() as i64,
+                content,
+            }),
+        )
+    }
+
+    #[allow(non_snake_case)]
+    /// Recognizes text contained in an image through the system operation host.
     fn recognizeImageText(&self, imagePath: &str) -> Result<String, String> {
         let Some(systemOperationHost) = self.systemOperationHost.clone() else {
             return Err("SystemOperationHost is required for OCR".to_string());
@@ -313,7 +357,7 @@ impl StandardFileSystemTools {
                     tool,
                     String::new(),
                     format!("Error reading file part: {error}"),
-                )
+                );
             }
         };
         let lines = content.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
@@ -720,11 +764,9 @@ impl StandardFileSystemTools {
             if visitKey.trim().is_empty() || (linkNumber.is_none() && imageNumber.is_none()) {
                 return toolError(
                     tool,
-                    fileOperationDataToString(
-                        &format!(
-                            "Download failed for {destPath}: Either url or (visit_key + link_number/image_number) is required"
-                        ),
-                    ),
+                    fileOperationDataToString(&format!(
+                        "Download failed for {destPath}: Either url or (visit_key + link_number/image_number) is required"
+                    )),
                     "Either url or (visit_key + link_number/image_number) is required".to_string(),
                 );
             }
@@ -790,7 +832,7 @@ impl StandardFileSystemTools {
                     tool,
                     fileOperationDataToString(&format!("Download failed for {destPath}: {error}")),
                     error,
-                )
+                );
             }
         };
 
@@ -1522,6 +1564,23 @@ fn fileExtension(path: &str) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase()
+}
+
+#[allow(non_snake_case)]
+/// Builds the canonical image media-link tag used by chat providers.
+fn buildImageMediaLink(imageId: &str) -> String {
+    format!("<link type=\"image\" id=\"{imageId}\"></link>")
+}
+
+#[allow(non_snake_case)]
+/// Returns the declared image MIME type for a supported image extension.
+fn imageMimeTypeFromPath(path: &str) -> &'static str {
+    match fileExtension(path).as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/png",
+    }
 }
 
 #[allow(non_snake_case)]

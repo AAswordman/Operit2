@@ -1,25 +1,26 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
-use serde_json::{json, Map, Value};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use serde_json::{Map, Value, json};
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use crate::chat::llmprovider::AIService::{
-    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
-    SendMessageRequest, TokenCounts,
+    AIService, AiServiceError, SendMessageRequest, TokenCounts, response_stream_from_chunks,
+    retry_error_text, retry_message,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
+use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
+use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::stream::RevisableTextStream::{
-    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
+    RevisableTextStreamLike, empty_revisable_event_channel, with_event_channel,
 };
 use operit_util::stream::Stream::FnStream;
-use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 
 #[derive(Clone)]
 pub struct ClaudeProvider {
@@ -252,8 +253,32 @@ impl ClaudeProvider {
         Ok(Value::Array(tools))
     }
 
+    /// Builds Claude content blocks from text and registered image links.
     fn build_content_array(&self, text: &str) -> Value {
-        json!([{"type": "text", "text": text}])
+        if !MediaLinkParser::has_image_links(text) {
+            return json!([{"type": "text", "text": text}]);
+        }
+
+        let image_links = MediaLinkParser::extract_image_links(text);
+        let text_without_links = MediaLinkParser::remove_image_links(text).trim().to_string();
+        let mut content_blocks = Vec::new();
+        for link in image_links {
+            content_blocks.push(json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": link.mime_type,
+                    "data": link.base64_data,
+                },
+            }));
+        }
+        if !text_without_links.is_empty() {
+            content_blocks.push(json!({"type": "text", "text": text_without_links}));
+        }
+        if content_blocks.is_empty() {
+            content_blocks.push(json!({"type": "text", "text": "[Empty]"}));
+        }
+        Value::Array(content_blocks)
     }
 
     fn build_assistant_content_blocks(
@@ -1247,4 +1272,50 @@ fn xml_unescape(text: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
         .replace("&amp;", "&")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClaudeProvider;
+    use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
+    use operit_util::ImagePoolManager::ImagePoolManager;
+
+    /// Creates a Claude provider for content-block conversion tests.
+    fn test_provider() -> ClaudeProvider {
+        ClaudeProvider::new(
+            "http://localhost".to_string(),
+            String::new(),
+            "claude-test".to_string(),
+            "CLAUDE".to_string(),
+            Vec::new(),
+            true,
+        )
+    }
+
+    /// Verifies image media links become Claude base64 image blocks.
+    #[test]
+    fn imageLinksBecomeClaudeImageBlocks() {
+        ImagePoolManager::clear();
+        let image_id = ImagePoolManager::add_image_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01",
+            Some("image/png"),
+            None,
+        );
+        let prompt = format!("look {}", MediaLinkBuilder::image(&image_id));
+        let provider = test_provider();
+
+        let content = provider.build_content_array(&prompt);
+        let blocks = content.as_array().expect("Claude content must be an array");
+
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "image");
+        assert_eq!(blocks[0]["source"]["media_type"], "image/png");
+        assert!(
+            !blocks[0]["source"]["data"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty()
+        );
+        assert_eq!(blocks[1]["text"], "look");
+    }
 }

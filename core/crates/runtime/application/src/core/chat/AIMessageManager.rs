@@ -6,6 +6,7 @@ use crate::core::chat::plugins::MessageProcessingPluginRegistry::{
     MessageProcessingHookParams, MessageProcessingPluginRegistry,
 };
 use crate::data::preferences::ApiPreferences::ApiPreferences;
+use operit_host_api::FileSystemHost;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
@@ -14,17 +15,19 @@ use operit_model::MessagePart::{MessagePart, MessagePartKind};
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
-use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
-use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
-use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, ResumeRequest, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
 };
+use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
+use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
+use operit_providers::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
+use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_store::PreferencesDataStore::FlowLike;
-use operit_util::stream::RevisableTextStream::with_event_channel_shared;
-use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_util::ImagePoolManager::ImagePoolManager;
+use operit_util::stream::RevisableTextStream::with_event_channel_shared;
+use operit_util::stream::Stream::Stream;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
 const MESSAGE_PROCESS_TIMING_TAG: &str = "MessageProcessTiming";
@@ -41,6 +44,7 @@ pub struct BuildUserMessageContentRequest {
     pub messageText: String,
     pub proxySenderName: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
+    pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub workspacePath: Option<String>,
     pub replyToMessage: Option<ChatMessage>,
     pub enableDirectImageProcessing: bool,
@@ -134,7 +138,10 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn buildUserMessageContent(request: BuildUserMessageContentRequest) -> String {
+    /// Builds user message content with processed text, attachments, workspace, and reply context.
+    pub fn buildUserMessageContent(
+        request: BuildUserMessageContentRequest,
+    ) -> Result<String, AiServiceError> {
         let promptInputStartTime = messageTimingNow();
         let originalMessageLength = request.messageText.len();
         let processedMessageText = InputProcessor::process_user_input(ProcessUserInputRequest {
@@ -190,15 +197,17 @@ impl AIMessageManager {
             .map(|attachment| {
                 Self::buildAttachmentTag(
                     attachment,
+                    request.fileSystemHost.as_deref(),
                     request.enableDirectImageProcessing,
                     request.enableDirectAudioProcessing,
                     request.enableDirectVideoProcessing,
                 )
+                .map_err(AiServiceError::RequestFailed)
             })
-            .collect::<Vec<_>>()
+            .collect::<Result<Vec<_>, AiServiceError>>()?
             .join(" ");
 
-        [
+        Ok([
             proxySenderTag,
             processedMessageText,
             attachmentTags,
@@ -208,7 +217,7 @@ impl AIMessageManager {
         .into_iter()
         .filter(|part| !part.trim().is_empty())
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" "))
     }
 
     #[allow(non_snake_case)]
@@ -756,21 +765,22 @@ impl AIMessageManager {
         )
     }
 
+    /// Builds the serialized markup for one attachment.
     fn buildAttachmentTag(
         attachment: &AttachmentInfo,
+        fileSystemHost: Option<&dyn FileSystemHost>,
         enableDirectImageProcessing: bool,
         enableDirectAudioProcessing: bool,
         enableDirectVideoProcessing: bool,
-    ) -> String {
+    ) -> Result<String, String> {
         let hasInlineContent = !attachment.content.trim().is_empty();
-        if !hasInlineContent
-            && enableDirectImageProcessing
+        if enableDirectImageProcessing
             && attachment
                 .mimeType
                 .to_ascii_lowercase()
                 .starts_with("image/")
         {
-            return format!("<image_link id=\"{}\"/>", attachment.filePath);
+            return Self::buildDirectImageAttachmentTag(attachment, fileSystemHost);
         }
         if !hasInlineContent
             && enableDirectAudioProcessing
@@ -779,7 +789,7 @@ impl AIMessageManager {
                 .to_ascii_lowercase()
                 .starts_with("audio/")
         {
-            return format!("<audio_link id=\"{}\"/>", attachment.filePath);
+            return Ok(format!("<audio_link id=\"{}\"/>", attachment.filePath));
         }
         if !hasInlineContent
             && enableDirectVideoProcessing
@@ -788,9 +798,63 @@ impl AIMessageManager {
                 .to_ascii_lowercase()
                 .starts_with("video/")
         {
-            return format!("<video_link id=\"{}\"/>", attachment.filePath);
+            return Ok(format!("<video_link id=\"{}\"/>", attachment.filePath));
         }
 
+        let attributes = Self::buildAttachmentAttributes(attachment);
+        Ok(format!(
+            "<attachment {attributes}>{}</attachment>",
+            attachment.content
+        ))
+    }
+
+    /// Builds an attachment tag and media link for a direct image attachment.
+    fn buildDirectImageAttachmentTag(
+        attachment: &AttachmentInfo,
+        fileSystemHost: Option<&dyn FileSystemHost>,
+    ) -> Result<String, String> {
+        let attributes = Self::buildAttachmentAttributes(attachment);
+        let imageId = Self::registerDirectImageAttachment(attachment, fileSystemHost)?;
+        let imageLink = MediaLinkBuilder::image(&imageId);
+        let mut attachedContent = "Image content has been attached as multimodal input with this message. Do not call file reading tools to read this path.".to_string();
+        if !attachment.content.trim().is_empty() {
+            attachedContent.push('\n');
+            attachedContent.push_str(&attachment.content);
+        }
+        Ok(format!(
+            "{imageLink} <attachment {attributes}>{attachedContent}</attachment>"
+        ))
+    }
+
+    /// Registers an image attachment in the process image pool.
+    fn registerDirectImageAttachment(
+        attachment: &AttachmentInfo,
+        fileSystemHost: Option<&dyn FileSystemHost>,
+    ) -> Result<String, String> {
+        let Some(fileSystemHost) = fileSystemHost else {
+            return Err("FileSystemHost is required for direct image attachment".to_string());
+        };
+        let bytes = fileSystemHost
+            .readFileBytes(&attachment.filePath)
+            .map_err(|error| error.message)?;
+        if bytes.is_empty() {
+            return Err(format!(
+                "image attachment is empty: {}",
+                attachment.filePath
+            ));
+        }
+        let imageId = ImagePoolManager::add_image_bytes(&bytes, Some(&attachment.mimeType), None);
+        if imageId == "error" {
+            return Err(format!(
+                "image attachment could not be registered: {}",
+                attachment.filePath
+            ));
+        }
+        Ok(imageId)
+    }
+
+    /// Builds the XML attributes for an attachment notice.
+    fn buildAttachmentAttributes(attachment: &AttachmentInfo) -> String {
         let mut attributes = format!(
             "id=\"{}\" filename=\"{}\" type=\"{}\"",
             attachment.filePath, attachment.fileName, attachment.mimeType
@@ -798,10 +862,7 @@ impl AIMessageManager {
         if attachment.fileSize > 0 {
             attributes.push_str(&format!(" size=\"{}\"", attachment.fileSize));
         }
-        format!(
-            "<attachment {attributes}>{}</attachment>",
-            attachment.content
-        )
+        attributes
     }
 
     fn rememberActiveChatKey(chatKey: String) {
@@ -1313,9 +1374,11 @@ mod tests {
         assert_eq!(turns[0].content, "before");
         assert!(turns[1].content.starts_with("<tool name=\"switch_core\""));
         assert_eq!(turns[1].tool_name.as_deref(), Some("switch_core"));
-        assert!(turns[2]
-            .content
-            .starts_with("<tool_result name=\"switch_core\""));
+        assert!(
+            turns[2]
+                .content
+                .starts_with("<tool_result name=\"switch_core\"")
+        );
         assert_eq!(turns[2].tool_name.as_deref(), Some("switch_core"));
         assert_eq!(turns[3].content, "after");
     }

@@ -10,8 +10,8 @@ class _CharacterGroupEditorSave extends _CharacterGroupEditorResult {
   final core_proxy.CharacterGroupCard group;
 }
 
-class _CharacterGroupEditorCopyJson extends _CharacterGroupEditorResult {
-  const _CharacterGroupEditorCopyJson();
+class _CharacterGroupEditorExportJson extends _CharacterGroupEditorResult {
+  const _CharacterGroupEditorExportJson();
 }
 
 class _CharacterGroupEditorDelete extends _CharacterGroupEditorResult {
@@ -177,8 +177,8 @@ class _CharacterGroupEditorDialogState
           TextButton(
             onPressed: () => Navigator.of(
               context,
-            ).pop(const _CharacterGroupEditorCopyJson()),
-            child: Text(l10n.settingsCharactersCopyJson),
+            ).pop(const _CharacterGroupEditorExportJson()),
+            child: Text(l10n.settingsCharactersExportJson),
           ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -218,14 +218,14 @@ class _CharacterCardExportDialog extends StatelessWidget {
           children: <Widget>[
             ListTile(
               leading: const Icon(Icons.data_object_outlined),
-              title: Text(l10n.settingsCharactersCopyJson),
+              title: Text(l10n.settingsCharactersExportJson),
               onTap: () => Navigator.of(
                 context,
               ).pop(_CharacterCardExportAction.nativeJson),
             ),
             ListTile(
               leading: const Icon(Icons.badge_outlined),
-              title: Text(l10n.settingsCharactersCopyTavernJson),
+              title: Text(l10n.settingsCharactersExportTavernJson),
               onTap: () => Navigator.of(
                 context,
               ).pop(_CharacterCardExportAction.tavernJson),
@@ -286,83 +286,6 @@ class _CharacterCardImportDialog extends StatelessWidget {
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
-        ),
-      ],
-    );
-  }
-}
-
-class _JsonImportDialog extends StatefulWidget {
-  const _JsonImportDialog({required this.title, required this.label});
-
-  final String title;
-  final String label;
-
-  static Future<String?> show({
-    required BuildContext context,
-    required String title,
-    required String label,
-  }) {
-    return showDialog<String>(
-      context: context,
-      builder: (context) => _JsonImportDialog(title: title, label: label),
-    );
-  }
-
-  @override
-  State<_JsonImportDialog> createState() => _JsonImportDialogState();
-}
-
-class _JsonImportDialogState extends State<_JsonImportDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-    Navigator.of(context).pop(_controller.text.trim());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 640,
-        child: Form(
-          key: _formKey,
-          child: TextFormField(
-            controller: _controller,
-            autofocus: true,
-            minLines: 12,
-            maxLines: 18,
-            decoration: InputDecoration(labelText: widget.label),
-            validator: (value) {
-              final text = value?.trim() ?? '';
-              if (text.isEmpty) {
-                return widget.label;
-              }
-              return null;
-            },
-          ),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(
-          onPressed: _submit,
-          child: Text(l10n.settingsCharactersImportJson),
         ),
       ],
     );
@@ -536,34 +459,6 @@ class _FullscreenTextEditDialogState extends State<_FullscreenTextEditDialog> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _DialogDropdown<T> extends StatelessWidget {
-  const _DialogDropdown({
-    required this.label,
-    required this.value,
-    required this.items,
-    required this.onChanged,
-  });
-
-  final String label;
-  final T? value;
-  final List<DropdownMenuItem<T>> items;
-  final ValueChanged<T?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: DropdownButtonFormField<T>(
-        initialValue: value,
-        items: items,
-        onChanged: items.isEmpty ? null : onChanged,
-        style: OperitFormStyles.dropdownTextStyle(context),
-        decoration: InputDecoration(labelText: label),
       ),
     );
   }
@@ -957,8 +852,6 @@ Map<String, Object?> _jsonObjectFromText(String text) {
   }
   return converted;
 }
-
-String _requestId() => 'flutter-${DateTime.now().microsecondsSinceEpoch}';
 
 Object? _convertJsonNode(Object? value) {
   if (value is Map) {

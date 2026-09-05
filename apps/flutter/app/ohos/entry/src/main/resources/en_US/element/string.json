@@ -23,6 +23,10 @@
     {
       "name": "permission_microphone_reason",
       "value": "Used to record speech for text recognition."
+    },
+    {
+      "name": "permission_pasteboard_reason",
+      "value": "Used to attach images pasted into the chat input."
     }
   ]
 }

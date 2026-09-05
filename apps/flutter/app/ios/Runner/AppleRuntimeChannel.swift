@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreBluetooth
 import CoreMedia
+import Darwin
 import Flutter
 import Foundation
 import Network
@@ -112,6 +113,8 @@ final class AppleRuntimeChannel: NSObject {
       closeWatchStream(call: call, result: result)
     case "startWebAccessServer":
       startWebAccessServer(call: call, result: result)
+    case "restartApplication":
+      restartApplication(result: result)
     case "localRuntimeStorageDefaults":
       localRuntimeStorageDefaults(result: result)
     case "runtimeBootstrapRead":
@@ -122,6 +125,8 @@ final class AppleRuntimeChannel: NSObject {
       localRuntimeStoragePaths(call: call, result: result)
     case "setLocalRuntimeStorage":
       setLocalRuntimeStorage(call: call, result: result)
+    case "readClipboardImages":
+      readClipboardImages(result: result)
     case "notificationActivationInitial":
       result(Self.takePendingNotificationActivation())
     case "notificationActivationReady":
@@ -156,6 +161,21 @@ final class AppleRuntimeChannel: NSObject {
       ownerLocalInference(call: call, result: result)
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+
+  /// Releases runtime resources and terminates the iOS host process.
+  private func restartApplication(result: @escaping FlutterResult) {
+    workQueue.async {
+      self.stopWatchPump()
+      if let handle = self.handle {
+        operit_flutter_bridge_destroy(handle)
+        self.handle = nil
+      }
+      DispatchQueue.main.async {
+        result(nil)
+        Darwin.exit(0)
+      }
     }
   }
 
@@ -416,6 +436,22 @@ final class AppleRuntimeChannel: NSObject {
       "runtimeRoot": roots.runtime.path,
       "workspaceRoot": roots.workspace.path,
     ])
+  }
+
+  /// Reads PNG byte payloads from the iOS pasteboard.
+  private func readClipboardImages(result: @escaping FlutterResult) {
+    DispatchQueue.main.async {
+      let payloads = UIPasteboard.general.images.compactMap { image -> [String: Any]? in
+        guard let data = image.pngData() else {
+          return nil
+        }
+        return [
+          "mimeType": "image/png",
+          "bytes": FlutterStandardTypedData(bytes: data),
+        ]
+      }
+      result(payloads)
+    }
   }
 
   /// Reads the client bootstrap record through the Rust startup Host.

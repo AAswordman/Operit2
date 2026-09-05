@@ -1690,29 +1690,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCharactersImportJson => '导入 JSON';
 
   @override
-  String get settingsCharactersCopyJson => '复制 JSON';
+  String get settingsCharactersExportJson => '导出 JSON';
 
   @override
   String get settingsCharactersImportTavernJson => '导入 Tavern JSON';
 
   @override
-  String get settingsCharactersCopyTavernJson => '复制 Tavern JSON';
-
-  @override
-  String get settingsCharactersJsonInput => 'JSON 内容';
-
-  @override
-  String get settingsCharactersTavernJsonInput => 'Tavern JSON 内容';
-
-  @override
-  String settingsCharactersJsonCopied(String name) {
-    return '已复制“$name”的 JSON。';
-  }
-
-  @override
-  String settingsCharactersTavernJsonCopied(String name) {
-    return '已复制“$name”的 Tavern JSON。';
-  }
+  String get settingsCharactersExportTavernJson => '导出 Tavern JSON';
 
   @override
   String get settingsCharactersImportCardJson => '导入角色卡 JSON';
@@ -1740,8 +1724,13 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String settingsCharactersTavernJsonCopyError(String error) {
-    return '复制 Tavern JSON 失败：$error';
+  String settingsCharactersExportJsonError(String error) {
+    return '导出 JSON 失败：$error';
+  }
+
+  @override
+  String settingsCharactersExportTavernJsonError(String error) {
+    return '导出 Tavern JSON 失败：$error';
   }
 
   @override
@@ -3232,18 +3221,10 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsDataCopyBackupJson => '复制备份';
+  String get settingsDataExportBackupJson => '导出备份';
 
   @override
   String get settingsDataImportBackupJson => '恢复数据';
-
-  @override
-  String get settingsDataBackupJsonInput => '恢复内容';
-
-  @override
-  String settingsDataBackupCopied(String name) {
-    return '已复制“$name”备份。';
-  }
 
   @override
   String settingsDataBackupImportResult(
@@ -3260,8 +3241,8 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String settingsDataBackupCopyError(String error) {
-    return '复制失败：$error';
+  String settingsDataBackupExportError(String error) {
+    return '导出失败：$error';
   }
 
   @override

@@ -66,76 +66,96 @@ class CollapsedDrawerContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.paddingOf(context).top;
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
+    final bottomPadding = MediaQuery.paddingOf(context).bottom;
+    return Column(
       children: <Widget>[
-        SizedBox(
-          height: topPadding + _topBarHeight,
-          child: Padding(
-            padding: EdgeInsets.only(top: topPadding),
-            child: Center(
-              child: OperitLogoMark(
-                size: 34,
-                color: appearance.statusAvailableColor,
+        Expanded(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: <Widget>[
+              SizedBox(
+                height: topPadding + _topBarHeight,
+                child: Padding(
+                  padding: EdgeInsets.only(top: topPadding),
+                  child: Center(
+                    child: OperitLogoMark(
+                      size: 34,
+                      color: appearance.statusAvailableColor,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Center(
-            child: _RoundDrawerButton(
-              selected: selectedRouteId == navigationEntries.first.routeId,
-              appearance: appearance,
-              icon: Icons.chat_bubble_outline,
-              onClick: onConversationActivated,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Center(
-            child: _RoundDrawerButton(
-              selected: false,
-              appearance: appearance,
-              icon: Icons.add_comment_outlined,
-              onClick: _createConversation,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (pluginEntries.isNotEmpty) ...<Widget>[
-          Divider(indent: 14, endIndent: 14, color: appearance.dividerColor),
-          const SizedBox(height: 8),
-          for (final entry in pluginEntries) ...<Widget>[
-            Center(
-              child: _RoundDrawerButton(
-                selected: selectedRouteId == entry.routeId,
-                appearance: appearance,
-                icon: entry.icon,
-                onClick: () => onNavigationEntrySelected(entry),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: _RoundDrawerButton(
+                    selected:
+                        selectedRouteId == navigationEntries.first.routeId,
+                    appearance: appearance,
+                    icon: Icons.chat_bubble_outline,
+                    onClick: onConversationActivated,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-          ],
-          const SizedBox(height: 8),
-        ],
-        Center(
-          child: _RoundDrawerButton(
-            selected: selectedRouteId == _packageManagerRouteId,
-            appearance: appearance,
-            icon: Icons.inventory_2_outlined,
-            onClick: _openPackageManager,
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Center(
+                  child: _RoundDrawerButton(
+                    selected: false,
+                    appearance: appearance,
+                    icon: Icons.add_comment_outlined,
+                    onClick: _createConversation,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (pluginEntries.isNotEmpty) ...<Widget>[
+                Divider(
+                  indent: 14,
+                  endIndent: 14,
+                  color: appearance.dividerColor,
+                ),
+                const SizedBox(height: 8),
+                for (final entry in pluginEntries) ...<Widget>[
+                  Center(
+                    child: _RoundDrawerButton(
+                      selected: selectedRouteId == entry.routeId,
+                      appearance: appearance,
+                      icon: entry.icon,
+                      onClick: () => onNavigationEntrySelected(entry),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                const SizedBox(height: 8),
+              ],
+            ],
           ),
         ),
-        const SizedBox(height: 8),
-        Center(
-          child: _RoundDrawerButton(
-            selected: selectedRouteId == _settingsRouteId,
-            appearance: appearance,
-            icon: Icons.settings_outlined,
-            onClick: _openSettings,
+        Padding(
+          padding: EdgeInsets.only(bottom: bottomPadding + 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Center(
+                child: _RoundDrawerButton(
+                  selected: selectedRouteId == _packageManagerRouteId,
+                  appearance: appearance,
+                  icon: Icons.inventory_2_outlined,
+                  onClick: _openPackageManager,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Center(
+                child: _RoundDrawerButton(
+                  selected: selectedRouteId == _settingsRouteId,
+                  appearance: appearance,
+                  icon: Icons.settings_outlined,
+                  onClick: _openSettings,
+                ),
+              ),
+            ],
           ),
         ),
       ],

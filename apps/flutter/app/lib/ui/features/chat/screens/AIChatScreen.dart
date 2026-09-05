@@ -133,6 +133,7 @@ class _ChatContentData {
     required this.isLoadingDisplayWindow,
     required this.isMultiSelectMode,
     required this.selectedMessageTimestamps,
+    required this.currentCharacterCardName,
     required this.currentCharacterCardAvatarUri,
     required this.isPreparingChatSwitch,
     required this.pendingQueueMessages,
@@ -152,6 +153,7 @@ class _ChatContentData {
   final bool isLoadingDisplayWindow;
   final bool isMultiSelectMode;
   final Set<int> selectedMessageTimestamps;
+  final String? currentCharacterCardName;
   final String? currentCharacterCardAvatarUri;
   final bool isPreparingChatSwitch;
   final List<PendingQueueMessageItem> pendingQueueMessages;
@@ -1061,6 +1063,16 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   Future<void> _handleAttachmentPaths(List<String> paths) async {
     for (final path in paths) {
       await _viewModel.handleAttachment(path);
+    }
+    await _refreshAttachments();
+  }
+
+  /// Adds pasted image payloads to the current attachment list.
+  Future<void> _handlePastedImages(
+    List<PastedImageAttachmentPayload> images,
+  ) async {
+    for (final image in images) {
+      await _viewModel.attachPastedImage(image);
     }
     await _refreshAttachments();
   }
@@ -2041,12 +2053,14 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           mentionSuggestionPanel: _buildMentionSuggestionPanel(),
           viewModel: _viewModel,
           currentChatId: data.currentChatId,
+          currentCharacterCardName: data.currentCharacterCardName,
           currentCharacterCardAvatarUri: data.currentCharacterCardAvatarUri,
           autoScrollToBottomListenable: _autoScrollToBottomNotifier,
           hasOlderDisplayHistory: data.hasOlderDisplayHistory,
           hasNewerDisplayHistory: data.hasNewerDisplayHistory,
           isLoadingDisplayWindow: data.isLoadingDisplayWindow,
           loadLocatorEntries: _loadMessageLocatorEntries,
+          onRevealMessageForLocator: _viewModel.revealMessageForCurrentChat,
           onAutoScrollToBottomChanged: _setAutoScrollToBottom,
           onLoadOlderDisplayWindow: _loadOlderDisplayWindow,
           onLoadNewerDisplayWindow: _loadNewerDisplayWindow,
@@ -2111,6 +2125,15 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
               StackTrace stackTrace,
             ) {
               debugPrint('Failed to attach dropped files: $error\n$stackTrace');
+              return null;
+            });
+          },
+          onPasteImages: (images) {
+            _handlePastedImages(images).catchError((
+              Object error,
+              StackTrace stackTrace,
+            ) {
+              debugPrint('Failed to attach pasted images: $error\n$stackTrace');
               return null;
             });
           },
@@ -2235,6 +2258,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       isLoadingDisplayWindow: _isLoadingDisplayWindow,
       isMultiSelectMode: _isMultiSelectMode,
       selectedMessageTimestamps: _selectedMessageTimestamps,
+      currentCharacterCardName: _currentCharacterCardName,
       currentCharacterCardAvatarUri: _currentCharacterCardAvatarUri,
       isPreparingChatSwitch: _isPreparingChatSwitch,
       pendingQueueMessages: List<PendingQueueMessageItem>.unmodifiable(
