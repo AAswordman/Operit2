@@ -496,6 +496,7 @@ class _ThinkPanel extends StatefulWidget {
   final bool fullHeight;
   final MarkdownContentSplitter splitMarkdownContent;
 
+  /// Creates state for the expandable thinking panel.
   @override
   State<_ThinkPanel> createState() => _ThinkPanelState();
 }
@@ -510,6 +511,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
   bool _isProgrammaticScroll = false;
   int _expandSession = 0;
 
+  /// Initializes expansion, height, and scroll state.
   @override
   void initState() {
     super.initState();
@@ -519,6 +521,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     _scrollController = ScrollController();
   }
 
+  /// Syncs expansion state when streaming or caller defaults change.
   @override
   void didUpdateWidget(covariant _ThinkPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -553,12 +556,14 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     }
   }
 
+  /// Releases the body scroll controller.
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
   }
 
+  /// Resolves the current expansion target from stream state and caller intent.
   bool _targetExpandedFor(_ThinkPanel widget) {
     if (widget.initiallyExpanded && !widget.isStreaming) {
       return true;
@@ -569,6 +574,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     return false;
   }
 
+  /// Toggles visibility for the thinking body.
   void _handleHeaderTap() {
     setState(() {
       _skipCollapseAnimationOnce = false;
@@ -581,17 +587,20 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     });
   }
 
+  /// Toggles the thinking body between capped and complete height.
   void _handleBodyTap() {
     setState(() {
       _bodyFullHeight = !_bodyFullHeight;
     });
   }
 
+  /// Restores automatic scrolling for a new expansion session.
   void _resetAutoScrollState() {
     _autoScrollEnabled = true;
     _userHasInteractedWithScroll = false;
   }
 
+  /// Tracks user scroll position inside capped thinking bodies.
   bool _handleScrollNotification(ScrollNotification notification) {
     if (!_expanded || _isProgrammaticScroll || !_scrollController.hasClients) {
       return false;
@@ -608,6 +617,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     return false;
   }
 
+  /// Updates automatic scroll intent from the current capped scroll position.
   void _updateAutoScrollFromPosition() {
     if (!_userHasInteractedWithScroll || !_scrollController.hasClients) {
       return;
@@ -618,6 +628,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
         position.pixels >= position.maxScrollExtent - threshold;
   }
 
+  /// Pins the capped thinking body to its latest streamed content.
   void _scrollToBottomAfterFrame() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients || !_autoScrollEnabled) {
@@ -644,6 +655,12 @@ class _ThinkPanelState extends State<_ThinkPanel> {
         _expanded && (contentText.isNotEmpty || hasStreamingMarkdown);
     final renderFullHeight =
         (widget.fullHeight || _bodyFullHeight) && _expanded;
+    final bodyConstraints = renderFullHeight
+        ? const BoxConstraints()
+        : const BoxConstraints(maxHeight: 300);
+    final bodyScrollPhysics = renderFullHeight
+        ? const NeverScrollableScrollPhysics()
+        : null;
     final switchDuration = _skipCollapseAnimationOnce
         ? Duration.zero
         : const Duration(milliseconds: 220);
@@ -722,39 +739,42 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                             ),
                             child: MessagePressShieldRegion(
                               child: GestureDetector(
+                                key: const ValueKey<String>(
+                                  'thinking-body-toggle',
+                                ),
                                 behavior: HitTestBehavior.translucent,
                                 onTap: _handleBodyTap,
-                                child: ConstrainedBox(
-                                  constraints: renderFullHeight
-                                      ? const BoxConstraints()
-                                      : const BoxConstraints(maxHeight: 300),
-                                  child: renderFullHeight
-                                      ? _ThinkMarkdownBody(
-                                          contentText: contentText,
-                                          contentStream: hasStreamingMarkdown
-                                              ? widget.markdownEventStream
-                                              : null,
-                                          textColor: widget.textColor,
-                                          splitMarkdownContent: widget.splitMarkdownContent,
-                                        )
-                                      : NotificationListener<
-                                          ScrollNotification
-                                        >(
-                                          onNotification:
-                                              _handleScrollNotification,
-                                          child: SingleChildScrollView(
-                                            controller: _scrollController,
-                                            child: _ThinkMarkdownBody(
-                                              contentText: contentText,
-                                              contentStream:
-                                                  hasStreamingMarkdown
-                                                  ? widget.markdownEventStream
-                                                  : null,
-                                              textColor: widget.textColor,
-                                              splitMarkdownContent: widget.splitMarkdownContent,
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: AnimatedSize(
+                                    alignment: Alignment.topCenter,
+                                    duration: const Duration(milliseconds: 240),
+                                    curve: Curves.easeOutCubic,
+                                    child: ConstrainedBox(
+                                      constraints: bodyConstraints,
+                                      child:
+                                          NotificationListener<
+                                            ScrollNotification
+                                          >(
+                                            onNotification:
+                                                _handleScrollNotification,
+                                            child: SingleChildScrollView(
+                                              controller: _scrollController,
+                                              physics: bodyScrollPhysics,
+                                              child: _ThinkMarkdownBody(
+                                                contentText: contentText,
+                                                contentStream:
+                                                    hasStreamingMarkdown
+                                                    ? widget.markdownEventStream
+                                                    : null,
+                                                textColor: widget.textColor,
+                                                splitMarkdownContent:
+                                                    widget.splitMarkdownContent,
+                                              ),
                                             ),
                                           ),
-                                        ),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -827,14 +847,20 @@ class _ThinkingTitle extends StatefulWidget {
   final Color color;
   final bool streaming;
 
+  /// Creates state that owns the title sweep animation.
   @override
   State<_ThinkingTitle> createState() => _ThinkingTitleState();
 }
 
 class _ThinkingTitleState extends State<_ThinkingTitle>
     with SingleTickerProviderStateMixin {
+  static const double _highlightBandWidth = 0.9;
+  static const double _highlightPathStart = -1.0 - _highlightBandWidth;
+  static const double _highlightPathEnd = 1.0;
+
   late final AnimationController _controller;
 
+  /// Starts the sweep animation when streamed thinking is visible.
   @override
   void initState() {
     super.initState();
@@ -847,6 +873,7 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
     }
   }
 
+  /// Syncs the sweep animation with streaming state changes.
   @override
   void didUpdateWidget(covariant _ThinkingTitle oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -861,12 +888,14 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
     }
   }
 
+  /// Disposes the sweep animation controller.
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
+  /// Builds the thinking title with a continuous off-text sweep loop.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -882,7 +911,9 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
-        final shift = _controller.value;
+        final sweepStart =
+            _highlightPathStart +
+            (_highlightPathEnd - _highlightPathStart) * _controller.value;
         return Stack(
           fit: StackFit.passthrough,
           children: <Widget>[
@@ -893,18 +924,14 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
                   blendMode: BlendMode.srcIn,
                   shaderCallback: (bounds) {
                     return LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
+                      begin: Alignment(sweepStart, 0),
+                      end: Alignment(sweepStart + _highlightBandWidth, 0),
                       colors: <Color>[
                         Colors.transparent,
                         theme.colorScheme.primary.withValues(alpha: 0.95),
                         Colors.transparent,
                       ],
-                      stops: <double>[
-                        (shift - 0.25).clamp(0.0, 1.0),
-                        shift.clamp(0.0, 1.0),
-                        (shift + 0.25).clamp(0.0, 1.0),
-                      ],
+                      stops: const <double>[0.0, 0.5, 1.0],
                     ).createShader(bounds);
                   },
                   child: Text(widget.text, style: highlightStyle),

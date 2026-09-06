@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::chat::llmprovider::AIService::AiServiceError;
+use crate::chat::llmprovider::EndpointCompleter::EndpointCompleter;
 use operit_model::ModelConfigData::{ApiProviderType, ModelBuiltinTool, ResolvedModelConfig};
 
 /// Trace metadata attached to one outbound LLM request attempt.
@@ -270,12 +271,16 @@ impl AIServiceFactory {
         let builtin_tools = config.builtinTools.clone();
         let model_name = config.modelId.clone();
         let provider_type = request.provider_type;
+        let api_endpoint = EndpointCompleter::completeEndpointForProviderType(
+            &config.apiEndpoint,
+            provider_type.clone(),
+        );
 
         let spec = match provider_type {
             ApiProviderType::OPENAI
             | ApiProviderType::OPENAI_GENERIC
             | ApiProviderType::OPENAI_LOCAL => Self::open_ai_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -287,7 +292,7 @@ impl AIServiceFactory {
             ),
             ApiProviderType::OPENAI_RESPONSES | ApiProviderType::OPENAI_RESPONSES_GENERIC => {
                 Self::open_ai_responses_provider(
-                    config.apiEndpoint,
+                    api_endpoint,
                     api_key_provider,
                     model_name,
                     custom_headers,
@@ -300,7 +305,7 @@ impl AIServiceFactory {
             }
             ApiProviderType::ANTHROPIC | ApiProviderType::ANTHROPIC_GENERIC => {
                 Self::claude_provider(
-                    config.apiEndpoint,
+                    api_endpoint,
                     api_key_provider,
                     model_name,
                     custom_headers,
@@ -309,7 +314,7 @@ impl AIServiceFactory {
                 )
             }
             ApiProviderType::GOOGLE | ApiProviderType::GEMINI_GENERIC => Self::gemini_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -318,7 +323,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::LMSTUDIO => Self::open_ai_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -329,7 +334,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::OLLAMA => Self::ollama_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -345,7 +350,7 @@ impl AIServiceFactory {
                 ));
             }
             ApiProviderType::ALIYUN => Self::qwen_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -365,7 +370,7 @@ impl AIServiceFactory {
             | ApiProviderType::PPINFRA
             | ApiProviderType::NOVITA
             | ApiProviderType::OTHER => Self::open_ai_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -376,7 +381,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::MOONSHOT => Self::kimi_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -387,7 +392,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::MIMO => Self::mimo_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -398,7 +403,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::DEEPSEEK => Self::deepseek_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -409,7 +414,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::MISTRAL => Self::mistral_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -420,7 +425,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::SILICONFLOW => Self::qwen_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -431,7 +436,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::OPENROUTER => Self::open_router_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -442,7 +447,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::FOUR_ROUTER => Self::four_router_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -453,7 +458,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::NOUS_PORTAL => Self::nous_portal_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -464,7 +469,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::DOUBAO => Self::doubao_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -475,7 +480,7 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::NVIDIA => Self::nvidia_provider(
-                config.apiEndpoint,
+                api_endpoint,
                 api_key_provider,
                 model_name,
                 custom_headers,

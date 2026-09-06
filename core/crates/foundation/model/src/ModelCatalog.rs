@@ -341,6 +341,21 @@ mod tests {
         assert!(model.request.is_some());
     }
 
+    /// Verifies cc-switch catalog rows carry seed pricing.
+    #[test]
+    fn ccswitch_catalog_row_has_pricing() {
+        let model = ModelCatalog::model("MIMO", "mimo-v2.5-pro").expect("MiMo catalog entry");
+        let pricing = model.pricing.expect("MiMo pricing");
+        let context = model.context.expect("MiMo context");
+        let capabilities = model.capabilities.expect("MiMo capabilities");
+
+        assert_eq!(model.providerTypeId, "MIMO");
+        assert!((pricing.inputPricePerMillion - 0.435).abs() < 0.001);
+        assert!((pricing.outputPricePerMillion - 0.87).abs() < 0.001);
+        assert!((context.maxContextLength - 1048.576).abs() < 0.001);
+        assert!(!capabilities.directImage);
+    }
+
     /// Verifies the generic provider can fetch OpenAI-compatible model lists.
     #[test]
     fn other_provider_has_model_list_operation() {

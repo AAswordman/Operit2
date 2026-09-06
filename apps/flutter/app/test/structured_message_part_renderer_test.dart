@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
@@ -43,6 +45,63 @@ void main() {
 
     expect(find.byType(CustomXmlRenderer), findsOneWidget);
     expect(find.byType(ExpansionTile), findsNothing);
+  });
+
+  testWidgets('keeps streamed thinking body mounted when height toggles', (
+    tester,
+  ) async {
+    var listenCount = 0;
+    final markdownController = StreamController<Object>(
+      onListen: () {
+        listenCount += 1;
+      },
+    );
+    addTearDown(markdownController.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: SizedBox(
+            width: 360,
+            child: CustomXmlRenderer(
+              xmlContent: '<think>streaming body',
+              isStreaming: true,
+              textColor: Colors.black,
+              xmlStream: const Stream<String>.empty(),
+              xmlMarkdownEventStream: markdownController.stream,
+              showThinkingProcess: true,
+              splitMarkdownContent: _splitMarkdownContent,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    markdownController
+      ..add(_markdownEvent('markdownBlockStart', blockId: 1))
+      ..add(
+        _markdownEvent(
+          'markdownBlockChunk',
+          blockId: 1,
+          value: 'streaming body',
+        ),
+      );
+    await tester.pump(const Duration(milliseconds: 240));
+    await tester.pump();
+
+    final bodyToggle = find.byKey(
+      const ValueKey<String>('thinking-body-toggle'),
+    );
+    expect(bodyToggle, findsOneWidget);
+
+    tester.widget<GestureDetector>(bodyToggle).onTap!();
+    await tester.pump(const Duration(milliseconds: 120));
+    tester.widget<GestureDetector>(bodyToggle).onTap!();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(listenCount, 1);
   });
 
   testWidgets('renders completion status with the established status card', (
@@ -231,4 +290,19 @@ Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
       headerLevel: null,
     ),
   ];
+}
+
+/// Creates a generated Markdown stream event for renderer tests.
+MarkdownStreamEvent _markdownEvent(String type, {String? value, int? blockId}) {
+  return MarkdownStreamEvent(
+    chatId: 'test',
+    eventType: type,
+    value: value,
+    id: null,
+    blockId: blockId,
+    inlineId: null,
+    parentBlockId: null,
+    nodeType: null,
+    headerLevel: null,
+  );
 }

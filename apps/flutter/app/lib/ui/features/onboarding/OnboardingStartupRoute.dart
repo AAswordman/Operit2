@@ -228,7 +228,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   String? _setupError;
   bool _providerConfirmed = false;
   List<_OnboardingRequirement> _requirements = const <_OnboardingRequirement>[];
-  RuntimeStoragePaths? _storagePaths;
 
   late final AnimationController _introAnimationController;
   late final AnimationController _introExitController;
@@ -415,7 +414,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         return;
       }
       setState(() {
-        _storagePaths = paths;
         _runtimeRootController.text = paths.runtimeRoot;
         _workspaceRootController.text = paths.workspaceRoot;
       });
@@ -445,14 +443,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
     });
     try {
-      final paths = await RuntimeBootstrapManager.instance
-          .localRuntimeStoragePathsForRoots(runtimeRoot, workspaceRoot);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _storagePaths = paths;
-      });
+      await RuntimeBootstrapManager.instance.localRuntimeStoragePathsForRoots(
+        runtimeRoot,
+        workspaceRoot,
+      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -693,7 +687,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
     _runtimeRootController.text = path.trim();
     setState(() {
-      _storagePaths = null;
       _setupError = null;
     });
   }
@@ -706,15 +699,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
     _workspaceRootController.text = path.trim();
     setState(() {
-      _storagePaths = null;
       _setupError = null;
     });
   }
 
-  /// Clears validated paths after either editable path changes.
+  /// Clears storage errors after either editable path changes.
   void _handleStoragePathChanged(String _) {
     setState(() {
-      _storagePaths = null;
       _setupError = null;
     });
   }
@@ -734,8 +725,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _setupError = null;
     });
     try {
-      final paths = await RuntimeBootstrapManager.instance
-          .localRuntimeStoragePathsForRoots(runtimeRoot, workspaceRoot);
+      await RuntimeBootstrapManager.instance.localRuntimeStoragePathsForRoots(
+        runtimeRoot,
+        workspaceRoot,
+      );
       await RuntimeBootstrapManager.instance.confirmLocalRuntimeStorage(
         runtimeRoot,
         workspaceRoot,
@@ -751,7 +744,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       }
       setState(() {
         _storageConfirmed = true;
-        _storagePaths = paths;
       });
       if (configured || guideSeen) {
         await widget.onComplete();
@@ -1156,9 +1148,14 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final runtimeRootReady = _runtimeRootController.text.trim().isNotEmpty;
+    final workspaceRootReady = _workspaceRootController.text.trim().isNotEmpty;
     final storageReady =
         !_isStoragePage ||
-        (!_loadingStoragePaths && !_savingStorage && _storagePaths != null);
+        (!_loadingStoragePaths &&
+            !_savingStorage &&
+            runtimeRootReady &&
+            workspaceRootReady);
     final agreementReady = !_isAgreementPage || _agreementWaitSeconds == 0;
     final modeReady = !_isModePage || _selectedStartMode != null;
     final modelReady =
