@@ -20,11 +20,13 @@ class SettingsDetailView extends StatelessWidget {
   const SettingsDetailView({
     super.key,
     required this.category,
+    required this.onOpenProfile,
     this.showHeader = true,
     this.onProfileChanged,
   });
 
   final SettingsCategory category;
+  final VoidCallback onOpenProfile;
   final bool showHeader;
   final VoidCallback? onProfileChanged;
 
@@ -44,7 +46,9 @@ class SettingsDetailView extends StatelessWidget {
       SettingsCategory.globalBehavior => const GlobalBehaviorSettingsPanel(),
       SettingsCategory.appearance => const AppearanceSettingsPanel(),
       SettingsCategory.data => const DataSettingsPanel(),
-      SettingsCategory.accessLinks => const AccessLinksSettingsPanel(),
+      SettingsCategory.accessLinks => AccessLinksSettingsPanel(
+        onOpenProfile: onOpenProfile,
+      ),
       SettingsCategory.about => const AboutOperitScreen(),
     };
   }

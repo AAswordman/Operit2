@@ -484,7 +484,7 @@ const HistoryChat = (function () {
             console.error(`Tool ${func.name} failed unexpectedly`, error);
             complete({
                 success: false,
-                message: `读取对话消息失败: ${message}`,
+                message: `工具 ${func.name.replace(/_impl$/, '')} 执行失败: ${message}`,
             });
         }
     }
@@ -498,7 +498,7 @@ const HistoryChat = (function () {
             console.error(`Tool ${func.name} failed unexpectedly`, error);
             complete({
                 success: false,
-                message: `读取对话消息失败: ${message}`,
+                message: `工具 ${func.name.replace(/_impl$/, '')} 执行失败: ${message}`,
             });
         }
     }
