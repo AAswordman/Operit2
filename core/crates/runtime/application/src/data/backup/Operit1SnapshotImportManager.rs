@@ -109,7 +109,7 @@ const OPERIT1_DEFAULT_AI_AVATAR_URI: &str = "file:///android_asset/operit.png";
 const OPERIT1_OBJECTBOX_KEY_MEMORY: [u8; 4] = [0x18, 0x00, 0x00, 0x10];
 const OPERIT1_OBJECTBOX_KEY_LINK: [u8; 4] = [0x18, 0x00, 0x00, 0x14];
 const OPERIT1_OBJECTBOX_KEY_TAG: [u8; 4] = [0x18, 0x00, 0x00, 0x1c];
-const OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION: [u8; 4] = [0x20, 0x00, 0x00, 0x20];
+const OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION: [u8; 4] = [0x08, 0x00, 0x00, 0x1c];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
@@ -3500,12 +3500,12 @@ fn buildMemoryExportDataFromOperit1ObjectBox(
         } else if key.len() == 8 && key[0..4] == OPERIT1_OBJECTBOX_KEY_TAG && !value.is_empty() {
             let tag = parseOperit1MemoryTagRecord(value)?;
             tags.insert(tag.id, tag);
-        } else if key.len() == 16
+        } else if key.len() == 12
             && key[0..4] == OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION
             && value.is_empty()
         {
-            let memoryId = readBigEndianU32(&key[8..12])?;
-            let tagId = readBigEndianU32(&key[12..16])?;
+            let memoryId = readBigEndianU32(&key[4..8])?;
+            let tagId = readBigEndianU32(&key[8..12])?;
             memoryTagPairs.insert((memoryId, tagId));
         }
         Ok(())
