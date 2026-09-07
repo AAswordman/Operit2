@@ -213,11 +213,14 @@ class AndroidPlatformChannel(
         }
     }
 
-    /** Destroys the native Runtime and terminates the Android process cleanly. */
+    /** Stops the service and exits without freeing a bridge still used by native calls. */
     private fun terminateApplication(result: MethodChannel.Result) {
         runtimeHost.runBackground {
             try {
-                runtimeHost.destroy()
+                // JNI calls share the process-level bridge. shutdownNow does not
+                // wait for them, so destroying its raw handle here races those
+                // calls. This path always kills the process; let process exit
+                // reclaim the handle after stopping the foreground service.
                 activity.stopService(
                     Intent(activity.applicationContext, OperitCoreService::class.java),
                 )
