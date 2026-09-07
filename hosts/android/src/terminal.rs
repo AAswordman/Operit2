@@ -87,8 +87,10 @@ impl Drop for AndroidPtySession {
     fn drop(&mut self) {
         #[cfg(target_os = "android")]
         unsafe {
-            libc::kill(self.pid, libc::SIGHUP);
-            libc::kill(self.pid, libc::SIGKILL);
+            if self.exitCode.is_none() {
+                libc::kill(self.pid, libc::SIGHUP);
+                libc::kill(self.pid, libc::SIGKILL);
+            }
             let fd = match self.writer.lock() {
                 Ok(mut writerFd) => {
                     let value = *writerFd;
@@ -298,7 +300,7 @@ impl TerminalHost for AndroidTerminalHost {
         {
             let mut state = self.lockState()?;
             if let Some(sessionId) = state.sessionNameToId.get(&key).cloned() {
-                if state.ptySessions.contains_key(&sessionId) {
+                if androidSessionIsAlive(&mut state, &sessionId)? {
                     return Ok(TerminalSessionInfo {
                         sessionId,
                         sessionName: normalizedSessionName,
@@ -308,7 +310,8 @@ impl TerminalHost for AndroidTerminalHost {
                         isNewSession: false,
                     });
                 }
-                state.sessionNameToId.remove(&key);
+                state.ptySessions.remove(&sessionId);
+                removeAndroidSessionMappings(&mut state, &sessionId);
             }
         }
 
@@ -509,10 +512,10 @@ fn hiddenAndroidPtySessionId(
     {
         let mut state = host.lockState()?;
         if let Some(sessionId) = state.hiddenExecutorKeyToSessionId.get(executorKey).cloned() {
-            if state.ptySessions.contains_key(&sessionId) {
+            if androidSessionIsAlive(&mut state, &sessionId)? {
                 return Ok(sessionId);
             }
-            state.hiddenExecutorKeyToSessionId.remove(executorKey);
+            state.ptySessions.remove(&sessionId);
             removeAndroidSessionMappings(&mut state, &sessionId);
         }
     }
@@ -1462,6 +1465,16 @@ fn androidLogWrite(priority: libc::c_int, message: &str) {
 
 fn sessionKey(terminalType: &str, name: &str) -> String {
     format!("{terminalType}:{name}")
+}
+
+fn androidSessionIsAlive(state: &mut AndroidTerminalState, sessionId: &str) -> HostResult<bool> {
+    let Some(session) = state.ptySessions.get_mut(sessionId) else {
+        return Ok(false);
+    };
+    if session.exitCode.is_none() {
+        session.exitCode = pollPidExitCode(session.pid)?;
+    }
+    Ok(session.exitCode.is_none())
 }
 
 fn removeAndroidSessionMappings(state: &mut AndroidTerminalState, sessionId: &str) {
