@@ -69,6 +69,7 @@ struct AndroidPtySession {
     output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: AndroidPtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
+    commandExecution: Arc<Mutex<()>>,
     commandRunning: bool,
     exitCode: Option<i32>,
 }
@@ -342,6 +343,18 @@ impl TerminalHost for AndroidTerminalHost {
     ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
+        let commandExecution = {
+            let state = self.lockState()?;
+            let session = state.ptySessions.get(&normalizedSessionId).ok_or_else(|| {
+                HostError::new(format!("Terminal session does not exist: {sessionId}"))
+            })?;
+            session.commandExecution.clone()
+        };
+        // Hold ownership through output collection and cancellation for this session.
+        // Waiting here must not hold the state mutex used by other sessions.
+        let _execution = commandExecution
+            .lock()
+            .map_err(|_| HostError::new("android terminal command mutex poisoned"))?;
         let (terminalType, commandOutput, writer) = {
             let mut state = self.lockState()?;
             let session = state
@@ -586,6 +599,7 @@ fn createAndroidPtySession(
         output,
         commandOutput,
         screenOutput,
+        commandExecution: Arc::new(Mutex::new(())),
         commandRunning: false,
         exitCode: None,
     })
