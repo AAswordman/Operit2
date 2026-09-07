@@ -14,6 +14,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../core/snapshot/SnapshotImportUploader.dart';
+import '../../../common/Operit1ImportResultDialog.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -452,6 +453,8 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       if (!mounted) {
         return;
       }
+      await showOperit1ImportResultDialog(context, result);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.settingsDataOperit1SnapshotImported)),
       );

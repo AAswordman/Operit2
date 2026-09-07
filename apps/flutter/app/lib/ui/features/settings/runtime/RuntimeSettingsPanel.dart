@@ -8,16 +8,23 @@ import '../../../../core/bridge/PlatformCoreProxy.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
+import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/DeviceSpaceDiscoveryPanel.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+import '../profile/UserProfileSummaryTile.dart';
 
 class RuntimeSettingsPanel extends StatefulWidget {
-  const RuntimeSettingsPanel({super.key, this.embedded = false});
+  const RuntimeSettingsPanel({
+    super.key,
+    this.embedded = false,
+    required this.onOpenProfile,
+  });
 
   final bool embedded;
+  final VoidCallback onOpenProfile;
 
   @override
   State<RuntimeSettingsPanel> createState() => _RuntimeSettingsPanelState();
@@ -28,6 +35,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   String? _connectionMessage;
   bool _connectionFailed = false;
   generated.CoreSpace? _currentDeviceSpace;
+  generated.RuntimeDeviceSpaceTopology? _topology;
   Map<String, _PairedRemoteProbeState> _pairedRemoteStates =
       <String, _PairedRemoteProbeState>{};
   Map<String, generated.RuntimePairedDevice> _pairedDevices =
@@ -126,8 +134,13 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     try {
       final deviceSpace = await _clients.server.runtimeRemoteLinkService
           .deviceSpace();
+      final topology = await _clients.server.runtimeRemoteLinkService
+          .deviceSpaceTopology();
       if (mounted) {
-        setState(() => _currentDeviceSpace = deviceSpace);
+        setState(() {
+          _currentDeviceSpace = deviceSpace;
+          _topology = topology;
+        });
       }
     } catch (error) {
       if (mounted) {
@@ -180,8 +193,13 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
         .disconnectDeviceSpaceConnection(deviceId: deviceId);
     final refreshedDeviceSpace = await _clients.server.runtimeRemoteLinkService
         .deviceSpace();
+    final refreshedTopology = await _clients.server.runtimeRemoteLinkService
+        .deviceSpaceTopology();
     if (mounted) {
-      setState(() => _currentDeviceSpace = refreshedDeviceSpace);
+      setState(() {
+        _currentDeviceSpace = refreshedDeviceSpace;
+        _topology = refreshedTopology;
+      });
     }
     return _clients.server.runtimeRemoteLinkService.deviceSpaceTopology();
   }
@@ -320,6 +338,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       if (mounted) {
         setState(() => _currentDeviceSpace = renamed);
       }
+      await _refreshTopology();
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -368,6 +387,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
           _connectionFailed = false;
         });
       }
+      await _refreshTopology();
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -425,11 +445,23 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     if (!mounted) {
       return;
     }
+    final topology = await _clients.server.runtimeRemoteLinkService
+        .deviceSpaceTopology();
     setState(() {
       _currentDeviceSpace = deviceSpace;
+      _topology = topology;
       _connectionMessage = null;
       _connectionFailed = false;
     });
+  }
+
+  /// Refreshes the visible device graph after a space mutation.
+  Future<void> _refreshTopology() async {
+    final topology = await _clients.server.runtimeRemoteLinkService
+        .deviceSpaceTopology();
+    if (mounted) {
+      setState(() => _topology = topology);
+    }
   }
 
   /// Mirrors discovery activity so the surrounding settings actions stay stable.
@@ -443,24 +475,16 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final children = <Widget>[
-      _SectionCard(
-        title: l10n.settingsRuntimeCurrentSpace,
-        children: <Widget>[
-          _CurrentDeviceSpaceLine(
-            deviceSpace: _currentDeviceSpace,
-            busy: _busy,
-            onViewTopology: _openDeviceSpaceTopology,
-            onRename: _renameCurrentDeviceSpace,
-            onLeave: _leaveCurrentDeviceSpace,
-          ),
-          if (_connectionMessage != null) ...<Widget>[
-            const SizedBox(height: 8),
-            _InlineStatus(
-              message: _connectionMessage!,
-              failed: _connectionFailed,
-            ),
-          ],
-        ],
+      _DeviceSpaceOverviewCard(
+        deviceSpace: _currentDeviceSpace,
+        topology: _topology,
+        busy: _busy,
+        onViewTopology: _openDeviceSpaceTopology,
+        onRename: _renameCurrentDeviceSpace,
+        onLeave: _leaveCurrentDeviceSpace,
+        onOpenProfile: widget.onOpenProfile,
+        connectionMessage: _connectionMessage,
+        connectionFailed: _connectionFailed,
       ),
       _SectionCard(
         title: l10n.settingsRuntimeRemoteTitle,
@@ -498,15 +522,92 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       ),
     ];
     if (widget.embedded) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
+      return _DeviceSpaceBackdrop(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
       );
     }
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-      children: children,
+    return _DeviceSpaceBackdrop(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+        children: children,
+      ),
     );
+  }
+}
+
+class _DeviceSpaceBackdrop extends StatelessWidget {
+  const _DeviceSpaceBackdrop({required this.child});
+
+  final Widget child;
+
+  /// Paints the violet starfield behind the complete device-space workflow.
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _DeviceSpaceBackdropPainter(
+        base: Theme.of(context).colorScheme.surface,
+        glow: Theme.of(context).colorScheme.primary,
+        secondary: Theme.of(context).colorScheme.secondary,
+      ),
+      child: child,
+    );
+  }
+}
+
+class _DeviceSpaceBackdropPainter extends CustomPainter {
+  const _DeviceSpaceBackdropPainter({
+    required this.base,
+    required this.glow,
+    required this.secondary,
+  });
+
+  final Color base;
+  final Color glow;
+  final Color secondary;
+
+  /// Draws a subtle diagonal gradient and fixed sparse stars.
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: <Color>[
+            Color.alphaBlend(glow.withValues(alpha: 0.18), base),
+            Color.alphaBlend(secondary.withValues(alpha: 0.08), base),
+            base,
+          ],
+          stops: const <double>[0, 0.42, 1],
+        ).createShader(rect),
+    );
+    final starPaint = Paint()..color = glow.withValues(alpha: 0.26);
+    final stars = <Offset>[
+      Offset(size.width * 0.07, size.height * 0.12),
+      Offset(size.width * 0.22, size.height * 0.23),
+      Offset(size.width * 0.42, size.height * 0.13),
+      Offset(size.width * 0.64, size.height * 0.3),
+      Offset(size.width * 0.83, size.height * 0.18),
+      Offset(size.width * 0.91, size.height * 0.57),
+      Offset(size.width * 0.35, size.height * 0.72),
+      Offset(size.width * 0.74, size.height * 0.84),
+    ];
+    for (final star in stars) {
+      canvas.drawCircle(star, 1.8, starPaint);
+    }
+  }
+
+  /// Repaints the backdrop when the active theme colors change.
+  @override
+  bool shouldRepaint(covariant _DeviceSpaceBackdropPainter oldDelegate) {
+    return oldDelegate.base != base ||
+        oldDelegate.glow != glow ||
+        oldDelegate.secondary != secondary;
   }
 }
 
@@ -533,6 +634,529 @@ _PairedRemoteProbeState _pairedRemoteStateFromStatus(
     generated.RuntimePairedDeviceStatus.removedFromSpace =>
       _PairedRemoteProbeState.removedFromSpace,
   };
+}
+
+class _DeviceSpaceOverviewCard extends StatelessWidget {
+  const _DeviceSpaceOverviewCard({
+    required this.deviceSpace,
+    required this.topology,
+    required this.busy,
+    required this.onViewTopology,
+    required this.onRename,
+    required this.onLeave,
+    required this.onOpenProfile,
+    required this.connectionMessage,
+    required this.connectionFailed,
+  });
+
+  final generated.CoreSpace? deviceSpace;
+  final generated.RuntimeDeviceSpaceTopology? topology;
+  final bool busy;
+  final VoidCallback onViewTopology;
+  final VoidCallback onRename;
+  final VoidCallback onLeave;
+  final VoidCallback onOpenProfile;
+  final String? connectionMessage;
+  final bool connectionFailed;
+
+  /// Builds the visual device-space overview shown at the top of settings.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    final space = deviceSpace;
+    if (space == null) {
+      return const _SectionCard(
+        title: '设备空间',
+        children: <Widget>[
+          SizedBox(
+            height: 190,
+            child: Center(child: M3LoadingIndicator(size: 24)),
+          ),
+        ],
+      );
+    }
+    final graph = topology;
+    if (graph == null) {
+      return const _SectionCard(
+        title: '设备空间',
+        children: <Widget>[
+          SizedBox(
+            height: 190,
+            child: Center(child: M3LoadingIndicator(size: 24)),
+          ),
+        ],
+      );
+    }
+    final devices = graph.devices;
+    final onlineCount = devices.where((device) => device.online).length;
+    final currentDevice = devices.firstWhere(
+      (device) => device.deviceId == graph.currentDeviceId,
+    );
+    final remoteDevices = devices
+        .where((device) => device.deviceId != graph.currentDeviceId)
+        .take(3)
+        .toList(growable: false);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: OperitGlassSurface(
+        color: Color.alphaBlend(
+          scheme.primary.withValues(alpha: 0.08),
+          scheme.surfaceContainerHighest.withValues(alpha: 0.42),
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.primary.withValues(alpha: 0.3)),
+        material: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _DeviceSpaceIdentityChip(onTap: onOpenProfile),
+              const SizedBox(height: 14),
+              Row(
+                children: <Widget>[
+                  Icon(Icons.hub_outlined, color: scheme.primary, size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      l10n.settingsRuntimeCurrentSpace,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: l10n.settingsRuntimeRenameSpace,
+                    onPressed: busy ? null : onRename,
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                  IconButton(
+                    tooltip: l10n.settingsRuntimeLeaveSpace,
+                    onPressed: busy || space.members.length <= 1
+                        ? null
+                        : onLeave,
+                    icon: const Icon(Icons.logout_outlined),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                space.spaceName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: scheme.primary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                l10n.settingsRuntimeSpaceId(space.spaceId),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                l10n.settingsRuntimeOverviewDescription,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: <Widget>[
+                  Text('${space.members.length} 台设备'),
+                  const SizedBox(width: 8),
+                  Icon(Icons.circle, size: 8, color: scheme.primary),
+                  const SizedBox(width: 5),
+                  Text('$onlineCount 台在线'),
+                ],
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 242,
+                child: _AnimatedSpaceGraph(
+                  color: scheme.primary,
+                  currentDevice: currentDevice,
+                  remoteDevices: remoteDevices,
+                ),
+              ),
+              const Divider(height: 18),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      l10n.settingsRuntimeSpaceId(space.spaceId),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: busy ? null : onViewTopology,
+                    icon: const Icon(Icons.account_tree_outlined, size: 18),
+                    label: Text(l10n.settingsRuntimeViewSpaceTopology),
+                  ),
+                ],
+              ),
+              if (connectionMessage != null) ...<Widget>[
+                const SizedBox(height: 4),
+                _InlineStatus(
+                  message: connectionMessage!,
+                  failed: connectionFailed,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeviceSpaceIdentityChip extends StatelessWidget {
+  const _DeviceSpaceIdentityChip({required this.onTap});
+
+  final VoidCallback onTap;
+
+  /// Builds the identity selector shown above the current-space title.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final identity = RuntimeBootstrapManager.instance.activeIdentity;
+    final name = runtimeIdentityDisplayName(identity, l10n);
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: scheme.outlineVariant.withValues(alpha: 0.4),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 5, 11, 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              CircleAvatar(
+                radius: 15,
+                backgroundColor: scheme.primary.withValues(alpha: 0.15),
+                child: Icon(
+                  Icons.person_outline,
+                  size: 19,
+                  color: scheme.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '用户与身份',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnimatedSpaceGraph extends StatefulWidget {
+  const _AnimatedSpaceGraph({
+    required this.color,
+    required this.currentDevice,
+    required this.remoteDevices,
+  });
+
+  final Color color;
+  final generated.RuntimeDeviceSpaceDevice currentDevice;
+  final List<generated.RuntimeDeviceSpaceDevice> remoteDevices;
+
+  /// Creates the ticker that drives orbit and connection motion.
+  @override
+  State<_AnimatedSpaceGraph> createState() => _AnimatedSpaceGraphState();
+}
+
+class _AnimatedSpaceGraphState extends State<_AnimatedSpaceGraph>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  /// Starts the continuous ambient motion for the device graph.
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    )..repeat();
+  }
+
+  /// Releases the graph animation ticker.
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// Builds animated orbit rings, connection dashes, and device nodes.
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final pulse = (math.sin(_controller.value * math.pi * 2) + 1) / 2;
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            CustomPaint(
+              painter: _SpaceOrbitPainter(
+                color: widget.color,
+                phase: _controller.value,
+                pulse: pulse,
+              ),
+            ),
+            Center(
+              child: _SpaceDeviceNode(
+                label: widget.currentDevice.deviceName,
+                current: true,
+                online: widget.currentDevice.online,
+                pulse: pulse,
+              ),
+            ),
+            for (var index = 0; index < widget.remoteDevices.length; index++)
+              Align(
+                alignment: index == 0
+                    ? Alignment.centerRight
+                    : index == 1
+                    ? Alignment.centerLeft
+                    : Alignment.topRight,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    right: index == 0 ? 8 : 20,
+                    left: index == 1 ? 8 : 0,
+                    top: index == 2 ? 18 : 0,
+                  ),
+                  child: _SpaceDeviceNode(
+                    label: widget.remoteDevices[index].deviceName,
+                    current: false,
+                    online: widget.remoteDevices[index].online,
+                    pulse: pulse,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _SpaceDeviceNode extends StatelessWidget {
+  const _SpaceDeviceNode({
+    required this.label,
+    required this.current,
+    required this.online,
+    required this.pulse,
+  });
+
+  final String label;
+  final bool current;
+  final bool online;
+  final double pulse;
+
+  /// Builds one glowing current-device node or compact remote node.
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final accent = online ? scheme.primary : scheme.error;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Transform.scale(
+          scale: 1 + (current ? pulse * 0.045 : pulse * 0.018),
+          child: Container(
+            width: current ? 88 : 52,
+            height: current ? 88 : 52,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: current
+                  ? RadialGradient(
+                      colors: <Color>[
+                        Colors.white.withValues(alpha: 0.95),
+                        accent.withValues(alpha: 0.86),
+                        const Color(0xff7750d9).withValues(alpha: 0.92),
+                      ],
+                      stops: const <double>[0.05, 0.48, 1],
+                    )
+                  : RadialGradient(
+                      colors: <Color>[
+                        Colors.white.withValues(alpha: 0.92),
+                        const Color(0xffbbc0d3).withValues(alpha: 0.74),
+                        scheme.surface.withValues(alpha: 0.42),
+                      ],
+                      stops: const <double>[0.06, 0.5, 1],
+                    ),
+              border: Border.all(
+                color: accent.withValues(alpha: 0.78),
+                width: current ? 2 : 1.5,
+              ),
+              boxShadow: current
+                  ? <BoxShadow>[
+                      BoxShadow(
+                        color: accent.withValues(alpha: 0.42),
+                        blurRadius: 22 + pulse * 12,
+                        spreadRadius: 5 + pulse * 6,
+                      ),
+                    ]
+                  : const <BoxShadow>[],
+            ),
+            child: Icon(
+              current
+                  ? Icons.laptop_mac_outlined
+                  : Icons.devices_other_outlined,
+              size: current ? 38 : 24,
+              color: accent,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 126),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              fontWeight: current ? FontWeight.w800 : FontWeight.w600,
+            ),
+          ),
+        ),
+        if (current)
+          Text(
+            '当前设备',
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        if (!current)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.circle, size: 7, color: accent),
+              const SizedBox(width: 4),
+              Text(online ? '在线' : '离线'),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _SpaceOrbitPainter extends CustomPainter {
+  const _SpaceOrbitPainter({
+    required this.color,
+    required this.phase,
+    required this.pulse,
+  });
+
+  final Color color;
+  final double phase;
+  final double pulse;
+
+  /// Draws the concentric orbit rings behind the device nodes.
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final shortest = math.min(size.width, size.height);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = color.withValues(alpha: 0.18);
+    for (final factor in <double>[0.28, 0.48, 0.68, 0.88]) {
+      canvas.drawCircle(center, shortest * factor / 2, paint);
+    }
+    final stars = <Offset>[
+      Offset(size.width * 0.58, size.height * 0.18),
+      Offset(size.width * 0.73, size.height * 0.34),
+      Offset(size.width * 0.79, size.height * 0.78),
+      Offset(size.width * 0.24, size.height * 0.68),
+      Offset(size.width * 0.14, size.height * 0.37),
+    ];
+    final starPaint = Paint()
+      ..color = color.withValues(alpha: 0.36 + pulse * 0.18);
+    for (final star in stars) {
+      canvas.drawCircle(star, 2.2, starPaint);
+    }
+    final dashPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..color = color.withValues(alpha: 0.42);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: shortest * 0.36),
+      -0.35,
+      1.7,
+      false,
+      dashPaint,
+    );
+    final connectionPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = color.withValues(alpha: 0.48);
+    const dashLength = 7.0;
+    const gapLength = 6.0;
+    final dashOffset = phase * (dashLength + gapLength);
+    final start = Offset(center.dx + shortest * 0.08, center.dy);
+    final end = Offset(size.width * 0.85, center.dy);
+    final delta = end - start;
+    final distance = delta.distance;
+    final direction = delta / distance;
+    for (
+      double traveled = -dashOffset;
+      traveled < distance;
+      traveled += dashLength + gapLength
+    ) {
+      final dashStart = start + direction * traveled;
+      final dashEnd =
+          start + direction * math.min(traveled + dashLength, distance);
+      canvas.drawLine(dashStart, dashEnd, connectionPaint);
+    }
+  }
+
+  /// Repaints the orbit when the active theme color changes.
+  @override
+  bool shouldRepaint(covariant _SpaceOrbitPainter oldDelegate) {
+    return oldDelegate.color != color ||
+        oldDelegate.phase != phase ||
+        oldDelegate.pulse != pulse;
+  }
 }
 
 class _SectionCard extends StatelessWidget {
@@ -568,118 +1192,6 @@ class _SectionCard extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _CurrentDeviceSpaceLine extends StatelessWidget {
-  const _CurrentDeviceSpaceLine({
-    required this.deviceSpace,
-    required this.busy,
-    required this.onViewTopology,
-    required this.onRename,
-    required this.onLeave,
-  });
-
-  final generated.CoreSpace? deviceSpace;
-  final bool busy;
-  final VoidCallback onViewTopology;
-  final VoidCallback onRename;
-  final VoidCallback onLeave;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final l10n = AppLocalizations.of(context)!;
-    final currentDeviceSpace = deviceSpace;
-    if (currentDeviceSpace == null) {
-      return const SizedBox(
-        height: 48,
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: M3LoadingIndicator(size: 20),
-        ),
-      );
-    }
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Icon(Icons.hub_outlined, color: colorScheme.primary),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                currentDeviceSpace.spaceName,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                l10n.settingsRuntimeSpaceId(currentDeviceSpace.spaceId),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Semantics(
-                button: true,
-                label: l10n.settingsRuntimeViewSpaceTopology,
-                child: InkWell(
-                  onTap: busy ? null : onViewTopology,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Flexible(
-                          child: Text(
-                            l10n.settingsRuntimeSpaceDeviceCount(
-                              currentDeviceSpace.members.length,
-                            ),
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: colorScheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                        const SizedBox(width: 2),
-                        Icon(
-                          Icons.chevron_right_rounded,
-                          size: 18,
-                          color: colorScheme.primary,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            IconButton(
-              tooltip: l10n.settingsRuntimeRenameSpace,
-              icon: const Icon(Icons.edit_outlined),
-              onPressed: busy ? null : onRename,
-            ),
-            IconButton(
-              tooltip: l10n.settingsRuntimeLeaveSpace,
-              icon: const Icon(Icons.logout_outlined),
-              onPressed: busy || currentDeviceSpace.members.length <= 1
-                  ? null
-                  : onLeave,
-            ),
-          ],
-        ),
-      ],
     );
   }
 }
