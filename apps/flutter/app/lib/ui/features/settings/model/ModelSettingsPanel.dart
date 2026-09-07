@@ -2071,7 +2071,9 @@ class _ModelSettingsEditorDialogState
     final maxContextLength = double.tryParse(
       _maxContextLengthController.text.trim(),
     );
-    if (maxContextLength == null || maxContextLength <= 0) {
+    if (maxContextLength == null ||
+        !maxContextLength.isFinite ||
+        maxContextLength <= 0) {
       setState(() {
         _maxContextLengthError = AppLocalizations.of(
           context,
