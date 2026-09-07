@@ -428,7 +428,7 @@ impl Operit1SnapshotImportManager {
             .selectedModelId
             .clone()
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
-        let modelConfig =
+        let mut modelConfig =
             self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
         let fileImportPlan = SnapshotFileImportPlan::new();
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
@@ -437,7 +437,7 @@ impl Operit1SnapshotImportManager {
             "正在写入角色卡、提示词、角色组和 TTS 配置。",
             0.36,
         ));
-        self.importStructuredPreferences(&parsed, &fileImportPlan)?;
+        modelConfig.skippedFields.extend(self.importStructuredPreferences(&parsed, &fileImportPlan)?);
         self.importUserMarkdownPreferences(&parsed)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "preferences",
@@ -495,7 +495,8 @@ impl Operit1SnapshotImportManager {
         &self,
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<String>, String> {
+        let mut notes = Vec::new();
         let paths = self.paths.clone();
         let promptTags = buildOperit2PromptTags(parsed)?;
         if !promptTags.is_empty()
@@ -505,6 +506,12 @@ impl Operit1SnapshotImportManager {
                 .contains_key(ENTRY_CHARACTER_CARDS)
         {
             let cards = buildOperit2CharacterCards(parsed, fileImportPlan)?;
+            for card in &cards {
+                if card.chatModelBindingMode == CharacterCardChatModelBindingMode::FIXED_MODEL
+                    && card.chatModelId.is_none() {
+                    notes.push(format!("角色「{}」的旧固定模型无法对应；已保留角色，请重新选择固定模型", card.name));
+                }
+            }
             let backup = serde_json::json!({
                 "characterCards": cards,
                 "promptTags": promptTags,
@@ -532,7 +539,7 @@ impl Operit1SnapshotImportManager {
             let manager = TtsConfigManager::new(paths);
             importOperit1TtsConfig(&manager, config)?;
         }
-        Ok(())
+        Ok(notes)
     }
 
     #[allow(non_snake_case)]
@@ -1996,7 +2003,9 @@ fn buildOperit2CharacterCards(
             preferences,
             &format!("character_card_{id}_chat_model_binding_mode"),
         )?;
-        let chatModelId = resolveOperit1CharacterChatModelId(parsed, preferences, &id)?;
+        let chatModelId = resolveOperit1CharacterChatModelId(parsed, preferences, &id)
+            .unwrap_or_else(|error| { AppLogger::w("Operit1SnapshotImport", &error); None });
+
         let memoryBinding = resolveOperit1CharacterMemoryBinding(parsed, preferences, &id)?;
         cards.push(CharacterCard {
             id: id.clone(),
