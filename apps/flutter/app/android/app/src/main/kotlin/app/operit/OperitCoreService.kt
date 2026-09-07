@@ -76,6 +76,21 @@ class OperitCoreService : Service() {
         }
         runtimeHost.runBackground {
             try {
+                if (!runtimeHost.restoreStorageRoots()) {
+                    // A cleared application has no confirmed storage. Do not turn
+                    // a sticky service restart into a crash or create a new identity.
+                    mainHandler.post {
+                        if (!destroyed.get()) {
+                            runtimeStartRequested.set(false)
+                            if (runtimeHost.hasStorageRoots()) {
+                                ensureRuntimeStarted()
+                            } else {
+                                stopSelf()
+                            }
+                        }
+                    }
+                    return@runBackground
+                }
                 runtimeHost.ensureRuntimeHandle()
                 mainHandler.post {
                     if (!destroyed.get()) {
