@@ -402,7 +402,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       );
       final session = stagedSession;
       if (session != null) {
-        await session.discard();
+        await discardOperit1ImportSession(session);
       }
       if (!mounted) {
         return;
@@ -420,7 +420,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
     final session = stagedSession;
     if (!mounted) {
-      await session.discard();
+      await discardOperit1ImportSession(session);
       return;
     }
     final confirmed = await _Operit1SnapshotImportDialog.show(
@@ -430,7 +430,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       byteCount: session.byteLength,
     );
     if (confirmed != true) {
-      await session.discard();
+      await discardOperit1ImportSession(session);
       return;
     }
     setState(() {
@@ -448,7 +448,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         'settings snapshot import completed chats=${result.importedChats} messages=${result.importedMessages} memories=${result.importedMemories} files=${result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles}',
         tag: _operit1SnapshotImportLogTag,
       );
-      await session.discard();
+      await discardOperit1ImportSession(session);
       if (!mounted) {
         return;
       }
@@ -463,7 +463,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         error: error,
         stackTrace: stackTrace,
       );
-      await session.discard();
+      await discardOperit1ImportSession(session);
       if (!mounted) {
         return;
       }
