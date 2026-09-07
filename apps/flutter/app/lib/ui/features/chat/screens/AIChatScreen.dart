@@ -226,6 +226,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
   bool _pendingQueueEnqueueInFlight = false;
+  bool _submitInFlight = false;
   bool _isApplyingChatDraft = false;
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
@@ -1363,7 +1364,22 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   }
 
   void _sendMessage() {
-    unawaited(_sendMessageWithHooks());
+    unawaited(_submitMessageOnce());
+  }
+
+  Future<void> _submitMessageOnce() async {
+    if (_submitInFlight) return;
+    _submitInFlight = true;
+    final submittingChat = _currentChatId;
+    try {
+      await _sendMessageWithHooks();
+    } catch (error, stackTrace) {
+      if (mounted && _currentChatId == submittingChat) {
+        _handleChatFlowError(error, stackTrace);
+      }
+    } finally {
+      _submitInFlight = false;
+    }
   }
 
   /// Dispatches submit_requested before mutating the visible input field.
