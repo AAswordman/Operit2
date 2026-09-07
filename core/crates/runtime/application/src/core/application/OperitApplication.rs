@@ -172,6 +172,22 @@ impl OperitApplication {
         }
     }
 
+    /// Shares this initialized application's service handles without starting another runtime.
+    /// Commands mutate the shared stores/holders, never a separate application or chat state.
+    pub fn sharedCommandContext(&self) -> Self {
+        Self {
+            appStartupTimeMs: self.appStartupTimeMs,
+            hostManager: self.hostManager.clone(),
+            chatRuntimeHolder: self.chatRuntimeHolder.clone(),
+            toolRuntimeDependencies: self.toolRuntimeDependencies.clone(),
+            toolHandler: self.toolHandler.clone(),
+            toolPkgBridgeRuntime: self.toolPkgBridgeRuntime.clone(),
+            providerRuntimeContext: self.providerRuntimeContext.clone(),
+            initialized: self.initialized,
+            hostRuntimeEventRegistration: self.hostRuntimeEventRegistration.clone(),
+        }
+    }
+
     /// Removes files queued for cleanup through the configured file-system host.
     #[allow(non_snake_case)]
     fn cleanOnExitFiles(&self) -> Result<(), String> {
