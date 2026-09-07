@@ -1564,9 +1564,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return;
     }
     _bottomScrollScheduled = true;
+    final scheduledChatId = _currentChatId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bottomScrollScheduled = false;
-      if (!mounted || !_scrollController.hasClients) {
+      if (!mounted || !_autoScrollToBottom ||
+          _currentChatId != scheduledChatId || _hasNewerDisplayHistory ||
+          _isLoadingDisplayWindow || !_scrollController.hasClients) {
         return;
       }
       final position = _scrollController.position;

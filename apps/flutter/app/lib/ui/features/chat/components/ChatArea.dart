@@ -322,7 +322,7 @@ class _ChatAreaState extends State<ChatArea> {
           widget.onAutoScrollToBottomChanged(false);
         }
       } else if (_userScrollSessionActive) {
-        if (_isAtBottom(notification.metrics) &&
+        if (!_userScrollsTowardHistory && _isAtBottom(notification.metrics) &&
             !widget.autoScrollToBottomListenable.value) {
           widget.onAutoScrollToBottomChanged(true);
         }
@@ -342,7 +342,10 @@ class _ChatAreaState extends State<ChatArea> {
       if (_userScrollSessionActive) {
         _scheduleMessageAnchorCollection();
       }
-      if (_isAtBottom(notification.metrics) &&
+      if (_userScrollSessionActive &&
+          notification.dragDetails != null &&
+          (notification.scrollDelta ?? 0) > 0 &&
+          _isAtBottom(notification.metrics) &&
           !_userScrollsTowardHistory &&
           !widget.autoScrollToBottomListenable.value) {
         widget.onAutoScrollToBottomChanged(true);
