@@ -385,7 +385,7 @@ impl Operit1SnapshotImportManager {
         AppLogger::i("Operit1SnapshotImport", "full snapshot import started");
         let result = self.importSnapshotSourceInner(source);
         match &result {
-            Ok(imported) => AppLogger::i(
+            Ok(imported) => { AppLogger::i(
                 "Operit1SnapshotImport",
                 &format!(
                     "full snapshot import completed chats={} messages={} memories={} files={}",
@@ -396,11 +396,14 @@ impl Operit1SnapshotImportManager {
                         + imported.importedExternalFiles
                         + imported.importedWorkspaceFiles,
                 ),
-            ),
-            Err(error) => AppLogger::e(
-                "Operit1SnapshotImport",
-                &format!("full snapshot import failed: {error}"),
-            ),
+            ); },
+            Err(error) => {
+                AppLogger::e("Operit1SnapshotImport", &format!("full snapshot import failed: {error}"));
+                publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress {
+                    stage: "failed".to_string(), title: "导入失败".to_string(),
+                    detail: error.clone(), progress: 0.0, active: false,
+                });
+            }
         };
         result
     }
