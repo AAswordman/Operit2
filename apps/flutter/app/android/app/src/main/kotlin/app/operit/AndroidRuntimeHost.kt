@@ -20,15 +20,16 @@ class AndroidRuntimeHost(context: Context) {
     private val applicationContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val runtimeLock = Any()
+    private val runtimeEventLock = Any()
     private val runtimeThreadIndex = AtomicInteger(0)
     private val runtimeExecutor: ExecutorService =
         Executors.newFixedThreadPool(8) { runnable ->
             Thread(runnable, "operit-runtime-${runtimeThreadIndex.incrementAndGet()}")
         }
-    private var runtimeHandle: Long = 0
+    @Volatile private var runtimeHandle: Long = 0
     private val pendingRuntimeEvents = ArrayDeque<String>()
-    private var configuredRuntimeRoot: File? = null
-    private var configuredWorkspaceRoot: File? = null
+    @Volatile private var configuredRuntimeRoot: File? = null
+    @Volatile private var configuredWorkspaceRoot: File? = null
     @Volatile
     private var runtimeStartupState = "preparing"
     @Volatile
@@ -68,16 +69,19 @@ class AndroidRuntimeHost(context: Context) {
                     "native runtime assets ready elapsedMs=" +
                         (System.currentTimeMillis() - startedAtMillis),
                 )
-                runtimeHandle = OperitRuntimeNative.create(
+                val createdHandle = OperitRuntimeNative.create(
                     paths.runtimeRoot.absolutePath,
                     paths.workspaceRoot.absolutePath,
                     this,
                 )
-                if (runtimeHandle == 0L) {
+                if (createdHandle == 0L) {
                     updateRuntimeStartupStatus("failed", "本地运行时启动失败")
                     throw IllegalStateException(OperitRuntimeNative.createError())
                 }
-                flushPendingRuntimeEventsLocked()
+                synchronized(runtimeEventLock) {
+                    runtimeHandle = createdHandle
+                    flushPendingRuntimeEventsLocked()
+                }
             } catch (error: Throwable) {
                 updateRuntimeStartupStatus("failed", "本地运行时启动失败")
                 throw error
@@ -122,7 +126,7 @@ class AndroidRuntimeHost(context: Context) {
     /** Delivers an Android lifecycle event after the native Core runtime is available. */
     fun emitRuntimeEvent(event: org.json.JSONObject) {
         val eventJson = event.toString()
-        synchronized(runtimeLock) {
+        synchronized(runtimeEventLock) {
             val handle = runtimeHandle
             if (handle == 0L) {
                 pendingRuntimeEvents.addLast(eventJson)
