@@ -14,6 +14,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../core/snapshot/SnapshotImportUploader.dart';
+import '../../../common/Operit1SnapshotPreparationDialog.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -370,63 +371,35 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
 
   /// Selects, previews, confirms, and imports a complete Operit1 snapshot.
   Future<void> _importOperit1Snapshot() async {
+    if (_busy) return;
     final l10n = AppLocalizations.of(context)!;
-    final file = await SnapshotImportFile.pick();
-    if (file == null) {
-      return;
-    }
-    ClientLogger.i(
-      'settings snapshot selected name=${file.name} bytes=${file.byteLength}',
-      tag: _operit1SnapshotImportLogTag,
-    );
-    setState(() => _busy = true);
-    SnapshotImportSession? stagedSession;
-    late final Operit1SnapshotPreview preview;
+    setState(() {
+      _busy = true;
+      _operit1ImportProgress = null;
+    });
+    PreparedOperit1Snapshot? prepared;
     try {
-      stagedSession = await SnapshotImportUploader(widget.clients).stage(file);
-      ClientLogger.i(
-        'settings snapshot upload completed bytes=${stagedSession.byteLength}; inspection started',
-        tag: _operit1SnapshotImportLogTag,
-      );
-      preview = await stagedSession.completeOperit1();
-      ClientLogger.i(
-        'settings snapshot inspection completed format=${preview.formatVersion} configs=${preview.modelConfig.configs.length} chats=${preview.chatCount} messages=${preview.messageCount}',
-        tag: _operit1SnapshotImportLogTag,
-      );
-    } catch (error, stackTrace) {
-      ClientLogger.e(
-        'settings snapshot selection, upload, or inspection failed',
-        tag: _operit1SnapshotImportLogTag,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      final session = stagedSession;
-      if (session != null) {
-        await session.discard();
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+      prepared = await prepareOperit1Snapshot(context, widget.clients);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(l10n.settingsDataOperit1SnapshotImportError('$error')),
-        ),
-      );
+        ));
+      }
       return;
     } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
+      if (mounted) setState(() => _busy = false);
     }
-    final session = stagedSession;
+    if (prepared == null) return;
+    final session = prepared.session;
     if (!mounted) {
       await session.discard();
       return;
     }
     final confirmed = await _Operit1SnapshotImportDialog.show(
       context: context,
-      fileName: file.name,
-      preview: preview,
+      fileName: prepared.fileName,
+      preview: prepared.preview,
       byteCount: session.byteLength,
     );
     if (confirmed != true) {
