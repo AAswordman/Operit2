@@ -1740,9 +1740,8 @@ impl SnapshotFileImportPlan {
         if let Some(relative) = localPath.strip_prefix(OPERIT1_DATA_DATA_FILES_PREFIX) {
             return self.rewriteInternalFilesRelativePath(relative);
         }
-        if let Some(relative) = localPath.strip_prefix(OPERIT1_EXTERNAL_DOWNLOAD_PREFIX) {
-            return self.rewriteExternalDownloadRelativePath(relative);
-        }
+        // Shared Download/Operit files are not the app's external_files export.
+        // Keep the original location when the snapshot has no copy mapping.
         Ok(value.to_string())
     }
 
