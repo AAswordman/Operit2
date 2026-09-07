@@ -867,6 +867,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   /// Atomically takes a queue item before placing it in the active input editor.
   Future<void> _editPendingQueueMessageInRuntime(int id) async {
     final chatId = _currentChatId;
+    final editorValue = _messageController.value;
     if (chatId == null) {
       return;
     }
@@ -879,7 +880,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       if (item == null) {
         return;
       }
-      if (!mounted || _currentChatId != chatId) {
+      if (!mounted || _currentChatId != chatId ||
+          _messageController.value != editorValue) {
         await _viewModel.restorePendingQueueMessage(
           chatId: chatId,
           message: item,
