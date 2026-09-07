@@ -117,19 +117,37 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   static const GeneratedCoreProxyClients _coreClients =
       GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
+  final RuntimeBootstrapManager _pairingRuntimeManager =
+      RuntimeBootstrapManager.instance;
   bool _shownStartupWebAccessError = false;
   StreamSubscription<core_proxy.RuntimeHostInteractionRequest>?
   _webAccessPairingSubscription;
   Future<void> _webAccessPairingDialogQueue = Future<void>.value();
 
-  /// Subscribes to native Web Access pairing request events.
+  /// Waits for confirmed storage before opening a native pairing stream.
   @override
   void initState() {
     super.initState();
+    _pairingRuntimeManager.addListener(_syncWebAccessPairingSubscription);
+    _syncWebAccessPairingSubscription();
+  }
+
+  void _syncWebAccessPairingSubscription() {
     if (kIsWeb) {
       return;
     }
-    _webAccessPairingSubscription = _coreClients
+    if (!_pairingRuntimeManager.runtimeConfigured) {
+      final subscription = _webAccessPairingSubscription;
+      _webAccessPairingSubscription = null;
+      unawaited(subscription?.cancel());
+      return;
+    }
+    if (_webAccessPairingSubscription != null) {
+      return;
+    }
+    late final StreamSubscription<core_proxy.RuntimeHostInteractionRequest>
+        subscription;
+    subscription = _coreClients
         .servicesRuntimeHostInteractionService
         .ownerHostInteractionEvents(
           kinds: <core_proxy.RuntimeHostInteractionKind>[
@@ -146,12 +164,19 @@ class _AppDialogHostState extends State<_AppDialogHost> {
               stackTrace: stackTrace,
             );
           },
+          onDone: () {
+            if (identical(_webAccessPairingSubscription, subscription)) {
+              _webAccessPairingSubscription = null;
+            }
+          },
         );
+    _webAccessPairingSubscription = subscription;
   }
 
   /// Cancels native Web Access pairing request event monitoring.
   @override
   void dispose() {
+    _pairingRuntimeManager.removeListener(_syncWebAccessPairingSubscription);
     unawaited(_webAccessPairingSubscription?.cancel());
     super.dispose();
   }
