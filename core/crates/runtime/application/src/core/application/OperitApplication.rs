@@ -224,6 +224,15 @@ impl OperitApplication {
     /// Initializes persistent stores, prompt managers, tool handlers, plugins, and runtime events.
     #[allow(non_snake_case)]
     pub fn onCreate(&mut self) -> Result<(), String> {
+        self.initializeRuntime(false)
+    }
+
+    /// Lets a host finish binding command callbacks before running installed startup hooks.
+    pub fn onCreateWithDeferredLifecycle(&mut self) -> Result<(), String> {
+        self.initializeRuntime(true)
+    }
+
+    fn initializeRuntime(&mut self, deferLifecycleHooks: bool) -> Result<(), String> {
         self.appStartupTimeMs = currentTimeMillis();
         AppLogger::i("OperitApplication", "runtime initialization start");
         setHostManager(self.hostManager.clone());
@@ -256,16 +265,9 @@ impl OperitApplication {
                 currentTimeMillis() - pluginInitializationStartedAt
             ),
         );
-        ToolPkgAppLifecycleHookBridge::dispatchEvent(
-            &self.toolPkgBridgeRuntime,
-            operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_APPLICATION_ON_CREATE,
-            serde_json::json!({
-                "extras": {
-                    "startupTimeMs": self.appStartupTimeMs,
-                    "elapsedMs": currentTimeMillis() - self.appStartupTimeMs,
-                }
-            }),
-        );
+        if !deferLifecycleHooks {
+            self.dispatchApplicationCreated();
+        }
         let runtimeEventRegistrationStartedAt = currentTimeMillis();
         AppLogger::i("OperitApplication", "host runtime event registration start");
         self.hostRuntimeEventRegistration =
@@ -291,6 +293,27 @@ impl OperitApplication {
             ),
         );
         Ok(())
+    }
+
+    /// Delivers startup exactly once after the host has bound the shared runtime services.
+    pub fn dispatchApplicationCreated(&self) {
+        (self.applicationCreatedDispatcher())();
+    }
+
+    /// Captures the event before the application is shared by the Core node.
+    pub fn applicationCreatedDispatcher(&self) -> Box<dyn FnOnce()> {
+        let runtime = self.toolPkgBridgeRuntime.clone();
+        let startupTimeMs = self.appStartupTimeMs;
+        Box::new(move || ToolPkgAppLifecycleHookBridge::dispatchEvent(
+            &runtime,
+            operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_APPLICATION_ON_CREATE,
+            serde_json::json!({
+                "extras": {
+                    "startupTimeMs": startupTimeMs,
+                    "elapsedMs": currentTimeMillis() - startupTimeMs,
+                }
+            }),
+        ))
     }
 
     /// Delivers one normalized host event to registered ToolPkg host-event hooks.

@@ -309,17 +309,24 @@ impl OperitFlutterBridge {
             ))]
             terminalHost.clone(),
         )?;
+        #[cfg(not(target_arch = "wasm32"))]
+        core.localApplicationMut().onCreateWithDeferredLifecycle()?;
+        #[cfg(target_arch = "wasm32")]
         core.localApplicationMut().onCreate()?;
         install_permission_requester(&mut core);
         #[cfg(not(target_arch = "wasm32"))]
         let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
         let runtimeStorageHost = core.runtimeStorageHost();
+        #[cfg(not(target_arch = "wasm32"))]
+        let dispatchApplicationCreated = core.localApplicationMut().applicationCreatedDispatcher();
         let localCore = Arc::new(core);
         #[cfg(not(target_arch = "wasm32"))]
         let coreApplication = CoreApplication::startWithSharedLocalClient(
             localCore.clone(),
             RemoteDeviceInfo::native(),
         )?;
+        #[cfg(not(target_arch = "wasm32"))]
+        dispatchApplicationCreated();
         Ok(Self {
             #[cfg(not(target_arch = "wasm32"))]
             runtime,
