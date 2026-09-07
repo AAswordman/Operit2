@@ -417,6 +417,8 @@ impl Operit1SnapshotImportManager {
             0.08,
         ));
         let parsed = ParsedOperit1Snapshot::fromSource(source)?;
+        let userProfiles = buildOperit1UserPreferenceProfiles(&parsed)?;
+        let (userDocuments, preferenceNotes) = buildOperit1UserPreferenceDocuments(&parsed, &userProfiles)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "model_config",
             "迁移模型配置",
@@ -428,7 +430,7 @@ impl Operit1SnapshotImportManager {
             .selectedModelId
             .clone()
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
-        let modelConfig =
+        let mut modelConfig =
             self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
         let fileImportPlan = SnapshotFileImportPlan::new();
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
@@ -438,7 +440,8 @@ impl Operit1SnapshotImportManager {
             0.36,
         ));
         self.importStructuredPreferences(&parsed, &fileImportPlan)?;
-        self.importUserMarkdownPreferences(&parsed)?;
+        modelConfig.skippedFields.extend(preferenceNotes);
+        self.importUserMarkdownPreferences(&userDocuments)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "preferences",
             "迁移偏好设置",
@@ -536,16 +539,10 @@ impl Operit1SnapshotImportManager {
     }
 
     #[allow(non_snake_case)]
-    fn importUserMarkdownPreferences(&self, parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
-        let profiles = buildOperit1UserPreferenceProfiles(parsed)?;
-        let cardBindings = collectOperit1CharacterMemoryProfileBindings(parsed)?;
-        let profileIds = cardBindings.values().cloned().collect::<BTreeSet<String>>();
-        for profileId in profileIds {
-            let profile = profiles
-                .get(&profileId)
-                .ok_or_else(|| format!("Operit1 角色卡绑定了不存在的用户偏好：{profileId}"))?;
-            let markdown = buildOperit2UserMarkdown(profile)?;
-            appendSharedUserMarkdown(self.storageHost.as_ref(), &profileId, &markdown)?;
+    fn importUserMarkdownPreferences(&self, documents: &BTreeMap<String, String>) -> Result<(), String> {
+        for (profileId, markdown) in documents {
+            if markdown.trim().is_empty() { continue; }
+            appendSharedUserMarkdown(self.storageHost.as_ref(), profileId, markdown)?;
         }
         Ok(())
     }
@@ -966,12 +963,15 @@ impl Operit1SnapshotImportManager {
             let mut totalLinkCount = 0;
             for (profileIndex, profileId) in profiles.into_iter().enumerate() {
                 let entry = operit1ObjectBoxEntryForProfile(&profileId);
-                let entryLength = parsed
-                    .archive
-                    .entries
-                    .get(&entry)
-                    .ok_or_else(|| format!("Operit1 记忆库条目不存在：{entry}"))?
-                    .uncompressedSize;
+                let Some(entryMetadata) = parsed.archive.entries.get(&entry) else {
+                    let storeId = operit1SharedMemoryStoreId(&profileId);
+                    let storeName = operit1SharedMemoryStoreName(parsed, &profileId)?;
+                    sharedMemoryStoreManager.createSharedMemoryStoreWithId(storeId, storeName)
+                        .map_err(|error| format!("创建 Operit1 空记忆库失败：{error}"))?;
+                    AppLogger::w("Operit1SnapshotImport", &format!("记忆库未包含数据库，保留空配置：{profileId}"));
+                    continue;
+                };
+                let entryLength = entryMetadata.uncompressedSize;
                 let exportData = self.withStagedArchiveEntry(
                     parsed,
                     &entry,
@@ -1979,12 +1979,10 @@ fn buildOperit2CharacterCards(
         .transpose()?
         .unwrap_or_default();
     let ids = optionalPreferenceStringSet(preferences, "character_card_list")?;
-    let userPreferences = parsed
-        .archive
-        .datastorePreferences
-        .get(ENTRY_USER_PREFERENCES)
-        .ok_or_else(|| "Operit1 快照缺少用户偏好，无法读取角色头像绑定".to_string())?;
-    let avatarUris = buildOperit1CharacterCardAvatarUris(userPreferences, &ids, fileImportPlan)?;
+    let avatarUris = match parsed.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES) {
+        Some(preferences) => buildOperit1CharacterCardAvatarUris(preferences, &ids, fileImportPlan)?,
+        None => BTreeMap::new(),
+    };
     let mut cards = Vec::new();
     for id in ids {
         let name = requiredPreferenceString(
@@ -2214,7 +2212,7 @@ struct Operit1CharacterMemoryBinding {
     sharedMemoryId: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[allow(non_snake_case)]
 struct Operit1UserPreferenceProfile {
     id: String,
@@ -2302,7 +2300,7 @@ fn collectOperit1MemoryProfileIds(
 ) -> Result<BTreeSet<String>, String> {
     let mut ids = BTreeSet::new();
     ids.insert(OPERIT1_DEFAULT_PROFILE_ID.to_string());
-    ids.extend(collectOperit1ObjectBoxProfileIds(parsed)?);
+    ids.extend(buildOperit1UserPreferenceProfiles(parsed)?.into_keys());
     for profileId in collectOperit1CharacterMemoryProfileBindings(parsed)?.values() {
         ids.insert(profileId.clone());
     }
@@ -2377,62 +2375,283 @@ fn operit1SharedMemoryStoreName(
     Ok(format!("Operit1 记忆库 - {profileName}"))
 }
 
+// Operit1 schema-v2 removes profile_* only after consuming profile_list.
+// A restored +4 snapshot can coexist with a newly initialized memory-space list;
+// use the same old-list precedence as MemorySpaceProfileDocumentRepository.
+#[allow(non_snake_case)]
+fn operit1UsesMemorySpaces(preferences: &HashMap<String, Operit1PreferenceValue>) -> bool {
+    !preferences.contains_key("profile_list")
+        && (preferences.contains_key("memory_space_list")
+            || preferences.contains_key("active_memory_space_id")
+            || preferences.keys().any(|key| key.starts_with("memory_space_")))
+}
+
 #[allow(non_snake_case)]
 fn operit1ActiveProfileId(parsed: &ParsedOperit1Snapshot) -> Result<String, String> {
-    let preferences = parsed
-        .archive
-        .datastorePreferences
-        .get(ENTRY_USER_PREFERENCES)
-        .ok_or_else(|| format!("快照里没有 Operit1 用户偏好文件：{ENTRY_USER_PREFERENCES}"))?;
-    let value = requiredPreferenceString(
-        preferences,
-        "active_profile_id",
-        "Operit1 用户偏好缺少当前配置 ID",
-    )?;
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        Err("Operit1 当前用户偏好 ID 为空".to_string())
-    } else {
-        Ok(trimmed.to_string())
-    }
+    let Some(preferences) = parsed.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES) else {
+        return Ok(OPERIT1_DEFAULT_PROFILE_ID.to_string());
+    };
+    let key = if operit1UsesMemorySpaces(preferences) {
+        "active_memory_space_id"
+    } else { "active_profile_id" };
+    // Both released preference flows define an absent selection as "default".
+    let value = optionalPreferenceString(preferences, key)?
+        .unwrap_or_else(|| OPERIT1_DEFAULT_PROFILE_ID.to_string());
+    let value = value.trim();
+    validateOperit1ProfileId(value)?;
+    Ok(value.to_string())
 }
 
 #[allow(non_snake_case)]
 fn buildOperit1UserPreferenceProfiles(
     parsed: &ParsedOperit1Snapshot,
 ) -> Result<BTreeMap<String, Operit1UserPreferenceProfile>, String> {
-    let Some(preferences) = parsed
-        .archive
-        .datastorePreferences
-        .get(ENTRY_USER_PREFERENCES)
-    else {
-        return Ok(BTreeMap::new());
-    };
     let mut profiles = BTreeMap::new();
-    for (key, value) in preferences {
-        if key == "profile_list" {
-            continue;
+    let mut ids = collectOperit1ObjectBoxProfileIds(parsed)?;
+    ids.insert(OPERIT1_DEFAULT_PROFILE_ID.to_string());
+    ids.insert(operit1ActiveProfileId(parsed)?);
+    ids.extend(collectOperit1CharacterMemoryProfileBindings(parsed)?.into_values());
+    if let Some(preferences) = parsed.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES) {
+        let (prefix, listKey) = if operit1UsesMemorySpaces(preferences) {
+            ("memory_space_", "memory_space_list")
+        } else { ("profile_", "profile_list") };
+        for (key, value) in preferences {
+            if key == listKey { continue; }
+            let Some(profileId) = key.strip_prefix(prefix) else { continue; };
+            validateOperit1ProfileId(profileId)?;
+            let raw = value.asString()
+                .ok_or_else(|| format!("Operit1 用户偏好配置不是字符串：{profileId}"))?;
+            let profile: Operit1UserPreferenceProfile = serde_json::from_str(raw)
+                .map_err(|error| format!("Operit1 用户偏好配置格式不正确：{profileId}: {error}"))?;
+            validateOperit1ProfileId(&profile.id)?;
+            profiles.insert(profile.id.clone(), profile);
         }
-        let Some(profileId) = key.strip_prefix("profile_") else {
-            continue;
-        };
-        validateOperit1ProfileId(profileId)?;
-        let raw = value
-            .asString()
-            .ok_or_else(|| format!("Operit1 用户偏好配置不是字符串：{profileId}"))?;
-        let profile: Operit1UserPreferenceProfile = serde_json::from_str(raw)
-            .map_err(|error| format!("Operit1 用户偏好配置格式不正确：{profileId}: {error}"))?;
-        profiles.insert(profile.id.clone(), profile);
+        if let Some(list) = optionalPreferenceStringList(preferences, listKey)? {
+            ids.extend(list);
+        }
     }
-    if let Some(profileIds) = optionalPreferenceStringList(preferences, "profile_list")? {
-        for profileId in profileIds {
-            validateOperit1ProfileId(&profileId)?;
-            if !profiles.contains_key(&profileId) {
-                return Err(format!("Operit1 用户偏好列表引用不存在的配置：{profileId}"));
+    // Operit1 creates empty legacy profiles for listed IDs without a record.
+    // Also retain real database/card identities whose metadata was not exported:
+    // their ID is a label, never invented user content or a different binding.
+    for id in ids {
+        validateOperit1ProfileId(&id)?;
+        profiles.entry(id.clone()).or_insert_with(|| Operit1UserPreferenceProfile {
+            name: if id == OPERIT1_DEFAULT_PROFILE_ID { "Default".to_string() } else { id.clone() },
+            id,
+            ..Default::default()
+        });
+    }
+    Ok(profiles)
+}
+
+/// Restores the user documents owned by Operit1 profiles without assigning an
+/// unowned published +5 root document to whichever space happens to be active.
+#[allow(non_snake_case)]
+fn buildOperit1UserPreferenceDocuments(
+    parsed: &ParsedOperit1Snapshot,
+    profiles: &BTreeMap<String, Operit1UserPreferenceProfile>,
+) -> Result<(BTreeMap<String, String>, Vec<String>), String> {
+    let mut documents = BTreeMap::new();
+    let mut notes = Vec::new();
+    let Some(preferences) = parsed.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES) else {
+        notes.push("用户文档：快照未包含用户偏好文件，未推断文档归属。".to_string());
+        return Ok((documents, notes));
+    };
+    if !operit1UsesMemorySpaces(preferences) {
+        for (id, profile) in profiles {
+            documents.insert(id.clone(), buildOperit2UserMarkdown(profile)?);
+        }
+        return Ok((documents, notes));
+    }
+
+    for id in profiles.keys() {
+        let entry = format!("payload/files/memory-space-profiles/{id}/user.md");
+        if let Some(markdown) = readOperit1UserDocument(parsed, &entry)? {
+            // Empty files are genuine documents too. Published +5 content may
+            // fill them, matching upstream writeIfDocumentEmpty semantics.
+            documents.insert(id.clone(), markdown);
+        }
+    }
+
+    // The released migration leaves its old root files in place. Once version
+    // two is committed, a later empty per-space file is authoritative (the
+    // user may have reset it); importing the stale root would undo that reset.
+    let migratePublishedDocuments = operit1UserDocumentSchemaVersion(parsed)? < 2;
+    let rootDocument = if migratePublishedDocuments {
+        readOperit1UserDocument(parsed, "payload/files/user.md")?
+    } else { None };
+    let archiveDocument = if migratePublishedDocuments {
+        readOperit1UserDocument(parsed, "payload/files/legacy-user-profiles.md")?
+    } else { None };
+    if rootDocument.is_some() || archiveDocument.is_some() {
+        // BTreeMap order and synthetic metadata for ObjectBox/card references
+        // cannot establish +5 ownership. Only the original ordered list can.
+        let ids = optionalPreferenceStringList(preferences, "memory_space_list")?
+            .unwrap_or_default();
+        let metadataComplete = !ids.is_empty()
+            && ids.iter().all(|id| {
+                profiles.contains_key(id)
+                    && preferences.contains_key(&format!("memory_space_{id}"))
+            });
+        if !metadataComplete {
+            notes.push("用户文档：旧版根 user.md／legacy-user-profiles.md 缺少完整的记忆空间列表，原文件已保留，未猜测归属。".to_string());
+        } else {
+            let spaces = ids.iter()
+                .map(|id| (id.as_str(), profiles[id].name.as_str()))
+                .collect::<Vec<_>>();
+            let archived = archiveDocument.as_deref()
+                .map(parseOperit1PublishedUserArchive)
+                .unwrap_or_default();
+            if archiveDocument.as_deref().is_some_and(|content| !content.trim().is_empty())
+                && archived.is_empty()
+            {
+                notes.push("用户文档：legacy-user-profiles.md 未识别出旧版配置章节，原文件已保留。".to_string());
+            }
+            let mut rootCandidates = Vec::new();
+            if rootDocument.as_deref().is_some_and(|content| !content.trim().is_empty()) {
+                for index in 0..spaces.len() {
+                    let otherNames = spaces.iter().enumerate()
+                        .filter(|(otherIndex, _)| *otherIndex != index)
+                        .map(|(_, (_, name))| *name)
+                        .collect::<Vec<_>>();
+                    if operit1PublishedArchiveNamesAreSubsequence(&archived, &otherNames) {
+                        rootCandidates.push(index);
+                    }
+                }
+            }
+            if rootCandidates.len() > 1 {
+                // Upstream also stops the whole +5 document assignment here;
+                // choosing an archive owner could steal the actual root owner.
+                notes.push("用户文档：旧版根 user.md 的所属记忆空间不唯一，根文件和档案原文已保留，未错误绑定到当前空间。".to_string());
+            } else {
+                let rootIndex = rootCandidates.first().copied();
+                let mut remainingSpaces = spaces.iter().enumerate()
+                    .filter(|(index, _)| Some(*index) != rootIndex)
+                    .map(|(_, space)| *space)
+                    .collect::<Vec<_>>();
+                for (name, content) in &archived {
+                    if let Some(index) = remainingSpaces.iter().position(|(_, candidate)| *candidate == name.as_str()) {
+                        let (id, _) = remainingSpaces.remove(index);
+                        insertOperit1UserDocumentIfEmpty(
+                            &mut documents,
+                            id,
+                            format!("# About me\n\n{}\n", content.trim()),
+                        );
+                    } else {
+                        notes.push(format!("用户文档：旧档案配置「{name}」没有对应记忆空间，档案原文已保留。"));
+                    }
+                }
+                if let (Some(index), Some(markdown)) = (rootIndex, rootDocument.as_ref()) {
+                    insertOperit1UserDocumentIfEmpty(&mut documents, spaces[index].0, markdown.clone());
+                } else if rootDocument.as_deref().is_some_and(|content| !content.trim().is_empty()) {
+                    notes.push("用户文档：无法确定旧版根 user.md 的所属记忆空间，原文件已保留。".to_string());
+                }
             }
         }
     }
-    Ok(profiles)
+    for (id, profile) in profiles {
+        if !documents.contains_key(id) {
+            notes.push(format!("用户文档：记忆空间「{}」({id}) 没有可恢复的 user.md；未生成替代正文，其他数据继续迁移。", profile.name));
+        }
+    }
+    Ok((documents, notes))
+}
+
+/// Android SharedPreferences writes this schema marker as an int element.
+/// Parse named attributes independently: XML attribute order is not semantic.
+#[allow(non_snake_case)]
+fn operit1UserDocumentSchemaVersion(parsed: &ParsedOperit1Snapshot) -> Result<i32, String> {
+    let entry = "payload/shared_prefs/memory_space_profile_documents.xml";
+    let Some(xml) = readOperit1UserDocument(parsed, entry)? else { return Ok(0); };
+    let intElements = regex::Regex::new(r#"(?s)<int\b[^>]*>"#)
+        .map_err(|error| error.to_string())?;
+    let attributes = regex::Regex::new(r#"([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')"#)
+        .map_err(|error| error.to_string())?;
+    let mut version = 0;
+    for element in intElements.find_iter(&xml) {
+        let mut name = None;
+        let mut value = None;
+        for attribute in attributes.captures_iter(element.as_str()) {
+            let text = attribute.get(2).or_else(|| attribute.get(3))
+                .map(|capture| capture.as_str());
+            match attribute.get(1).map(|capture| capture.as_str()) {
+                Some("name") => name = text,
+                Some("value") => value = text,
+                _ => {},
+            }
+        }
+        if name == Some("schema_version") {
+            version = value.ok_or("Operit1 用户文档迁移标记缺少版本值")?
+                .parse::<i32>()
+                .map_err(|error| format!("Operit1 用户文档迁移版本格式不正确：{error}"))?;
+        }
+    }
+    Ok(version)
+}
+
+#[allow(non_snake_case)]
+fn readOperit1UserDocument(
+    parsed: &ParsedOperit1Snapshot,
+    entry: &str,
+) -> Result<Option<String>, String> {
+    if !parsed.archive.hasEntry(entry) {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    parsed.copyEntryTo(entry, &mut bytes)?;
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|error| format!("Operit1 用户文档不是 UTF-8：{entry}: {error}"))
+}
+
+/// Matches the released Kotlin parser's level-two heading boundaries while
+/// retaining Basic information/Personality/Preferred assistant style sections.
+#[allow(non_snake_case)]
+fn parseOperit1PublishedUserArchive(content: &str) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    let mut offset = 0usize;
+    for line in content.split_inclusive('\n') {
+        let withoutNewline = line.strip_suffix('\n').unwrap_or(line);
+        let heading = withoutNewline.strip_suffix('\r').unwrap_or(withoutNewline);
+        if let Some(name) = heading.strip_prefix("## ") {
+            if !name.is_empty() && !name.contains('\r')
+                && !matches!(name, "Basic information" | "Personality" | "Preferred assistant style")
+            {
+                headers.push((name.to_string(), offset, offset + line.len()));
+            }
+        }
+        offset += line.len();
+    }
+    headers.iter().enumerate().filter_map(|(index, (name, _, start))| {
+        let end = headers.get(index + 1).map(|(_, start, _)| *start).unwrap_or(content.len());
+        let body = content[*start..end].trim();
+        if body.is_empty() { None } else { Some((name.clone(), body.to_string())) }
+    }).collect()
+}
+
+#[allow(non_snake_case)]
+fn operit1PublishedArchiveNamesAreSubsequence(
+    archived: &[(String, String)],
+    spaceNames: &[&str],
+) -> bool {
+    let mut next = 0usize;
+    for name in spaceNames {
+        if next < archived.len() && archived[next].0.as_str() == *name {
+            next += 1;
+        }
+    }
+    next == archived.len()
+}
+
+#[allow(non_snake_case)]
+fn insertOperit1UserDocumentIfEmpty(
+    documents: &mut BTreeMap<String, String>,
+    id: &str,
+    markdown: String,
+) {
+    if documents.get(id).map_or(true, |current| current.trim().is_empty()) {
+        documents.insert(id.to_string(), markdown);
+    }
 }
 
 #[allow(non_snake_case)]
