@@ -47,17 +47,11 @@ pub(crate) fn render_generated(
     output.push_str(&render_reverse_stream_dispatch(objects));
     output.push_str(&render_generated_error_details(objects, error_types));
     for object in objects {
-        if object.has_call_dispatch()
-            && (!object_uses_arc_mutex_instance(&object.access)
-                || object
-                    .methods
-                    .iter()
-                    .any(|method| method.is_async && method.call_protocol().is_some()))
-        {
+        if object.has_async_call_dispatch() {
             output.push_str(&render_object_call_dispatch(object, error_types));
             output.push('\n');
         }
-        if object_uses_arc_mutex_instance(&object.access) && object.has_sync_call_dispatch() {
+        if object.has_sync_call_dispatch() {
             output.push_str(&render_object_sync_call_dispatch(object, error_types));
             output.push('\n');
         }

@@ -164,6 +164,13 @@ impl SourceObject {
             .any(|method| !method.is_async && method.call_protocol().is_some())
     }
 
+    /// Returns whether generated async call dispatch has direct async calls.
+    pub fn has_async_call_dispatch(&self) -> bool {
+        self.methods
+            .iter()
+            .any(|method| method.is_async && method.call_protocol().is_some())
+    }
+
     /// Returns whether generated proxy calls need the typed value helper.
     pub fn has_proxy_value_call_methods(&self) -> bool {
         self.methods.iter().any(|method| {

@@ -209,7 +209,10 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     } else {
         println!("Web access URL: {}", state.base_url);
         println!("Web access token: {}", config.token);
-        println!("State path: {}", crate::client_paths::link_host_state_path().display());
+        println!(
+            "State path: {}",
+            crate::client_paths::link_host_state_path().display()
+        );
         println!("Web root: {}", web_root.display());
         println!("Runtime mode: local");
     }
@@ -245,8 +248,11 @@ async fn run_web_access_close_command() -> Result<(), String> {
     write_link_host_config(&config)?;
 
     let Some(state) = read_link_host_state_optional()? else {
-        if cli_json_mode() { emit_cli_json(serde_json::json!({ "closed": true, "running": false })); }
-        else { println!("Web access is closed (no running server)."); }
+        if cli_json_mode() {
+            emit_cli_json(serde_json::json!({ "closed": true, "running": false }));
+        } else {
+            println!("Web access is closed (no running server).");
+        }
         return Ok(());
     };
     let client = reqwest::Client::new();
@@ -258,8 +264,11 @@ async fn run_web_access_close_command() -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .error_for_status()
         .map_err(|error| error.to_string())?;
-    if cli_json_mode() { emit_cli_json(serde_json::json!({ "closed": true, "running": false })); }
-    else { println!("Web access closed."); }
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "closed": true, "running": false }));
+    } else {
+        println!("Web access closed.");
+    }
     Ok(())
 }
 
@@ -270,7 +279,9 @@ async fn run_web_access_status_command() -> Result<(), String> {
     let state_path = crate::client_paths::link_host_state_path();
     let state = read_link_host_state_optional()?;
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "configPath": config_path, "config": config, "statePath": state_path, "state": state }));
+        emit_cli_json(
+            serde_json::json!({ "configPath": config_path, "config": config, "statePath": state_path, "state": state }),
+        );
     } else {
         println!("Configuration: {}", config_path.display());
         match config {
@@ -304,8 +315,11 @@ async fn run_web_access_token_command(args: &[String]) -> Result<(), String> {
             config.token = generate_token();
             config.updated_at = unix_millis();
             write_link_host_config(&config)?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({ "token": config.token })); }
-            else { println!("Web access token: {}", config.token); }
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({ "token": config.token }));
+            } else {
+                println!("Web access token: {}", config.token);
+            }
             Ok(())
         }
         Some("set") if args.len() == 2 => {
@@ -313,8 +327,11 @@ async fn run_web_access_token_command(args: &[String]) -> Result<(), String> {
             config.token = args[1].clone();
             config.updated_at = unix_millis();
             write_link_host_config(&config)?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({ "token": config.token })); }
-            else { println!("Web access token: {}", config.token); }
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({ "token": config.token }));
+            } else {
+                println!("Web access token: {}", config.token);
+            }
             Ok(())
         }
         _ => {

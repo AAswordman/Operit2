@@ -337,7 +337,11 @@ pub(crate) fn persist_cli_storage_config_json(stdout: &str) -> Result<(), String
     let object = value
         .as_object()
         .ok_or_else(|| "storage migrate JSON output must be an object".to_string())?;
-    if object.get("storageConfig").and_then(serde_json::Value::as_str) != Some("updated") {
+    if object
+        .get("storageConfig")
+        .and_then(serde_json::Value::as_str)
+        != Some("updated")
+    {
         return Ok(());
     }
     let runtimeRoot = object

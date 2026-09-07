@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use super::scrollbar::split_transcript_inner;
 use super::theme;
 
 #[derive(Clone, Debug, Default)]
@@ -216,12 +217,7 @@ pub(super) fn apply_transcript_selection(
 }
 
 fn transcript_inner_area(area: Rect) -> Rect {
-    Rect {
-        x: area.x.saturating_add(1),
-        y: area.y.saturating_add(1),
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
-    }
+    split_transcript_inner(area).content
 }
 
 fn slice_columns(line: &str, start_column: usize, end_column: usize) -> String {

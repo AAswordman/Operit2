@@ -33,10 +33,7 @@ async fn main() -> ExitCode {
         Ok(Ok(())) => ExitCode::SUCCESS,
         Ok(Err(error)) => {
             if json_requested {
-                println!(
-                    "{}",
-                    serde_json::json!({ "error": error.to_string() })
-                );
+                println!("{}", serde_json::json!({ "error": error.to_string() }));
             } else {
                 eprintln!("{error}");
             }

@@ -236,11 +236,18 @@ fn render_route_catalog(
     for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
         if routeKind == "call" {
             output.push_str(&format!(
-                "        {method:?} => core.__operit_core_route_call_{method}(request).await,\n"
+                "        {method:?} => Box::pin(generated_space_call_on_chat_core_{method}(core, request)).await,\n"
             ));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&request.registryKey())),\n    }\n}\n\n");
+    for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
+        if routeKind == "call" {
+            output.push_str(&format!(
+                "/// Dispatches one generated Space call method on the runtime's main ChatServiceCore.\nasync fn generated_space_call_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    core.__operit_core_route_call_{method}(request).await\n}}\n\n"
+            ));
+        }
+    }
     output.push_str(
         "/// Reads one generated Space watch snapshot on the runtime's main ChatServiceCore.\n",
     );
@@ -248,21 +255,35 @@ fn render_route_catalog(
     output.push_str("    match request.propertyName.as_str() {\n");
     for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
         if routeKind == "watch" {
-            output.push_str(&format!("        {method:?} => core.__operit_core_route_watch_snapshot_{method}(request).await,\n"));
+            output.push_str(&format!("        {method:?} => Box::pin(generated_space_watch_snapshot_on_chat_core_{method}(core, request)).await,\n"));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
+    for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
+        if routeKind == "watch" {
+            output.push_str(&format!(
+                "/// Reads one generated Space watch snapshot method on the runtime's main ChatServiceCore.\nasync fn generated_space_watch_snapshot_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    core.__operit_core_route_watch_snapshot_{method}(request).await\n}}\n\n"
+            ));
+        }
+    }
     output.push_str("/// Opens one generated Space watch on the runtime's main ChatServiceCore.\n");
     output.push_str("pub async fn generated_space_watch_on_chat_core(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
     output.push_str("    match request.propertyName.as_str() {\n");
     for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
         if routeKind == "watch" {
             output.push_str(&format!(
-                "        {method:?} => core.__operit_core_route_watch_{method}(request, attachmentAdopter).await,\n"
+                "        {method:?} => Box::pin(generated_space_watch_on_chat_core_{method}(core, request, attachmentAdopter)).await,\n"
             ));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n    }\n}\n\n");
+    for (method, _binding, _targetType, routeKind, _lifecycle) in declarations {
+        if routeKind == "watch" {
+            output.push_str(&format!(
+                "/// Opens one generated Space watch method on the runtime's main ChatServiceCore.\nasync fn generated_space_watch_on_chat_core_{method}(core: &mut operit_runtime::services::ChatServiceCore::ChatServiceCore, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n    core.__operit_core_route_watch_{method}(request, attachmentAdopter).await\n}}\n\n"
+            ));
+        }
+    }
     output
         .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
     output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");

@@ -169,14 +169,23 @@ pub(super) async fn run_backup_command(core: &mut CliCore, args: &[String]) -> R
                 println!("Chats: {}", preview.chatCount);
                 println!("Messages: {}", preview.messageCount);
                 println!("Imported files: {}", preview.importedFileCount);
-                println!("Imported external files: {}", preview.importedExternalFileCount);
+                println!(
+                    "Imported external files: {}",
+                    preview.importedExternalFileCount
+                );
                 println!("Detected domains: {}", preview.detectedDomains.join(", "));
-                println!("Model configurations: {}", preview.modelConfig.configs.len());
+                println!(
+                    "Model configurations: {}",
+                    preview.modelConfig.configs.len()
+                );
                 for config in preview.modelConfig.configs {
                     println!("  {} ({})", config.name, config.configId);
                 }
                 for datastoreFile in preview.datastoreFiles {
-                    println!("  datastore {}: {} keys", datastoreFile.fileName, datastoreFile.keyCount);
+                    println!(
+                        "  datastore {}: {} keys",
+                        datastoreFile.fileName, datastoreFile.keyCount
+                    );
                 }
             }
             Ok(())
@@ -198,9 +207,15 @@ async fn export_snapshot(core: &mut CliCore, path: Option<&String>) -> Result<()
         .map_err(|error| error.to_string())?;
     write_bytes(path, &bytes)?;
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "path": Path::new(path), "bytes": bytes.len(), "format": "snapshot" }));
+        emit_cli_json(
+            serde_json::json!({ "path": Path::new(path), "bytes": bytes.len(), "format": "snapshot" }),
+        );
     } else {
-        println!("Exported snapshot to {} ({} bytes)", Path::new(path).display(), bytes.len());
+        println!(
+            "Exported snapshot to {} ({} bytes)",
+            Path::new(path).display(),
+            bytes.len()
+        );
     }
     Ok(())
 }
@@ -256,7 +271,10 @@ async fn import_operit1_snapshot(core: &mut CliCore, path: Option<&String>) -> R
         println!("Imported external files: {}", result.importedExternalFiles);
         println!("Imported workspaces: {}", result.importedWorkspaces);
         if !result.modelConfig.skippedFields.is_empty() {
-            println!("Skipped fields: {}", result.modelConfig.skippedFields.join(", "));
+            println!(
+                "Skipped fields: {}",
+                result.modelConfig.skippedFields.join(", ")
+            );
         }
     }
     Ok(())
@@ -403,7 +421,9 @@ fn print_export_usage() {
 /// Prints import command usage in the selected output format.
 fn print_import_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli import <memory|chat|snapshot|operit1-snapshot>" }));
+        emit_cli_json(
+            serde_json::json!({ "usage": "operit2 cli import <memory|chat|snapshot|operit1-snapshot>" }),
+        );
         return;
     }
     println!("operit2 cli import memory <path> <SKIP|UPDATE|CREATE_NEW> <owner-key>");
@@ -415,7 +435,9 @@ fn print_import_usage() {
 /// Prints backup command usage in the selected output format.
 fn print_backup_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli backup <create|restore|inspect|inspect-operit1-snapshot>" }));
+        emit_cli_json(
+            serde_json::json!({ "usage": "operit2 cli backup <create|restore|inspect|inspect-operit1-snapshot>" }),
+        );
         return;
     }
     println!("operit2 cli backup create <snapshot-zip-path>");

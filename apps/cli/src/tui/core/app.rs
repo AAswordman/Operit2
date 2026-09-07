@@ -44,6 +44,9 @@ use super::helpers::{short_chat_label, split_command_line};
 use super::i18n::{TuiLanguage, TuiText};
 use super::link_proxy_rs::{TuiContentStreamEventInfo, TuiCore};
 use super::pending_queue::PendingQueueMessage;
+use super::scrollbar::{
+    pointer_hits_scrollbar, scroll_position_for_pointer, scrollbar_hit_part, ScrollbarHit,
+};
 use super::selection::{
     mouse_drag_transcript_position, mouse_transcript_position, TranscriptCopyLine,
     TranscriptSelectionState,
@@ -109,6 +112,9 @@ pub(super) struct OperitTui {
     pub(super) transcript_area: Rect,
     pub(super) transcript_copy_lines: Vec<TranscriptCopyLine>,
     pub(super) transcript_selection: TranscriptSelectionState,
+    pub(super) scrollbar_hovered: bool,
+    pub(super) scrollbar_pressed: bool,
+    pub(super) scrollbar_dragging: bool,
     pub(super) show_chat_list: bool,
     pub(super) ctrl_c_pending: bool,
     pub(super) last_current_chat_loading: bool,
@@ -398,6 +404,9 @@ impl OperitTui {
             transcript_area: Rect::default(),
             transcript_copy_lines: Vec::new(),
             transcript_selection: TranscriptSelectionState::default(),
+            scrollbar_hovered: false,
+            scrollbar_pressed: false,
+            scrollbar_dragging: false,
             show_chat_list: false,
             ctrl_c_pending: false,
             last_current_chat_loading: false,
@@ -554,6 +563,9 @@ impl OperitTui {
             MouseEventKind::ScrollUp => self.scroll_transcript_up(self.terminal_wheel_step()),
             MouseEventKind::ScrollDown => self.scroll_transcript_down(self.terminal_wheel_step()),
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.handle_scrollbar_press(mouse) {
+                    return Ok(());
+                }
                 if let Some(position) = mouse_transcript_position(
                     mouse,
                     self.transcript_area,
@@ -566,6 +578,13 @@ impl OperitTui {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                if self.scrollbar_dragging {
+                    self.drag_scrollbar_to(mouse.row);
+                    return Ok(());
+                }
+                if self.scrollbar_pressed {
+                    return Ok(());
+                }
                 if let Some(position) = mouse_drag_transcript_position(
                     mouse,
                     self.transcript_area,
@@ -576,6 +595,11 @@ impl OperitTui {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                if self.scrollbar_pressed {
+                    self.scrollbar_pressed = false;
+                    self.scrollbar_dragging = false;
+                    return Ok(());
+                }
                 if let Some(position) = mouse_drag_transcript_position(
                     mouse,
                     self.transcript_area,
@@ -585,10 +609,54 @@ impl OperitTui {
                     self.transcript_selection.end(position);
                 }
             }
-            MouseEventKind::Down(MouseButton::Right) => self.transcript_selection.clear(),
+            MouseEventKind::Moved => self.update_scrollbar_hover(mouse.column, mouse.row),
+            MouseEventKind::Down(MouseButton::Right) => {
+                self.scrollbar_pressed = false;
+                self.scrollbar_dragging = false;
+                self.transcript_selection.clear();
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Starts scrollbar interaction when the pointer is on the visible bar.
+    fn handle_scrollbar_press(&mut self, mouse: MouseEvent) -> bool {
+        if self.transcript_max_scroll == 0
+            || !pointer_hits_scrollbar(mouse.column, mouse.row, self.transcript_area)
+        {
+            self.scrollbar_pressed = false;
+            self.scrollbar_dragging = false;
+            self.scrollbar_hovered = false;
+            return false;
+        }
+        self.transcript_selection.clear();
+        self.scrollbar_hovered = true;
+        self.scrollbar_pressed = true;
+        match scrollbar_hit_part(mouse.row, self.transcript_area) {
+            ScrollbarHit::Begin => self.scroll_transcript_up(self.transcript_page_step()),
+            ScrollbarHit::End => self.scroll_transcript_down(self.transcript_page_step()),
+            ScrollbarHit::Track => {
+                self.scrollbar_dragging = true;
+                self.drag_scrollbar_to(mouse.row);
+            }
+        }
+        true
+    }
+
+    /// Moves transcript scroll to the track position under `row`.
+    fn drag_scrollbar_to(&mut self, row: u16) {
+        let position =
+            scroll_position_for_pointer(row, self.transcript_area, self.transcript_max_scroll);
+        self.transcript_scroll = position;
+        self.follow_transcript = position >= self.transcript_max_scroll;
+        self.scrollbar_hovered = true;
+    }
+
+    /// Tracks whether the pointer is resting on the visible scrollbar.
+    fn update_scrollbar_hover(&mut self, column: u16, row: u16) {
+        self.scrollbar_hovered = self.transcript_max_scroll > 0
+            && pointer_hits_scrollbar(column, row, self.transcript_area);
     }
 
     fn copy_transcript_selection(&mut self) -> bool {

@@ -167,7 +167,10 @@ async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
     if cli_json_mode() {
         emit_cli_json(serde_json::to_value(&hello).map_err(|error| error.to_string())?);
     } else {
-        println!("{}", serde_json::to_string_pretty(&hello).map_err(|error| error.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&hello).map_err(|error| error.to_string())?
+        );
     }
     Ok(())
 }
@@ -208,7 +211,10 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
                 space.spaceName, space.spaceId, space.memberCount
             );
             for device in space.devices {
-                println!("  {} ({}) — {}", device.displayName, device.deviceId, device.baseUrl);
+                println!(
+                    "  {} ({}) — {}",
+                    device.displayName, device.deviceId, device.baseUrl
+                );
             }
         }
     }
@@ -227,7 +233,11 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
         .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client"))
         .await?;
     if !cli_json_mode() {
-        println!("Pairing with {} ({})", pairing.coreDeviceInfo.displayName(), pairing.coreDeviceId);
+        println!(
+            "Pairing with {} ({})",
+            pairing.coreDeviceInfo.displayName(),
+            pairing.coreDeviceId
+        );
         println!("Pairing started: {}", pairing.pairingId);
         println!("Check the server terminal for the pairing code.");
         print!("Pairing code: ");
@@ -252,7 +262,11 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
             "transport": link_transport_name(&session.transport),
         }));
     } else {
-        println!("Paired device {} ({})", session.remoteDeviceInfo.displayName(), session.coreDeviceId);
+        println!(
+            "Paired device {} ({})",
+            session.remoteDeviceInfo.displayName(),
+            session.coreDeviceId
+        );
         println!("Saved as: {name}");
         println!("Join its device space with: operit2 cli link space join {name}");
     }
@@ -329,7 +343,13 @@ async fn run_link_sessions_command() -> Result<(), String> {
         emit_cli_json(serde_json::json!({ "sessions": sessions }));
     } else {
         for (name, session) in sessions {
-            println!("{} — {} — {} — {}", name, session.remoteDeviceInfo.displayName(), session.baseUrl, session.coreDeviceId);
+            println!(
+                "{} — {} — {} — {}",
+                name,
+                session.remoteDeviceInfo.displayName(),
+                session.baseUrl,
+                session.coreDeviceId
+            );
             println!("  Transport: {}", link_transport_name(&session.transport));
         }
     }
@@ -349,9 +369,14 @@ async fn run_link_transport_command(args: &[String]) -> Result<(), String> {
     record.transport = parse_link_transport(&args[1])?;
     accessStore.saveOutboundSession(name.clone(), record.clone())?;
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "name": name, "transport": link_transport_name(&record.transport) }));
+        emit_cli_json(
+            serde_json::json!({ "name": name, "transport": link_transport_name(&record.transport) }),
+        );
     } else {
-        println!("Session transport updated: {}", link_transport_name(&record.transport));
+        println!(
+            "Session transport updated: {}",
+            link_transport_name(&record.transport)
+        );
     }
     Ok(())
 }
@@ -363,8 +388,11 @@ async fn run_link_session_delete_command(args: &[String]) -> Result<(), String> 
         .ok_or_else(|| "usage: operit2 cli link session-delete <name>".to_string())?;
     let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     coreApplication.accessStore().removeOutboundSession(name)?;
-    if cli_json_mode() { emit_cli_json(serde_json::json!({ "name": name, "deleted": true })); }
-    else { println!("Deleted session {name}"); }
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "name": name, "deleted": true }));
+    } else {
+        println!("Deleted session {name}");
+    }
     Ok(())
 }
 
@@ -376,7 +404,12 @@ async fn run_link_accepted_sessions_command() -> Result<(), String> {
         emit_cli_json(serde_json::json!({ "sessions": sessions }));
     } else {
         for (session_id, session) in sessions {
-            println!("{} — {} ({})", session_id, session.deviceInfo.displayName(), session.deviceId);
+            println!(
+                "{} — {} ({})",
+                session_id,
+                session.deviceInfo.displayName(),
+                session.deviceId
+            );
         }
     }
     Ok(())
@@ -389,8 +422,11 @@ async fn run_link_accepted_session_delete_command(args: &[String]) -> Result<(),
     })?;
     let coreApplication = create_cli_core_application_without_space_sync("server").await?;
     remove_link_server_session(&coreApplication.accessStore(), session_id)?;
-    if cli_json_mode() { emit_cli_json(serde_json::json!({ "sessionId": session_id, "deleted": true })); }
-    else { println!("Deleted accepted session {session_id}"); }
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({ "sessionId": session_id, "deleted": true }));
+    } else {
+        println!("Deleted accepted session {session_id}");
+    }
     Ok(())
 }
 
@@ -405,7 +441,11 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     if cli_json_mode() {
         emit_cli_json(serde_json::to_value(&info).map_err(|error| error.to_string())?);
     } else {
-        println!("Session active: {} ({})", info.coreDeviceInfo.displayName(), info.coreDeviceId);
+        println!(
+            "Session active: {} ({})",
+            info.coreDeviceInfo.displayName(),
+            info.coreDeviceId
+        );
         println!("Client device: {}", info.clientDeviceId);
         println!("Transports: {}", info.transports.join(", "));
     }
@@ -424,13 +464,22 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
     let service = coreApplication.accessServices();
     let space = service.joinPairedDeviceSpace(name.clone()).await?;
     if !json_mode {
-        println!("Probe joined space {name} on {} ({} members)", record.coreDeviceId, space.members.len());
+        println!(
+            "Probe joined space {name} on {} ({} members)",
+            record.coreDeviceId,
+            space.members.len()
+        );
     }
 
     let chatId = format!("route-probe-{}", link_probe_unix_millis());
     CoreNodeBindingStore::new(coreApplication.nodeRuntime().runtimeStorageHost())?
         .create(&chatId, &record.coreDeviceId)?;
-    if !json_mode { println!("Probe binding created for chat {chatId} -> {}", record.coreDeviceId); }
+    if !json_mode {
+        println!(
+            "Probe binding created for chat {chatId} -> {}",
+            record.coreDeviceId
+        );
+    }
 
     let targetObjectId =
         operit_proxy_local::LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
@@ -459,14 +508,26 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
         .iter()
         .filter(|message| message.contentStream.is_some())
         .count();
-    if !json_mode { println!("Probe flow event {:?}: {} messages, {} content streams", flowEvent.kind, messages.len(), contentStreamCount); }
+    if !json_mode {
+        println!(
+            "Probe flow event {:?}: {} messages, {} content streams",
+            flowEvent.kind,
+            messages.len(),
+            contentStreamCount
+        );
+    }
     if messages.is_empty() || contentStreamCount == 0 {
         return Err("probe flow did not expose a ChatMessage.contentStream".to_string());
     }
 
     let descriptor = find_core_stream_descriptor(&flowEvent.value)
         .ok_or_else(|| "probe flow did not contain a $coreStream descriptor".to_string())?;
-    if !json_mode { println!("Probe stream descriptor {} -> {}.{}", descriptor.streamId, descriptor.targetObjectId, descriptor.propertyName); }
+    if !json_mode {
+        println!(
+            "Probe stream descriptor {} -> {}.{}",
+            descriptor.streamId, descriptor.targetObjectId, descriptor.propertyName
+        );
+    }
     if descriptor.targetObjectId != CORE_STREAM_POOL_OBJECT_ID
         || descriptor.propertyName != "openCoreStream"
     {
@@ -491,7 +552,14 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
             recv_link_probe_event(&mut embeddedStream, "route probe embedded stream").await?;
         let markdown: MarkdownStreamEvent =
             operit_link::fromCoreValue(event.value.clone()).map_err(|error| error.to_string())?;
-        if !json_mode { println!("Probe stream event {:?}: {} {}", event.kind, markdown.eventType, markdown.value.clone().unwrap_or_default()); }
+        if !json_mode {
+            println!(
+                "Probe stream event {:?}: {} {}",
+                event.kind,
+                markdown.eventType,
+                markdown.value.clone().unwrap_or_default()
+            );
+        }
         match event.kind {
             CoreEventKind::Changed => {
                 changedCount += 1;
@@ -830,7 +898,9 @@ fn remove_link_server_session(
 /// Prints Link command usage in the selected output format.
 fn print_link_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli link <serve|discover|hello|connect|space|sessions|transport|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>" }));
+        emit_cli_json(
+            serde_json::json!({ "usage": "operit2 cli link <serve|discover|hello|connect|space|sessions|transport|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>" }),
+        );
         return;
     }
     println!("operit2 cli link serve [--bind <addr:port>] [--token <token>]");

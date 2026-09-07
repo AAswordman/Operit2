@@ -1,7 +1,10 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Wrap,
+};
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,6 +16,9 @@ use super::helpers::{
 };
 use super::pending_queue::{
     pending_queue_preview_text, pending_queue_visible_items, pending_queue_visible_range,
+};
+use super::scrollbar::{
+    split_transcript_inner, BEGIN_SYMBOL, END_SYMBOL, THUMB_SYMBOL, TRACK_SYMBOL,
 };
 use super::selection::{apply_transcript_selection, transcript_copy_line};
 use super::theme;
@@ -170,7 +176,8 @@ impl OperitTui {
         let input_state = self.current_chat_input_processing_state();
         let text = self.text();
         let thinking_line = thinking_indicator_line(text.thinking());
-        let content_width = area.width.saturating_sub(2).max(1) as usize;
+        let split = split_transcript_inner(area);
+        let content_width = split.content.width.max(1) as usize;
         let current_chat_id = self.current_chat_id_cache.clone();
         let mut transcript_lines = render_transcript_lines(
             &messages,
@@ -195,14 +202,50 @@ impl OperitTui {
             self.follow_transcript = true;
         }
 
-        let paragraph = Paragraph::new(Text::from(transcript_lines))
-            .block(
-                Block::default()
-                    .title(self.text().conversation_title())
-                    .borders(Borders::ALL),
-            )
-            .scroll((self.transcript_scroll, 0));
-        frame.render_widget(paragraph, area);
+        let block = Block::default()
+            .title(self.text().conversation_title())
+            .borders(Borders::ALL);
+        frame.render_widget(block, area);
+        let paragraph =
+            Paragraph::new(Text::from(transcript_lines)).scroll((self.transcript_scroll, 0));
+        frame.render_widget(paragraph, split.content);
+        if max_scroll > 0 {
+            self.render_transcript_scrollbar(frame, split.scrollbar, max_scroll);
+        }
+    }
+
+    /// Draws the inner scrollbar with single-cell glyphs so it cannot punch through the border.
+    fn render_transcript_scrollbar(&self, frame: &mut Frame, area: Rect, max_scroll: u16) {
+        let pressed = self.scrollbar_pressed || self.scrollbar_dragging;
+        let hovered = self.scrollbar_hovered;
+        let thumb_style = if pressed {
+            Style::default().fg(theme::ACCENT)
+        } else if hovered {
+            Style::default().fg(theme::TEXT_MUTED)
+        } else {
+            Style::default()
+                .fg(theme::TEXT_SUBTLE)
+                .add_modifier(Modifier::DIM)
+        };
+        let track_style = if pressed {
+            Style::default().fg(theme::TEXT_MUTED)
+        } else {
+            Style::default()
+                .fg(theme::TEXT_SUBTLE)
+                .add_modifier(Modifier::DIM)
+        };
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .thumb_symbol(THUMB_SYMBOL)
+            .track_symbol(Some(TRACK_SYMBOL))
+            .begin_symbol(Some(BEGIN_SYMBOL))
+            .end_symbol(Some(END_SYMBOL))
+            .thumb_style(thumb_style)
+            .track_style(track_style)
+            .begin_style(track_style)
+            .end_style(track_style);
+        let mut scrollbar_state = ScrollbarState::new(max_scroll.saturating_add(1) as usize)
+            .position(self.transcript_scroll as usize);
+        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
     }
 
     fn render_input(&self, frame: &mut Frame, area: Rect) {

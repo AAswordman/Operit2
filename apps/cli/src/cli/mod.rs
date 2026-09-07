@@ -5,8 +5,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
@@ -62,8 +62,9 @@ mod transfer;
 mod web_access;
 
 use crate::bootstrap::{
-    cli_identities, create_cli_identity, persist_cli_storage_config, persist_cli_storage_config_json,
-    rename_cli_identity, scope_cli_storage_command_args, select_cli_identity,
+    cli_identities, create_cli_identity, persist_cli_storage_config,
+    persist_cli_storage_config_json, rename_cli_identity, scope_cli_storage_command_args,
+    select_cli_identity,
 };
 use crate::browser_callback::CliOAuthCallback;
 use crate::chat_runtime::{
@@ -101,7 +102,10 @@ fn finish_cli_output() {
 
 /// Emits one explicit JSON value for a CLI-only command.
 pub(crate) fn emit_cli_json(value: serde_json::Value) {
-    ::std::println!("{}", serde_json::to_string(&value).expect("CLI JSON output must serialize"));
+    ::std::println!(
+        "{}",
+        serde_json::to_string(&value).expect("CLI JSON output must serialize")
+    );
 }
 
 pub(crate) async fn run_cli_root(args: &[String]) -> Result<(), String> {
@@ -205,7 +209,16 @@ fn run_identity_command(args: &[String]) -> Result<(), String> {
                 return Ok(());
             }
             for identity in identities {
-                println!("{} ({}){}", identity.name, identity.id, if identity.id == activeIdentityId { " [current]" } else { "" });
+                println!(
+                    "{} ({}){}",
+                    identity.name,
+                    identity.id,
+                    if identity.id == activeIdentityId {
+                        " [current]"
+                    } else {
+                        ""
+                    }
+                );
             }
             Ok(())
         }
@@ -382,7 +395,10 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
             if cli_json_mode() {
                 emit_cli_json(serde_json::json!(config));
             } else {
-                println!("Created local TTS configuration {} ({})", config.name, config.id);
+                println!(
+                    "Created local TTS configuration {} ({})",
+                    config.name, config.id
+                );
             }
             Ok(())
         }
@@ -819,8 +835,12 @@ fn handle_downloaded_update_package(
         match status {
             DownloadedUpdateInstallStatus::Installed => {}
             DownloadedUpdateInstallStatus::Scheduled => {}
-            DownloadedUpdateInstallStatus::NotInstalled => println!("Install status: not installed"),
-            DownloadedUpdateInstallStatus::TargetMismatch => println!("Install status: target mismatch"),
+            DownloadedUpdateInstallStatus::NotInstalled => {
+                println!("Install status: not installed")
+            }
+            DownloadedUpdateInstallStatus::TargetMismatch => {
+                println!("Install status: target mismatch")
+            }
         }
     }
     Ok(status)
@@ -1031,8 +1051,16 @@ fn print_cli_install_status() -> Result<(), String> {
         }));
     } else {
         println!("Install directory: {}", install_dir.display());
-        println!("operit: {} ({})", operit.display(), if operit_exists { "present" } else { "missing" });
-        println!("operit2: {} ({})", operit2.display(), if operit2_exists { "present" } else { "missing" });
+        println!(
+            "operit: {} ({})",
+            operit.display(),
+            if operit_exists { "present" } else { "missing" }
+        );
+        println!(
+            "operit2: {} ({})",
+            operit2.display(),
+            if operit2_exists { "present" } else { "missing" }
+        );
         println!("Installed: {installed}");
         println!("PATH contains install directory: {path_contains_install_dir}");
         println!("Current executable is installed: {current_exe_is_installed}");
@@ -1497,7 +1525,10 @@ async fn run_market_auth_login(core: &mut crate::core_proxy::CliCore) -> Result<
         .await
         .map_err(core_command_error_message)?;
     if cli_json_mode() {
-        eprintln!("Open this GitHub authorization URL in your browser: {}", start.authorizationUrl);
+        eprintln!(
+            "Open this GitHub authorization URL in your browser: {}",
+            start.authorizationUrl
+        );
     } else {
         println!(
             "Open this GitHub authorization URL in your browser:\n{}",
@@ -1609,7 +1640,11 @@ async fn run_version_core_command(core: &mut crate::core_proxy::CliCore) -> Resu
         println!("CLI version: {}", env!("CARGO_PKG_VERSION"));
         println!("Core version: {core_version}");
         println!("Link version: {}", operit_link::LINK_VERSION);
-        println!("Target: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+        println!(
+            "Target: {} {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
     }
     Ok(())
 }
@@ -1715,7 +1750,9 @@ fn print_cli_usage() {
 /// Prints local identity commands that run before Core startup.
 fn print_identity_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli identity <list|current|create|use|rename>" }));
+        emit_cli_json(
+            serde_json::json!({ "usage": "operit2 cli identity <list|current|create|use|rename>" }),
+        );
         return;
     }
     println!("operit2 cli identity list");
@@ -1888,7 +1925,9 @@ fn print_market_usage() {
 /// Prints update command usage in the selected output format.
 fn print_update_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli update [check|target|run|download]" }));
+        emit_cli_json(
+            serde_json::json!({ "usage": "operit2 cli update [check|target|run|download]" }),
+        );
         return;
     }
     println!("operit2 cli update");
@@ -1902,7 +1941,9 @@ fn print_update_usage() {
 /// Prints install command usage in the selected output format.
 fn print_install_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli install [--source <path>] | status" }));
+        emit_cli_json(
+            serde_json::json!({ "usage": "operit2 cli install [--source <path>] | status" }),
+        );
         return;
     }
     println!("operit2 install [--source <path>]");
@@ -2301,4 +2342,3 @@ fn currentTimeMillis() -> i64 {
         .expect("system clock must be after unix epoch")
         .as_millis() as i64
 }
-

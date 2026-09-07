@@ -13,22 +13,25 @@ pub(crate) fn render_object_call_dispatch(
         object.dispatch_name, object.full_type
     ));
     output.push_str("    let registryKey = request.registryKey();\n");
-    output
-        .push_str("    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n");
     output.push_str("    match request.methodName.as_str() {\n");
     for method in object
         .methods
         .iter()
-        .filter(|method| method.call_protocol().is_some())
+        .filter(|method| method.is_async && method.call_protocol().is_some())
     {
-        output.push_str(&render_call_arm(method, error_types));
-    }
-    if object.schema_key == "application" {
-        output.push_str("        \"coreProxySchema\" => Ok(generated_core_proxy_schema()),\n");
+        output.push_str(&render_async_call_arm(object, method));
     }
     output
         .push_str("        _ => Err(operit_link::CoreLinkError::methodNotFound(&registryKey)),\n");
     output.push_str("    }\n}\n");
+    for method in object
+        .methods
+        .iter()
+        .filter(|method| method.is_async && method.call_protocol().is_some())
+    {
+        output.push('\n');
+        output.push_str(&render_async_call_helper(object, method, error_types));
+    }
     output
 }
 
@@ -240,8 +243,9 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         .find(|object| object.access == ObjectAccess::Application && object.has_call_dispatch())
     {
         output.push_str(&format!(
-            "    if request.targetObjectId == {} {{\n        let mut application = proxy.application.lock().await;\n        return generated_dispatch_{}_call(&mut application, request).await;\n    }}\n",
-            application.object_id, application.dispatch_name
+            "    if request.targetObjectId == {} {{\n        let mut application = proxy.application.lock().await;\n        return {};\n    }}\n",
+            application.object_id,
+            render_direct_call_dispatch_expression(application, "&mut application", "request", "        ")
         ));
     }
     for object in objects.iter().filter(|object| object.has_call_dispatch()) {
@@ -249,9 +253,9 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             continue;
         };
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            return generated_dispatch_{}_call(object, request).await;\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            return {};\n        }}\n    }}\n",
             object.dispatch_name,
-            object.dispatch_name
+            render_direct_call_dispatch_expression(object, "object", "request", "            ")
         ));
     }
     output.push_str("    match request.targetObjectId {\n");
@@ -470,28 +474,22 @@ enum DispatchMode {
     Watch,
 }
 
+/// Renders dispatch from a freshly constructed generated object.
 fn render_constructed_dispatch(object: &SourceObject, mode: DispatchMode) -> String {
     if object_uses_arc_mutex_instance(&object.access) {
         let lock = "            let mut object = object.lock().expect(\"core proxy object mutex poisoned\");\n";
         return match mode {
-            DispatchMode::Call
-                if object
-                    .methods
-                    .iter()
-                    .any(|method| method.is_async && method.call_protocol().is_some()) =>
-            {
-                let async_methods = object
-                    .methods
-                    .iter()
-                    .filter(|method| method.is_async && method.call_protocol().is_some())
-                    .map(|method| format!("{:?}", method.name))
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                format!(
-                    "            if matches!(request.methodName.as_str(), {async_methods}) {{\n                let mut object = object.lock().expect(\"core proxy object mutex poisoned\").clone();\n                generated_dispatch_{}_call(&mut object, request).await\n            }} else {{\n{}            generated_dispatch_{}_call_sync(&mut object, request)\n            }}\n",
-                    object.dispatch_name, lock, object.dispatch_name
-                )
-            }
+            DispatchMode::Call if object.has_async_call_dispatch() && object.has_sync_call_dispatch() => format!(
+                "            if matches!(request.methodName.as_str(), {}) {{\n                let mut object = object.lock().expect(\"core proxy object mutex poisoned\").clone();\n                Box::pin(generated_dispatch_{}_call(&mut object, request)).await\n            }} else {{\n{}            generated_dispatch_{}_call_sync(&mut object, request)\n            }}\n",
+                render_async_call_method_pattern(object),
+                object.dispatch_name,
+                lock,
+                object.dispatch_name
+            ),
+            DispatchMode::Call if object.has_async_call_dispatch() => format!(
+                "            let mut object = object.lock().expect(\"core proxy object mutex poisoned\").clone();\n            Box::pin(generated_dispatch_{}_call(&mut object, request)).await\n",
+                object.dispatch_name
+            ),
             DispatchMode::Call => format!(
                 "{}            generated_dispatch_{}_call_sync(&mut object, request)\n",
                 lock, object.dispatch_name
@@ -508,8 +506,8 @@ fn render_constructed_dispatch(object: &SourceObject, mode: DispatchMode) -> Str
     }
     match mode {
         DispatchMode::Call => format!(
-            "            generated_dispatch_{}_call(&mut object, request).await\n",
-            object.dispatch_name
+            "            {}\n",
+            render_direct_call_dispatch_expression(object, "&mut object", "request", "            ")
         ),
         DispatchMode::WatchSnapshot => format!(
             "            generated_dispatch_{}_watch_snapshot(&mut object, &request)?\n",
@@ -849,29 +847,125 @@ fn resolved_holder_metadata(access: &ObjectAccess) -> Option<(&str, &str)> {
     }
 }
 
+/// Renders the generated call expression for one already resolved object.
+fn render_direct_call_dispatch_expression(
+    object: &SourceObject,
+    object_ref: &str,
+    request: &str,
+    indent: &str,
+) -> String {
+    match (
+        object.has_async_call_dispatch(),
+        object.has_sync_call_dispatch(),
+    ) {
+        (true, true) => format!(
+            "if matches!({request}.methodName.as_str(), {}) {{\n{}    Box::pin(generated_dispatch_{}_call({}, {})).await\n{}}} else {{\n{}    generated_dispatch_{}_call_sync({}, {})\n{}}}",
+            render_async_call_method_pattern(object),
+            indent,
+            object.dispatch_name,
+            object_ref,
+            request,
+            indent,
+            indent,
+            object.dispatch_name,
+            object_ref,
+            request,
+            indent
+        ),
+        (true, false) => format!(
+            "Box::pin(generated_dispatch_{}_call({}, {})).await",
+            object.dispatch_name, object_ref, request
+        ),
+        (false, true) => format!(
+            "generated_dispatch_{}_call_sync({}, {})",
+            object.dispatch_name, object_ref, request
+        ),
+        (false, false) => {
+            format!("Err(operit_link::CoreLinkError::methodNotFound(&{request}.registryKey()))")
+        }
+    }
+}
+
+/// Renders the match pattern covering every async call method on one object.
+fn render_async_call_method_pattern(object: &SourceObject) -> String {
+    object
+        .methods
+        .iter()
+        .filter(|method| method.is_async && method.call_protocol().is_some())
+        .map(|method| format!("{:?}", method.name))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// Renders one async call match arm that delegates to its method-sized helper.
+fn render_async_call_arm(object: &SourceObject, method: &SourceMethod) -> String {
+    format!(
+        "        {:?} => Box::pin(generated_dispatch_{}_call_{}(object, request)).await,\n",
+        method.name, object.dispatch_name, method.name
+    )
+    .prepend_with(render_cfg_attrs(method))
+}
+
+/// Renders one method-sized async call helper for generated proxy dispatch.
+fn render_async_call_helper(
+    object: &SourceObject,
+    method: &SourceMethod,
+    error_types: &HashMap<String, ErrorTypeDefinition>,
+) -> String {
+    let body = render_call_body(method, error_types, "    ");
+    format!(
+        "/// Dispatches generated async call `{}` for `{}`.\n{}#[allow(unused_mut, unused_variables)]\nasync fn generated_dispatch_{}_call_{}(object: &mut {}, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n{}{}\n}}\n",
+        method.name,
+        object.schema_key,
+        render_item_cfg_attrs(method),
+        object.dispatch_name,
+        method.name,
+        object.full_type,
+        body,
+        if body.ends_with('\n') { "" } else { "\n" }
+    )
+}
+
+/// Renders one synchronous call match arm with inline method execution.
 fn render_call_arm(
     method: &SourceMethod,
     error_types: &HashMap<String, ErrorTypeDefinition>,
 ) -> String {
-    let args = render_arg_decoders(method);
+    let body = render_call_body(method, error_types, "            ");
+    let arm = format!(
+        "        {:?} => {{\n{}        }}\n",
+        method.name, body
+    );
+    render_cfg_attrs(method) + &arm
+}
+
+/// Renders the decode, invoke, and encode body for one generated method call.
+fn render_call_body(
+    method: &SourceMethod,
+    error_types: &HashMap<String, ErrorTypeDefinition>,
+    indent: &str,
+) -> String {
+    let args = render_arg_decoders_with_indent(method, indent);
     let call_args = render_arg_call_list(method);
-    let arm = match method.call_protocol() {
+    match method.call_protocol() {
         Some(CallProtocol::Unit) => format!(
-            "        {:?} => {{\n{}            object.{}({}){};\n            Ok(operit_link::CoreValue::Null)\n        }}\n",
-            method.name,
+            "{}{}object.{}({}){};\n{}Ok(operit_link::CoreValue::Null)\n",
             args,
-            method.name,
-            call_args,
-            await_suffix(method)
-        ),
-        Some(CallProtocol::ResultUnit { error_type }) => format!(
-            "        {:?} => {{\n{}            object.{}({}){}.map_err(|error| operit_rslink_runtime::core_call_error(error.to_string(), {}(&error)))?;\n            Ok(operit_link::CoreValue::Null)\n        }}\n",
-            method.name,
-            args,
+            indent,
             method.name,
             call_args,
             await_suffix(method),
-            error_details_converter(error_type, error_types)
+            indent
+        ),
+        Some(CallProtocol::ResultUnit { error_type }) => format!(
+            "{}{}object.{}({}){}.map_err(|error| operit_rslink_runtime::core_call_error(error.to_string(), {}(&error)))?;\n{}Ok(operit_link::CoreValue::Null)\n",
+            args,
+            indent,
+            method.name,
+            call_args,
+            await_suffix(method),
+            error_details_converter(error_type, error_types),
+            indent
         ),
         Some(CallProtocol::Value(value_type)) => {
             let value = format!(
@@ -881,9 +975,9 @@ fn render_call_arm(
                 await_suffix(method)
             );
             format!(
-                "        {:?} => {{\n{}            {}\n        }}\n",
-                method.name,
+                "{}{}{}\n",
                 args,
+                indent,
                 render_core_value_result(value_type, &value)
             )
         }
@@ -899,15 +993,14 @@ fn render_call_arm(
                 error_details_converter(error_type, error_types)
             );
             format!(
-                "        {:?} => {{\n{}            {}\n        }}\n",
-                method.name,
+                "{}{}{}\n",
                 args,
+                indent,
                 render_core_value_result(value_type, &value)
             )
         }
         None => String::new(),
-    };
-    render_cfg_attrs(method) + &arm
+    }
 }
 
 /// Renders a typed runtime value as a native CoreValue result.
@@ -1063,11 +1156,21 @@ fn watch_await_suffix(method: &SourceMethod, async_dispatch: bool) -> &'static s
     }
 }
 
+/// Renders method cfg attributes for a generated match arm.
 fn render_cfg_attrs(method: &SourceMethod) -> String {
     method
         .cfg_attrs
         .iter()
         .map(|attr| format!("        {attr}\n"))
+        .collect()
+}
+
+/// Renders method cfg attributes for a generated item.
+fn render_item_cfg_attrs(method: &SourceMethod) -> String {
+    method
+        .cfg_attrs
+        .iter()
+        .map(|attr| format!("{attr}\n"))
         .collect()
 }
 
@@ -1081,13 +1184,19 @@ impl GeneratedStringExt for String {
     }
 }
 
+/// Renders argument decode statements for a generated match arm.
 fn render_arg_decoders(method: &SourceMethod) -> String {
+    render_arg_decoders_with_indent(method, "            ")
+}
+
+/// Renders argument decode statements using the requested indentation.
+fn render_arg_decoders_with_indent(method: &SourceMethod, indent: &str) -> String {
     method
         .args
         .iter()
         .map(|arg| {
             format!(
-                "            let {}: {} = operit_rslink_runtime::decode_core_arg(&mut __core_args, {:?})?;\n",
+                "{indent}let {}: {} = operit_rslink_runtime::decode_core_arg(&mut __core_args, {:?})?;\n",
                 arg.name,
                 render_arg_decode_type(arg),
                 arg.name

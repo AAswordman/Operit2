@@ -24,6 +24,8 @@ mod markdown;
 mod pending_queue;
 #[path = "view/render.rs"]
 mod render;
+#[path = "view/scrollbar.rs"]
+mod scrollbar;
 #[path = "transcript/selection.rs"]
 mod selection;
 #[path = "view/theme.rs"]
