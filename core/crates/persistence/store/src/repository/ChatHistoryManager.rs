@@ -670,10 +670,8 @@ impl ChatHistoryManager {
             .collect::<Vec<_>>();
         self.messageDao.insertMessages(messages)?;
         self.messageVariantDao.insertVariants(variants)?;
-        for ((timestamp, variantIndex), parts) in groupMessagePartEntities(partEntities) {
-            self.messagePartDao
-                .replaceParts(&chatId, timestamp, variantIndex, parts)?;
-        }
+        // Old parts for this chat were already cleared above.
+        self.messagePartDao.insertParts(partEntities)?;
         self.recordChatSnapshot(&chatId)?;
         if createBinding {
             self.createBinding(&chatId)?;
