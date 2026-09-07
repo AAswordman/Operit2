@@ -188,11 +188,51 @@ impl MessageVariantDao {
         messageTimestamp: i64,
         variantIndex: i32,
     ) -> Result<(), SqliteStoreError> {
-        self.store.execute(
-            "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
-            sqliteParams![chatId, messageTimestamp, variantIndex],
-        )?;
-        Ok(())
+        self.store.transaction(|transaction| {
+            let selectedVariantIndex: i32 = transaction
+                .queryOne(
+                    "SELECT selectedVariantIndex FROM messages WHERE chatId = ?1 AND timestamp = ?2",
+                    sqliteParams![chatId, messageTimestamp],
+                )?
+                .map(|row| row.get(0))
+                .transpose()?
+                .unwrap_or(0);
+            transaction.execute(
+                "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                sqliteParams![chatId, messageTimestamp, variantIndex],
+            )?;
+            transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                sqliteParams![chatId, messageTimestamp, variantIndex],
+            )?;
+            let remaining = transaction.queryRows(
+                "SELECT variantIndex FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 ORDER BY variantIndex ASC",
+                sqliteParams![chatId, messageTimestamp],
+            )?;
+            let mut nextSelectedVariantIndex = 0;
+            for (index, row) in remaining.into_iter().enumerate() {
+                let oldIndex: i32 = row.get(0)?;
+                let newIndex = index as i32 + 1;
+                if oldIndex == selectedVariantIndex {
+                    nextSelectedVariantIndex = newIndex;
+                }
+                if oldIndex != newIndex {
+                    transaction.execute(
+                        "UPDATE message_variants SET variantIndex = ?4 WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                        sqliteParams![chatId, messageTimestamp, oldIndex, newIndex],
+                    )?;
+                    transaction.execute(
+                        "UPDATE message_parts SET variantIndex = ?4 WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                        sqliteParams![chatId, messageTimestamp, oldIndex, newIndex],
+                    )?;
+                }
+            }
+            transaction.execute(
+                "UPDATE messages SET selectedVariantIndex = ?3 WHERE chatId = ?1 AND timestamp = ?2",
+                sqliteParams![chatId, messageTimestamp, nextSelectedVariantIndex],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn deleteVariantsForMessage(

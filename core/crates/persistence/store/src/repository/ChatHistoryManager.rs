@@ -995,12 +995,6 @@ impl ChatHistoryManager {
         }
         self.messageVariantDao
             .deleteVariant(&chatId, messageTimestamp, variantIndex)?;
-        self.messagePartDao
-            .deletePartsForMessage(&chatId, messageTimestamp, variantIndex)?;
-        if baseMessage.selectedVariantIndex == variantIndex {
-            self.messageDao
-                .updateSelectedVariantIndex(&chatId, messageTimestamp, 0)?;
-        }
         self.touchChatMetadata(&chatId)?;
         self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         Ok(())
@@ -1181,7 +1175,10 @@ impl ChatHistoryManager {
         let nextVariantIndex = self
             .messageVariantDao
             .getVariantsForMessage(&chatId, messageTimestamp)?
-            .len() as i32
+            .into_iter()
+            .map(|variant| variant.variantIndex)
+            .max()
+            .unwrap_or(0)
             + 1;
         let parts = message.parts.clone();
         self.messageVariantDao
