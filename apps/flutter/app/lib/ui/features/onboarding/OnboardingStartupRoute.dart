@@ -220,6 +220,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   core_proxy.Operit1SnapshotPreview? _operit1Snapshot;
   core_proxy.Operit1SnapshotImportProgress? _operit1ImportProgress;
   SnapshotImportSession? _operit1SnapshotSession;
+  core_proxy.Operit1SnapshotImportResult? _completedOperit1Import;
   String? _operit1SnapshotFileName;
   List<core_proxy.ProviderCatalogEntry> _catalogEntries =
       const <core_proxy.ProviderCatalogEntry>[];
@@ -969,6 +970,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _pickOperit1Snapshot() async {
+    if (_importingOperit1Snapshot || _completedOperit1Import != null) return;
     final previousSession = _operit1SnapshotSession;
     SnapshotImportSession? stagedSession;
     ClientLogger.i(
@@ -981,6 +983,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _operit1Snapshot = null;
       _operit1ImportProgress = null;
       _operit1SnapshotSession = null;
+      _completedOperit1Import = null;
       _operit1SnapshotFileName = null;
     });
     try {
@@ -1042,6 +1045,23 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _saveOperit1Import() async {
+    if (_importingOperit1Snapshot) return;
+    if (_completedOperit1Import != null) {
+      setState(() {
+        _importingOperit1Snapshot = true;
+        _setupError = null;
+      });
+      try {
+        await widget.onComplete();
+      } catch (error) {
+        if (mounted) {
+          setState(() => _setupError = '数据已导入，进入应用失败：$error；再次继续不会重复导入');
+        }
+      } finally {
+        if (mounted) setState(() => _importingOperit1Snapshot = false);
+      }
+      return;
+    }
     final session = _operit1SnapshotSession;
     if (session == null) {
       setState(() {
@@ -1061,15 +1081,19 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       );
       _subscribeOperit1ImportProgress();
       final result = await session.commitOperit1();
+      _completedOperit1Import = result;
+      _operit1SnapshotSession = null;
       ClientLogger.i(
         'snapshot import completed chats=${result.importedChats} messages=${result.importedMessages} memories=${result.importedMemories} files=${result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles}',
         tag: _operit1SnapshotImportLogTag,
       );
       await session.discard();
-      await widget.onComplete();
+      if (mounted) await widget.onComplete();
     } catch (error, stackTrace) {
       ClientLogger.e(
-        'snapshot import failed',
+        _completedOperit1Import == null
+            ? 'snapshot import failed'
+            : 'snapshot imported; startup transition failed',
         tag: _operit1SnapshotImportLogTag,
         error: error,
         stackTrace: stackTrace,
@@ -1078,7 +1102,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         return;
       }
       setState(() {
-        _setupError = '$error';
+        _setupError = _completedOperit1Import == null
+            ? '$error'
+            : '数据已导入，进入应用失败：$error；再次继续不会重复导入';
       });
     } finally {
       if (mounted) {
@@ -1294,6 +1320,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                     fileName: _operit1SnapshotFileName,
                                     reading: _readingOperit1Snapshot,
                                     importing: _importingOperit1Snapshot,
+                                    completed: _completedOperit1Import != null,
                                     progress: _operit1ImportProgress,
                                     onPickSnapshot: _pickOperit1Snapshot,
                                     errorText: _setupError,
@@ -1370,6 +1397,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     if (_isImportPage) {
       if (_readingOperit1Snapshot) {
         return '读取中';
+      }
+      if (_completedOperit1Import != null) {
+        return _importingOperit1Snapshot ? '正在进入' : '进入应用';
       }
       return _importingOperit1Snapshot ? '导入中' : '继续';
     }
@@ -2382,6 +2412,7 @@ class _AiSetupImportPage extends StatelessWidget {
     required this.fileName,
     required this.reading,
     required this.importing,
+    required this.completed,
     required this.progress,
     required this.onPickSnapshot,
     required this.errorText,
@@ -2391,6 +2422,7 @@ class _AiSetupImportPage extends StatelessWidget {
   final String? fileName;
   final bool reading;
   final bool importing;
+  final bool completed;
   final core_proxy.Operit1SnapshotImportProgress? progress;
   final VoidCallback onPickSnapshot;
   final String? errorText;
@@ -2420,7 +2452,9 @@ class _AiSetupImportPage extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: FilledButton.tonalIcon(
-                  onPressed: reading || importing ? null : onPickSnapshot,
+                  onPressed: reading || importing || completed
+                      ? null
+                      : onPickSnapshot,
                   icon: reading
                       ? const SizedBox.square(
                           dimension: 18,
@@ -2444,7 +2478,7 @@ class _AiSetupImportPage extends StatelessWidget {
               if (preview != null) ...<Widget>[
                 const SizedBox(height: 18),
                 Text(
-                  '检测到可迁移内容',
+                  completed ? '快照已导入' : '快照预览（尚未导入）',
                   style: textTheme.titleSmall?.copyWith(
                     color: colorScheme.onSurface,
                     fontWeight: FontWeight.w800,
@@ -2507,7 +2541,11 @@ class _AiSetupImportPage extends StatelessWidget {
                 ],
                 const SizedBox(height: 14),
                 Text(
-                  importing ? '正在导入快照内容，请稍候。' : '点击继续后会开始迁移整份快照。',
+                  completed
+                      ? '数据已保存。点击“进入应用”继续，不会重复导入。'
+                      : importing
+                      ? '正在导入快照内容，请稍候。'
+                      : '点击继续后会开始迁移整份快照。',
                   style: textTheme.bodyMedium?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     height: 1.36,
