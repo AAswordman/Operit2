@@ -84,18 +84,22 @@ impl ToolPkgAppLifecycleHookBridge {
             .lock()
             .expect("toolpkg app lifecycle replay mutex poisoned")
             .clone();
-        for replayEvent in replayEvents {
-            for hook in hooksToReplay
-                .iter()
-                .filter(|hook| hook.event == replayEvent.eventName)
-            {
-                runAppLifecycleHook(
-                    runtime,
-                    hook,
-                    &replayEvent.eventName,
-                    replayEvent.payload.clone(),
-                );
-            }
+        // Runtime-change listeners may run inside enablePackage's manager lock. Replay
+        // outside that call so hooks can access their package and issue nested commands.
+        if replayEvents.is_empty() {
+            return;
+        }
+        let runtime = runtime.clone();
+        if let Err(error) = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeTask("toolpkg-lifecycle-replay", Box::new(move || {
+                for replayEvent in replayEvents {
+                    for hook in hooksToReplay.iter().filter(|hook| hook.event == replayEvent.eventName) {
+                        runAppLifecycleHook(&runtime, hook, &replayEvent.eventName, replayEvent.payload.clone());
+                    }
+                }
+            }))
+        {
+            ChainLogger::error(PLUGIN_CHAIN, "plugin.toolpkg.app_lifecycle.replay.error", &[("error", error.to_string())]);
         }
     }
 
