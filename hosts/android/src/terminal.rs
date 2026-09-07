@@ -856,10 +856,15 @@ fn drainAndroidPtyCommandOutput(
             buffer = result.0;
         }
     }
-    let mut drained = 0usize;
-    while let Some(value) = buffer.pop_front() {
-        collected.push(value);
-        drained += 1;
+    let drained = buffer.len();
+    collected.extend(buffer.drain(..));
+    // The shared queue is bounded, but a long-running noisy command used to
+    // copy every drained byte into this unbounded second buffer until timeout.
+    if collected.len() > PTY_OUTPUT_LIMIT {
+        const NOTICE: &[u8] = b"[Earlier terminal output was truncated]\r\n";
+        let discard = collected.len() + NOTICE.len() - PTY_OUTPUT_LIMIT;
+        collected.drain(..discard);
+        collected.splice(..0, NOTICE.iter().copied());
     }
     Ok(drained)
 }
