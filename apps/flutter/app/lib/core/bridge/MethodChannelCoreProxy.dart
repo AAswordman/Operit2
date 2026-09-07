@@ -324,7 +324,10 @@ class _MethodChannelWatchChannel {
     );
     controller.onCancel = null;
     controller.addError(error, stackTrace);
-    await controller.close();
+    // Opening may fail before watchStream reaches yield* and attaches a
+    // listener. Waiting for close() then waits for a listener that will never
+    // exist, preventing the original error from reaching its caller.
+    unawaited(controller.close());
   }
 
   Future<Object?> _handleMethodCall(MethodCall call) async {
