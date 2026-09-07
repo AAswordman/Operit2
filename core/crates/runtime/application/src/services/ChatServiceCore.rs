@@ -906,7 +906,10 @@ impl ChatServiceCore {
 
     /// Deletes a chat history and updates current chat selection.
     pub fn deleteChatHistory(&mut self, chatId: String) -> bool {
+        let summaryMutationGuard = self.messageProcessingDelegate
+            .invalidateAutomaticSummaryForChat(&chatId);
         let deleted = self.chatHistoryDelegate.deleteChatHistory(chatId);
+        drop(summaryMutationGuard);
         self.syncTokenStatisticsForCurrentChat();
         deleted
     }
@@ -915,6 +918,8 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn deleteMessage(&mut self, chatId: String, messageTimestamp: i64) {
+        let _summaryMutationGuard = self.messageProcessingDelegate
+            .invalidateAutomaticSummaryForChat(&chatId);
         self.chatHistoryDelegate
             .deleteMessageInChatByTimestamp(chatId, messageTimestamp);
     }
@@ -923,6 +928,8 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn deleteMessages(&mut self, chatId: String, messageTimestamps: Vec<i64>) -> bool {
+        let _summaryMutationGuard = self.messageProcessingDelegate
+            .invalidateAutomaticSummaryForChat(&chatId);
         self.chatHistoryDelegate
             .deleteMessagesInChatByTimestamps(chatId, messageTimestamps)
     }
@@ -973,8 +980,12 @@ impl ChatServiceCore {
             parts: editedParts,
             ..message
         };
-        self.chatHistoryDelegate
-            .addMessageToChat(editedMessage, Some(chatId.clone()));
+        {
+            let _summaryMutationGuard = self.messageProcessingDelegate
+                .invalidateAutomaticSummaryForChat(&chatId);
+            self.chatHistoryDelegate
+                .addMessageToChat(editedMessage, Some(chatId.clone()));
+        }
         if let Some(mut service) = self.newEnhancedAiServiceForChat(&chatId) {
             if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
                 delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
@@ -1000,6 +1011,8 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn deleteMessagesFrom(&mut self, chatId: String, messageTimestamp: i64) -> bool {
+        let _summaryMutationGuard = self.messageProcessingDelegate
+            .invalidateAutomaticSummaryForChat(&chatId);
         self.chatHistoryDelegate
             .deleteMessagesFromTimestamp(chatId, messageTimestamp)
     }
@@ -1007,6 +1020,8 @@ impl ChatServiceCore {
     /// Deletes one alternate response variant from a message timestamp.
     #[allow(non_snake_case)]
     pub fn deleteMessageVariant(&mut self, timestamp: i64, variantIndex: i32) {
+        let _summaryMutationGuard = self.chatHistoryDelegate.currentChatIdFlow.value()
+            .map(|chatId| self.messageProcessingDelegate.invalidateAutomaticSummaryForChat(&chatId));
         self.chatHistoryDelegate
             .deleteMessageVariant(timestamp, variantIndex);
     }
@@ -1014,6 +1029,8 @@ impl ChatServiceCore {
     /// Selects the displayed response variant for one message timestamp.
     #[allow(non_snake_case)]
     pub fn selectMessageVariant(&mut self, timestamp: i64, selectedVariantIndex: i32) {
+        let _summaryMutationGuard = self.chatHistoryDelegate.currentChatIdFlow.value()
+            .map(|chatId| self.messageProcessingDelegate.invalidateAutomaticSummaryForChat(&chatId));
         self.chatHistoryDelegate
             .selectMessageVariant(timestamp, selectedVariantIndex);
     }
