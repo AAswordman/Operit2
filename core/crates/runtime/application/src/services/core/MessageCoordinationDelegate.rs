@@ -1079,6 +1079,69 @@ impl MessageCoordinationDelegate {
             );
         }
 
+        // The caller holds the core command mutex. Persist the user turn above,
+        // then release that mutex before waiting for any planner/member response,
+        // so cancellation, tools and unrelated chats remain callable.
+        let mut background = Self {
+            chatHistoryDelegate: self.chatHistoryDelegate.clone_for_core(),
+            messageProcessingDelegate: self.messageProcessingDelegate.clone_for_core(),
+            tokenStatisticsDelegate: self.tokenStatisticsDelegate.clone(),
+            characterCardManager: CharacterCardManager::getInstance(),
+            characterGroupCardManager: CharacterGroupCardManager::getInstance(),
+            activePromptManager: ActivePromptManager::getInstance(),
+            isSummarizing: false,
+            isUpdatingMemory: false,
+            summarizingChatId: None,
+            isSendTriggeredSummarizing: false,
+            sendTriggeredSummarizingChatId: None,
+            summaryJob: None,
+            sendTriggeredSummaryJob: None,
+            currentPromptFunctionType: self.currentPromptFunctionType.clone(),
+            currentChatProviderIdOverride: self.currentChatProviderIdOverride.clone(),
+            currentChatModelIdOverride: self.currentChatModelIdOverride.clone(),
+            // Shared message flows already have the core's non-fatal collector.
+            nonFatalErrorCollectorJob: self.nonFatalErrorCollectorJob.clone(),
+            pendingAutoContinuationByChatId: HashMap::new(),
+        };
+        let mut service = enhancedAiService.clone();
+        let taskChatId = chatId.clone();
+        if let Err(error) = defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+            "group-conversation",
+            Box::new(move || {
+                Box::pin(async move {
+                    background
+                        .runGroupConversation(
+                            &mut service,
+                            taskChatId,
+                            promptFunctionType,
+                            originalUserText,
+                            orderedMembers,
+                            turnOptions,
+                        )
+                        .await;
+                })
+            }),
+        ) {
+            self.messageProcessingDelegate.setInputProcessingStateForChat(
+                chatId,
+                InputProcessingState::Error {
+                    message: error.to_string(),
+                },
+            );
+        }
+        true
+    }
+
+    #[allow(non_snake_case)]
+    async fn runGroupConversation(
+        &mut self,
+        enhancedAiService: &mut EnhancedAIService,
+        chatId: String,
+        promptFunctionType: PromptFunctionType,
+        originalUserText: String,
+        orderedMembers: Vec<GroupMemberConfig>,
+        turnOptions: ChatTurnOptions,
+    ) -> bool {
         let mut timeline = Vec::<(String, String)>::new();
         if !originalUserText.trim().is_empty() {
             timeline.push(("用户".to_string(), originalUserText.clone()));
