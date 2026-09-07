@@ -376,7 +376,9 @@ class _ChatSessionSummarySectionState
           providerId: binding.providerId,
           modelId: binding.modelId,
         );
-    return config.context.maxContextLength;
+    return config.context.enableMaxContextMode
+        ? config.context.maxContextLength
+        : config.context.maxContextLength * 0.4;
   }
 
   /// Subscribes to the runtime-owned token statistic streams.
