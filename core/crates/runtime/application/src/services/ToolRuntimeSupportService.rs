@@ -450,7 +450,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         Box::pin(async move {
             let mut holder = self.chatRuntimeHolder.lock().await;
             let slot = runtimeChatSlotToRuntimeSlot(request.slot);
-            holder
+            let result = holder
                 .getCore(slot)
                 .sendUserMessage(
                     PromptFunctionType::CHAT,
@@ -466,7 +466,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 )
                 .await;
             holder.observeStats();
-            Ok(())
+            result
         })
     }
 

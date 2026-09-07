@@ -746,7 +746,7 @@ async fn dispatch_chat_message_with_application(
         replyToMessage,
         turnOptions,
     )
-    .await;
+    .await?;
     let currentChatId = core
         .currentChatIdFlow()
         .value()

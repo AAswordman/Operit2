@@ -311,7 +311,7 @@ impl MessageCoordinationDelegate {
         attachments: Vec<AttachmentInfo>,
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
-    ) {
+    ) -> Result<(), String> {
         AppLogger::i(
             "CoreSend",
             &format!(
@@ -363,7 +363,7 @@ impl MessageCoordinationDelegate {
                 )
                 .await
             {
-                return;
+                return Ok(());
             }
         }
         self.sendMessageInternal(
@@ -386,8 +386,9 @@ impl MessageCoordinationDelegate {
             None,
             turnOptions,
         )
-        .await;
+        .await?;
         AppLogger::i("CoreSend", "dispatch return");
+        Ok(())
     }
 
     /// Regenerates a single AI message variant using the surrounding conversation state.
@@ -693,7 +694,7 @@ impl MessageCoordinationDelegate {
         suppressUserMessageInHistory: bool,
         chatHistoryOverride: Option<Vec<ChatMessage>>,
         turnOptions: ChatTurnOptions,
-    ) {
+    ) -> Result<(), String> {
         self.currentPromptFunctionType = promptFunctionType.clone();
         self.currentChatProviderIdOverride = chatProviderIdOverride.clone();
         self.currentChatModelIdOverride = chatModelIdOverride.clone();
@@ -775,7 +776,7 @@ impl MessageCoordinationDelegate {
                                 message: error.to_string(),
                             },
                         );
-                    return;
+                    return Err(error.to_string());
                 }
             },
         };
@@ -823,7 +824,8 @@ impl MessageCoordinationDelegate {
             .await;
         let result = match result {
             Ok(result) => result,
-            Err(error) => {
+            Err(failure) => {
+                let error = failure.error;
                 ChainLogger::error(
                     SEND_CHAIN,
                     "send.dispatch.error",
@@ -836,7 +838,13 @@ impl MessageCoordinationDelegate {
                             message: error.to_string(),
                         },
                     );
-                return;
+                // The input was already stored before the provider failed. Acknowledge
+                // receipt so the editor/queue does not submit the same message again.
+                return if failure.userMessagePersisted {
+                    Ok(())
+                } else {
+                    Err(error.to_string())
+                };
             }
         };
         self.tokenStatisticsDelegate
@@ -875,6 +883,7 @@ impl MessageCoordinationDelegate {
         if isAutoContinuation {
             self.removePendingAutoContinuation(chatId);
         }
+        Ok(())
     }
 
     #[allow(non_snake_case)]
@@ -1167,7 +1176,7 @@ impl MessageCoordinationDelegate {
                 } else {
                     String::new()
                 };
-                self.sendMessageInternal(
+                let sendResult = self.sendMessageInternal(
                     enhancedAiService,
                     promptFunctionType.clone(),
                     !isFirstMemberOfFirstRound,
@@ -1188,6 +1197,9 @@ impl MessageCoordinationDelegate {
                     turnOptions.clone(),
                 )
                 .await;
+                if sendResult.is_err() {
+                    return true;
+                }
                 if !self
                     .awaitTurnComplete(chatId.clone(), targetTurnCounter, 180_000)
                     .await
@@ -1831,7 +1843,7 @@ impl MessageCoordinationDelegate {
                 } else {
                     self.messageProcessingDelegate
                         .setSuppressIdleCompletedStateForChat(currentChatId.clone(), false);
-                    self.sendMessageInternal(
+                    let _ = self.sendMessageInternal(
                         enhancedAiService,
                         continuationPromptType,
                         true,
