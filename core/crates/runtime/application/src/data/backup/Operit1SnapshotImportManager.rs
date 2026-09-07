@@ -3545,6 +3545,11 @@ fn buildMemoryExportDataFromOperit1ObjectBox(
             createdAt: memory.createdAt,
             updatedAt: memory.updatedAt,
             tagNames: tagNamesByMemoryId.remove(&memory.id).unwrap_or_default(),
+            documentPath: None,
+            isDocumentNode: None,
+            chunkIndexFilePath: None,
+            lastAccessedAt: None,
+            properties: None,
         });
     }
 

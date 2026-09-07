@@ -15,6 +15,16 @@ pub struct SerializableMemory {
     pub createdAt: i64,
     pub updatedAt: i64,
     pub tagNames: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documentPath: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isDocumentNode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunkIndexFilePath: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lastAccessedAt: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub properties: Option<Vec<crate::Memory::MemoryProperty>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
