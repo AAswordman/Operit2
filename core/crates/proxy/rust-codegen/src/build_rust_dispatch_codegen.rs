@@ -917,7 +917,7 @@ fn render_async_call_helper(
         "/// Dispatches generated async call `{}` for `{}`.\n{}#[allow(unused_mut, unused_variables)]\nasync fn generated_dispatch_{}_call_{}(object: &mut {}, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n{}{}\n}}\n",
         method.name,
         object.schema_key,
-        render_item_cfg_attrs(method),
+        render_object_item_cfg_attrs(object) + &render_item_cfg_attrs(method),
         object.dispatch_name,
         method.name,
         object.full_type,
