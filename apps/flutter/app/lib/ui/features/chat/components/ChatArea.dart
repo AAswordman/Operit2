@@ -280,6 +280,9 @@ class _ChatAreaState extends State<ChatArea> {
   bool _handleScrollMetricsNotification(
     ScrollMetricsNotification notification,
   ) {
+    if (notification.depth != 0 || notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
     final viewportDimension = notification.metrics.viewportDimension;
     if (_scrollViewportDimension != viewportDimension) {
       _scrollViewportDimension = viewportDimension;
@@ -309,6 +312,9 @@ class _ChatAreaState extends State<ChatArea> {
 
   /// Updates navigator anchors for active user scroll sessions only.
   bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0 || notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
     if (notification is UserScrollNotification) {
       if (notification.direction != ScrollDirection.idle) {
         _userScrollSessionActive = true;
