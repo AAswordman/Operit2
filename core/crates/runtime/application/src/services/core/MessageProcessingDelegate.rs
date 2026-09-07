@@ -1740,17 +1740,38 @@ impl MessageProcessingDelegate {
                                 ],
                             );
                             if completionTurnOptions.persistTurn {
-                                let failedMessageTimestamp = completionAiMessage
+                                let partialMessage = {
+                                    let mut delegate = completionMessageProcessingDelegate
+                                        .lock()
+                                        .expect("worker message processing delegate mutex poisoned");
+                                    if !delegate.isCurrentChatTurn(
+                                        &completionChatId,
+                                        completionTurnId,
+                                    ) {
+                                        return;
+                                    }
+                                    delegate
+                                        .detachStreamingAiMessage(completionChatId.clone())
+                                        .filter(|message| !message.displayText().trim().is_empty())
+                                };
+                                let mut history = completionChatHistoryDelegate
                                     .lock()
-                                    .expect("worker AI message mutex poisoned")
-                                    .timestamp;
-                                completionChatHistoryDelegate
-                                    .lock()
-                                    .expect("worker chat history mutex poisoned")
-                                    .discardFailedAssistantMessage(
+                                    .expect("worker chat history mutex poisoned");
+                                if let Some(partialMessage) = partialMessage {
+                                    history.addMessageToChat(
+                                        partialMessage,
+                                        Some(completionChatId.clone()),
+                                    );
+                                } else {
+                                    let failedMessageTimestamp = completionAiMessage
+                                        .lock()
+                                        .expect("worker AI message mutex poisoned")
+                                        .timestamp;
+                                    history.discardFailedAssistantMessage(
                                         completionChatId.clone(),
                                         failedMessageTimestamp,
                                     );
+                                }
                             }
                             let mut delegate = completionMessageProcessingDelegate
                                 .lock()
