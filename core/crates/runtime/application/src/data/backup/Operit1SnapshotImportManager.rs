@@ -60,7 +60,8 @@ use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
-    ApiProviderType, ModelCapabilities, ModelConfigDefaults, ModelContextSpec, ModelProfile,
+    ApiProviderType, BuiltinToolExclusivity, BuiltinToolRequestFormat, BuiltinToolType,
+    ModelBuiltinTool, ModelCapabilities, ModelConfigDefaults, ModelContextSpec, ModelProfile,
     ModelRequestSpec, ModelSummarySettings, ProviderProfile,
 };
 use operit_model::ModelParameter::{CustomParameterData, ModelParameter, ParameterCategory};
@@ -653,7 +654,6 @@ impl Operit1SnapshotImportManager {
             skippedFields: vec![
                 "contextLength".to_string(),
                 "summaryCustomRules".to_string(),
-                "enableGoogleSearch".to_string(),
                 "enableClaude1hPromptCache".to_string(),
             ],
         })
@@ -1336,6 +1336,8 @@ struct Operit1ModelConfig {
     #[serde(default = "defaultSummaryMessageCountThreshold")]
     summaryMessageCountThreshold: i32,
     #[serde(default)]
+    enableGoogleSearch: bool,
+    #[serde(default)]
     mnnForwardType: i32,
     #[serde(default = "defaultThreadCount")]
     mnnThreadCount: i32,
@@ -1472,6 +1474,16 @@ fn buildModelProfile(
     model.localRuntime.llamaKvUnified = config.llamaKvUnified;
     model.localRuntime.llamaOffloadKqv = config.llamaOffloadKqv;
     model.parameters = buildModelParameters(config)?;
+    if matches!(providerTypeId, "GOOGLE" | "GEMINI_GENERIC") {
+        let mut search = ModelBuiltinTool::disabled(
+            BuiltinToolType::WebSearch,
+            "Google 搜索".to_string(),
+            BuiltinToolRequestFormat::GeminiGoogleSearch,
+            BuiltinToolExclusivity::ExclusiveWithExternalTools,
+        );
+        search.enabled = config.enableGoogleSearch;
+        model.builtinToolsOverride = Some(vec![search]);
+    }
     Ok(model)
 }
 
