@@ -1369,7 +1369,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   /// Dispatches submit_requested before mutating the visible input field.
   Future<void> _sendMessageWithHooks() async {
     final text = _messageController.text.trim();
-    final hasAttachments = _attachments.isNotEmpty;
+    final inputAttachments = List<AttachmentInfo>.unmodifiable(_attachments);
+    final hasAttachments = inputAttachments.isNotEmpty;
     if (text.isEmpty && !hasAttachments) {
       return;
     }
@@ -1393,9 +1394,13 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       text: text,
       selectionStart: inputValue.selection.start,
       selectionEnd: inputValue.selection.end,
-      attachmentCount: _attachments.length,
+      attachmentCount: inputAttachments.length,
     );
-    if (!mounted || _currentChatId != chatId) {
+    if (!mounted || _currentChatId != chatId ||
+        inputAttachments.length != _attachments.length ||
+        !inputAttachments.every((attachment) => _attachments.any(
+          (current) => current.filePath == attachment.filePath,
+        ))) {
       return;
     }
     if (decision != null) {
@@ -1407,7 +1412,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         if (decision.action == 'consume' && decision.clearInput) {
           _clearMentionSuggestionState();
           _messageController.clear();
-          await _viewModel.clearAttachments();
+          for (final attachment in inputAttachments) {
+            await _viewModel.removeAttachment(attachment.filePath);
+          }
+          await _refreshAttachments();
         }
         final message = decision.message;
         if (message != null && message.trim().isNotEmpty) {
@@ -1430,7 +1438,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _clearMentionSuggestionState();
     _messageController.clear();
     _inputFocusNode.unfocus();
-    _startSendMessageText(submittedText, chatId!);
+    _startSendMessageText(submittedText, chatId!, inputAttachments);
   }
 
   /// Starts or stops local speech input from the chat action button.
@@ -1527,7 +1535,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   }
 
   /// Starts one send while retaining the chat id that accepted the submit hook.
-  void _startSendMessageText(String text, String chatId) {
+  void _startSendMessageText(
+    String text,
+    String chatId,
+    List<AttachmentInfo> submittedAttachments,
+  ) {
     if (_currentChatId != chatId) {
       return;
     }
@@ -1541,7 +1553,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       );
     });
     _scheduleScrollToBottom();
-    _sendMessageAfterNextFrame(text, chatId);
+    _sendMessageAfterNextFrame(text, chatId, submittedAttachments);
   }
 
   /// Schedules one automatic alignment with the latest message for this frame.
@@ -1578,7 +1590,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   }
 
   /// Sends the submitted text after layout has accepted the optimistic UI state.
-  void _sendMessageAfterNextFrame(String text, String chatId) {
+  void _sendMessageAfterNextFrame(
+    String text,
+    String chatId,
+    List<AttachmentInfo> submittedAttachments,
+  ) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -1588,6 +1604,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
             text,
             replyToMessage: _replyToMessage,
             chatIdOverride: chatId,
+            attachmentsOverride: submittedAttachments,
           )
           .then((_) async {
             if (!mounted || _currentChatId != chatId) {
