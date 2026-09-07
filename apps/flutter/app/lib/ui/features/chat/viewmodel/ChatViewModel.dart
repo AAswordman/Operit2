@@ -91,6 +91,27 @@ class ChatViewModel {
   final GeneratedCoreProxyClients clients;
   final GeneratedChatRuntimeHolderMainCoreProxy _chat;
 
+  // All main-chat surfaces share one initial creation, including embedded views.
+  static Future<void>? _initialChatCreation;
+
+  Future<void> ensureInitialChat() {
+    return _initialChatCreation ??= _createInitialChatIfNeeded().whenComplete(() {
+      _initialChatCreation = null;
+    });
+  }
+
+  Future<void> _createInitialChatIfNeeded() async {
+    final current = await watchCurrentChatId().first;
+    if (current != null && current.trim().isNotEmpty) return;
+    await clients.chatRuntimeHolderMain.createNewChat(
+      characterCardName: null,
+      group: null,
+      inheritGroupFromCurrent: true,
+      setAsCurrentChat: true,
+      characterGroupId: null,
+    );
+  }
+
   /// Watches the selected chat id used to bind per-chat Core flows.
   Stream<String?> watchCurrentChatId() {
     return _chat.currentChatIdFlow();
