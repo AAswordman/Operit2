@@ -87,8 +87,10 @@ impl Drop for AndroidPtySession {
     fn drop(&mut self) {
         #[cfg(target_os = "android")]
         unsafe {
-            libc::kill(self.pid, libc::SIGHUP);
-            libc::kill(self.pid, libc::SIGKILL);
+            if self.exitCode.is_none() {
+                libc::kill(self.pid, libc::SIGHUP);
+                libc::kill(self.pid, libc::SIGKILL);
+            }
             let fd = match self.writer.lock() {
                 Ok(mut writerFd) => {
                     let value = *writerFd;
@@ -364,15 +366,22 @@ impl TerminalHost for AndroidTerminalHost {
             executeAndroidPtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
         {
             let mut state = self.lockState()?;
+            let mut retireSession = false;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
                 if result.timedOut {
-                    if let Some(workingDir) = cancelTimedOutAndroidPtyCommand(session)? {
-                        session.workingDir = workingDir;
+                    match cancelTimedOutAndroidPtyCommand(session) {
+                        Ok(Some(workingDir)) => session.workingDir = workingDir,
+                        // Without a prompt, the foreground process may consume the next command.
+                        Ok(None) | Err(_) => retireSession = true,
                     }
                 } else if let Some(workingDir) = result.workingDir.clone() {
                     session.workingDir = workingDir;
                 }
                 session.commandRunning = false;
+            }
+            if retireSession {
+                state.ptySessions.remove(&normalizedSessionId);
+                removeAndroidSessionMappings(&mut state, &normalizedSessionId);
             }
         }
         Ok(TerminalCommandOutput {
