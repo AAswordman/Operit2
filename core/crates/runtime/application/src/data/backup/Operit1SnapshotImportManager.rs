@@ -1058,33 +1058,49 @@ impl Operit1SnapshotImportManager {
             Operit1ToOperit2ChatArchiveBridge,
         ) -> Result<T, String>,
     ) -> Result<T, String> {
-        self.withStagedArchiveEntry(
-            parsed,
-            ENTRY_DATABASE,
+        for path in [
             OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH,
-            || {
-                self.withStagedArchiveEntry(
-                    parsed,
-                    ENTRY_DATABASE_WAL,
+            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH,
+            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_SHM_PATH,
+        ] {
+            if self.storageHost.exists(path).map_err(|error| error.to_string())? {
+                self.storageHost.delete(path, false).map_err(|error| error.to_string())?;
+            }
+        }
+        let result = (|| {
+            writeArchiveEntryToStorage(
+                self.storageWriteHost.as_ref(), parsed, ENTRY_DATABASE,
+                OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH,
+            )?;
+            if parsed.archive.hasEntry(ENTRY_DATABASE_WAL) {
+                writeArchiveEntryToStorage(
+                    self.storageWriteHost.as_ref(), parsed, ENTRY_DATABASE_WAL,
                     OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH,
-                    || {
-                        self.withStagedArchiveEntry(
-                            parsed,
-                            ENTRY_DATABASE_SHM,
-                            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_SHM_PATH,
-                            || {
-                                let mut connection = self
-                                    .sqliteHost
-                                    .openSqliteDatabase(OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH)
-                                    .map_err(|error| error.to_string())?;
-                                let archiveBridge = prepareOperit1RoomImport(connection.as_mut())?;
-                                operation(connection.as_mut(), archiveBridge)
-                            },
-                        )
-                    },
-                )
-            },
-        )
+                )?;
+            }
+            // SHM contains process-local WAL bookkeeping; SQLite rebuilds it from WAL.
+            let mut connection = self.sqliteHost
+                .openSqliteDatabase(OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH)
+                .map_err(|error| error.to_string())?;
+            let archiveBridge = prepareOperit1RoomImport(connection.as_mut())?;
+            operation(connection.as_mut(), archiveBridge)
+        })();
+        for path in [
+            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_SHM_PATH,
+            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH,
+            OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH,
+        ] {
+            let cleanup = (|| {
+                if self.storageHost.exists(path).map_err(|error| error.to_string())? {
+                    self.storageHost.delete(path, false).map_err(|error| error.to_string())?;
+                }
+                Ok::<(), String>(())
+            })();
+            if let Err(error) = cleanup {
+                AppLogger::w("Operit1SnapshotImport", &format!("temporary database cleanup failed: {error}"));
+            }
+        }
+        result
     }
 
     /// Counts chat and message rows through the runtime owner's SQLite host.
