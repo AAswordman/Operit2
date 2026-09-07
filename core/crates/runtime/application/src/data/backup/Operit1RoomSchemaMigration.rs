@@ -55,6 +55,10 @@ pub(crate) fn prepareOperit1RoomImport(
 fn selectOperit1ToOperit2ChatArchiveBridge(
     connection: &mut dyn RuntimeSqliteConnection,
 ) -> Result<Operit1ToOperit2ChatArchiveBridge, String> {
+    let sourceVersion = readOperit1RoomSchemaVersion(connection)?;
+    if (11..20).contains(&sourceVersion) {
+        upgradeOperit1RoomToV20(connection, sourceVersion)?;
+    }
     let sourceSchemaVersion = match readOperit1RoomSchemaVersion(connection)? {
         10 => Operit1RoomSchemaVersion::V10,
         20 => Operit1RoomSchemaVersion::V20,
@@ -84,6 +88,44 @@ fn selectOperit1ToOperit2ChatArchiveBridge(
         ));
     }
     Ok(bridge)
+}
+
+/// Applies the original Operit1 11..20 migrations only to the temporary import database.
+fn upgradeOperit1RoomToV20(connection: &mut dyn RuntimeSqliteConnection, version: i32) -> Result<(), String> {
+    let migrations = [
+        (11, "ALTER TABLE chats ADD COLUMN characterGroupId TEXT;"),
+        (12, "ALTER TABLE messages ADD COLUMN inputTokens INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE messages ADD COLUMN outputTokens INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE messages ADD COLUMN cachedInputTokens INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE messages ADD COLUMN sentAt INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE messages ADD COLUMN outputDurationMs INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE messages ADD COLUMN waitDurationMs INTEGER NOT NULL DEFAULT 0;"),
+        (13, "DROP TABLE IF EXISTS problem_records;"),
+        (14, "ALTER TABLE messages ADD COLUMN selectedVariantIndex INTEGER NOT NULL DEFAULT 0;
+              CREATE TABLE message_variants (
+                variantId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                chatId TEXT NOT NULL, messageTimestamp INTEGER NOT NULL, variantIndex INTEGER NOT NULL,
+                content TEXT NOT NULL, roleName TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '',
+                modelName TEXT NOT NULL DEFAULT '', inputTokens INTEGER NOT NULL DEFAULT 0,
+                outputTokens INTEGER NOT NULL DEFAULT 0, cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+                sentAt INTEGER NOT NULL DEFAULT 0, outputDurationMs INTEGER NOT NULL DEFAULT 0,
+                waitDurationMs INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(chatId) REFERENCES chats(id) ON DELETE CASCADE);
+              CREATE INDEX index_message_variants_chatId_messageTimestamp ON message_variants(chatId, messageTimestamp);
+              CREATE UNIQUE INDEX index_message_variants_chatId_messageTimestamp_variantIndex ON message_variants(chatId, messageTimestamp, variantIndex);"),
+        (15, "ALTER TABLE messages ADD COLUMN displayMode TEXT NOT NULL DEFAULT 'NORMAL';"),
+        (16, "CREATE INDEX IF NOT EXISTS index_messages_chatId_timestamp ON messages(chatId, timestamp);"),
+        (17, "ALTER TABLE messages ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0;"),
+        (18, "ALTER TABLE messages ADD COLUMN completedAt INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE message_variants ADD COLUMN completedAt INTEGER NOT NULL DEFAULT 0;"),
+        (19, "ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;"),
+    ];
+    for (from, sql) in migrations {
+        if from >= version {
+            connection.executeBatch(sql).map_err(|error| error.to_string())?;
+        }
+    }
+    connection.executeBatch("PRAGMA user_version = 20;").map_err(|error| error.to_string())
 }
 
 /// Reads the SQLite user version written by Operit1 Room.

@@ -934,14 +934,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Back up chats, characters, and model settings, restore backup content, and view data statistics.';
 
   @override
-  String get settingsCategoryAccessLinksTitle => 'Devices & Access';
+  String get settingsCategoryAccessLinksTitle => 'Device Space';
 
   @override
-  String get settingsCategoryAccessLinksSubtitle => 'Connect, sync, access';
+  String get settingsCategoryAccessLinksSubtitle =>
+      'Connect, sync, collaborate';
 
   @override
   String get settingsCategoryAccessLinksDescription =>
-      'Connect another device, sync data, or allow browsers to access this device.';
+      'Manage this device space, connect devices, and share data and routes.';
 
   @override
   String get settingsCategoryGroupAssistant => 'AI & Creation';
@@ -2307,6 +2308,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsRuntimeCurrentSpace => 'Current device space';
+
+  @override
+  String get settingsRuntimeOverviewDescription =>
+      'Devices in the same space can connect and share data and routes.';
 
   @override
   String get settingsRuntimeRenameSpace => 'Rename device space';
