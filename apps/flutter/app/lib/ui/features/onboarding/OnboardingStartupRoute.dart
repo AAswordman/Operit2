@@ -354,7 +354,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     final session = _operit1SnapshotSession;
-    if (session != null) {
+    // An active import owns its upload until the Core call finishes.
+    if (session != null && !_importingOperit1Snapshot) {
       unawaited(session.discard());
     }
     _agreementCountdownTimer?.cancel();
@@ -590,8 +591,27 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     }
   }
 
+  bool get _operit1ImportBusy =>
+      _readingOperit1Snapshot || _importingOperit1Snapshot;
+
+  // A selected snapshot is only a preview until the import API succeeds.
+  bool get _canSkipGuide =>
+      _agreementAccepted &&
+      _storageConfirmed &&
+      !_operit1ImportBusy &&
+      !(_isImportPage && _operit1Snapshot != null);
+
+  Future<void> _skipGuide() async {
+    if (!_canSkipGuide) return;
+    try {
+      await widget.onSkip();
+    } catch (error) {
+      if (mounted) setState(() => _setupError = '$error');
+    }
+  }
+
   Future<void> _goToPreviousPage() async {
-    if (_currentPage == 0) {
+    if (_operit1ImportBusy || _currentPage == 0) {
       return;
     }
     if (_isAgreementPage) {
@@ -633,6 +653,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _goToNextPage() async {
+    if (_operit1ImportBusy) return;
     if (_currentPage == _introPageIndex) {
       await _advanceFromIntro();
       return;
@@ -969,6 +990,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _pickOperit1Snapshot() async {
+    if (_operit1ImportBusy) return;
     final previousSession = _operit1SnapshotSession;
     SnapshotImportSession? stagedSession;
     ClientLogger.i(
@@ -1042,6 +1064,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _saveOperit1Import() async {
+    if (_operit1ImportBusy) return;
     final session = _operit1SnapshotSession;
     if (session == null) {
       setState(() {
@@ -1054,6 +1077,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _importingOperit1Snapshot = true;
       _setupError = null;
     });
+    var importCommitted = false;
     try {
       ClientLogger.i(
         'snapshot import started bytes=${session.byteLength}',
@@ -1061,12 +1085,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       );
       _subscribeOperit1ImportProgress();
       final result = await session.commitOperit1();
+      importCommitted = true;
       ClientLogger.i(
         'snapshot import completed chats=${result.importedChats} messages=${result.importedMessages} memories=${result.importedMemories} files=${result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles}',
         tag: _operit1SnapshotImportLogTag,
       );
       await session.discard();
-      await widget.onComplete();
+      if (mounted) await widget.onComplete();
     } catch (error, stackTrace) {
       ClientLogger.e(
         'snapshot import failed',
@@ -1081,6 +1106,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         _setupError = '$error';
       });
     } finally {
+      // dispose() leaves an active import's archive to this operation.
+      if (!mounted && !importCommitted) {
+        await session.discard();
+      }
       if (mounted) {
         setState(() {
           _importingOperit1Snapshot = false;
@@ -1185,7 +1214,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     final introActive = _currentPage == _introPageIndex;
     final showChrome = !introActive;
 
-    return Material(
+    final guide = Material(
       color: colorScheme.surface,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 420),
@@ -1323,14 +1352,12 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                       pageCount: _pageCount,
                       progressLabel: _progressLabel,
                       primaryActionLabel: _primaryActionLabel,
-                      canSkip: _agreementAccepted && _storageConfirmed,
+                      canSkip: _canSkipGuide,
                       isAgreementPage: _isAgreementPage,
                       isPermissionPage: _isPermissionPage,
-                      onBack: _goToPreviousPage,
+                      onBack: _operit1ImportBusy ? null : _goToPreviousPage,
                       onPrimary: _primaryAction,
-                      onSkip: () {
-                        widget.onSkip();
-                      },
+                      onSkip: _skipGuide,
                     ),
                   ],
                 );
@@ -1340,6 +1367,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         ),
       ),
     );
+    return PopScope(canPop: !_operit1ImportBusy, child: guide);
   }
 
   String get _primaryActionLabel {
@@ -1371,7 +1399,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       if (_readingOperit1Snapshot) {
         return '读取中';
       }
-      return _importingOperit1Snapshot ? '导入中' : '继续';
+      return _importingOperit1Snapshot ? '导入中' : '开始导入';
     }
     if (_isDeviceSpacePage) {
       return _deviceSpaceDiscoveryBusy ? '处理中' : '完成';
@@ -1545,7 +1573,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
   final bool canSkip;
   final bool isAgreementPage;
   final bool isPermissionPage;
-  final VoidCallback onBack;
+  final VoidCallback? onBack;
   final VoidCallback onPrimary;
   final VoidCallback onSkip;
 
@@ -2444,7 +2472,7 @@ class _AiSetupImportPage extends StatelessWidget {
               if (preview != null) ...<Widget>[
                 const SizedBox(height: 18),
                 Text(
-                  '检测到可迁移内容',
+                  '快照预览（尚未导入）',
                   style: textTheme.titleSmall?.copyWith(
                     color: colorScheme.onSurface,
                     fontWeight: FontWeight.w800,
@@ -2507,7 +2535,7 @@ class _AiSetupImportPage extends StatelessWidget {
                 ],
                 const SizedBox(height: 14),
                 Text(
-                  importing ? '正在导入快照内容，请稍候。' : '点击继续后会开始迁移整份快照。',
+                  importing ? '正在导入快照内容，请稍候。' : '点击“开始导入”后迁移整份快照，完成后再进入应用。',
                   style: textTheme.bodyMedium?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     height: 1.36,
