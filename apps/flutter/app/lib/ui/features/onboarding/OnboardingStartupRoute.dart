@@ -14,6 +14,7 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../core/snapshot/SnapshotImportUploader.dart';
+import '../../common/Operit1ImportResultDialog.dart';
 import '../../common/DeviceSpaceDiscoveryPanel.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
@@ -1066,7 +1067,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         tag: _operit1SnapshotImportLogTag,
       );
       await session.discard();
-      await widget.onComplete();
+      if (mounted) await showOperit1ImportResultDialog(context, result);
+      if (mounted) await widget.onComplete();
     } catch (error, stackTrace) {
       ClientLogger.e(
         'snapshot import failed',
@@ -2414,7 +2416,7 @@ class _AiSetupImportPage extends StatelessWidget {
                 icon: Icons.move_to_inbox_rounded,
                 eyebrow: '导入配置',
                 title: '从 Operit1 导入',
-                description: '选择旧版快照，将配置、聊天、角色卡、资源等数据迁移到 Operit2。',
+                description: '请在 Operit1 的聊天备份设置中导出原始快照 ZIP，再选择该文件。仅迁移快照内的数据；旧版未备份的共享文件、工作流和媒体缓存需另行迁移。',
               ),
               const SizedBox(height: 22),
               Align(
