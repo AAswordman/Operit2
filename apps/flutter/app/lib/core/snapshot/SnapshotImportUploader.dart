@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 
@@ -201,17 +202,33 @@ class SnapshotImportSession {
   }
 }
 
+/// Temporary upload cleanup must not turn an accepted import into a retry.
+Future<void> discardOperit1ImportSession(SnapshotImportSession? session) async {
+  if (session == null) return;
+  try {
+    await session.discard();
+  } catch (error, stackTrace) {
+    ClientLogger.e(
+      'snapshot temporary upload cleanup failed',
+      tag: 'Operit1SnapshotImport',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+}
+
 /// Uploads bounded platform file chunks through the generated archive reverse stream.
 class SnapshotImportUploader {
   const SnapshotImportUploader(this.clients);
 
   final GeneratedCoreProxyClients clients;
 
-  /// Creates a staged archive and uploads exactly the selected file's declared byte length.
+  /// Creates a staged archive and uploads the selected file in bounded chunks.
   Future<SnapshotImportSession> stage(SnapshotImportFile file) async {
-    final archiveId = await clients.servicesArchiveTransferManager
-        .beginArchiveUpload(expectedByteLength: file.byteLength);
+    String? archiveId;
     try {
+      archiveId = await clients.servicesArchiveTransferManager
+          .beginArchiveUpload(expectedByteLength: file.byteLength);
       await clients.servicesArchiveTransferManager.writeArchiveUpload(
         archiveId: archiveId,
         bytes: file.chunks(),
@@ -221,17 +238,27 @@ class SnapshotImportUploader {
             archiveId: archiveId,
             expectedByteLength: file.byteLength,
           );
-      return SnapshotImportSession(
-        clients: clients,
-        archive: archive,
-      );
+      return SnapshotImportSession(clients: clients, archive: archive);
     } catch (error, stackTrace) {
-      await clients.servicesArchiveTransferManager.discardArchiveUpload(
-        archiveId: archiveId,
-      );
+      if (archiveId != null) {
+        try {
+          await clients.servicesArchiveTransferManager.discardArchiveUpload(
+            archiveId: archiveId,
+          );
+        } catch (cleanupError, cleanupTrace) {
+          ClientLogger.e('failed upload cleanup failed', tag: 'Operit1SnapshotImport',
+              error: cleanupError, stackTrace: cleanupTrace);
+        }
+      }
       Error.throwWithStackTrace(error, stackTrace);
     } finally {
-      await file.close();
+      // Even beginArchiveUpload failures must release the selected document.
+      try {
+        await file.close();
+      } catch (error, stackTrace) {
+        ClientLogger.e('selected document cleanup failed', tag: 'Operit1SnapshotImport',
+            error: error, stackTrace: stackTrace);
+      }
     }
   }
 }

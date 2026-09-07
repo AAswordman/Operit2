@@ -1787,19 +1787,19 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryAccessLinksTitle.
   ///
   /// In en, this message translates to:
-  /// **'Devices & Access'**
+  /// **'Device Space'**
   String get settingsCategoryAccessLinksTitle;
 
   /// No description provided for @settingsCategoryAccessLinksSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Connect, sync, access'**
+  /// **'Connect, sync, collaborate'**
   String get settingsCategoryAccessLinksSubtitle;
 
   /// No description provided for @settingsCategoryAccessLinksDescription.
   ///
   /// In en, this message translates to:
-  /// **'Connect another device, sync data, or allow browsers to access this device.'**
+  /// **'Manage this device space, connect devices, and share data and routes.'**
   String get settingsCategoryAccessLinksDescription;
 
   /// No description provided for @settingsCategoryGroupAssistant.
@@ -4188,6 +4188,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Current device space'**
   String get settingsRuntimeCurrentSpace;
+
+  /// No description provided for @settingsRuntimeOverviewDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices in the same space can connect and share data and routes.'**
+  String get settingsRuntimeOverviewDescription;
 
   /// No description provided for @settingsRuntimeRenameSpace.
   ///

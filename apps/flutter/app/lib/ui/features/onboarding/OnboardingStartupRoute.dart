@@ -355,7 +355,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     WidgetsBinding.instance.removeObserver(this);
     final session = _operit1SnapshotSession;
     if (session != null) {
-      unawaited(session.discard());
+      unawaited(discardOperit1ImportSession(session));
     }
     _agreementCountdownTimer?.cancel();
     _operit1ImportProgressSubscription?.cancel();
@@ -985,7 +985,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     });
     try {
       if (previousSession != null) {
-        await previousSession.discard();
+        await discardOperit1ImportSession(previousSession);
       }
       final file = await SnapshotImportFile.pick();
       if (file == null) {
@@ -1007,7 +1007,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         tag: _operit1SnapshotImportLogTag,
       );
       if (!mounted) {
-        await session.discard();
+        await discardOperit1ImportSession(session);
         return;
       }
       setState(() {
@@ -1024,7 +1024,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       );
       final session = stagedSession;
       if (session != null) {
-        await session.discard();
+        await discardOperit1ImportSession(session);
       }
       if (!mounted) {
         return;
@@ -1065,7 +1065,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         'snapshot import completed chats=${result.importedChats} messages=${result.importedMessages} memories=${result.importedMemories} files=${result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles}',
         tag: _operit1SnapshotImportLogTag,
       );
-      await session.discard();
+      await discardOperit1ImportSession(session);
       await widget.onComplete();
     } catch (error, stackTrace) {
       ClientLogger.e(
