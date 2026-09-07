@@ -313,7 +313,13 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
             raise ValueError(f"Missing tsconfig.json for TypeScript plugins: {source_dir}")
         signature = _compute_paths_signature(repo_root, _collect_root_prebuild_inputs(source_dir))
         key = "prebuild:."
-        if state.get(key) == signature:
+        # A saved input signature does not guarantee that generated files survived cleanup.
+        compiled_outputs_exist = all(
+            (_plugins_root() / ".out" / source_dir.name / f"{plan.source.stem}.js").is_file()
+            for plan in plans
+            if plan.mode == "compile-ts"
+        )
+        if state.get(key) == signature and compiled_outputs_exist:
             print(f"SKIP-PREBUILD: {source_dir}")
         else:
             _run_checked_command([_platform_command("tsc"), "-p", str(tsconfig)], repo_root, dry_run=dry_run)
