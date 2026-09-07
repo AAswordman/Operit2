@@ -309,8 +309,14 @@ class _ChatAreaState extends State<ChatArea> {
 
   /// Updates navigator anchors for active user scroll sessions only.
   bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification && notification.dragDetails != null) {
+      _clearPendingMessageJump();
+      _userScrollSessionActive = true;
+      widget.onAutoScrollToBottomChanged(false);
+    }
     if (notification is UserScrollNotification) {
       if (notification.direction != ScrollDirection.idle) {
+        _clearPendingMessageJump();
         _userScrollSessionActive = true;
         _userScrollsTowardHistory =
             notification.direction == ScrollDirection.forward;
@@ -430,6 +436,7 @@ class _ChatAreaState extends State<ChatArea> {
   }
 
   Future<void> _scrollToBottomFromNavigator() async {
+    _clearPendingMessageJump();
     widget.onAutoScrollToBottomChanged(true);
     if (widget.hasNewerDisplayHistory) {
       await widget.onShowLatestDisplayWindow();
