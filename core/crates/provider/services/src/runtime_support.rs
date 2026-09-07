@@ -75,6 +75,9 @@ pub trait ProviderRuntimeSupport: Send + Sync {
         promptFunctionType: PromptFunctionType,
     ) -> Result<ProviderCharacterPromptContext, String>;
 
+    /// Resolves a role's fixed provider/model pair; legacy unqualified IDs must be unique.
+    fn characterModelBinding(&self, card: &CharacterCard) -> Result<Option<ProviderFunctionModelBinding>, String>;
+
     /// Returns deployed skill package descriptions for provider prompt composition.
     fn aiVisibleSkillPackages(&self) -> Result<Vec<ProviderPackageInfo>, String>;
 

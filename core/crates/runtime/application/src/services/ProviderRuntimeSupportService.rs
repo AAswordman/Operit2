@@ -104,6 +104,24 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
         })
     }
 
+    fn characterModelBinding(&self, card: &operit_model::CharacterCard::CharacterCard)
+        -> Result<Option<ProviderFunctionModelBinding>, String> {
+        use operit_model::CharacterCard::CharacterCardChatModelBindingMode;
+        if CharacterCardChatModelBindingMode::normalize(Some(&card.chatModelBindingMode))
+            != CharacterCardChatModelBindingMode::FIXED_MODEL { return Ok(None); }
+        let modelId = card.chatModelId.as_ref().filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("角色「{}」的固定模型未就绪，请重新选择供应商和模型", card.name))?;
+        let providerId = card.chatProviderId.as_ref().filter(|id| !id.trim().is_empty());
+        let mut candidates = ModelConfigManager::default().getAllModelSummaries()
+            .map_err(|error| error.to_string())?.into_iter()
+            .filter(|summary| &summary.modelId == modelId && providerId.is_none_or(|id| &summary.providerId == id));
+        let selected = candidates.next().ok_or_else(|| format!("角色「{}」的固定模型不可用：{modelId}，请重新选择", card.name))?;
+        if candidates.next().is_some() {
+            return Err(format!("角色「{}」有多个同名模型 {modelId}，请明确选择供应商", card.name));
+        }
+        Ok(Some(ProviderFunctionModelBinding { providerId: selected.providerId, modelId: selected.modelId }))
+    }
+
     /// Returns skill package descriptions visible to AI prompt composition.
     fn aiVisibleSkillPackages(&self) -> Result<Vec<ProviderPackageInfo>, String> {
         let hostManager = self.tool_handler.getContext();

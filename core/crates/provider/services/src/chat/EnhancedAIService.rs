@@ -1031,34 +1031,29 @@ impl EnhancedAIService {
         &mut self,
         options: &SendMessageOptions,
     ) -> Result<SendMessageRuntime, AiServiceError> {
-        let (modelConfig, modelParameters, selectedService) = match (
-            options.chatProviderIdOverride.as_ref(),
-            options.chatModelIdOverride.as_ref(),
-        ) {
-            (Some(providerId), Some(modelId))
-                if !providerId.trim().is_empty() && !modelId.trim().is_empty() =>
-            {
-                self.multi_service_manager
-                    .getServiceBundleForModel(providerId.clone(), modelId.clone())?
-            }
-            (None, None) => self
-                .multi_service_manager
-                .getServiceBundleForFunction(options.functionType.clone())?,
-            _ => {
-                return Err(AiServiceError::RequestFailed(
-                    "chat provider and model override must be set together".to_string(),
-                ));
-            }
-        };
         let roleCardId = options.roleCardId.as_ref().ok_or_else(|| {
             AiServiceError::RequestFailed("roleCardId is required to resolve USER.md".to_string())
         })?;
-        let characterPromptContext = self
-            .provider_runtime_context
-            .support()
+        let characterPromptContext = self.provider_runtime_context.support()
             .characterPromptContext(roleCardId, options.promptFunctionType.clone())
             .map_err(AiServiceError::RequestFailed)?;
         let activeCard = &characterPromptContext.activeCard;
+        let fixedBinding = if options.functionType == FunctionType::CHAT
+            && options.chatProviderIdOverride.is_none() && options.chatModelIdOverride.is_none() {
+            self.provider_runtime_context.support().characterModelBinding(activeCard)
+                .map_err(AiServiceError::RequestFailed)?
+        } else { None };
+        let providerOverride = options.chatProviderIdOverride.as_ref()
+            .or_else(|| fixedBinding.as_ref().map(|binding| &binding.providerId));
+        let modelOverride = options.chatModelIdOverride.as_ref()
+            .or_else(|| fixedBinding.as_ref().map(|binding| &binding.modelId));
+        let (modelConfig, modelParameters, selectedService) = match (providerOverride, modelOverride) {
+            (Some(providerId), Some(modelId))
+                if !providerId.trim().is_empty() && !modelId.trim().is_empty() =>
+                self.multi_service_manager.getServiceBundleForModel(providerId.clone(), modelId.clone())?,
+            (None, None) => self.multi_service_manager.getServiceBundleForFunction(options.functionType.clone())?,
+            _ => return Err(AiServiceError::RequestFailed("chat provider and model override must be set together".to_string())),
+        };
         let introPrompt = characterPromptContext.introPrompt;
         let aiName = characterPromptContext.aiName;
         let memoryBindingMode =

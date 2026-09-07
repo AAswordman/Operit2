@@ -630,7 +630,8 @@ impl MessageCoordinationDelegate {
             .getAllModelSummaries()
             .map_err(|error| error.to_string())?
             .into_iter()
-            .filter(|summary| summary.modelId == fixedModelId);
+            .filter(|summary| summary.modelId == fixedModelId && roleCard.chatProviderId.as_ref()
+                .filter(|id| !id.trim().is_empty()).is_none_or(|id| &summary.providerId == id));
         let fixedModel = candidates
             .next()
             .ok_or_else(|| format!("Fixed chat model is unavailable: {fixedModelId}"))?;

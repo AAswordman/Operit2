@@ -594,6 +594,7 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       marks: '',
       chatModelBindingMode: 'FOLLOW_GLOBAL',
       chatModelId: null,
+      chatProviderId: null,
       ttsConfigId: null,
       memoryBindingMode: _memoryBindingCharacter,
       sharedMemoryId: null,

@@ -919,15 +919,28 @@ impl MessageProcessingDelegate {
                 (providerId.clone(), modelId.clone())
             }
             (None, None) => {
-                let binding = self
-                    .functionalConfigManager
-                    .getModelBindingForFunction(FunctionType::CHAT)
-                    .map_err(|error| {
-                        operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
-                            error.to_string(),
-                        )
-                    })?;
-                (binding.providerId, binding.modelId)
+                use operit_model::CharacterCard::CharacterCardChatModelBindingMode;
+                use operit_providers::chat::llmprovider::AIService::AiServiceError;
+                let card = CharacterCardManager::getInstance().getCharacterCard(&request.roleCardId)
+                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+                if CharacterCardChatModelBindingMode::normalize(Some(&card.chatModelBindingMode))
+                    == CharacterCardChatModelBindingMode::FIXED_MODEL {
+                    let model = card.chatModelId.as_ref().filter(|id| !id.trim().is_empty())
+                        .ok_or_else(|| AiServiceError::RequestFailed(format!("角色「{}」的固定模型未就绪，请重新选择", card.name)))?;
+                    let provider = card.chatProviderId.as_ref().filter(|id| !id.trim().is_empty());
+                    let mut candidates = self.modelConfigManager.getAllModelSummaries()
+                        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?.into_iter()
+                        .filter(|summary| &summary.modelId == model && provider.is_none_or(|id| &summary.providerId == id));
+                    let selected = candidates.next().ok_or_else(|| AiServiceError::RequestFailed(format!("角色「{}」的固定模型不可用，请重新选择", card.name)))?;
+                    if candidates.next().is_some() {
+                        return Err(AiServiceError::RequestFailed(format!("角色「{}」有多个同名模型，请明确选择供应商", card.name)));
+                    }
+                    (selected.providerId, selected.modelId)
+                } else {
+                    let binding = self.functionalConfigManager.getModelBindingForFunction(FunctionType::CHAT)
+                        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+                    (binding.providerId, binding.modelId)
+                }
             }
             _ => {
                 return Err(

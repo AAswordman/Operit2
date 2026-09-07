@@ -9,20 +9,24 @@ import '../runtime/RuntimeSettingsPanel.dart';
 import '../web_access/WebAccessSettingsPanel.dart';
 
 class AccessLinksSettingsPanel extends StatelessWidget {
-  const AccessLinksSettingsPanel({super.key});
+  const AccessLinksSettingsPanel({super.key, required this.onOpenProfile});
 
+  final VoidCallback onOpenProfile;
+
+  /// Builds the combined device-space and browser-access settings page.
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
       children: <Widget>[
-        const RuntimeSettingsPanel(embedded: true),
+        RuntimeSettingsPanel(embedded: true, onOpenProfile: onOpenProfile),
         const SizedBox(height: 2),
         _buildAdvancedSection(context),
       ],
     );
   }
 
+  /// Builds the collapsed advanced section for browser access settings.
   Widget _buildAdvancedSection(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
