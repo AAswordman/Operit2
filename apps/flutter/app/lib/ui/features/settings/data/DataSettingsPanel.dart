@@ -429,7 +429,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       preview: preview,
       byteCount: session.byteLength,
     );
-    if (confirmed != true) {
+    if (confirmed != true || !mounted) {
       await session.discard();
       return;
     }
