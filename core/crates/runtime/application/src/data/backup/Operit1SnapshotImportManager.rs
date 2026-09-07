@@ -966,12 +966,15 @@ impl Operit1SnapshotImportManager {
             let mut totalLinkCount = 0;
             for (profileIndex, profileId) in profiles.into_iter().enumerate() {
                 let entry = operit1ObjectBoxEntryForProfile(&profileId);
-                let entryLength = parsed
-                    .archive
-                    .entries
-                    .get(&entry)
-                    .ok_or_else(|| format!("Operit1 记忆库条目不存在：{entry}"))?
-                    .uncompressedSize;
+                let Some(entryMetadata) = parsed.archive.entries.get(&entry) else {
+                    let storeId = operit1SharedMemoryStoreId(&profileId);
+                    let storeName = operit1SharedMemoryStoreName(parsed, &profileId)?;
+                    sharedMemoryStoreManager.createSharedMemoryStoreWithId(storeId, storeName)
+                        .map_err(|error| format!("创建 Operit1 空记忆库失败：{error}"))?;
+                    AppLogger::w("Operit1SnapshotImport", &format!("记忆库未包含数据库，保留空配置：{profileId}"));
+                    continue;
+                };
+                let entryLength = entryMetadata.uncompressedSize;
                 let exportData = self.withStagedArchiveEntry(
                     parsed,
                     &entry,
