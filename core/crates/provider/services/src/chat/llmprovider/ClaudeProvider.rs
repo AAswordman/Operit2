@@ -219,20 +219,21 @@ impl ClaudeProvider {
             Value::Array(
                 system_parts
                     .into_iter()
-                    .map(|text| {
-                        json!({
-                            "type": "text",
-                            "text": text,
-                            "cache_control": {"type": "ephemeral"}
-                        })
-                    })
+                    .map(|text| json!({"type": "text", "text": text}))
                     .collect(),
             )
         };
         Ok((system, messages))
     }
 
-    pub fn apply_stable_cache_breakpoints(&self, _request_object: &mut Map<String, Value>) {}
+    pub fn apply_stable_cache_breakpoints(&self, request_object: &mut Map<String, Value>) {
+        if let Some(block) = request_object.get_mut("system")
+            .and_then(Value::as_array_mut)
+            .and_then(|blocks| blocks.last_mut())
+            .and_then(Value::as_object_mut) {
+            block.entry("cache_control".to_string()).or_insert_with(|| json!({"type": "ephemeral"}));
+        }
+    }
 
     fn build_tool_definitions_for_claude(
         &self,
