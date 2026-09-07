@@ -4,12 +4,16 @@ import android.app.Activity
 import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
+import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.InputStream
 import java.util.UUID
+import java.util.concurrent.Executors
 
 /** Streams user-selected snapshot files to Flutter without materializing their full contents. */
 class SnapshotImportInputChannel(private val activity: MainActivity) {
@@ -24,25 +28,54 @@ class SnapshotImportInputChannel(private val activity: MainActivity) {
         val uri: Uri,
     )
 
+    // All content-provider access and the input registry belong to this worker.
+    private val inputExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "operit-snapshot-input")
+    }
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val openInputs = mutableMapOf<String, OpenSnapshotInput>()
+    private var channel: MethodChannel? = null
     private var pickResult: MethodChannel.Result? = null
+    @Volatile private var closed = false
 
     /** Registers snapshot input methods on the Flutter binary messenger. */
     fun attach(messenger: BinaryMessenger) {
-        MethodChannel(messenger, CHANNEL_NAME).setMethodCallHandler(::handle)
+        channel?.setMethodCallHandler(null)
+        channel = MethodChannel(messenger, CHANNEL_NAME).also {
+            it.setMethodCallHandler(::handle)
+        }
     }
 
     /** Releases every opened content stream owned by this channel. */
     fun clear() {
-        for (input in openInputs.values) {
-            input.stream.close()
-        }
-        openInputs.clear()
+        if (closed) return
+        closed = true
+        channel?.setMethodCallHandler(null)
+        channel = null
+        val pendingPick = pickResult
         pickResult = null
+        pendingPick?.error("INPUT_CLOSED", "Snapshot input channel was closed", null)
+        // MainActivity creates a new router on engine reattachment. Finish any
+        // accepted reads before closing streams; never wait for provider I/O here.
+        inputExecutor.execute {
+            for (input in openInputs.values) {
+                try {
+                    input.stream.close()
+                } catch (error: Exception) {
+                    Log.w(CHANNEL_NAME, "Unable to close snapshot input", error)
+                }
+            }
+            openInputs.clear()
+        }
+        inputExecutor.shutdown()
     }
 
     /** Handles one snapshot selection or bounded-read MethodChannel operation. */
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
+        if (closed) {
+            result.error("INPUT_CLOSED", "Snapshot input channel was closed", null)
+            return
+        }
         when (call.method) {
             "pick" -> pickSnapshot(result)
             "readChunk" -> readChunk(call, result)
@@ -70,7 +103,12 @@ class SnapshotImportInputChannel(private val activity: MainActivity) {
                 ),
             )
         }
-        activity.startActivityForResult(intent, PICK_SNAPSHOT_REQUEST_CODE)
+        try {
+            activity.startActivityForResult(intent, PICK_SNAPSHOT_REQUEST_CODE)
+        } catch (error: Exception) {
+            pickResult = null
+            result.error("PICK_FAILED", error.message, null)
+        }
     }
 
     /** Receives the single document-picker result and opens its content stream. */
@@ -79,34 +117,50 @@ class SnapshotImportInputChannel(private val activity: MainActivity) {
             return false
         }
         val result = pickResult
-        pickResult = null
         if (result == null) {
             return true
         }
         if (resultCode != Activity.RESULT_OK) {
+            pickResult = null
             result.success(null)
             return true
         }
         val uri = data?.data
         if (uri == null) {
+            pickResult = null
             result.error("MISSING_DOCUMENT", "Snapshot picker returned no document", null)
             return true
         }
-        try {
-            val descriptor = describe(uri)
-            val stream = activity.contentResolver.openInputStream(uri)
-                ?: throw IllegalStateException("Unable to open selected snapshot")
-            val token = UUID.randomUUID().toString()
-            openInputs[token] = OpenSnapshotInput(stream, uri)
-            result.success(
-                mapOf(
-                    "token" to token,
-                    "name" to descriptor.name,
-                    "byteLength" to descriptor.byteLength,
-                ),
-            )
-        } catch (error: Throwable) {
-            result.error("OPEN_FAILED", error.message, null)
+        inputExecutor.execute {
+            if (closed) return@execute
+            try {
+                val descriptor = describe(uri)
+                if (closed) return@execute
+                val stream = activity.contentResolver.openInputStream(uri)
+                    ?: throw IllegalStateException("Unable to open selected snapshot")
+                val token = UUID.randomUUID().toString()
+                openInputs[token] = OpenSnapshotInput(stream, uri)
+                mainHandler.post {
+                    // clear() may already have completed the picker future.
+                    if (pickResult === result) {
+                        pickResult = null
+                        result.success(
+                            mapOf(
+                                "token" to token,
+                                "name" to descriptor.name,
+                                "byteLength" to descriptor.byteLength,
+                            ),
+                        )
+                    }
+                }
+            } catch (error: Throwable) {
+                mainHandler.post {
+                    if (pickResult === result) {
+                        pickResult = null
+                        result.error("OPEN_FAILED", error.message, null)
+                    }
+                }
+            }
         }
         return true
     }
@@ -120,17 +174,22 @@ class SnapshotImportInputChannel(private val activity: MainActivity) {
             result.error("INVALID_ARGS", "readChunk expects a token and positive maxBytes", null)
             return
         }
-        val input = openInputs[token]
-        if (input == null) {
-            result.error("UNKNOWN_INPUT", "Snapshot input token is not open", null)
-            return
-        }
-        val buffer = ByteArray(requestedLength.coerceAtMost(DEFAULT_CHUNK_SIZE))
-        try {
-            val count = input.stream.read(buffer)
-            result.success(if (count <= 0) ByteArray(0) else buffer.copyOf(count))
-        } catch (error: Throwable) {
-            result.error("READ_FAILED", error.message, null)
+        inputExecutor.execute {
+            val input = openInputs[token]
+            if (input == null) {
+                mainHandler.post {
+                    result.error("UNKNOWN_INPUT", "Snapshot input token is not open", null)
+                }
+                return@execute
+            }
+            val buffer = ByteArray(requestedLength.coerceAtMost(DEFAULT_CHUNK_SIZE))
+            try {
+                val count = input.stream.read(buffer)
+                val bytes = if (count <= 0) ByteArray(0) else buffer.copyOf(count)
+                mainHandler.post { result.success(bytes) }
+            } catch (error: Throwable) {
+                mainHandler.post { result.error("READ_FAILED", error.message, null) }
+            }
         }
     }
 
@@ -141,13 +200,22 @@ class SnapshotImportInputChannel(private val activity: MainActivity) {
             result.error("INVALID_ARGS", "close expects a token", null)
             return
         }
-        val input = openInputs.remove(token)
-        if (input == null) {
-            result.error("UNKNOWN_INPUT", "Snapshot input token is not open", null)
-            return
+        inputExecutor.execute {
+            val input = openInputs[token]
+            if (input == null) {
+                mainHandler.post {
+                    result.error("UNKNOWN_INPUT", "Snapshot input token is not open", null)
+                }
+                return@execute
+            }
+            try {
+                input.stream.close()
+                openInputs.remove(token)
+                mainHandler.post { result.success(null) }
+            } catch (error: Throwable) {
+                mainHandler.post { result.error("CLOSE_FAILED", error.message, null) }
+            }
         }
-        input.stream.close()
-        result.success(null)
     }
 
     /** Reads the selected document's display name and authoritative byte length. */
