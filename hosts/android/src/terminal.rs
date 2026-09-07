@@ -87,8 +87,10 @@ impl Drop for AndroidPtySession {
     fn drop(&mut self) {
         #[cfg(target_os = "android")]
         unsafe {
-            libc::kill(self.pid, libc::SIGHUP);
-            libc::kill(self.pid, libc::SIGKILL);
+            if self.exitCode.is_none() {
+                libc::kill(self.pid, libc::SIGHUP);
+                libc::kill(self.pid, libc::SIGKILL);
+            }
             let fd = match self.writer.lock() {
                 Ok(mut writerFd) => {
                     let value = *writerFd;
@@ -350,31 +352,45 @@ impl TerminalHost for AndroidTerminalHost {
                 .ok_or_else(|| {
                     HostError::new(format!("Terminal session does not exist: {sessionId}"))
                 })?;
-            session.commandRunning = true;
             clearAndroidPtyCommandOutput(&session.commandOutput)?;
+            session.commandRunning = true;
             (
                 session.terminalType.clone(),
                 session.commandOutput.clone(),
                 session.writer.clone(),
             )
         };
-        let commandInput = format!("{normalizedCommand}\r");
-        writeAndroidPtyBytes(&writer, commandInput.as_bytes())?;
-        let result =
-            executeAndroidPtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+        let outcome: HostResult<AndroidSessionCommandResult> = (|| {
+            let commandInput = format!("{normalizedCommand}\r");
+            writeAndroidPtyBytes(&writer, commandInput.as_bytes())?;
+            let result =
+                executeAndroidPtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+            {
+                let mut state = self.lockState()?;
+                if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
+                    if result.timedOut {
+                        if let Some(workingDir) = cancelTimedOutAndroidPtyCommand(session)? {
+                            session.workingDir = workingDir;
+                        }
+                    } else if let Some(workingDir) = result.workingDir.clone() {
+                        session.workingDir = workingDir;
+                    }
+                }
+            }
+            Ok(result)
+        })();
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                if result.timedOut {
-                    if let Some(workingDir) = cancelTimedOutAndroidPtyCommand(session)? {
-                        session.workingDir = workingDir;
-                    }
-                } else if let Some(workingDir) = result.workingDir.clone() {
-                    session.workingDir = workingDir;
-                }
                 session.commandRunning = false;
             }
+            // An I/O or marker error leaves the command boundary uncertain.
+            if outcome.is_err() {
+                state.ptySessions.remove(&normalizedSessionId);
+                removeAndroidSessionMappings(&mut state, &normalizedSessionId);
+            }
         }
+        let result = outcome?;
         Ok(TerminalCommandOutput {
             command: normalizedCommand,
             output: result.output,
