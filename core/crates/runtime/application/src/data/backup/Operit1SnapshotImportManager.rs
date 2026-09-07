@@ -430,7 +430,7 @@ impl Operit1SnapshotImportManager {
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
         let modelConfig =
             self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
-        let fileImportPlan = SnapshotFileImportPlan::new();
+        let fileImportPlan = SnapshotFileImportPlan::forSnapshot(&parsed, &self.paths)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
             "迁移角色和语音",
@@ -438,7 +438,7 @@ impl Operit1SnapshotImportManager {
             0.36,
         ));
         self.importStructuredPreferences(&parsed, &fileImportPlan)?;
-        self.importUserMarkdownPreferences(&parsed)?;
+        self.importUserMarkdownPreferences(&parsed, &fileImportPlan)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "preferences",
             "迁移偏好设置",
@@ -463,7 +463,7 @@ impl Operit1SnapshotImportManager {
             "正在转换 Operit1 记忆和关联关系。",
             0.78,
         ));
-        let (importedMemories, importedMemoryLinks) = self.importObjectBoxMemoryStore(&parsed)?;
+        let (importedMemories, importedMemoryLinks) = self.importObjectBoxMemoryStore(&parsed, &fileImportPlan)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "files",
             "迁移资源文件",
@@ -516,7 +516,15 @@ impl Operit1SnapshotImportManager {
                 .map_err(|error| format!("导入 Operit1 角色卡失败：{error}"))?;
         }
 
-        let groups = buildOperit2CharacterGroups(parsed)?;
+        let mut groups = buildOperit2CharacterGroups(parsed)?;
+        for group in &mut groups {
+            group.name = fileImportPlan.groupNames.get(&group.id).cloned().unwrap_or_else(|| group.name.clone());
+            group.id = fileImportPlan.groupIds.get(&group.id).cloned().unwrap_or_else(|| group.id.clone());
+            for member in &mut group.members {
+                member.characterCardId = fileImportPlan.characterIds.get(&member.characterCardId)
+                    .cloned().unwrap_or_else(|| member.characterCardId.clone());
+            }
+        }
         if !groups.is_empty() {
             let backup = serde_json::json!({
                 "characterGroups": groups,
@@ -536,7 +544,7 @@ impl Operit1SnapshotImportManager {
     }
 
     #[allow(non_snake_case)]
-    fn importUserMarkdownPreferences(&self, parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
+    fn importUserMarkdownPreferences(&self, parsed: &ParsedOperit1Snapshot, fileImportPlan: &SnapshotFileImportPlan) -> Result<(), String> {
         let profiles = buildOperit1UserPreferenceProfiles(parsed)?;
         let cardBindings = collectOperit1CharacterMemoryProfileBindings(parsed)?;
         let profileIds = cardBindings.values().cloned().collect::<BTreeSet<String>>();
@@ -545,7 +553,9 @@ impl Operit1SnapshotImportManager {
                 .get(&profileId)
                 .ok_or_else(|| format!("Operit1 角色卡绑定了不存在的用户偏好：{profileId}"))?;
             let markdown = buildOperit2UserMarkdown(profile)?;
-            appendSharedUserMarkdown(self.storageHost.as_ref(), &profileId, &markdown)?;
+            let sourceId = operit1SharedMemoryStoreId(&profileId);
+            let storeId = fileImportPlan.memoryStoreIds.get(&sourceId).unwrap_or(&sourceId);
+            appendSharedUserMarkdown(self.storageHost.as_ref(), storeId, &markdown)?;
         }
         Ok(())
     }
@@ -747,12 +757,21 @@ impl Operit1SnapshotImportManager {
                     );
                 }
             };
-            let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
+            let mut archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
                 archiveBridge,
                 connection,
                 fileImportPlan,
                 &mut onMessageParsed,
             )?;
+            for chat in &mut archive.chats {
+                chat.characterCardName = match &chat.characterCardName {
+                    Some(name) => Some(fileImportPlan.characterNames.get(name).cloned().unwrap_or_else(|| name.clone())),
+                    None if chat.characterGroupId.is_none() => fileImportPlan.defaultCharacterName.clone(),
+                    None => None,
+                };
+                chat.characterGroupId = chat.characterGroupId.as_ref().map(|id|
+                    fileImportPlan.groupIds.get(id).cloned().unwrap_or_else(|| id.clone()));
+            }
             let chatCount = archive.chats.len() as i32;
             let messageCount = archive
                 .chats
@@ -956,6 +975,7 @@ impl Operit1SnapshotImportManager {
     fn importObjectBoxMemoryStore(
         &self,
         parsed: &ParsedOperit1Snapshot,
+        fileImportPlan: &SnapshotFileImportPlan,
     ) -> Result<(i32, i32), String> {
         let result = (|| {
             let paths = self.paths.clone();
@@ -986,8 +1006,11 @@ impl Operit1SnapshotImportManager {
                 )?;
                 totalMemoryCount += exportData.memories.len() as i32;
                 totalLinkCount += exportData.links.len() as i32;
-                let storeId = operit1SharedMemoryStoreId(&profileId);
-                let storeName = operit1SharedMemoryStoreName(parsed, &profileId)?;
+                let sourceId = operit1SharedMemoryStoreId(&profileId);
+                let storeId = fileImportPlan.memoryStoreIds.get(&sourceId).cloned()
+                    .ok_or_else(|| format!("Operit1 记忆库迁移身份不存在：{profileId}"))?;
+                let storeName = fileImportPlan.memoryStoreNames.get(&sourceId).cloned()
+                    .ok_or_else(|| format!("Operit1 记忆库迁移名称不存在：{profileId}"))?;
                 sharedMemoryStoreManager
                     .createSharedMemoryStoreWithId(storeId.clone(), storeName)
                     .map_err(|error| format!("创建 Operit1 共享记忆库失败：{error}"))?;
@@ -1631,10 +1654,31 @@ impl Operit1PreferenceValue {
     }
 }
 
+/// Keeps imported records distinct even when a previous import used the same display names.
+fn uniqueOperit1ImportName(source: &str, used: &mut HashSet<String>) -> String {
+    let base = source.trim();
+    let mut name = base.to_string();
+    let mut suffix = 1;
+    while used.contains(&name) {
+        name = if suffix == 1 { format!("{base} (Operit1)") }
+            else { format!("{base} (Operit1 {suffix})") };
+        suffix += 1;
+    }
+    used.insert(name.clone());
+    name
+}
+
 #[derive(Clone, Debug)]
 struct SnapshotFileImportPlan {
     importedFilesRoot: String,
     importedExternalFilesRoot: String,
+    characterIds: HashMap<String, String>,
+    characterNames: HashMap<String, String>,
+    groupIds: HashMap<String, String>,
+    groupNames: HashMap<String, String>,
+    memoryStoreIds: HashMap<String, String>,
+    memoryStoreNames: HashMap<String, String>,
+    defaultCharacterName: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1668,7 +1712,51 @@ impl SnapshotFileImportPlan {
         Self {
             importedFilesRoot: RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH.to_string(),
             importedExternalFilesRoot: RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR_PATH.to_string(),
+            characterIds: HashMap::new(),
+            characterNames: HashMap::new(),
+            groupIds: HashMap::new(),
+            groupNames: HashMap::new(),
+            memoryStoreIds: HashMap::new(),
+            memoryStoreNames: HashMap::new(),
+            defaultCharacterName: None,
         }
+    }
+
+    fn forSnapshot(parsed: &ParsedOperit1Snapshot, paths: &RuntimeStorePaths) -> Result<Self, String> {
+        let mut plan = Self::new();
+        // Import APIs upsert by ID; allocate new identities before any persistent writes.
+        let mut cardNames = CharacterCardManager::new(paths.clone()).getAllCharacterCards()
+            .map_err(|error| error.to_string())?.into_iter()
+            .map(|card| card.name.trim().to_string()).collect::<HashSet<_>>();
+        if let Some(preferences) = parsed.archive.datastorePreferences.get(ENTRY_CHARACTER_CARDS) {
+            for id in optionalPreferenceStringSet(preferences, "character_card_list")? {
+                let name = requiredPreferenceString(preferences, &format!("character_card_{id}_name"),
+                    &format!("Operit1 角色卡缺少名称：{id}"))?;
+                let targetName = uniqueOperit1ImportName(name, &mut cardNames);
+                if id == CharacterCardManager::DEFAULT_CHARACTER_CARD_ID {
+                    plan.defaultCharacterName = Some(targetName.clone());
+                }
+                plan.characterNames.insert(name.to_string(), targetName);
+                plan.characterIds.insert(id, Uuid::new_v4().to_string());
+            }
+        }
+        let mut groupNames = CharacterGroupCardManager::new(paths.clone()).getAllCharacterGroupCards()
+            .map_err(|error| error.to_string())?.into_iter()
+            .map(|group| group.name.trim().to_string()).collect::<HashSet<_>>();
+        for group in buildOperit2CharacterGroups(parsed)? {
+            plan.groupNames.insert(group.id.clone(), uniqueOperit1ImportName(&group.name, &mut groupNames));
+            plan.groupIds.insert(group.id, Uuid::new_v4().to_string());
+        }
+        let mut memoryNames = SharedMemoryStoreManager::new(paths.clone()).getAllSharedMemoryStores()
+            .map_err(|error| error.to_string())?.into_iter()
+            .map(|store| store.name.trim().to_string()).collect::<HashSet<_>>();
+        for profileId in collectOperit1MemoryProfileIds(parsed)? {
+            let sourceId = operit1SharedMemoryStoreId(&profileId);
+            plan.memoryStoreIds.insert(sourceId.clone(), Uuid::new_v4().to_string());
+            plan.memoryStoreNames.insert(sourceId,
+                uniqueOperit1ImportName(&operit1SharedMemoryStoreName(parsed, &profileId)?, &mut memoryNames));
+        }
+        Ok(plan)
     }
 
     #[allow(non_snake_case)]
@@ -1684,6 +1772,11 @@ impl SnapshotFileImportPlan {
 
     #[allow(non_snake_case)]
     fn rewritePreferenceKey(&self, key: &str) -> Result<String, String> {
+        for (sourceId, targetId) in &self.characterIds {
+            if let Some(suffix) = key.strip_prefix(&format!("character_card_theme_{sourceId}_")) {
+                return Ok(format!("character_card_theme_{targetId}_{suffix}"));
+            }
+        }
         if let Some((prefix, workspace)) = splitOperit1WorkspaceStatePreferenceKey(key) {
             let targetWorkspace = self.rewriteWorkspacePath(workspace)?;
             return Ok(format!("{prefix}{targetWorkspace}"));
@@ -1999,8 +2092,8 @@ fn buildOperit2CharacterCards(
         let chatModelId = resolveOperit1CharacterChatModelId(parsed, preferences, &id)?;
         let memoryBinding = resolveOperit1CharacterMemoryBinding(parsed, preferences, &id)?;
         cards.push(CharacterCard {
-            id: id.clone(),
-            name: name.to_string(),
+            id: fileImportPlan.characterIds.get(&id).cloned().unwrap_or_else(|| id.clone()),
+            name: fileImportPlan.characterNames.get(name).cloned().unwrap_or_else(|| name.to_string()),
             description: optionalPreferenceString(
                 preferences,
                 &format!("character_card_{id}_description"),
@@ -2049,7 +2142,8 @@ fn buildOperit2CharacterCards(
             chatModelId,
             ttsConfigId: None,
             memoryBindingMode: memoryBinding.memoryBindingMode,
-            sharedMemoryId: memoryBinding.sharedMemoryId,
+            sharedMemoryId: memoryBinding.sharedMemoryId.map(|id|
+                fileImportPlan.memoryStoreIds.get(&id).cloned().unwrap_or(id)),
             sharedMemoryMounts: Vec::new(),
             toolAccessConfig: optionalPreferenceString(
                 preferences,
@@ -2466,10 +2560,9 @@ fn pushMarkdownField(lines: &mut Vec<String>, label: &str, value: &str) {
 #[allow(non_snake_case)]
 fn appendSharedUserMarkdown(
     storageHost: &dyn RuntimeStorageHost,
-    profileId: &str,
+    storeId: &str,
     importedMarkdown: &str,
 ) -> Result<(), String> {
-    let storeId = operit1SharedMemoryStoreId(profileId);
     let path = format!(
         "{}/{}/USER.md",
         DATA_MEMORY_SHARED_DIR_PATH.trim_end_matches('/'),
