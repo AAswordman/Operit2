@@ -1526,6 +1526,7 @@ fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand>
         cstring(&format!("TERMUX_PREFIX={}", runtimeDir.to_string_lossy()))?,
         cstring(&format!("LD_LIBRARY_PATH={ldLibraryPath}"))?,
         cstring(&format!("PROOT_LOADER={}", loader.to_string_lossy()))?,
+        cstring("PROOT_NO_SECCOMP=1")?,
         cstring(&format!("TMPDIR={}", tmpDir.to_string_lossy()))?,
         cstring(&format!("PROOT_TMP_DIR={}", tmpDir.to_string_lossy()))?,
         cstring(&format!("OPERIT_WORKING_DIR={workDir}"))?,

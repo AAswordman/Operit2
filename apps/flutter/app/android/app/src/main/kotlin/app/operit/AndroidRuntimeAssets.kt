@@ -208,6 +208,7 @@ object AndroidRuntimeAssets {
             export TMPDIR=${File(runtimeDir, "tmp").absolutePath}
             export PROOT_TMP_DIR=${File(runtimeDir, "tmp").absolutePath}
             export PROOT_LOADER=${File(runtimeDir, "loader").absolutePath}
+            export PROOT_NO_SECCOMP=1
             export UBUNTU_PATH=${rootfsDir.absolutePath}
             export OPERIT_RUNTIME_ROOT=${runtimeRoot.absolutePath}
             export OPERIT_WORKSPACE_ROOT=${workspaceRoot.absolutePath}
