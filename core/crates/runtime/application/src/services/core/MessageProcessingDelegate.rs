@@ -381,6 +381,9 @@ pub struct MessageProcessingDelegate {
     pub currentTurnToolInvocationCountByChatId: HashMap<String, i32>,
     pub currentTurnToolInvocationCountByChatIdFlow: MutableStateFlow<HashMap<String, i32>>,
     pub chatRuntimes: Arc<Mutex<HashMap<String, ChatRuntime>>>,
+    // Maps edited chats to the turn whose automatic summary is invalid.
+    // Shared by clones; never held across provider or other async work.
+    summaryCommitLock: Arc<Mutex<HashMap<String, u64>>>,
     pub lastScrollEmitMsByChatKey: Arc<Mutex<HashMap<String, i64>>>,
     pub suppressIdleCompletedStateByChatId: Arc<Mutex<HashMap<String, bool>>>,
     pub pendingAsyncSummaryUiByChatId: Arc<Mutex<HashMap<String, bool>>>,
@@ -420,6 +423,7 @@ impl MessageProcessingDelegate {
             currentTurnToolInvocationCountByChatId: HashMap::new(),
             currentTurnToolInvocationCountByChatIdFlow: mutableStateFlow(HashMap::new()),
             chatRuntimes: Arc::new(Mutex::new(HashMap::new())),
+            summaryCommitLock: Arc::new(Mutex::new(HashMap::new())),
             lastScrollEmitMsByChatKey: Arc::new(Mutex::new(HashMap::new())),
             suppressIdleCompletedStateByChatId: Arc::new(Mutex::new(HashMap::new())),
             pendingAsyncSummaryUiByChatId: Arc::new(Mutex::new(HashMap::new())),
@@ -449,6 +453,7 @@ impl MessageProcessingDelegate {
                 .currentTurnToolInvocationCountByChatIdFlow
                 .clone(),
             chatRuntimes: self.chatRuntimes.clone(),
+            summaryCommitLock: self.summaryCommitLock.clone(),
             lastScrollEmitMsByChatKey: self.lastScrollEmitMsByChatKey.clone(),
             suppressIdleCompletedStateByChatId: self.suppressIdleCompletedStateByChatId.clone(),
             pendingAsyncSummaryUiByChatId: self.pendingAsyncSummaryUiByChatId.clone(),
@@ -620,6 +625,8 @@ impl MessageProcessingDelegate {
     /// Starts a fresh chat turn and returns its chat-scoped ownership token.
     #[allow(non_snake_case)]
     fn beginChatTurn(&self, chatId: String, turnOptions: ChatTurnOptions) -> u64 {
+        let _summaryCommitGuard = self.summaryCommitLock.lock()
+            .expect("summary commit mutex poisoned");
         self.withRuntime(Some(chatId), |runtime| {
             runtime.activeTurnId = runtime
                 .activeTurnId
@@ -644,6 +651,30 @@ impl MessageProcessingDelegate {
             runtime.activeTurnId == turnId && !runtime.isCancelling
         })
         .unwrap_or(false)
+    }
+
+    /// Permanently excludes this turn's snapshot before an edit or deletion.
+    /// New turns receive a new activeTurnId; they can summarize their own history.
+    /// The caller keeps this guard only through the synchronous mutation.
+    pub(crate) fn invalidateAutomaticSummaryForChat(
+        &self,
+        chatId: &str,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, u64>> {
+        let mut invalidated = self.summaryCommitLock.lock()
+            .expect("summary commit mutex poisoned");
+        if let Some(turnId) = self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            runtime.activeTurnId
+        }) {
+            invalidated.insert(chatId.to_string(), turnId);
+        }
+        invalidated
+    }
+
+    fn isAutomaticSummaryCurrent(&self, chatId: &str, turnId: u64) -> bool {
+        let invalidated = self.summaryCommitLock.lock()
+            .expect("summary commit mutex poisoned");
+        invalidated.get(chatId).copied() != Some(turnId)
+            && self.isCurrentChatTurn(chatId, turnId)
     }
 
     /// Clears one turn's runtime state without touching a newer turn for the chat.
@@ -1051,22 +1082,26 @@ impl MessageProcessingDelegate {
         chatId: String,
         keepPartialResponse: bool,
     ) -> Option<ChatMessage> {
-        let cancellation = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
-            if !runtime.isLoading || runtime.isCancelling {
-                return None;
-            }
-            let cancelledTurnId = runtime.activeTurnId;
-            runtime.isCancelling = true;
-            runtime.activeTurnId = runtime
-                .activeTurnId
-                .checked_add(1)
-                .expect("chat turn id must not overflow");
-            Some((
-                cancelledTurnId,
-                runtime.activeTurnId,
-                runtime.responseStream.clone(),
-            ))
-        });
+        let cancellation = {
+            let _summaryCommitGuard = self.summaryCommitLock.lock()
+                .expect("summary commit mutex poisoned");
+            self.withExistingRuntime(Some(chatId.clone()), |runtime| {
+                if !runtime.isLoading || runtime.isCancelling {
+                    return None;
+                }
+                let cancelledTurnId = runtime.activeTurnId;
+                runtime.isCancelling = true;
+                runtime.activeTurnId = runtime
+                    .activeTurnId
+                    .checked_add(1)
+                    .expect("chat turn id must not overflow");
+                Some((
+                    cancelledTurnId,
+                    runtime.activeTurnId,
+                    runtime.responseStream.clone(),
+                ))
+            })
+        };
         let Some((cancelledTurnId, cancellationTurnId, responseStream)) = cancellation.flatten()
         else {
             return None;
@@ -1864,7 +1899,8 @@ impl MessageProcessingDelegate {
                                 chatModelIdOverride: completionContextModelIdOverride.clone(),
                                 turnOptions: completionTurnOptions.clone(),
                             });
-                        let nextWindowSize = async {
+                        let mut summaryModelConfig = None;
+                        let mut nextWindowSize = async {
                             let runtimeOptions = SendMessageOptions {
                                 roleCardId: Some(completionContextRoleCardId.clone()),
                                 promptFunctionType: completionContextPromptFunctionType.clone(),
@@ -1875,23 +1911,24 @@ impl MessageProcessingDelegate {
                             let runtime = workerService
                                 .createSendMessageRuntime(&runtimeOptions)
                                 .map_err(|_| ())?;
+                            summaryModelConfig = Some(runtime.modelConfig.clone());
                             AIMessageManager::calculateStableContextWindow(
                                 StableContextWindowRequest {
                                     enhancedAiService: &mut workerService,
                                     chatId: Some(completionChatId.clone()),
                                     messageContent: String::new(),
                                     chatHistory: completionChatHistory,
-                                    workspacePath: completionContextWorkspacePath,
-                                    promptFunctionType: completionContextPromptFunctionType,
-                                    roleCardId: Some(completionContextRoleCardId),
-                                    currentRoleName: Some(completionContextRoleName),
+                                    workspacePath: completionContextWorkspacePath.clone(),
+                                    promptFunctionType: completionContextPromptFunctionType.clone(),
+                                    roleCardId: Some(completionContextRoleCardId.clone()),
+                                    currentRoleName: Some(completionContextRoleName.clone()),
                                     splitHistoryByRole: true,
                                     groupOrchestrationMode: completionContextGroupOrchestrationMode,
                                     groupParticipantNamesText:
-                                        completionContextGroupParticipantNamesText,
-                                    proxySenderName: completionContextProxySenderName,
-                                    chatProviderIdOverride: completionContextProviderIdOverride,
-                                    chatModelIdOverride: completionContextModelIdOverride,
+                                        completionContextGroupParticipantNamesText.clone(),
+                                    proxySenderName: completionContextProxySenderName.clone(),
+                                    chatProviderIdOverride: completionContextProviderIdOverride.clone(),
+                                    chatModelIdOverride: completionContextModelIdOverride.clone(),
                                     publishEstimate: true,
                                     runtime,
                                 },
@@ -1968,6 +2005,169 @@ impl MessageProcessingDelegate {
                             }
                         }
                         drop(workerChatHistoryDelegate);
+                        'automatic_summary: {
+                            // Keep the turn active until automatic summary finishes, so the
+                            // next queued send uses the completed tool round and its summary.
+                            if workerTurnOptions.persistTurn
+                                && !completionContextGroupOrchestrationMode
+                                && pendingRouteChange.is_none()
+                            {
+                                if let Some(config) = summaryModelConfig {
+                                    let summaryHistory = completionChatHistoryDelegate
+                                        .lock()
+                                        .expect("worker chat history mutex poisoned")
+                                        .getRuntimeChatHistory(completionChatId.clone());
+                                    let effectiveContextLength = if config.context.enableMaxContextMode {
+                                        config.context.maxContextLength
+                                    } else {
+                                        config.context.maxContextLength * 0.4
+                                    };
+                                    let limit = (effectiveContextLength * 1024.0)
+                                        .clamp(0.0, i32::MAX as f32) as i32;
+                                    if AIMessageManager::shouldGenerateSummary(
+                                        summaryHistory.clone(), nextWindowSize.unwrap_or(0), limit,
+                                        f64::from(config.summary.summaryTokenThreshold),
+                                        config.summary.enableSummary,
+                                        config.summary.enableSummaryByMessageCount,
+                                        config.summary.summaryMessageCountThreshold,
+                                    ) {
+                                        let summaryOwner = {
+                                            let mut delegate = completionMessageProcessingDelegate
+                                                .lock()
+                                                .expect("worker message processing delegate mutex poisoned");
+                                            if !delegate.isAutomaticSummaryCurrent(&completionChatId, completionTurnId) {
+                                                break 'automatic_summary;
+                                            }
+                                            delegate.setInputProcessingStateForChatIfCurrent(
+                                                completionChatId.clone(), completionTurnId,
+                                                InputProcessingState::Summarizing {
+                                                    message: "chat_compressing_history".to_string(),
+                                                },
+                                            );
+                                            delegate.clone_for_core()
+                                        };
+                                        // This request owns its provider service. Cancelling it
+                                        // must not close a replacement turn's response stream.
+                                        let mut summaryService = EnhancedAIService::new(
+                                            workerService.tool_handler.clone(),
+                                            workerService.provider_runtime_context.clone(),
+                                        );
+                                        let summaryResult = {
+                                            let summaryFuture = AIMessageManager::summarizeMemory(
+                                                &mut summaryService, summaryHistory.clone(), false, false,
+                                            );
+                                            futures_util::pin_mut!(summaryFuture);
+                                            loop {
+                                                let scheduler = defaultHostRuntimeTaskSchedulerHost();
+                                                let delay = scheduler.waitForHostRuntimeDelay(50);
+                                                futures_util::pin_mut!(delay);
+                                                match futures_util::future::select(summaryFuture.as_mut(), delay).await {
+                                                    futures_util::future::Either::Left((result, _)) => break Some(result),
+                                                    futures_util::future::Either::Right((_, _)) => {
+                                                        if !summaryOwner.isAutomaticSummaryCurrent(&completionChatId, completionTurnId) {
+                                                            break None;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        };
+                                        let Some(summaryResult) = summaryResult else {
+                                            summaryService.cancelConversation().await;
+                                            break 'automatic_summary;
+                                        };
+                                        if !summaryOwner.isAutomaticSummaryCurrent(&completionChatId, completionTurnId) {
+                                            break 'automatic_summary;
+                                        }
+                                        match summaryResult {
+                                            Ok(Some(summaryMessage)) => {
+                                                {
+                                                    let mut history = completionChatHistoryDelegate
+                                                        .lock()
+                                                        .expect("worker chat history mutex poisoned");
+                                                    let _summaryCommitGuard = summaryOwner.summaryCommitLock
+                                                        .lock()
+                                                        .expect("summary commit mutex poisoned");
+                                                    if _summaryCommitGuard.get(&completionChatId).copied() == Some(completionTurnId)
+                                                        || !summaryOwner.isCurrentChatTurn(&completionChatId, completionTurnId)
+                                                    {
+                                                        break 'automatic_summary;
+                                                    }
+                                                    let position = history.findProperSummaryPosition(summaryHistory.clone());
+                                                    let before = summaryHistory.get(position.saturating_sub(1))
+                                                        .map(|message| message.timestamp);
+                                                    let after = summaryHistory.get(position)
+                                                        .map(|message| message.timestamp);
+                                                    history.addSummaryMessage(
+                                                        summaryMessage, before, after, Some(completionChatId.clone()),
+                                                    );
+                                                }
+                                                let summarizedHistory = completionChatHistoryDelegate
+                                                    .lock()
+                                                    .expect("worker chat history mutex poisoned")
+                                                    .getRuntimeChatHistory(completionChatId.clone());
+                                                let windowResult = async {
+                                                    let runtimeOptions = SendMessageOptions {
+                                                        roleCardId: Some(completionContextRoleCardId.clone()),
+                                                        promptFunctionType: completionContextPromptFunctionType.clone(),
+                                                        chatProviderIdOverride: completionContextProviderIdOverride.clone(),
+                                                        chatModelIdOverride: completionContextModelIdOverride.clone(),
+                                                        ..SendMessageOptions::new()
+                                                    };
+                                                    let runtime = workerService.createSendMessageRuntime(&runtimeOptions)?;
+                                                    AIMessageManager::calculateStableContextWindow(StableContextWindowRequest {
+                                                        enhancedAiService: &mut workerService,
+                                                        chatId: Some(completionChatId.clone()),
+                                                        messageContent: String::new(),
+                                                        chatHistory: summarizedHistory,
+                                                        workspacePath: completionContextWorkspacePath.clone(),
+                                                        promptFunctionType: completionContextPromptFunctionType.clone(),
+                                                        roleCardId: Some(completionContextRoleCardId.clone()),
+                                                        currentRoleName: Some(completionContextRoleName.clone()),
+                                                        splitHistoryByRole: true,
+                                                        groupOrchestrationMode: false,
+                                                        groupParticipantNamesText: None,
+                                                        proxySenderName: completionContextProxySenderName.clone(),
+                                                        chatProviderIdOverride: completionContextProviderIdOverride.clone(),
+                                                        chatModelIdOverride: completionContextModelIdOverride.clone(),
+                                                        publishEstimate: false,
+                                                        runtime,
+                                                    }).await
+                                                }.await;
+                                                if let Ok(window) = windowResult {
+                                                    let mut history = completionChatHistoryDelegate
+                                                        .lock()
+                                                        .expect("worker chat history mutex poisoned");
+                                                    let _summaryCommitGuard = summaryOwner.summaryCommitLock
+                                                        .lock()
+                                                        .expect("summary commit mutex poisoned");
+                                                    if _summaryCommitGuard.get(&completionChatId).copied() == Some(completionTurnId)
+                                                        || !summaryOwner.isCurrentChatTurn(&completionChatId, completionTurnId)
+                                                    {
+                                                        break 'automatic_summary;
+                                                    }
+                                                    nextWindowSize = Some(window);
+                                                    workerService.publishRequestWindowEstimate(window);
+                                                    if let Some(chat) = history.chatHistoriesFlow().value().into_iter()
+                                                        .find(|chat| chat.id == completionChatId)
+                                                    {
+                                                        history.saveCurrentChat(
+                                                            chat.inputTokens, chat.outputTokens, window,
+                                                            Some(completionChatId.clone()),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            Ok(None) => {},
+                                            Err(error) => {
+                                                AppLogger::w("CoreSend", &format!(
+                                                    "Automatic summary failed; keeping original history: {error}",
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if let Some(routeChange) = pendingRouteChange {
                             ChainLogger::info(
                                 SEND_CHAIN,
