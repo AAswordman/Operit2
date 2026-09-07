@@ -87,8 +87,10 @@ impl Drop for AndroidPtySession {
     fn drop(&mut self) {
         #[cfg(target_os = "android")]
         unsafe {
-            libc::kill(self.pid, libc::SIGHUP);
-            libc::kill(self.pid, libc::SIGKILL);
+            if self.exitCode.is_none() {
+                libc::kill(self.pid, libc::SIGHUP);
+                libc::kill(self.pid, libc::SIGKILL);
+            }
             let fd = match self.writer.lock() {
                 Ok(mut writerFd) => {
                     let value = *writerFd;
