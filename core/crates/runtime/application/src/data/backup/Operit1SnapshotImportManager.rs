@@ -1185,8 +1185,14 @@ impl ParsedOperit1Snapshot {
             .configs
             .iter()
             .map(|config| {
-                let providerType = config.providerType()?;
-                let provider = ModelCatalog::provider(providerType.name())?;
+                let providerType = config.providerType().ok();
+                let providerTypeId = providerType.as_ref().map(|value| value.name().to_string())
+                    .unwrap_or_else(|| config.apiProviderTypeId.clone());
+                let providerDisplayName = if let Some(providerType) = &providerType {
+                    ModelCatalog::provider(providerType.name())?.displayName
+                } else {
+                    format!("{}（需重新配置）", providerTypeId)
+                };
                 let modelIds = splitModelIds(&config.modelName);
                 let selectedModelIndex =
                     (self.chatMapping.configId == config.id).then_some(self.chatMapping.modelIndex);
@@ -1195,8 +1201,8 @@ impl ParsedOperit1Snapshot {
                 Ok(Operit1ModelConfigPreview {
                     configId: config.id.clone(),
                     name: config.name.clone(),
-                    providerTypeId: providerType.name().to_string(),
-                    providerDisplayName: provider.displayName,
+                    providerTypeId,
+                    providerDisplayName,
                     endpoint: config.apiEndpoint.clone(),
                     modelIds,
                     selectedModelId,
