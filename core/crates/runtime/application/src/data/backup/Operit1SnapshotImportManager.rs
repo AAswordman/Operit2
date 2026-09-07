@@ -1861,10 +1861,6 @@ fn isDataStoreEntry(entry: &str) -> bool {
 fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, PathBuf> {
     let mut mappings = BTreeMap::new();
     mappings.insert(
-        "payload/files/datastore/current_chat_id.preferences_pb".to_string(),
-        paths.current_chat_id_preferences_path(),
-    );
-    mappings.insert(
         "payload/files/datastore/tool_permissions.preferences_pb".to_string(),
         paths.tool_permissions_preferences_path(),
     );
