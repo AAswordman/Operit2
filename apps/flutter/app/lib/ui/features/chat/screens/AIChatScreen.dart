@@ -939,13 +939,26 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     bool cancelCurrentConversation,
   ) async {
     var queuedText = item.text;
-    final decision = await _viewModel.dispatchChatInputSubmitRequested(
-      chatId: queueChatId,
-      text: queuedText,
-      selectionStart: queuedText.length,
-      selectionEnd: queuedText.length,
-      attachmentCount: 0,
-    );
+    ChatInputSubmitDecision? decision;
+    try {
+      decision = await _viewModel.dispatchChatInputSubmitRequested(
+        chatId: queueChatId,
+        text: queuedText,
+        selectionStart: queuedText.length,
+        selectionEnd: queuedText.length,
+        attachmentCount: 0,
+      );
+    } catch (_) {
+      // The runtime removed this item before running its hook; no send has begun.
+      if (cancelCurrentConversation) {
+        await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
+      }
+      await _viewModel.restorePendingQueueMessage(
+        chatId: queueChatId,
+        message: item,
+      );
+      rethrow;
+    }
     if (decision != null) {
       final timeoutMessage = decision.message;
       if (decision.timedOut && timeoutMessage != null) {
@@ -982,11 +995,15 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         }
       }
     }
+    if (queuedText.trim().isEmpty) {
+      if (cancelCurrentConversation) {
+        await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
+      }
+      await _viewModel.restorePendingQueueMessage(chatId: queueChatId, message: item);
+      return;
+    }
     if (cancelCurrentConversation) {
       await _viewModel.cancelMessage(queueChatId);
-    }
-    if (queuedText.trim().isEmpty) {
-      return;
     }
     if (mounted && _currentChatId == queueChatId) {
       _inputFocusNode.unfocus();
