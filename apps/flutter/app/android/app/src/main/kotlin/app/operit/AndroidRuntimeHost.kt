@@ -27,8 +27,8 @@ class AndroidRuntimeHost(context: Context) {
         }
     private var runtimeHandle: Long = 0
     private val pendingRuntimeEvents = ArrayDeque<String>()
-    private var configuredRuntimeRoot: File? = null
-    private var configuredWorkspaceRoot: File? = null
+    @Volatile private var configuredRuntimeRoot: File? = null
+    @Volatile private var configuredWorkspaceRoot: File? = null
     @Volatile
     private var runtimeStartupState = "preparing"
     @Volatile
@@ -51,11 +51,52 @@ class AndroidRuntimeHost(context: Context) {
         }
     }
 
+    /** Returns whether Flutter or persisted bootstrap state configured this process. */
+    fun hasStorageRoots(): Boolean =
+        configuredRuntimeRoot != null && configuredWorkspaceRoot != null
+
+    /** Restores the selected identity when Android recreates a service without Flutter. */
+    fun restoreStorageRoots(): Boolean = synchronized(runtimeLock) {
+        if (hasStorageRoots()) {
+            return@synchronized true
+        }
+        val response = org.json.JSONObject(
+            OperitRuntimeNative.runtimeBootstrapRead(defaultRuntimeRootPath()),
+        )
+        check(response.getBoolean("ok")) {
+            response.optString("error", "Unable to read runtime bootstrap configuration")
+        }
+        if (response.isNull("value")) {
+            return@synchronized false
+        }
+        val config = org.json.JSONObject(response.getString("value"))
+        if (!config.optBoolean("confirmed", false)) {
+            return@synchronized false
+        }
+        val identityId = config.getString("activeIdentityId")
+        val identities = config.getJSONArray("identities")
+        require(Regex("^identity-[a-z0-9-]+$").matches(identityId) &&
+            (0 until identities.length()).any {
+                identities.getJSONObject(it).getString("id") == identityId
+            }
+        ) { "Runtime bootstrap active identity is invalid" }
+        val runtimeBase = requiredAbsoluteRoot(config.getString("runtimeRoot"), "runtimeRoot")
+        val workspaceBase = requiredAbsoluteRoot(config.getString("workspaceRoot"), "workspaceRoot")
+        setStorageRoots(
+            File(runtimeBase, "identities/$identityId").absolutePath,
+            File(workspaceBase, "identities/$identityId").absolutePath,
+        )
+        true
+    }
+
     /** Returns the active native runtime handle, creating it when required. */
     fun ensureRuntimeHandle(): Long {
         synchronized(runtimeLock) {
             if (runtimeHandle != 0L) {
                 return runtimeHandle
+            }
+            check(restoreStorageRoots()) {
+                "Runtime storage has not been confirmed; complete application setup first"
             }
             val startedAtMillis = System.currentTimeMillis()
             updateRuntimeStartupStatus("preparingAssets", "正在准备本地运行时资源")
