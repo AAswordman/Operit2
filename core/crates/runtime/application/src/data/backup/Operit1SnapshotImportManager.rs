@@ -53,6 +53,7 @@ use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::FunctionType::FunctionType;
+use operit_model::Memory::MemoryProperty;
 use operit_model::MemoryExportModel::{
     ImportStrategy, MemoryExportData, SerializableLink, SerializableMemory,
 };
@@ -109,7 +110,10 @@ const OPERIT1_DEFAULT_AI_AVATAR_URI: &str = "file:///android_asset/operit.png";
 const OPERIT1_OBJECTBOX_KEY_MEMORY: [u8; 4] = [0x18, 0x00, 0x00, 0x10];
 const OPERIT1_OBJECTBOX_KEY_LINK: [u8; 4] = [0x18, 0x00, 0x00, 0x14];
 const OPERIT1_OBJECTBOX_KEY_TAG: [u8; 4] = [0x18, 0x00, 0x00, 0x1c];
-const OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION: [u8; 4] = [0x20, 0x00, 0x00, 0x20];
+const OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION: [u8; 4] = [0x08, 0x00, 0x00, 0x1c];
+const OPERIT1_OBJECTBOX_KEY_PROPERTY: [u8; 4] = [0x18, 0x00, 0x00, 0x18];
+const OPERIT1_OBJECTBOX_KEY_DOCUMENT_CHUNK: [u8; 4] = [0x18, 0x00, 0x00, 0x20];
+const OPERIT1_OBJECTBOX_KEY_MEMORY_PROPERTY_RELATION: [u8; 4] = [0x08, 0x00, 0x00, 0x20];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[allow(non_snake_case)]
@@ -428,7 +432,7 @@ impl Operit1SnapshotImportManager {
             .selectedModelId
             .clone()
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
-        let modelConfig =
+        let mut modelConfig =
             self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
         let fileImportPlan = SnapshotFileImportPlan::new();
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
@@ -463,7 +467,8 @@ impl Operit1SnapshotImportManager {
             "正在转换 Operit1 记忆和关联关系。",
             0.78,
         ));
-        let (importedMemories, importedMemoryLinks) = self.importObjectBoxMemoryStore(&parsed)?;
+        let (importedMemories, importedMemoryLinks, memoryNotes) = self.importObjectBoxMemoryStore(&parsed)?;
+        modelConfig.skippedFields.extend(memoryNotes);
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "files",
             "迁移资源文件",
@@ -956,14 +961,16 @@ impl Operit1SnapshotImportManager {
     fn importObjectBoxMemoryStore(
         &self,
         parsed: &ParsedOperit1Snapshot,
-    ) -> Result<(i32, i32), String> {
+    ) -> Result<(i32, i32, Vec<String>), String> {
         let result = (|| {
             let paths = self.paths.clone();
+            let documentPaths = buildOperit1DocumentPaths(parsed, &paths)?;
             let sharedMemoryStoreManager = SharedMemoryStoreManager::new(paths);
             let profiles = collectOperit1MemoryProfileIds(parsed)?;
             let profileCount = profiles.len();
             let mut totalMemoryCount = 0;
             let mut totalLinkCount = 0;
+            let mut memoryNotes = Vec::new();
             for (profileIndex, profileId) in profiles.into_iter().enumerate() {
                 let entry = operit1ObjectBoxEntryForProfile(&profileId);
                 let entryLength = parsed
@@ -972,7 +979,7 @@ impl Operit1SnapshotImportManager {
                     .get(&entry)
                     .ok_or_else(|| format!("Operit1 记忆库条目不存在：{entry}"))?
                     .uncompressedSize;
-                let exportData = self.withStagedArchiveEntry(
+                let (exportData, documentNotes) = self.withStagedArchiveEntry(
                     parsed,
                     &entry,
                     OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH,
@@ -981,9 +988,12 @@ impl Operit1SnapshotImportManager {
                             self.storageHost.as_ref(),
                             OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH,
                             entryLength,
+                            &documentPaths,
                         )
                     },
                 )?;
+                memoryNotes.extend(documentNotes.into_iter()
+                    .map(|note| format!("记忆库 {profileId}：{note}")));
                 totalMemoryCount += exportData.memories.len() as i32;
                 totalLinkCount += exportData.links.len() as i32;
                 let storeId = operit1SharedMemoryStoreId(&profileId);
@@ -1023,7 +1033,7 @@ impl Operit1SnapshotImportManager {
                     0,
                 );
             }
-            Ok((totalMemoryCount, totalLinkCount))
+            Ok((totalMemoryCount, totalLinkCount, memoryNotes))
         })();
         result
     }
@@ -3459,7 +3469,10 @@ struct Operit1MemoryRecord {
     folderPath: Option<String>,
     createdAt: i64,
     updatedAt: i64,
+    lastAccessedAt: i64,
+    documentPath: Option<String>,
     isDocumentNode: bool,
+    chunkIndexFilePath: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -3479,16 +3492,57 @@ struct Operit1MemoryTagRecord {
     name: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[allow(non_snake_case)]
+struct Operit1DocumentChunkRecord {
+    id: u32,
+    content: String,
+    chunkIndex: i32,
+    memoryId: u32,
+}
+
+/// Maps only original documents present in the same copy plan used by the importer.
+#[allow(non_snake_case)]
+fn buildOperit1DocumentPaths(
+    parsed: &ParsedOperit1Snapshot,
+    paths: &RuntimeStorePaths,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut documents = BTreeMap::new();
+    let packageName = &parsed.archive.manifest.packageName;
+    for item in buildSnapshotFileCopyPlan(parsed)?.items {
+        let (prefixes, relative) = if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_FILES_PREFIX) {
+            (vec![format!("/data/user/0/{packageName}/files/"), format!("/data/data/{packageName}/files/")], relative)
+        } else if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_EXTERNAL_FILES_PREFIX) {
+            (vec![format!("/storage/emulated/0/Android/data/{packageName}/files/"), format!("/sdcard/Android/data/{packageName}/files/")], relative)
+        } else { continue; };
+        let target = if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_WORKSPACE_FILES_PREFIX) {
+            let (id, rest) = splitWorkspaceRelativePath(relative)?;
+            paths.workspace_path(id).join(rest).to_string_lossy().into_owned()
+        } else {
+            paths.runtime_storage_path(&item.targetPath).to_string_lossy().into_owned()
+        };
+        for prefix in prefixes {
+            documents.insert(format!("{prefix}{relative}"), target.clone());
+        }
+    }
+    Ok(documents)
+}
+
 #[allow(non_snake_case)]
 fn buildMemoryExportDataFromOperit1ObjectBox(
     storageHost: &dyn RuntimeStorageHost,
     storagePath: &str,
     byteLength: u64,
-) -> Result<MemoryExportData, String> {
+    documentPaths: &BTreeMap<String, String>,
+) -> Result<(MemoryExportData, Vec<String>), String> {
     let mut memories = BTreeMap::<u32, Operit1MemoryRecord>::new();
     let mut links = BTreeMap::<u32, Operit1MemoryLinkRecord>::new();
     let mut tags = BTreeMap::<u32, Operit1MemoryTagRecord>::new();
     let mut memoryTagPairs = BTreeSet::<(u32, u32)>::new();
+    let mut properties = BTreeMap::<u32, MemoryProperty>::new();
+    let mut memoryPropertyPairs = BTreeSet::<(u32, u32)>::new();
+    let mut chunksByMemoryId = BTreeMap::<u32, Vec<Operit1DocumentChunkRecord>>::new();
+    let mut notes = Vec::new();
 
     visitLmdbRecords(storageHost, storagePath, byteLength, &mut |key, value| {
         if key.len() == 8 && key[0..4] == OPERIT1_OBJECTBOX_KEY_MEMORY && !value.is_empty() {
@@ -3500,12 +3554,34 @@ fn buildMemoryExportDataFromOperit1ObjectBox(
         } else if key.len() == 8 && key[0..4] == OPERIT1_OBJECTBOX_KEY_TAG && !value.is_empty() {
             let tag = parseOperit1MemoryTagRecord(value)?;
             tags.insert(tag.id, tag);
-        } else if key.len() == 16
+        } else if key.len() == 8 && key[0..4] == OPERIT1_OBJECTBOX_KEY_PROPERTY && !value.is_empty() {
+            let table = FlatObjectBoxTable::new(value)?;
+            let id = table.requiredU32(0, "MemoryProperty.id")?;
+            properties.insert(id, MemoryProperty {
+                id: id as i64,
+                key: table.optionalString(1)?.unwrap_or_default(),
+                value: table.optionalString(2)?.unwrap_or_default(),
+            });
+        } else if key.len() == 8 && key[0..4] == OPERIT1_OBJECTBOX_KEY_DOCUMENT_CHUNK && !value.is_empty() {
+            let table = FlatObjectBoxTable::new(value)?;
+            let chunk = Operit1DocumentChunkRecord {
+                id: table.requiredU32(0, "DocumentChunk.id")?,
+                content: table.optionalString(1)?.unwrap_or_default(),
+                chunkIndex: table.optionalI32(2)?.unwrap_or(0),
+                memoryId: table.requiredU32(4, "DocumentChunk.memoryId")?,
+            };
+            chunksByMemoryId.entry(chunk.memoryId).or_default().push(chunk);
+        } else if key.len() == 12
+            && key[0..4] == OPERIT1_OBJECTBOX_KEY_MEMORY_PROPERTY_RELATION
+            && value.is_empty()
+        {
+            memoryPropertyPairs.insert((readBigEndianU32(&key[4..8])?, readBigEndianU32(&key[8..12])?));
+        } else if key.len() == 12
             && key[0..4] == OPERIT1_OBJECTBOX_KEY_MEMORY_TAG_RELATION
             && value.is_empty()
         {
-            let memoryId = readBigEndianU32(&key[8..12])?;
-            let tagId = readBigEndianU32(&key[12..16])?;
+            let memoryId = readBigEndianU32(&key[4..8])?;
+            let tagId = readBigEndianU32(&key[8..12])?;
             memoryTagPairs.insert((memoryId, tagId));
         }
         Ok(())
@@ -3526,17 +3602,69 @@ fn buildMemoryExportDataFromOperit1ObjectBox(
         tagNames.dedup();
     }
 
+    let mut propertiesByMemoryId = HashMap::<u32, Vec<MemoryProperty>>::new();
+    for (memoryId, propertyId) in memoryPropertyPairs {
+        let property = properties.get(&propertyId)
+            .ok_or_else(|| format!("Operit1 记忆属性关系引用不存在的属性：{propertyId}"))?;
+        propertiesByMemoryId.entry(memoryId).or_default().push(property.clone());
+    }
+    for (memoryId, chunks) in &mut chunksByMemoryId {
+        if !memories.contains_key(memoryId) {
+            return Err(format!("Operit1 文档分块引用不存在的记忆：{memoryId}；请保留原始快照"));
+        }
+        chunks.sort_by_key(|chunk| (chunk.chunkIndex, chunk.id));
+    }
     let mut memoryUuidById = HashMap::<u32, String>::new();
     let mut serializableMemories = Vec::new();
     for memory in memories.values() {
-        if memory.isDocumentNode {
-            continue;
+        let chunks = chunksByMemoryId.remove(&memory.id).unwrap_or_default();
+        let isDocument = memory.isDocumentNode || !chunks.is_empty();
+        let mut content = memory.content.clone();
+        let mut memoryProperties = propertiesByMemoryId.remove(&memory.id).unwrap_or_default();
+        let documentPath = memory.documentPath.as_deref().and_then(|source| {
+            let normalized = source.trim().replace('\\', "/");
+            documentPaths.get(normalized.strip_prefix("file://").unwrap_or(&normalized)).cloned()
+        });
+        if isDocument {
+            let metadata = serde_json::json!({
+                "description": memory.content,
+                "documentPath": memory.documentPath,
+                "chunkIndexFilePath": memory.chunkIndexFilePath,
+                "isDocumentNode": memory.isDocumentNode,
+                "retrieval": "lexical",
+            });
+            let propertyId = memoryProperties.iter().map(|property| property.id).max().unwrap_or(0) + 1;
+            memoryProperties.push(MemoryProperty {
+                id: propertyId,
+                key: "operit1.document.metadata.v1".to_string(),
+                value: metadata.to_string(),
+            });
+            if !chunks.is_empty() {
+                content = chunks.iter().map(|chunk| chunk.content.as_str()).collect::<Vec<_>>().join("\n\n");
+                memoryProperties.push(MemoryProperty {
+                    id: propertyId + 1,
+                    key: "operit1.document.chunks.v1".to_string(),
+                    value: serde_json::to_string(&chunks).map_err(|error| error.to_string())?,
+                });
+            } else {
+                let detail = if let Some(path) = &documentPath {
+                    format!("原文件已迁移至 {path}，可打开原文件；快照未含正文分块")
+                } else {
+                    "快照未含正文分块或原文件，请补充原文档；已保留文档节点、原说明及关联".to_string()
+                };
+                content.push_str(&format!("\n\n迁移说明：{detail}。"));
+                notes.push(format!("文档「{}」：{detail}", memory.title));
+            }
+            if documentPath.is_none() && !chunks.is_empty() {
+                let source = memory.documentPath.as_deref().unwrap_or("未记录原文件路径");
+                notes.push(format!("文档「{}」的全部 {} 个正文分块已恢复并可读取、检索；原文件未包含在快照中（{source}），如需原格式请补充文件", memory.title, chunks.len()));
+            }
         }
         memoryUuidById.insert(memory.id, memory.uuid.clone());
         serializableMemories.push(SerializableMemory {
             uuid: memory.uuid.clone(),
             title: memory.title.clone(),
-            content: memory.content.clone(),
+            content,
             contentType: memory.contentType.clone(),
             source: memory.source.clone(),
             credibility: memory.credibility,
@@ -3545,6 +3673,12 @@ fn buildMemoryExportDataFromOperit1ObjectBox(
             createdAt: memory.createdAt,
             updatedAt: memory.updatedAt,
             tagNames: tagNamesByMemoryId.remove(&memory.id).unwrap_or_default(),
+            documentPath,
+            isDocumentNode: Some(isDocument),
+            // Operit1 HNSW files address ObjectBox IDs and cannot back this SQLite store.
+            chunkIndexFilePath: None,
+            lastAccessedAt: Some(memory.lastAccessedAt),
+            properties: Some(memoryProperties),
         });
     }
 
@@ -3576,12 +3710,15 @@ fn buildMemoryExportDataFromOperit1ObjectBox(
         });
     }
 
-    Ok(MemoryExportData {
+    if serializableMemories.iter().any(|memory| memory.isDocumentNode == Some(true)) {
+        notes.push("文档节点、已有正文分块、元数据和记忆关联已迁移，缺失项已单独列出；正文通过现有记忆读取和关键词检索访问，没有复用旧版 HNSW 向量索引".to_string());
+    }
+    Ok((MemoryExportData {
         memories: serializableMemories,
         links: serializableLinks,
         exportDate: currentTimeMillis(),
-        version: "1.0".to_string(),
-    })
+        version: "1.1".to_string(),
+    }, notes))
 }
 
 #[allow(non_snake_case)]
@@ -3598,7 +3735,12 @@ fn parseOperit1MemoryRecord(bytes: &[u8]) -> Result<Operit1MemoryRecord, String>
         importance: table.requiredF32(7, "Memory.importance")?,
         createdAt: table.requiredI64(8, "Memory.createdAt")?,
         updatedAt: table.requiredI64(9, "Memory.updatedAt")?,
+        lastAccessedAt: if table.fieldAbs(10).is_some() {
+            table.requiredI64(10, "Memory.lastAccessedAt")?
+        } else { table.requiredI64(9, "Memory.updatedAt")? },
+        documentPath: table.optionalString(12)?,
         isDocumentNode: table.optionalBool(13)?.unwrap_or(false),
+        chunkIndexFilePath: table.optionalString(14)?,
         folderPath: table.optionalString(17)?,
     })
 }
@@ -3747,6 +3889,15 @@ impl<'a> FlatObjectBoxTable<'a> {
         String::from_utf8(self.bytes[start..end].to_vec())
             .map(Some)
             .map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
+    fn optionalI32(&self, index: usize) -> Result<Option<i32>, String> {
+        let Some(abs) = self.fieldAbs(index) else { return Ok(None); };
+        if abs + 4 > self.bytes.len() {
+            return Err("Operit1 ObjectBox 整数字段越界".to_string());
+        }
+        readLittleEndianI32(&self.bytes[abs..abs + 4]).map(Some)
     }
 
     #[allow(non_snake_case)]
