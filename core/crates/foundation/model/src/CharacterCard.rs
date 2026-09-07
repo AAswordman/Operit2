@@ -62,6 +62,8 @@ pub struct CharacterCard {
     pub marks: String,
     pub chatModelBindingMode: String,
     pub chatModelId: Option<String>,
+    #[serde(default)]
+    pub chatProviderId: Option<String>,
     pub ttsConfigId: Option<String>,
     #[serde(default = "default_character_memory_binding_mode")]
     pub memoryBindingMode: String,
@@ -199,6 +201,8 @@ pub struct OperitCharacterCardPayload {
     pub chatModelBindingMode: String,
     #[serde(default)]
     pub chatModelId: Option<String>,
+    #[serde(default)]
+    pub chatProviderId: Option<String>,
     #[serde(default)]
     pub ttsConfigId: Option<String>,
     #[serde(default = "default_character_memory_binding_mode")]

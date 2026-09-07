@@ -2047,6 +2047,7 @@ fn buildOperit2CharacterCards(
                 CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string()
             },
             chatModelId,
+            chatProviderId: None,
             ttsConfigId: None,
             memoryBindingMode: memoryBinding.memoryBindingMode,
             sharedMemoryId: memoryBinding.sharedMemoryId,

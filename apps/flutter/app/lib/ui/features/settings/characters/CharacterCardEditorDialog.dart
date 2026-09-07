@@ -120,6 +120,7 @@ class _CharacterCardEditorDialogState
   String? _avatarUri;
   late String _chatModelBindingMode;
   String? _chatModelId;
+  String? _chatProviderId;
   late bool _ttsBindingEnabled;
   String? _ttsConfigId;
   late String _memoryBindingMode;
@@ -163,6 +164,7 @@ class _CharacterCardEditorDialogState
       card.chatModelBindingMode,
     );
     _chatModelId = card.chatModelId;
+    _chatProviderId = card.chatProviderId;
     _ttsBindingEnabled = card.ttsConfigId != null;
     _ttsConfigId = card.ttsConfigId;
     _memoryBindingMode = _normalizeMemoryBindingMode(card.memoryBindingMode);
@@ -247,6 +249,7 @@ class _CharacterCardEditorDialogState
           advancedCustomPrompt: _advancedPromptController.text,
           marks: _marksController.text,
           chatModelBindingMode: _chatModelBindingMode,
+          chatProviderId: _chatModelBindingMode == _chatModelFixedConfig ? _chatProviderId : null,
           chatModelId: _chatModelBindingMode == _chatModelFixedConfig
               ? _chatModelId
               : null,
@@ -462,12 +465,14 @@ class _CharacterCardEditorDialogState
       ),
       summaries: widget.modelSummaries,
       currentModelId: _chatModelId,
+      currentProviderId: _chatProviderId,
     );
     if (selected == null) {
       return;
     }
     setState(() {
       _chatModelId = selected.modelId;
+      _chatProviderId = selected.providerId;
     });
   }
 
@@ -560,6 +565,7 @@ class _CharacterCardEditorDialogState
     final selectedModel = _providerModelSummaryById(
       widget.modelSummaries,
       _chatModelId,
+      _chatProviderId,
     );
     final selectedTtsConfig = _ttsConfigById(widget.ttsConfigs, _ttsConfigId);
     final toolAccessSummary = _toolAccessSummary(l10n, _toolAccessConfig);
@@ -686,6 +692,7 @@ class _CharacterCardEditorDialogState
                                   : _chatModelFollowGlobal;
                               if (!value) {
                                 _chatModelId = null;
+                                _chatProviderId = null;
                               }
                             });
                           },
@@ -1088,17 +1095,20 @@ class _CharacterModelSelectorDialog extends StatefulWidget {
     required this.title,
     required this.summaries,
     required this.currentModelId,
+    required this.currentProviderId,
   });
 
   final String title;
   final List<core_proxy.ProviderModelSummary> summaries;
   final String? currentModelId;
+  final String? currentProviderId;
 
   static Future<core_proxy.ProviderModelSummary?> show({
     required BuildContext context,
     required String title,
     required List<core_proxy.ProviderModelSummary> summaries,
     required String? currentModelId,
+    required String? currentProviderId,
   }) {
     return showDialog<core_proxy.ProviderModelSummary>(
       context: context,
@@ -1106,6 +1116,7 @@ class _CharacterModelSelectorDialog extends StatefulWidget {
         title: title,
         summaries: summaries,
         currentModelId: currentModelId,
+        currentProviderId: currentProviderId,
       ),
     );
   }
@@ -1167,7 +1178,9 @@ class _CharacterModelSelectorDialogState
                     final summary = filteredModels[index];
                     return _CharacterModelOptionTile(
                       summary: summary,
-                      selected: summary.modelId == widget.currentModelId,
+                      selected: identical(summary, _providerModelSummaryById(
+                        widget.summaries, widget.currentModelId, widget.currentProviderId,
+                      )),
                       onTap: () => _selectModel(summary),
                     );
                   },

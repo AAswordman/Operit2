@@ -761,13 +761,11 @@ String _normalizeMemoryBindingMode(String mode) {
 core_proxy.ProviderModelSummary? _providerModelSummaryById(
   List<core_proxy.ProviderModelSummary> summaries,
   String? id,
+  String? providerId,
 ) {
-  for (final summary in summaries) {
-    if (summary.modelId == id) {
-      return summary;
-    }
-  }
-  return null;
+  final candidates = summaries.where((summary) => summary.modelId == id &&
+      (providerId == null || providerId.trim().isEmpty || summary.providerId == providerId)).toList();
+  return candidates.length == 1 ? candidates.single : null;
 }
 
 String _characterModelBindingText(
@@ -888,6 +886,7 @@ core_proxy.CharacterCard _characterCardWith(
     marks: card.marks,
     chatModelBindingMode: card.chatModelBindingMode,
     chatModelId: card.chatModelId,
+    chatProviderId: card.chatProviderId,
     ttsConfigId: card.ttsConfigId,
     memoryBindingMode: card.memoryBindingMode,
     sharedMemoryId: card.sharedMemoryId,

@@ -114,6 +114,7 @@ pub fn run_character_command(
                     chatModelBindingMode: CharacterCardChatModelBindingMode::FOLLOW_GLOBAL
                         .to_string(),
                     chatModelId: None,
+                    chatProviderId: None,
                     ttsConfigId: None,
                     memoryBindingMode: CharacterCardMemoryBindingMode::CHARACTER.to_string(),
                     sharedMemoryId: None,
@@ -162,8 +163,9 @@ pub fn run_character_command(
                         CharacterCardChatModelBindingMode::normalize(Some(&value))
                 }
                 "chatModelId" => card.chatModelId = nonBlankString(value.clone()),
+                "chatProviderId" => card.chatProviderId = nonBlankString(value.clone()),
                 _ => {
-                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | avatarUri | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelId".to_string())
+                    return Err("character fields: name | description | characterSetting | openingStatement | otherContentChat | otherContentVoice | avatarUri | attachedTagIds | advancedCustomPrompt | marks | chatModelBindingMode | chatModelId | chatProviderId".to_string())
                 }
             }
             let updated = card.clone();

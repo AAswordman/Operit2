@@ -192,6 +192,9 @@ impl CharacterCardManager {
                     "character_card_{id}_chat_model_id"
                 )))
                 .cloned(),
+            chatProviderId: preferences
+                .get(&stringPreferencesKey(&format!("character_card_{id}_chat_provider_id")))
+                .cloned().filter(|value| !value.trim().is_empty()),
             ttsConfigId: preferences
                 .get(&stringPreferencesKey(&format!(
                     "character_card_{id}_tts_config_id"
@@ -454,6 +457,7 @@ impl CharacterCardManager {
                     .chatModelId
                     .clone()
                     .filter(|value| !value.trim().is_empty()),
+                chatProviderId: card.chatProviderId.clone().filter(|value| !value.trim().is_empty()),
                 ttsConfigId: card
                     .ttsConfigId
                     .clone()
@@ -616,6 +620,7 @@ impl CharacterCardManager {
                     .chatModelId
                     .clone()
                     .filter(|value| !value.trim().is_empty()),
+                chatProviderId: card.chatProviderId.clone().filter(|value| !value.trim().is_empty()),
                 ttsConfigId: card
                     .ttsConfigId
                     .clone()
@@ -692,6 +697,7 @@ impl CharacterCardManager {
                 .chatModelId
                 .clone()
                 .filter(|value| !value.trim().is_empty()),
+            chatProviderId: payload.chatProviderId.clone().filter(|value| !value.trim().is_empty()),
             ttsConfigId: payload
                 .ttsConfigId
                 .clone()
@@ -837,6 +843,7 @@ impl CharacterCardManager {
             marks: marks.trim().to_string(),
             chatModelBindingMode: CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string(),
             chatModelId: None,
+            chatProviderId: None,
             ttsConfigId: None,
             memoryBindingMode: CharacterCardMemoryBindingMode::CHARACTER.to_string(),
             sharedMemoryId: None,
@@ -1001,6 +1008,11 @@ impl CharacterCardManager {
             &stringPreferencesKey(&format!("character_card_{id}_chat_model_binding_mode")),
             card.chatModelBindingMode.clone(),
         );
+        if let Some(value) = card.chatProviderId.as_ref().filter(|value| !value.trim().is_empty()) {
+            preferences.set(&stringPreferencesKey(&format!("character_card_{id}_chat_provider_id")), value.clone());
+        } else {
+            preferences.remove(&stringPreferencesKey(&format!("character_card_{id}_chat_provider_id")));
+        }
         if let Some(value) = &card.chatModelId {
             preferences.set(
                 &stringPreferencesKey(&format!("character_card_{id}_chat_model_id")),
@@ -1112,6 +1124,7 @@ impl CharacterCardManager {
             &stringPreferencesKey(&format!("character_card_{id}_chat_model_binding_mode")),
             CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string(),
         );
+        preferences.remove(&stringPreferencesKey(&format!("character_card_{id}_chat_provider_id")));
         preferences.remove(&stringPreferencesKey(&format!(
             "character_card_{id}_chat_model_id"
         )));
@@ -1161,6 +1174,7 @@ impl CharacterCardManager {
             "advanced_custom_prompt",
             "marks",
             "chat_model_binding_mode",
+            "chat_provider_id",
             "chat_model_id",
             "tts_config_id",
             "memory_profile_binding_mode",
