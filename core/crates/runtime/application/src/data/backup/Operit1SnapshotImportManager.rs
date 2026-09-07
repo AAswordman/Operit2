@@ -2582,10 +2582,17 @@ fn buildOperit2TtsConfig(parsed: &ParsedOperit1Snapshot) -> Result<Option<TtsCon
     )?;
     let httpConfig: Operit1TtsHttpConfig = serde_json::from_str(httpConfigRaw)
         .map_err(|error| format!("Operit1 TTS HTTP 配置格式不正确：{error}"))?;
-    Ok(Some(TtsConfig {
+    let providerType = match serviceType {
+        "OPENAI_TTS" => "OPENAI_COMPATIBLE",
+        "HTTP_TTS" | "SILICONFLOW_TTS" | "MINIMAX_TTS" | "MIMO_TTS" | "DOUBAO_TTS" => serviceType,
+        other => return Err(format!("没有对应的语音合成驱动：{other}")),
+    };
+    let catalog = operit_model::TtsCatalog::TtsCatalog::provider(providerType)?;
+    let dedicatedHttp = providerType != "HTTP_TTS";
+    let mut config = TtsConfig {
         id: String::new(),
         name: format!("Operit1 {serviceType}"),
-        providerType: TtsProviderType::HTTP_TTS.to_string(),
+        providerType: providerType.to_string(),
         endpoint: httpConfig.urlTemplate,
         apiKey: httpConfig.apiKey,
         model: httpConfig.modelName,
@@ -2615,7 +2622,22 @@ fn buildOperit2TtsConfig(parsed: &ParsedOperit1Snapshot) -> Result<Option<TtsCon
             .collect(),
         createdAt: now,
         updatedAt: now,
-    }))
+    };
+    if dedicatedHttp {
+        if config.endpoint.trim().is_empty() { config.endpoint = catalog.defaultEndpoint; }
+        if config.model.trim().is_empty() { config.model = catalog.defaultModel; }
+        config.httpMethod = catalog.defaultHttpMethod;
+        config.contentType = catalog.defaultContentType;
+        config.requestBody = catalog.defaultRequestBody;
+        config.responseFormat = catalog.defaultResponseFormat;
+        config.responsePipeline = catalog.defaultResponsePipeline;
+        for header in catalog.defaultHeaders {
+            if !config.headers.iter().any(|existing| existing.name.eq_ignore_ascii_case(&header.name)) {
+                config.headers.push(header);
+            }
+        }
+    }
+    Ok(Some(config))
 }
 
 #[allow(non_snake_case)]
