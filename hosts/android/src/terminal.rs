@@ -564,7 +564,7 @@ fn createAndroidPtySession(
         cursorState,
     );
     if let Err(error) =
-        waitForInitialAndroidPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
+        waitForInitialAndroidPtyPrompt(commandOutput.clone(), Duration::from_millis(30000))
     {
         androidLogError(&format!(
             "createAndroidPtySession initial prompt failed pid={pid} masterFd={masterFd} name={sessionName}: {error}"
