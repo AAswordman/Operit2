@@ -344,8 +344,8 @@ class _MarkdownTextState extends State<_MarkdownText>
         return;
       }
       widgets.add(
-        const SizedBox(
-          key: ValueKey<String>('markdown-paragraph-break'),
+        SizedBox(
+          key: ValueKey<String>('markdown-paragraph-break-${widget.nodeKey}-$index'),
           height: _markdownParagraphBreakHeight,
         ),
       );
