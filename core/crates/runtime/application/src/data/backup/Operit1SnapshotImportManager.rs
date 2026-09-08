@@ -423,13 +423,26 @@ impl Operit1SnapshotImportManager {
             "正在写入供应商、密钥和默认聊天模型。",
             0.22,
         ));
-        let selected = parsed.selectedChatConfig()?;
-        let selectedModelId = selected
-            .selectedModelId
-            .clone()
-            .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
-        let modelConfig =
-            self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
+        let selectedConfig = parsed.configById(&parsed.chatMapping.configId).ok();
+        let selectedModelId = selectedConfig.as_ref().and_then(|config| {
+            splitModelIds(&config.modelName).get(parsed.chatMapping.modelIndex as usize).cloned()
+        });
+        let modelConfig = if let Some(modelId) = selectedModelId {
+            self.importModelConfigFromParsed(&parsed, parsed.chatMapping.configId.clone(), modelId)?
+        } else {
+            Operit1ModelConfigImportResult {
+                providerId: String::new(),
+                providerTypeId: selectedConfig.as_ref().map(|config| config.apiProviderTypeId.clone()).unwrap_or_default(),
+                providerName: selectedConfig.as_ref().map(|config| config.name.clone()).unwrap_or_else(|| parsed.chatMapping.configId.clone()),
+                modelId: String::new(),
+                importedModelCount: 0,
+                chatBindingUpdated: false,
+                skippedFields: vec![format!(
+                    "原聊天模型绑定已失效（配置 {}）；保留当前模型绑定并继续导入其他数据",
+                    parsed.chatMapping.configId,
+                )],
+            }
+        };
         let fileImportPlan = SnapshotFileImportPlan::new();
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
