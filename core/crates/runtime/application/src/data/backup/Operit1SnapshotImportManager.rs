@@ -966,12 +966,15 @@ impl Operit1SnapshotImportManager {
             let mut totalLinkCount = 0;
             for (profileIndex, profileId) in profiles.into_iter().enumerate() {
                 let entry = operit1ObjectBoxEntryForProfile(&profileId);
-                let entryLength = parsed
-                    .archive
-                    .entries
-                    .get(&entry)
-                    .ok_or_else(|| format!("Operit1 记忆库条目不存在：{entry}"))?
-                    .uncompressedSize;
+                let Some(entryMetadata) = parsed.archive.entries.get(&entry) else {
+                    let storeId = operit1SharedMemoryStoreId(&profileId);
+                    let storeName = operit1SharedMemoryStoreName(parsed, &profileId)?;
+                    sharedMemoryStoreManager.createSharedMemoryStoreWithId(storeId, storeName)
+                        .map_err(|error| format!("创建 Operit1 空记忆库失败：{error}"))?;
+                    AppLogger::w("Operit1SnapshotImport", &format!("记忆库未包含数据库，保留空配置：{profileId}"));
+                    continue;
+                };
+                let entryLength = entryMetadata.uncompressedSize;
                 let exportData = self.withStagedArchiveEntry(
                     parsed,
                     &entry,
@@ -1979,12 +1982,10 @@ fn buildOperit2CharacterCards(
         .transpose()?
         .unwrap_or_default();
     let ids = optionalPreferenceStringSet(preferences, "character_card_list")?;
-    let userPreferences = parsed
-        .archive
-        .datastorePreferences
-        .get(ENTRY_USER_PREFERENCES)
-        .ok_or_else(|| "Operit1 快照缺少用户偏好，无法读取角色头像绑定".to_string())?;
-    let avatarUris = buildOperit1CharacterCardAvatarUris(userPreferences, &ids, fileImportPlan)?;
+    let avatarUris = match parsed.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES) {
+        Some(preferences) => buildOperit1CharacterCardAvatarUris(preferences, &ids, fileImportPlan)?,
+        None => BTreeMap::new(),
+    };
     let mut cards = Vec::new();
     for id in ids {
         let name = requiredPreferenceString(
@@ -2214,7 +2215,7 @@ struct Operit1CharacterMemoryBinding {
     sharedMemoryId: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[allow(non_snake_case)]
 struct Operit1UserPreferenceProfile {
     id: String,
@@ -2302,7 +2303,7 @@ fn collectOperit1MemoryProfileIds(
 ) -> Result<BTreeSet<String>, String> {
     let mut ids = BTreeSet::new();
     ids.insert(OPERIT1_DEFAULT_PROFILE_ID.to_string());
-    ids.extend(collectOperit1ObjectBoxProfileIds(parsed)?);
+    ids.extend(buildOperit1UserPreferenceProfiles(parsed)?.into_keys());
     for profileId in collectOperit1CharacterMemoryProfileBindings(parsed)?.values() {
         ids.insert(profileId.clone());
     }
@@ -2377,60 +2378,71 @@ fn operit1SharedMemoryStoreName(
     Ok(format!("Operit1 记忆库 - {profileName}"))
 }
 
+// Operit1 schema-v2 removes profile_* only after consuming profile_list.
+// A restored +4 snapshot can coexist with a newly initialized memory-space list;
+// use the same old-list precedence as MemorySpaceProfileDocumentRepository.
+#[allow(non_snake_case)]
+fn operit1UsesMemorySpaces(preferences: &HashMap<String, Operit1PreferenceValue>) -> bool {
+    !preferences.contains_key("profile_list")
+        && (preferences.contains_key("memory_space_list")
+            || preferences.contains_key("active_memory_space_id")
+            || preferences.keys().any(|key| key.starts_with("memory_space_")))
+}
+
 #[allow(non_snake_case)]
 fn operit1ActiveProfileId(parsed: &ParsedOperit1Snapshot) -> Result<String, String> {
-    let preferences = parsed
-        .archive
-        .datastorePreferences
-        .get(ENTRY_USER_PREFERENCES)
-        .ok_or_else(|| format!("快照里没有 Operit1 用户偏好文件：{ENTRY_USER_PREFERENCES}"))?;
-    let value = requiredPreferenceString(
-        preferences,
-        "active_profile_id",
-        "Operit1 用户偏好缺少当前配置 ID",
-    )?;
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        Err("Operit1 当前用户偏好 ID 为空".to_string())
-    } else {
-        Ok(trimmed.to_string())
-    }
+    let Some(preferences) = parsed.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES) else {
+        return Ok(OPERIT1_DEFAULT_PROFILE_ID.to_string());
+    };
+    let key = if operit1UsesMemorySpaces(preferences) {
+        "active_memory_space_id"
+    } else { "active_profile_id" };
+    // Both released preference flows define an absent selection as "default".
+    let value = optionalPreferenceString(preferences, key)?
+        .unwrap_or_else(|| OPERIT1_DEFAULT_PROFILE_ID.to_string());
+    let value = value.trim();
+    validateOperit1ProfileId(value)?;
+    Ok(value.to_string())
 }
 
 #[allow(non_snake_case)]
 fn buildOperit1UserPreferenceProfiles(
     parsed: &ParsedOperit1Snapshot,
 ) -> Result<BTreeMap<String, Operit1UserPreferenceProfile>, String> {
-    let Some(preferences) = parsed
-        .archive
-        .datastorePreferences
-        .get(ENTRY_USER_PREFERENCES)
-    else {
-        return Ok(BTreeMap::new());
-    };
     let mut profiles = BTreeMap::new();
-    for (key, value) in preferences {
-        if key == "profile_list" {
-            continue;
+    let mut ids = collectOperit1ObjectBoxProfileIds(parsed)?;
+    ids.insert(OPERIT1_DEFAULT_PROFILE_ID.to_string());
+    ids.insert(operit1ActiveProfileId(parsed)?);
+    ids.extend(collectOperit1CharacterMemoryProfileBindings(parsed)?.into_values());
+    if let Some(preferences) = parsed.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES) {
+        let (prefix, listKey) = if operit1UsesMemorySpaces(preferences) {
+            ("memory_space_", "memory_space_list")
+        } else { ("profile_", "profile_list") };
+        for (key, value) in preferences {
+            if key == listKey { continue; }
+            let Some(profileId) = key.strip_prefix(prefix) else { continue; };
+            validateOperit1ProfileId(profileId)?;
+            let raw = value.asString()
+                .ok_or_else(|| format!("Operit1 用户偏好配置不是字符串：{profileId}"))?;
+            let profile: Operit1UserPreferenceProfile = serde_json::from_str(raw)
+                .map_err(|error| format!("Operit1 用户偏好配置格式不正确：{profileId}: {error}"))?;
+            validateOperit1ProfileId(&profile.id)?;
+            profiles.insert(profile.id.clone(), profile);
         }
-        let Some(profileId) = key.strip_prefix("profile_") else {
-            continue;
-        };
-        validateOperit1ProfileId(profileId)?;
-        let raw = value
-            .asString()
-            .ok_or_else(|| format!("Operit1 用户偏好配置不是字符串：{profileId}"))?;
-        let profile: Operit1UserPreferenceProfile = serde_json::from_str(raw)
-            .map_err(|error| format!("Operit1 用户偏好配置格式不正确：{profileId}: {error}"))?;
-        profiles.insert(profile.id.clone(), profile);
+        if let Some(list) = optionalPreferenceStringList(preferences, listKey)? {
+            ids.extend(list);
+        }
     }
-    if let Some(profileIds) = optionalPreferenceStringList(preferences, "profile_list")? {
-        for profileId in profileIds {
-            validateOperit1ProfileId(&profileId)?;
-            if !profiles.contains_key(&profileId) {
-                return Err(format!("Operit1 用户偏好列表引用不存在的配置：{profileId}"));
-            }
-        }
+    // Operit1 creates empty legacy profiles for listed IDs without a record.
+    // Also retain real database/card identities whose metadata was not exported:
+    // their ID is a label, never invented user content or a different binding.
+    for id in ids {
+        validateOperit1ProfileId(&id)?;
+        profiles.entry(id.clone()).or_insert_with(|| Operit1UserPreferenceProfile {
+            name: if id == OPERIT1_DEFAULT_PROFILE_ID { "Default".to_string() } else { id.clone() },
+            id,
+            ..Default::default()
+        });
     }
     Ok(profiles)
 }
