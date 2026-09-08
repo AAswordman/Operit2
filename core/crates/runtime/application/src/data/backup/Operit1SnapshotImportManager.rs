@@ -429,7 +429,7 @@ impl Operit1SnapshotImportManager {
             .clone()
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
         let modelConfig =
-            self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
+            self.importModelConfigsFromParsed(&parsed, selected.configId.clone(), selectedModelId, true)?;
         let fileImportPlan = SnapshotFileImportPlan::new();
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
@@ -587,75 +587,133 @@ impl Operit1SnapshotImportManager {
         configId: String,
         modelId: String,
     ) -> Result<Operit1ModelConfigImportResult, String> {
-        let config = parsed.configById(&configId)?;
-        let modelIds = splitModelIds(&config.modelName);
-        if !modelIds.iter().any(|current| current == &modelId) {
-            return Err(format!(
-                "模型配置「{}」不包含模型：{}",
-                config.name, modelId
-            ));
+        self.importModelConfigsFromParsed(parsed, configId, modelId, false)
+    }
+
+    /// Imports providers as new profiles and preserves every existing provider and its API keys.
+    fn importModelConfigsFromParsed(
+        &self,
+        parsed: &ParsedOperit1Snapshot,
+        configId: String,
+        modelId: String,
+        importAll: bool,
+    ) -> Result<Operit1ModelConfigImportResult, String> {
+        let selectedConfig = parsed.configById(&configId)?;
+        if !splitModelIds(&selectedConfig.modelName).contains(&modelId) {
+            return Err(format!("模型配置「{}」不包含模型：{modelId}", selectedConfig.name));
         }
-        let providerType = config.providerType()?;
-        let providerCatalog = ModelCatalog::provider(providerType.name())?;
-        let endpoint = config.apiEndpoint.trim().to_string();
-        if endpoint.is_empty() {
-            return Err(format!("模型配置「{}」缺少服务地址", config.name));
+        let modelManager = ModelConfigManager::new(self.paths.runtime_dir().to_path_buf());
+        let mut usedNames = modelManager.getProviderProfiles()
+            .map_err(|error| error.to_string())?
+            .into_iter().map(|provider| provider.name).collect::<HashSet<_>>();
+        let selectedProviderTypeId = selectedConfig.apiProviderTypeId.clone();
+        let selectedProviderName = selectedConfig.name.clone();
+        let sourceConfigs = if importAll { parsed.configs.clone() } else { vec![selectedConfig] };
+        let mut providers = Vec::new();
+        let mut sourceProviders = HashMap::new();
+        let mut skippedFields = vec![
+            "contextLength".to_string(), "summaryCustomRules".to_string(),
+            "enableGoogleSearch".to_string(), "enableClaude1hPromptCache".to_string(),
+        ];
+        for config in sourceConfigs {
+            let providerType = match config.providerType() {
+                Ok(value) => value,
+                Err(error) => {
+                    skippedFields.push(format!("{}: {error}；请在二代重新配置此供应商", config.name));
+                    continue;
+                }
+            };
+            let endpoint = config.apiEndpoint.trim().to_string();
+            let baseName = format!("{} (Operit1)", config.name);
+            let mut name = baseName.clone();
+            let mut suffix = 2;
+            while !usedNames.insert(name.clone()) {
+                name = format!("{baseName} {suffix}");
+                suffix += 1;
+            }
+            let mut provider = ProviderProfile::new(
+                format!("operit1-{}", Uuid::new_v4()), name, providerType, endpoint,
+            );
+            provider.providerTypeId = provider.providerType.name().to_string();
+            provider.apiKey = config.apiKey.clone();
+            provider.useMultipleApiKeys = config.useMultipleApiKeys;
+            provider.apiKeyPool = config.apiKeyPool.iter().map(Operit1ApiKeyInfo::toApiKeyInfo).collect();
+            provider.currentKeyIndex = config.currentKeyIndex;
+            provider.keyRotationMode = config.keyRotationMode.clone();
+            provider.customHeaders = config.customHeaders.clone();
+            provider.requestLimitPerMinute = config.requestLimitPerMinute;
+            provider.maxConcurrentRequests = config.maxConcurrentRequests;
+            provider.models = splitModelIds(&config.modelName).iter()
+                .map(|id| buildModelProfile(&provider.providerTypeId, id, &config))
+                .collect::<Result<Vec<_>, String>>()?;
+            if provider.providerType == ApiProviderType::LOCAL_MODEL {
+                // Operit2 discovers local models through its installed asset registry.
+                skippedFields.push(format!("{}: 本地模型配置已保存，模型文件需在二代重新安装；保留当前功能绑定", config.name));
+            }
+            sourceProviders.insert(config.id, provider.clone());
+            providers.push(provider);
         }
-
-        let mut provider = ProviderProfile::new(
-            ModelConfigDefaults::DEFAULT_PROVIDER_ID.to_string(),
-            providerCatalog.displayName,
-            providerType,
-            endpoint,
-        );
-        provider.providerTypeId = provider.providerType.name().to_string();
-        provider.apiKey = config.apiKey.clone();
-        provider.useMultipleApiKeys = config.useMultipleApiKeys;
-        provider.apiKeyPool = config
-            .apiKeyPool
-            .iter()
-            .map(Operit1ApiKeyInfo::toApiKeyInfo)
-            .collect();
-        provider.currentKeyIndex = config.currentKeyIndex;
-        provider.keyRotationMode = config.keyRotationMode.clone();
-        provider.customHeaders = config.customHeaders.clone();
-        provider.requestLimitPerMinute = config.requestLimitPerMinute;
-        provider.maxConcurrentRequests = config.maxConcurrentRequests;
-        provider.models = modelIds
-            .iter()
-            .map(|currentModelId| {
-                buildModelProfile(&provider.providerTypeId, currentModelId, &config)
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-
-        let modelConfigManager = ModelConfigManager::new(self.paths.runtime_dir().to_path_buf());
-        modelConfigManager
-            .replaceDefaultProviderProfile(provider.clone())
-            .map_err(|error| error.to_string())?;
-
-        let functionalConfigManager =
-            FunctionalConfigManager::new(self.paths.runtime_dir().to_path_buf());
-        functionalConfigManager
-            .setModelForFunction(
-                FunctionType::CHAT,
-                ModelConfigDefaults::DEFAULT_PROVIDER_ID.to_string(),
-                modelId.clone(),
-            )
-            .map_err(|error| error.to_string())?;
-
+        let selected = sourceProviders.get(&configId).cloned();
+        let functionalManager = FunctionalConfigManager::new(self.paths.runtime_dir().to_path_buf());
+        let mut bindings = functionalManager.functionModelBindingFlow()
+            .map_err(|error| error.to_string())?.first().map_err(|error| error.to_string())?;
+        if importAll {
+            let mappings = parsed.archive.functionalMappingJson.as_object()
+                .ok_or_else(|| "Operit1 功能映射不是对象".to_string())?;
+            for (functionName, raw) in mappings {
+                let Ok(function) = serde_json::from_value::<FunctionType>(Value::String(functionName.clone())) else {
+                    skippedFields.push(format!("不再提供的功能映射：{functionName}"));
+                    continue;
+                };
+                let mapping = decodeChatMapping(raw.clone())?;
+                // A saved legacy OAuth/local provider can require a newer host implementation.
+                let Some(provider) = sourceProviders.get(&mapping.configId) else { continue; };
+                if provider.providerType == ApiProviderType::LOCAL_MODEL {
+                    continue;
+                }
+                let Some(mappedModel) = provider.models.get(mapping.modelIndex as usize) else {
+                    skippedFields.push(format!(
+                        "{functionName} 的旧模型索引已失效：{}；保留二代当前功能绑定", mapping.modelIndex
+                    ));
+                    continue;
+                };
+                bindings.insert(function, crate::data::preferences::FunctionalConfigManager::FunctionModelBinding::new(
+                    provider.id.clone(), mappedModel.id.clone(),
+                ));
+            }
+        }
+        let chatBindingUpdated = selected.as_ref()
+            .is_some_and(|provider| provider.providerType != ApiProviderType::LOCAL_MODEL);
+        if let Some(provider) = selected.as_ref().filter(|_| chatBindingUpdated) {
+            bindings.insert(FunctionType::CHAT,
+                crate::data::preferences::FunctionalConfigManager::FunctionModelBinding::new(
+                    provider.id.clone(), modelId.clone(),
+                ));
+        }
+        // Keep the original settings, including fields that have no current runtime equivalent.
+        let rawConfigs = parsed.archive.modelConfigJsons.iter()
+            .filter(|config| importAll || config.id == configId)
+            .map(|config| &config.value).collect::<Vec<_>>();
+        self.storageHost.writeBytes(
+            &format!("{RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH}/model-configs-{}.json", Uuid::new_v4()),
+            &serde_json::to_vec_pretty(&rawConfigs).map_err(|error| error.to_string())?,
+        ).map_err(|error| error.to_string())?;
+        if !providers.is_empty() {
+            modelManager.importAllProvidersFromBackupContent(
+                &serde_json::to_string(&providers).map_err(|error| error.to_string())?,
+            )?;
+        }
+        functionalManager.saveFunctionModelBinding(bindings).map_err(|error| error.to_string())?;
         Ok(Operit1ModelConfigImportResult {
-            providerId: provider.id,
-            providerTypeId: provider.providerTypeId,
-            providerName: provider.name,
+            providerId: selected.as_ref().map(|provider| provider.id.clone()).unwrap_or_default(),
+            providerTypeId: selected.as_ref().map(|provider| provider.providerTypeId.clone())
+                .unwrap_or(selectedProviderTypeId),
+            providerName: selected.as_ref().map(|provider| provider.name.clone())
+                .unwrap_or(selectedProviderName),
             modelId,
-            importedModelCount: provider.models.len() as i32,
-            chatBindingUpdated: true,
-            skippedFields: vec![
-                "contextLength".to_string(),
-                "summaryCustomRules".to_string(),
-                "enableGoogleSearch".to_string(),
-                "enableClaude1hPromptCache".to_string(),
-            ],
+            importedModelCount: providers.iter().map(|provider| provider.models.len() as i32).sum(),
+            chatBindingUpdated,
+            skippedFields,
         })
     }
 
