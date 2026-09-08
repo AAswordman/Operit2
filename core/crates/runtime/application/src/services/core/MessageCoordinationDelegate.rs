@@ -339,10 +339,10 @@ impl MessageCoordinationDelegate {
             proxySenderNameOverride.clone(),
             chatIdOverride.clone(),
         ) {
-            let chatId = self
-                .chatHistoryDelegate
-                .currentChatIdFlow
-                .value()
+            let chatId = chatIdOverride
+                .clone()
+                .filter(|id| !id.trim().is_empty())
+                .or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value())
                 .unwrap_or_else(|| {
                     self.chatHistoryDelegate
                         .createNewChat(None, None, None, true, true, None);
@@ -949,17 +949,13 @@ impl MessageCoordinationDelegate {
         {
             return false;
         }
-        if chatIdOverride
-            .as_ref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false)
-        {
-            return false;
-        }
-        matches!(
-            self.activePromptManager.getActivePrompt(),
-            Ok(ActivePrompt::CharacterGroup { .. })
-        )
+        let targetChatId = chatIdOverride
+            .filter(|id| !id.trim().is_empty())
+            .or_else(|| self.chatHistoryDelegate.currentChatIdFlow.value());
+        targetChatId
+            .as_deref()
+            .and_then(|chatId| self.resolveTargetGroupForChat(chatId))
+            .is_some()
     }
 
     #[allow(non_snake_case)]
@@ -1388,19 +1384,35 @@ impl MessageCoordinationDelegate {
     #[allow(non_snake_case)]
     /// Resolves the character group associated with a chat id.
     fn resolveTargetGroupForChat(&self, chatId: &str) -> Option<CharacterGroupCard> {
-        let activePrompt = self.activePromptManager.getActivePrompt().ok()?;
-        let activeGroupId = match activePrompt {
-            ActivePrompt::CharacterGroup { id } if !id.trim().is_empty() => id,
-            _ => return None,
-        };
-        let _boundGroupId = self
+        let targetChat = self
             .chatHistoryDelegate
             .chatHistoriesFlow
             .value()
-            .iter()
-            .find(|history| history.id == chatId)
+            .into_iter()
+            .find(|history| history.id == chatId);
+        let boundGroupId = targetChat
+            .as_ref()
             .and_then(|history| history.characterGroupId.clone())
             .filter(|value| !value.trim().is_empty());
+        if let Some(groupId) = boundGroupId {
+            return self.characterGroupCardManager
+                .getCharacterGroupCard(&groupId)
+                .ok()
+                .flatten();
+        }
+        // A background send for a single-role chat must not adopt the group
+        // currently selected in another chat surface.
+        if targetChat
+            .as_ref()
+            .and_then(|history| history.characterCardName.as_ref())
+            .is_some_and(|name| !name.trim().is_empty())
+        {
+            return None;
+        }
+        let activeGroupId = match self.activePromptManager.getActivePrompt().ok()? {
+            ActivePrompt::CharacterGroup { id } if !id.trim().is_empty() => id,
+            _ => return None,
+        };
         self.characterGroupCardManager
             .getCharacterGroupCard(&activeGroupId)
             .ok()
