@@ -110,12 +110,13 @@ class ChatViewModel {
     String text, {
     ChatUiMessage? replyToMessage,
     String? chatIdOverride,
+    List<AttachmentInfo>? attachmentsOverride,
   }) async {
     debugPrint(
       'Chat send requested chatId=${chatIdOverride ?? 'current'} '
       'chars=${text.length}',
     );
-    final attachments = await _chat.attachments();
+    final attachments = attachmentsOverride ?? await _chat.attachments();
     await _chat.sendUserMessage(
       promptFunctionType: core_proxy.PromptFunctionType.chat,
       roleCardIdOverride: null,

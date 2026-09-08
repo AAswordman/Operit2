@@ -994,6 +994,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     await _viewModel.sendUserMessage(
       queuedText.trim(),
       chatIdOverride: queueChatId,
+      attachmentsOverride: const <AttachmentInfo>[],
     );
   }
 
