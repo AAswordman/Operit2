@@ -747,12 +747,36 @@ impl Operit1SnapshotImportManager {
                     );
                 }
             };
-            let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
+            let mut archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
                 archiveBridge,
                 connection,
                 fileImportPlan,
                 &mut onMessageParsed,
             )?;
+            let resourcePaths = buildOperit1ResourcePaths(parsed, &self.paths)?;
+            let mut sources = resourcePaths.keys().map(String::as_str).collect::<Vec<_>>();
+            sources.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+            if !sources.is_empty() {
+                let pattern = sources.into_iter().map(regex::escape).collect::<Vec<_>>().join("|");
+                let matcher = regex::Regex::new(&pattern)
+                    .map_err(|error| format!("无法建立快照附件路径匹配：{error}"))?;
+                for chat in &mut archive.chats {
+                    for message in &mut chat.messages {
+                        for part in &mut message.baseMessage.parts {
+                            if let Some(content) = rewriteOperit1ResourceText(&part.content, &matcher, &resourcePaths) {
+                                part.content = content;
+                            }
+                        }
+                        for variant in &mut message.variants {
+                            for part in &mut variant.parts {
+                                if let Some(content) = rewriteOperit1ResourceText(&part.content, &matcher, &resourcePaths) {
+                                    part.content = content;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             let chatCount = archive.chats.len() as i32;
             let messageCount = archive
                 .chats
@@ -3477,6 +3501,56 @@ struct Operit1MemoryLinkRecord {
 struct Operit1MemoryTagRecord {
     id: u32,
     name: String,
+}
+
+/// Maps only resources present in the same copy plan used by the importer.
+#[allow(non_snake_case)]
+fn buildOperit1ResourcePaths(
+    parsed: &ParsedOperit1Snapshot,
+    paths: &RuntimeStorePaths,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut documents = BTreeMap::new();
+    let packageName = &parsed.archive.manifest.packageName;
+    for item in buildSnapshotFileCopyPlan(parsed)?.items {
+        let (prefixes, relative) = if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_FILES_PREFIX) {
+            (vec![format!("/data/user/0/{packageName}/files/"), format!("/data/data/{packageName}/files/")], relative)
+        } else if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_EXTERNAL_FILES_PREFIX) {
+            (vec![format!("/storage/emulated/0/Android/data/{packageName}/files/"), format!("/sdcard/Android/data/{packageName}/files/")], relative)
+        } else { continue; };
+        let target = if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_WORKSPACE_FILES_PREFIX) {
+            let (id, rest) = splitWorkspaceRelativePath(relative)?;
+            paths.workspace_path(id).join(rest).to_string_lossy().into_owned()
+        } else {
+            paths.runtime_storage_path(&item.targetPath).to_string_lossy().into_owned()
+        };
+        for prefix in prefixes {
+            let source = format!("{prefix}{relative}");
+            documents.insert(format!("file://{source}"), target.clone());
+            documents.insert(source, target.clone());
+        }
+    }
+    Ok(documents)
+}
+
+#[allow(non_snake_case)]
+fn rewriteOperit1ResourceText(
+    content: &str,
+    matcher: &regex::Regex,
+    resourcePaths: &BTreeMap<String, String>,
+) -> Option<String> {
+    let rewritten = matcher.replace_all(content, |captures: &regex::Captures<'_>| {
+        let matched = captures.get(0).expect("resource pattern matched the full path");
+        let boundary = content[matched.end()..].chars().next();
+        if boundary.is_some_and(|value| !value.is_whitespace() && !matches!(value, '\'' | '"' | '<' | '>' | ')' | ']' | '}')) {
+            matched.as_str().to_string()
+        } else {
+            resourcePaths[matched.as_str()].clone()
+        }
+    });
+    match rewritten {
+        std::borrow::Cow::Owned(value) if value != content => Some(value),
+        _ => None,
+    }
 }
 
 #[allow(non_snake_case)]
