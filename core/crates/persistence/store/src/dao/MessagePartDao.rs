@@ -106,6 +106,28 @@ impl MessagePartDao {
         })
     }
 
+    /// Inserts an imported part batch atomically after its old rows have been cleared.
+    pub fn insertParts(
+        &self,
+        parts: Vec<MessagePartEntity>,
+    ) -> Result<(), SqliteStoreError> {
+        self.store.transaction(|transaction| {
+            for part in parts {
+                transaction.execute(
+                    r#"
+                    INSERT INTO message_parts (
+                        chatId, messageTimestamp, variantIndex, partId, sequence, kind, content,
+                        toolCallId, toolName, attributesJson
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                    "#,
+                    partParams(&part)?,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     /// Copies all selected revision parts into a different chat identifier.
     pub fn copyPartsToChat(
         &self,
