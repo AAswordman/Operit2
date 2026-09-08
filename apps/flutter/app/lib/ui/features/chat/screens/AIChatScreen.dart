@@ -1577,10 +1577,35 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     });
   }
 
+  /// Retains rejected input together with a newer draft, without submitting either.
+  void _restoreUnsentMessageDraft(String text, String chatId) {
+    final existing = mounted && _currentChatId == chatId
+        ? _messageController.value
+        : _inputDraftsByChatId[chatId] ?? TextEditingValue.empty;
+    if (text.isEmpty || existing.text.trim() == text.trim()) return;
+    final prefix = existing.text.isEmpty ? text : '$text\n\n';
+    final recovered = TextEditingValue(
+      text: '$prefix${existing.text}',
+      selection: existing.selection.isValid
+          ? TextSelection(
+              baseOffset: existing.selection.baseOffset + prefix.length,
+              extentOffset: existing.selection.extentOffset + prefix.length,
+              affinity: existing.selection.affinity,
+              isDirectional: existing.selection.isDirectional,
+            )
+          : TextSelection.collapsed(offset: prefix.length + existing.text.length),
+    );
+    _inputDraftsByChatId[chatId] = recovered;
+    if (mounted && _currentChatId == chatId) {
+      _messageController.value = recovered;
+    }
+  }
+
   /// Sends the submitted text after layout has accepted the optimistic UI state.
   void _sendMessageAfterNextFrame(String text, String chatId) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
+        _restoreUnsentMessageDraft(text, chatId);
         return;
       }
       _viewModel
@@ -1594,11 +1619,16 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
               return null;
             }
             _replyToMessage = null;
-            await _refreshAttachments();
+            try {
+              await _refreshAttachments();
+            } catch (error, stackTrace) {
+              debugPrint('Failed to refresh accepted attachments: $error\n$stackTrace');
+            }
             return null;
           })
           .catchError((Object error, StackTrace stackTrace) {
             debugPrint('Failed to send chat message: $error\n$stackTrace');
+            _restoreUnsentMessageDraft(text, chatId);
             if (!mounted) {
               return null;
             }

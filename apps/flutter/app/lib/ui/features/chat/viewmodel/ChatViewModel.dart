@@ -136,7 +136,12 @@ class ChatViewModel {
     );
     debugPrint('Chat send accepted chatId=${chatIdOverride ?? 'current'}');
     if (attachments.isNotEmpty) {
-      await _chat.clearAttachments();
+      try {
+        await _chat.clearAttachments();
+      } catch (error, stackTrace) {
+        // The input was accepted; cleanup must not restore it as unsent.
+        debugPrint('Failed to clear accepted attachments: $error\n$stackTrace');
+      }
     }
   }
 
