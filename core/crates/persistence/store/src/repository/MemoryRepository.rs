@@ -643,7 +643,6 @@ impl MemoryRepository {
             .all()
             .map_err(|error| error.to_string())?
             .into_iter()
-            .filter(|memory| !memory.isDocumentNode)
             .collect::<Vec<_>>();
         let memoryUuids = memories
             .iter()
@@ -667,6 +666,11 @@ impl MemoryRepository {
                 createdAt: memory.createdAt,
                 updatedAt: memory.updatedAt,
                 tagNames: memory.tags.into_iter().map(|tag| tag.name).collect(),
+                documentPath: memory.documentPath,
+                isDocumentNode: Some(memory.isDocumentNode),
+                chunkIndexFilePath: memory.chunkIndexFilePath,
+                lastAccessedAt: Some(memory.lastAccessedAt),
+                properties: Some(memory.properties),
             })
             .collect::<Vec<_>>();
         let mut seenLinks = BTreeSet::new();
@@ -738,6 +742,17 @@ impl MemoryRepository {
                         Self::normalizeFolderPath(serializableMemory.folderPath.as_deref());
                     existing.updatedAt = nowMillis();
                     existing.tags = buildTags(serializableMemory.tagNames);
+                    if let Some(isDocumentNode) = serializableMemory.isDocumentNode {
+                        existing.isDocumentNode = isDocumentNode;
+                        existing.documentPath = serializableMemory.documentPath;
+                        existing.chunkIndexFilePath = serializableMemory.chunkIndexFilePath;
+                    }
+                    if let Some(lastAccessedAt) = serializableMemory.lastAccessedAt {
+                        existing.lastAccessedAt = lastAccessedAt;
+                    }
+                    if let Some(properties) = serializableMemory.properties {
+                        existing.properties = properties;
+                    }
                     let saved = self
                         .memoryBox
                         .put(existing)
@@ -814,15 +829,15 @@ impl MemoryRepository {
             source: serializable.source,
             credibility: serializable.credibility,
             importance: serializable.importance,
-            documentPath: None,
-            isDocumentNode: false,
-            chunkIndexFilePath: None,
+            documentPath: serializable.documentPath,
+            isDocumentNode: serializable.isDocumentNode.unwrap_or(false),
+            chunkIndexFilePath: serializable.chunkIndexFilePath,
             folderPath: Self::normalizeFolderPath(serializable.folderPath.as_deref()),
             createdAt: serializable.createdAt,
             updatedAt: serializable.updatedAt,
-            lastAccessedAt: now,
+            lastAccessedAt: serializable.lastAccessedAt.unwrap_or(now),
             tags: buildTags(serializable.tagNames),
-            properties: Vec::new(),
+            properties: serializable.properties.unwrap_or_default(),
         };
         self.memoryBox
             .put(memory)
