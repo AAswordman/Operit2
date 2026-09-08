@@ -226,6 +226,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
   bool _pendingQueueEnqueueInFlight = false;
+  bool _creatingInitialChat = false;
   bool _isApplyingChatDraft = false;
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
@@ -1158,7 +1159,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Rebinds the two per-chat Core watches after the selected chat changes.
   void _bindChatFlows(String? chatId) {
-    if (chatId == _requestedChatFlowChatId) {
+    if (_chatFlowBindingGeneration > 0 && chatId == _requestedChatFlowChatId) {
       return;
     }
     _requestedChatFlowChatId = chatId;
@@ -1200,6 +1201,19 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return;
     }
     if (chatId == null || chatId.isEmpty) {
+      _creatingInitialChat = true;
+      _messages.clear();
+      _replyToMessage = null;
+      _loading = true;
+      _publishChatContentData();
+      try {
+        await _viewModel.ensureInitialChat();
+      } catch (error, stackTrace) {
+        if (mounted && generation == _chatFlowBindingGeneration) {
+          _creatingInitialChat = false;
+          _handleChatFlowError(error, stackTrace);
+        }
+      }
       return;
     }
     _messagesSubscription = _viewModel
@@ -1301,7 +1315,21 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     final workspaceChanged =
         _currentWorkspacePath != state.currentWorkspacePath;
     if (chatChanged) {
-      _saveCurrentInputDraft();
+      if (_creatingInitialChat && state.currentChatId != null) {
+        // Embedded and main surfaces share the first draft. An empty surface
+        // must not erase text entered in the other while creation was pending.
+        final initialDraft = _messageController.text.isNotEmpty
+            ? _messageController.value
+            : _inputDraftsByChatId[null] ?? TextEditingValue.empty;
+        final savedDraft = _inputDraftsByChatId[state.currentChatId];
+        if (savedDraft == null || savedDraft.text.isEmpty) {
+          _inputDraftsByChatId[state.currentChatId] = initialDraft;
+        }
+        _inputDraftsByChatId.remove(null);
+      } else {
+        _saveCurrentInputDraft();
+      }
+      _creatingInitialChat = false;
       _currentChatId = state.currentChatId;
       _isMultiSelectMode = false;
       _selectedMessageTimestamps = const <int>{};

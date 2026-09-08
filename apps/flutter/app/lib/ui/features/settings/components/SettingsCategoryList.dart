@@ -5,19 +5,16 @@ import 'package:flutter/material.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../models/SettingsModels.dart';
-import '../profile/UserProfileSummaryTile.dart';
 
 class SettingsCategoryList extends StatelessWidget {
   const SettingsCategoryList({
     super.key,
     required this.selectedCategory,
     required this.onCategorySelected,
-    this.profileRevision = 0,
   });
 
   final SettingsCategory? selectedCategory;
   final ValueChanged<SettingsCategory> onCategorySelected;
-  final int profileRevision;
 
   /// Builds the categorized settings navigation list.
   @override
@@ -51,7 +48,6 @@ class SettingsCategoryList extends StatelessWidget {
         title: l10n.settingsCategoryGroupSystem,
         categories: const <SettingsCategory>[
           SettingsCategory.data,
-          SettingsCategory.accessLinks,
           SettingsCategory.about,
         ],
       ),
@@ -60,10 +56,11 @@ class SettingsCategoryList extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 16),
       children: <Widget>[
-        UserProfileSummaryTile(
-          selected: selectedCategory == SettingsCategory.profile,
-          revision: profileRevision,
-          onTap: () => onCategorySelected(SettingsCategory.profile),
+        SettingsCategoryTile(
+          spec: SettingsCategorySpec.of(SettingsCategory.accessLinks, l10n),
+          selected: selectedCategory == SettingsCategory.accessLinks,
+          onTap: () => onCategorySelected(SettingsCategory.accessLinks),
+          prominent: true,
         ),
         for (final groupEntry in groups.asMap().entries) ...<Widget>[
           Padding(
@@ -102,11 +99,13 @@ class SettingsCategoryTile extends StatelessWidget {
     required this.spec,
     required this.selected,
     required this.onTap,
+    this.prominent = false,
   });
 
   final SettingsCategorySpec spec;
   final bool selected;
   final VoidCallback onTap;
+  final bool prominent;
 
   /// Builds a selectable tile for one settings category.
   @override
@@ -135,15 +134,24 @@ class SettingsCategoryTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            padding: EdgeInsets.fromLTRB(
+              12,
+              prominent ? 13 : 9,
+              10,
+              prominent ? 13 : 9,
+            ),
             child: Row(
               children: <Widget>[
                 CircleAvatar(
-                  radius: 16,
+                  radius: prominent ? 20 : 16,
                   backgroundColor: selected
                       ? colorScheme.primary.withValues(alpha: 0.16)
                       : colorScheme.surface,
-                  child: Icon(spec.icon, size: 18, color: foreground),
+                  child: Icon(
+                    spec.icon,
+                    size: prominent ? 22 : 18,
+                    color: foreground,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -171,6 +179,12 @@ class SettingsCategoryTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (prominent)
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 22,
+                    color: foreground,
+                  ),
               ],
             ),
           ),
