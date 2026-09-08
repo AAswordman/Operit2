@@ -207,14 +207,35 @@ class SnapshotImportUploader {
 
   final GeneratedCoreProxyClients clients;
 
+  /// Reports consumed file bytes; this is preparation, not import progress.
+  Stream<Uint8List> _trackedChunks(
+    SnapshotImportFile file,
+    ValueChanged<int>? onBytesRead,
+  ) async* {
+    var bytesRead = 0;
+    final sinceReport = Stopwatch()..start();
+    onBytesRead?.call(0);
+    await for (final chunk in file.chunks()) {
+      bytesRead += chunk.length;
+      if (sinceReport.elapsedMilliseconds >= 100 || bytesRead == file.byteLength) {
+        onBytesRead?.call(bytesRead);
+        sinceReport.reset();
+      }
+      yield chunk;
+    }
+  }
+
   /// Creates a staged archive and uploads exactly the selected file's declared byte length.
-  Future<SnapshotImportSession> stage(SnapshotImportFile file) async {
+  Future<SnapshotImportSession> stage(
+    SnapshotImportFile file, {
+    ValueChanged<int>? onBytesRead,
+  }) async {
     final archiveId = await clients.servicesArchiveTransferManager
         .beginArchiveUpload(expectedByteLength: file.byteLength);
     try {
       await clients.servicesArchiveTransferManager.writeArchiveUpload(
         archiveId: archiveId,
-        bytes: file.chunks(),
+        bytes: _trackedChunks(file, onBytesRead),
       );
       final archive = await clients.servicesArchiveTransferManager
           .completeArchiveUpload(

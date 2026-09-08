@@ -14,6 +14,7 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../core/snapshot/SnapshotImportUploader.dart';
+import '../../common/Operit1SnapshotPreparationDialog.dart';
 import '../../common/DeviceSpaceDiscoveryPanel.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
@@ -969,12 +970,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _pickOperit1Snapshot() async {
+    if (_readingOperit1Snapshot || _importingOperit1Snapshot) return;
     final previousSession = _operit1SnapshotSession;
-    SnapshotImportSession? stagedSession;
-    ClientLogger.i(
-      'snapshot selection started',
-      tag: _operit1SnapshotImportLogTag,
-    );
     setState(() {
       _readingOperit1Snapshot = true;
       _setupError = null;
@@ -984,60 +981,23 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _operit1SnapshotFileName = null;
     });
     try {
-      if (previousSession != null) {
-        await previousSession.discard();
-      }
-      final file = await SnapshotImportFile.pick();
-      if (file == null) {
-        return;
-      }
-      ClientLogger.i(
-        'snapshot selected name=${file.name} bytes=${file.byteLength}',
-        tag: _operit1SnapshotImportLogTag,
-      );
-      final session = await SnapshotImportUploader(widget.clients).stage(file);
-      stagedSession = session;
-      ClientLogger.i(
-        'snapshot upload completed bytes=${session.byteLength}; inspection started',
-        tag: _operit1SnapshotImportLogTag,
-      );
-      final snapshot = await session.completeOperit1();
-      ClientLogger.i(
-        'snapshot inspection completed format=${snapshot.formatVersion} configs=${snapshot.modelConfig.configs.length} chats=${snapshot.chatCount} messages=${snapshot.messageCount}',
-        tag: _operit1SnapshotImportLogTag,
-      );
+      if (previousSession != null) await previousSession.discard();
+      if (!mounted) return;
+      final prepared = await prepareOperit1Snapshot(context, widget.clients);
+      if (prepared == null) return;
       if (!mounted) {
-        await session.discard();
+        await prepared.session.discard();
         return;
       }
       setState(() {
-        _operit1Snapshot = snapshot;
-        _operit1SnapshotSession = session;
-        _operit1SnapshotFileName = file.name;
+        _operit1Snapshot = prepared.preview;
+        _operit1SnapshotSession = prepared.session;
+        _operit1SnapshotFileName = prepared.fileName;
       });
-    } catch (error, stackTrace) {
-      ClientLogger.e(
-        'snapshot selection, upload, or inspection failed',
-        tag: _operit1SnapshotImportLogTag,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      final session = stagedSession;
-      if (session != null) {
-        await session.discard();
-      }
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _setupError = '$error';
-      });
+    } catch (error) {
+      if (mounted) setState(() => _setupError = '$error');
     } finally {
-      if (mounted) {
-        setState(() {
-          _readingOperit1Snapshot = false;
-        });
-      }
+      if (mounted) setState(() => _readingOperit1Snapshot = false);
     }
   }
 
