@@ -226,6 +226,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
   bool _pendingQueueEnqueueInFlight = false;
+  String? _speechRecordingChatId;
+  TextEditingValue? _speechRecordingDraft;
   bool _isApplyingChatDraft = false;
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
@@ -1466,6 +1468,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Starts one WAV recording after validating the selected STT provider config.
   Future<void> _startSpeechInput() async {
+    final recordingChatId = _currentChatId;
+    final recordingDraft = _messageController.value;
     final selectedConfigId = await _viewModel
         .clients
         .preferencesSttConfigManager
@@ -1484,12 +1488,16 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return;
     }
     _mutateChatContentData(() {
+      _speechRecordingChatId = recordingChatId;
+      _speechRecordingDraft = recordingDraft;
       _isSpeechRecording = true;
     });
   }
 
   /// Stops recording, transcribes its bytes, and updates the current draft.
   Future<void> _finishSpeechInput() async {
+    final recordingChatId = _speechRecordingChatId;
+    final recordingDraft = _speechRecordingDraft;
     _mutateChatContentData(() {
       _isSpeechRecording = false;
       _isSpeechTranscribing = true;
@@ -1510,6 +1518,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
             AppLocalizations.of(context)!.chatSpeechNoTextRecognized,
           );
         }
+        return;
+      }
+      if (!mounted) return;
+      if (_currentChatId != recordingChatId || _messageController.value != recordingDraft) {
+        _showLocalToast('语音识别完成，但对话或草稿已变更，未覆盖当前输入：$text');
         return;
       }
       _messageController.value = TextEditingValue(
