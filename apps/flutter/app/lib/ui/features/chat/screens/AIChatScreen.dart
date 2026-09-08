@@ -1302,6 +1302,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         _currentWorkspacePath != state.currentWorkspacePath;
     if (chatChanged) {
       _saveCurrentInputDraft();
+      _replyToMessage = null;
       _currentChatId = state.currentChatId;
       _isMultiSelectMode = false;
       _selectedMessageTimestamps = const <int>{};
@@ -1579,6 +1580,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Sends the submitted text after layout has accepted the optimistic UI state.
   void _sendMessageAfterNextFrame(String text, String chatId) {
+    final submittedReply = _replyToMessage;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -1586,14 +1588,16 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _viewModel
           .sendUserMessage(
             text,
-            replyToMessage: _replyToMessage,
+            replyToMessage: submittedReply,
             chatIdOverride: chatId,
           )
           .then((_) async {
             if (!mounted || _currentChatId != chatId) {
               return null;
             }
-            _replyToMessage = null;
+            if (_replyToMessage == submittedReply) {
+              _replyToMessage = null;
+            }
             await _refreshAttachments();
             return null;
           })
