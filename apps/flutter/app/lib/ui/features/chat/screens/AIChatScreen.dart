@@ -1388,6 +1388,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
     final chatId = _currentChatId;
     final inputValue = _messageController.value;
+    final inputReply = _replyToMessage;
     final decision = await _viewModel.dispatchChatInputSubmitRequested(
       chatId: chatId,
       text: text,
@@ -1395,7 +1396,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       selectionEnd: inputValue.selection.end,
       attachmentCount: _attachments.length,
     );
-    if (!mounted || _currentChatId != chatId) {
+    if (!mounted || _currentChatId != chatId ||
+        _messageController.value != inputValue || _replyToMessage != inputReply) {
+      // A hook may await network/UI: never send or clear a newer draft.
       return;
     }
     if (decision != null) {
