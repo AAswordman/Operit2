@@ -110,12 +110,13 @@ class ChatViewModel {
     String text, {
     ChatUiMessage? replyToMessage,
     String? chatIdOverride,
+    List<AttachmentInfo>? attachmentsOverride,
   }) async {
     debugPrint(
       'Chat send requested chatId=${chatIdOverride ?? 'current'} '
       'chars=${text.length}',
     );
-    final attachments = await _chat.attachments();
+    final attachments = attachmentsOverride ?? await _chat.attachments();
     await _chat.sendUserMessage(
       promptFunctionType: core_proxy.PromptFunctionType.chat,
       roleCardIdOverride: null,
@@ -135,8 +136,10 @@ class ChatViewModel {
       ),
     );
     debugPrint('Chat send accepted chatId=${chatIdOverride ?? 'current'}');
-    if (attachments.isNotEmpty) {
-      await _chat.clearAttachments();
+    // The runtime call can await a group turn or hook. Keep attachments
+    // added for the next draft while this send was pending.
+    for (final attachment in attachments) {
+      await _chat.removeAttachment(filePath: attachment.filePath);
     }
   }
 
