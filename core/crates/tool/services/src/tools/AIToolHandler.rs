@@ -327,6 +327,11 @@ impl AIToolHandler {
             .clone()
     }
 
+    /// Binds the existing application command executor after proxy initialization.
+    pub fn bindCoreCommandExecutor(&self, executor: operit_host_api::HostManager::CoreCommandExecutor) {
+        self.inner.lock().expect("AIToolHandler mutex poisoned").context.coreCommandExecutor = Some(executor);
+    }
+
     /// Returns the dependency set associated with this handler.
     #[allow(non_snake_case)]
     pub fn runtimeDependencies(&self) -> ToolRuntimeDependencies {

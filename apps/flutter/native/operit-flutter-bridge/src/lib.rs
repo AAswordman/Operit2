@@ -313,6 +313,8 @@ impl OperitFlutterBridge {
         install_permission_requester(&mut core);
         #[cfg(not(target_arch = "wasm32"))]
         let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        core.bindLocalCoreCommandExecutor()?;
         let runtimeStorageHost = core.runtimeStorageHost();
         let localCore = Arc::new(core);
         #[cfg(not(target_arch = "wasm32"))]

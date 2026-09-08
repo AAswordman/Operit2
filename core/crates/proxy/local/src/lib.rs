@@ -24,6 +24,7 @@ include!(concat!(env!("OUT_DIR"), "/generated_core_dispatch.rs"));
 #[derive(Clone)]
 pub struct LocalCoreProxy {
     application: Arc<Mutex<OperitApplication>>,
+    commandApplication: Option<Arc<OperitApplication>>,
     chatRuntimeHolder: Arc<tokio::sync::Mutex<ChatRuntimeHolder>>,
     hostManager: HostManager,
     toolRuntimeSupport: Arc<dyn ToolRuntimeSupport>,
@@ -106,6 +107,7 @@ impl LocalCoreProxy {
             hostManager: application.hostManager.clone(),
             toolRuntimeSupport,
             application: Arc::new(Mutex::new(application)),
+            commandApplication: None,
             chatRuntimeHolder,
             coreStreamPool: Arc::new(CoreStreamPool::new()),
         }
@@ -117,6 +119,39 @@ impl LocalCoreProxy {
         Arc::get_mut(&mut self.application)
             .expect("LocalCoreProxy application must not be shared while mutating setup")
             .get_mut()
+    }
+
+    /// Runs plugin commands through this application's shared services, outside dispatch locks.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn bindLocalCoreCommandExecutor(&mut self) -> Result<(), String> {
+        let mut context = self.localApplicationMut().sharedCommandContext();
+        let commandApplication: Arc<OperitApplication> = Arc::new_cyclic(|weak: &std::sync::Weak<OperitApplication>| {
+            let weak = weak.clone();
+            let executor: operit_host_api::HostManager::CoreCommandExecutor = Arc::new(move |args| {
+                let application = weak.upgrade().ok_or("The local application has stopped")?;
+                let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+                // CLI commands can enter their own async runtime. They must run on a plain
+                // native task, and never hold the application's dispatch mutex over JS hooks.
+                operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeTask(
+                    operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(),
+                    "plugin-core-command",
+                    Box::new(move || {
+                        let mut command = application.sharedCommandContext();
+                        let result = operit_command_core::run_core_command(&mut command, &args).map(|output| output.stdout);
+                        let _ = sender.send(result);
+                    }),
+                ).map_err(|error| error.to_string())?;
+                receiver.recv().map_err(|error| error.to_string())?
+            });
+            context.hostManager.coreCommandExecutor = Some(executor);
+            context
+        });
+        let executor = commandApplication.hostManager.coreCommandExecutor.clone().expect("command executor was just bound");
+        commandApplication.toolHandler.bindCoreCommandExecutor(executor.clone());
+        self.hostManager.coreCommandExecutor = Some(executor.clone());
+        self.localApplicationMut().hostManager.coreCommandExecutor = Some(executor);
+        self.commandApplication = Some(commandApplication);
+        Ok(())
     }
 
     /// Returns the runtime storage capability owned by this local core.
