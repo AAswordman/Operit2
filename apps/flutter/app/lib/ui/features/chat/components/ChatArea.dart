@@ -430,6 +430,7 @@ class _ChatAreaState extends State<ChatArea> {
   }
 
   Future<void> _scrollToBottomFromNavigator() async {
+    if (!mounted || !widget.scrollController.hasClients) return;
     widget.onAutoScrollToBottomChanged(true);
     if (widget.hasNewerDisplayHistory) {
       await widget.onShowLatestDisplayWindow();
