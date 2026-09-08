@@ -381,6 +381,7 @@ pub struct MessageProcessingDelegate {
     pub currentTurnToolInvocationCountByChatId: HashMap<String, i32>,
     pub currentTurnToolInvocationCountByChatIdFlow: MutableStateFlow<HashMap<String, i32>>,
     pub chatRuntimes: Arc<Mutex<HashMap<String, ChatRuntime>>>,
+    cancellationVersionByChatId: Arc<Mutex<HashMap<String, u64>>>,
     pub lastScrollEmitMsByChatKey: Arc<Mutex<HashMap<String, i64>>>,
     pub suppressIdleCompletedStateByChatId: Arc<Mutex<HashMap<String, bool>>>,
     pub pendingAsyncSummaryUiByChatId: Arc<Mutex<HashMap<String, bool>>>,
@@ -420,6 +421,7 @@ impl MessageProcessingDelegate {
             currentTurnToolInvocationCountByChatId: HashMap::new(),
             currentTurnToolInvocationCountByChatIdFlow: mutableStateFlow(HashMap::new()),
             chatRuntimes: Arc::new(Mutex::new(HashMap::new())),
+            cancellationVersionByChatId: Arc::new(Mutex::new(HashMap::new())),
             lastScrollEmitMsByChatKey: Arc::new(Mutex::new(HashMap::new())),
             suppressIdleCompletedStateByChatId: Arc::new(Mutex::new(HashMap::new())),
             pendingAsyncSummaryUiByChatId: Arc::new(Mutex::new(HashMap::new())),
@@ -449,6 +451,7 @@ impl MessageProcessingDelegate {
                 .currentTurnToolInvocationCountByChatIdFlow
                 .clone(),
             chatRuntimes: self.chatRuntimes.clone(),
+            cancellationVersionByChatId: self.cancellationVersionByChatId.clone(),
             lastScrollEmitMsByChatKey: self.lastScrollEmitMsByChatKey.clone(),
             suppressIdleCompletedStateByChatId: self.suppressIdleCompletedStateByChatId.clone(),
             pendingAsyncSummaryUiByChatId: self.pendingAsyncSummaryUiByChatId.clone(),
@@ -1044,6 +1047,17 @@ impl MessageProcessingDelegate {
         Some(aiMessage)
     }
 
+    /// Identifies explicit cancellation even while a group is still planning.
+    #[allow(non_snake_case)]
+    pub fn cancellationVersionForChat(&self, chatId: &str) -> u64 {
+        self.cancellationVersionByChatId
+            .lock()
+            .expect("chat cancellation version mutex poisoned")
+            .get(chatId)
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Cancels an active message turn and optionally keeps partial response content.
     #[allow(non_snake_case)]
     pub async fn cancelMessageInternal(
@@ -1051,6 +1065,14 @@ impl MessageProcessingDelegate {
         chatId: String,
         keepPartialResponse: bool,
     ) -> Option<ChatMessage> {
+        {
+            let mut versions = self
+                .cancellationVersionByChatId
+                .lock()
+                .expect("chat cancellation version mutex poisoned");
+            let version = versions.entry(chatId.clone()).or_default();
+            *version = version.wrapping_add(1);
+        }
         let cancellation = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             if !runtime.isLoading || runtime.isCancelling {
                 return None;
@@ -1069,6 +1091,9 @@ impl MessageProcessingDelegate {
         });
         let Some((cancelledTurnId, cancellationTurnId, responseStream)) = cancellation.flatten()
         else {
+            if !self.isChatLoading(chatId.clone()) {
+                self.finishChatExecution(chatId, InputProcessingState::Idle);
+            }
             return None;
         };
         let partialMessage = keepPartialResponse

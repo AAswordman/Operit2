@@ -1001,6 +1001,9 @@ impl MessageCoordinationDelegate {
         if originalUserText.is_empty() && attachments.is_empty() {
             return false;
         }
+        let cancellationVersion = self
+            .messageProcessingDelegate
+            .cancellationVersionForChat(&chatId);
         self.messageProcessingDelegate
             .setInputProcessingStateForChat(
                 chatId.clone(),
@@ -1095,15 +1098,23 @@ impl MessageCoordinationDelegate {
             .collect::<HashMap<_, _>>();
         let groupParticipantNamesText =
             self.buildGroupParticipantNamesText(&orderedMembers, &memberCardsById);
-        let Some(plannedRounds) = self
+        if self.messageProcessingDelegate.cancellationVersionForChat(&chatId) != cancellationVersion {
+            return true;
+        }
+        let plannedRounds = self
             .planResponseOrder(
                 enhancedAiService,
+                &chatId,
+                cancellationVersion,
                 &originalUserText,
                 &orderedMembers,
                 &memberCardsById,
             )
-            .await
-        else {
+            .await;
+        if self.messageProcessingDelegate.cancellationVersionForChat(&chatId) != cancellationVersion {
+            return true;
+        }
+        let Some(plannedRounds) = plannedRounds else {
             self.messageProcessingDelegate
                 .setInputProcessingStateForChat(
                     chatId,
@@ -1126,6 +1137,9 @@ impl MessageCoordinationDelegate {
 
         for (roundIndex, roundMembers) in plannedRounds.rounds.iter().enumerate() {
             for (memberIndex, plannedMember) in roundMembers.iter().enumerate() {
+                if self.messageProcessingDelegate.cancellationVersionForChat(&chatId) != cancellationVersion {
+                    return true;
+                }
                 if !plannedMember.speak {
                     continue;
                 }
@@ -1189,10 +1203,15 @@ impl MessageCoordinationDelegate {
                 )
                 .await;
                 if !self
-                    .awaitTurnComplete(chatId.clone(), targetTurnCounter, 180_000)
+                    .awaitTurnComplete(
+                        chatId.clone(),
+                        targetTurnCounter,
+                        180_000,
+                        cancellationVersion,
+                    )
                     .await
                 {
-                    continue;
+                    return true;
                 }
                 let newAiMessage = self
                     .chatHistoryDelegate
@@ -1216,6 +1235,9 @@ impl MessageCoordinationDelegate {
                 }
             }
         }
+        if self.messageProcessingDelegate.cancellationVersionForChat(&chatId) != cancellationVersion {
+            return true;
+        }
         self.maybeSummarizeAfterGroupRound(enhancedAiService, chatId, promptFunctionType)
             .await;
         true
@@ -1225,6 +1247,8 @@ impl MessageCoordinationDelegate {
     async fn planResponseOrder(
         &self,
         enhancedAiService: &mut EnhancedAIService,
+        chatId: &str,
+        cancellationVersion: u64,
         userText: &str,
         members: &[GroupMemberConfig],
         memberCardsById: &HashMap<String, CharacterCard>,
@@ -1248,11 +1272,34 @@ impl MessageCoordinationDelegate {
         options.promptFunctionType = PromptFunctionType::CHAT;
         options.enableThinking = false;
         options.stream = false;
-        let response = enhancedAiService.sendMessage(options).await.ok()?;
-        let rawContent =
-            removeThinkingContent(&collect_stream_chunks(Box::new(response)).await.join(""))
-                .trim()
-                .to_string();
+        if self.messageProcessingDelegate.cancellationVersionForChat(chatId) != cancellationVersion {
+            return None;
+        }
+        let response = tokio::select! {
+            biased;
+            _ = self.waitForGroupCancellation(chatId, cancellationVersion) => None,
+            response = enhancedAiService.sendMessage(options) => Some(response),
+        };
+        let response = match response {
+            Some(response) => response.ok()?,
+            None => {
+                enhancedAiService.cancelConversation().await;
+                return None;
+            }
+        };
+        let chunks = tokio::select! {
+            biased;
+            _ = self.waitForGroupCancellation(chatId, cancellationVersion) => None,
+            chunks = collect_stream_chunks(Box::new(response)) => Some(chunks),
+        };
+        let chunks = match chunks {
+            Some(chunks) => chunks,
+            None => {
+                enhancedAiService.cancelConversation().await;
+                return None;
+            }
+        };
+        let rawContent = removeThinkingContent(&chunks.join("")).trim().to_string();
         self.parsePlannedRounds(
             &rawContent,
             members
@@ -1264,6 +1311,16 @@ impl MessageCoordinationDelegate {
                 .map(|card| (card.name.trim().to_string(), card.id.clone()))
                 .collect(),
         )
+    }
+
+    #[allow(non_snake_case)]
+    async fn waitForGroupCancellation(&self, chatId: &str, cancellationVersion: u64) {
+        while self.messageProcessingDelegate.cancellationVersionForChat(chatId) == cancellationVersion {
+            defaultHostRuntimeTaskSchedulerHost()
+                .waitForHostRuntimeDelay(50)
+                .await
+                .expect("group cancellation delay must be provided by the Host");
+        }
     }
 
     #[allow(non_snake_case)]
@@ -1408,17 +1465,37 @@ impl MessageCoordinationDelegate {
     }
 
     #[allow(non_snake_case)]
-    async fn awaitTurnComplete(&self, chatId: String, targetCounter: i64, timeoutMs: u64) -> bool {
+    async fn awaitTurnComplete(
+        &self,
+        chatId: String,
+        targetCounter: i64,
+        timeoutMs: u64,
+        cancellationVersion: u64,
+    ) -> bool {
         let startedAtMillis = operit_host_api::TimeUtils::currentTimeMillisU128();
         while operit_host_api::TimeUtils::currentTimeMillisU128().saturating_sub(startedAtMillis)
             < u128::from(timeoutMs)
         {
+            if self.messageProcessingDelegate.cancellationVersionForChat(&chatId) != cancellationVersion {
+                return false;
+            }
             if self
                 .messageProcessingDelegate
                 .getTurnCompleteCounter(chatId.clone())
                 >= targetCounter
             {
                 return true;
+            }
+            if !self.messageProcessingDelegate.isChatLoading(chatId.clone())
+                && matches!(
+                    self.messageProcessingDelegate
+                        .inputProcessingStateByChatIdFlow()
+                        .value()
+                        .get(&chatId),
+                    Some(InputProcessingState::Error { .. } | InputProcessingState::Idle)
+                )
+            {
+                return false;
             }
             defaultHostRuntimeTaskSchedulerHost()
                 .waitForHostRuntimeDelay(50)
