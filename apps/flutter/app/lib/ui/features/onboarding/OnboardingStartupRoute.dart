@@ -1066,7 +1066,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         tag: _operit1SnapshotImportLogTag,
       );
       await session.discard();
-      await widget.onComplete();
+      await _openImportedConversation(result);
+      if (mounted) await widget.onComplete();
     } catch (error, stackTrace) {
       ClientLogger.e(
         'snapshot import failed',
@@ -1085,6 +1086,33 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         setState(() {
           _importingOperit1Snapshot = false;
         });
+      }
+    }
+  }
+
+  /// Restore a real conversation before the first chat screen can create an
+  /// empty one.
+  Future<void> _openImportedConversation(
+    core_proxy.Operit1SnapshotImportResult result,
+  ) async {
+    final chat = widget.clients.chatRuntimeHolderMain;
+    if (result.importedChats > 0) {
+      final current = await chat.currentChatIdFlow().first;
+      if (current == null || current.trim().isEmpty) {
+        final histories = await chat.chatHistoryListItemsFlow().first;
+        if (histories.isNotEmpty) {
+          var selected = histories.first;
+          for (final history in histories.skip(1)) {
+            if ((int.tryParse(history.updatedAt) ?? 0) >
+                (int.tryParse(selected.updatedAt) ?? 0)) {
+              selected = history;
+            }
+          }
+          final latestCurrent = await chat.currentChatIdFlow().first;
+          if (latestCurrent == null || latestCurrent.trim().isEmpty) {
+            await chat.switchChat(chatId: selected.id);
+          }
+        }
       }
     }
   }
