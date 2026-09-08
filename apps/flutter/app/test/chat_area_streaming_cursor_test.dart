@@ -248,7 +248,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(
-      find.byKey(const ValueKey<String>('markdown-paragraph-break')),
+      find.byWidgetPredicate((widget) {
+        final key = widget.key;
+        return key is ValueKey<String> &&
+            key.value.startsWith('markdown-paragraph-break-');
+      }),
       findsNothing,
     );
   });
