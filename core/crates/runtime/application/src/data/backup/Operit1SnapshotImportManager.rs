@@ -453,10 +453,8 @@ impl Operit1SnapshotImportManager {
             "正在导入历史会话和消息。",
             0.64,
         ));
-        let (importedChats, importedMessages) =
+        let (importedChats, importedMessages, importedTokenUsageRecords, importedTokenStatsModels) =
             self.importChatDatabase(&parsed, &fileImportPlan)?;
-        let (importedTokenUsageRecords, importedTokenStatsModels) =
-            self.importTokenStatistics(&parsed)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "memory",
             "迁移记忆库",
@@ -724,7 +722,7 @@ impl Operit1SnapshotImportManager {
         &self,
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
-    ) -> Result<(i32, i32), String> {
+    ) -> Result<(i32, i32, i32, i32), String> {
         self.withStagedOperit1ChatDatabase(parsed, |connection, archiveBridge| {
             let (totalChatCount, totalMessageCount) = operit1ChatDatabaseCounts(connection)?;
             let mut parsedMessageCount = 0usize;
@@ -781,7 +779,7 @@ impl Operit1SnapshotImportManager {
                                 "正在写入聊天：{persistedChats}/{totalChats} 个会话，{messageCount} 条消息已解析。"
                             ),
                             0.71,
-                            0.78,
+                            0.77,
                             persistedChats,
                             totalChats,
                         );
@@ -794,98 +792,122 @@ impl Operit1SnapshotImportManager {
                     "迁移聊天记录",
                     "快照没有可导入的聊天记录。".to_string(),
                     0.71,
-                    0.78,
+                    0.77,
                     0,
                     0,
                 );
             }
-            Ok((chatCount, messageCount))
+            // Keep the already normalized database open for the ledger. A
+            // second staging pass used to decompress the whole database again,
+            // even for older snapshots which have no v21 token tables.
+            let (usageCount, pricingCount) = self.importTokenStatistics(connection, archiveBridge)?;
+            Ok((chatCount, messageCount, usageCount, pricingCount))
         })
     }
 
     #[allow(non_snake_case)]
     /// Imports the OP1 v21 token ledger and pricing identities without deriving usage from chats.
-    fn importTokenStatistics(&self, parsed: &ParsedOperit1Snapshot) -> Result<(i32, i32), String> {
-        self.withStagedOperit1ChatDatabase(parsed, |connection, bridge| {
-            if bridge != Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27 {
-                return Ok((0, 0));
+    fn importTokenStatistics(
+        &self,
+        connection: &mut dyn RuntimeSqliteConnection,
+        bridge: Operit1ToOperit2ChatArchiveBridge,
+    ) -> Result<(i32, i32), String> {
+        if bridge != Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27 {
+            return Ok((0, 0));
+        }
+        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
+            "chats", "迁移用量统计", "聊天已写入，正在读取原快照的用量统计。", 0.77,
+        ));
+        let usageRows = connection
+            .query(
+                r#"
+                SELECT importKey, occurredAtMs, configId, provider, model, requestCount,
+                    uncachedInputTokens, cachedInputTokens, cacheWriteTokens,
+                    totalInputTokens, outputTokens
+                FROM token_usage_records
+                ORDER BY id ASC
+                "#,
+                Vec::new(),
+            )
+            .map_err(|error| error.to_string())?;
+        let pricingRows = connection
+            .query(
+                r#"
+                SELECT configId, provider, model, billingMode, currency,
+                    inputPricePerMillion, cachedInputPricePerMillion,
+                    cacheWritePricePerMillion, outputPricePerMillion, pricePerRequest
+                FROM token_stats_models
+                ORDER BY provider ASC, model ASC, configId ASC
+                "#,
+                Vec::new(),
+            )
+            .map_err(|error| error.to_string())?;
+        let statisticsStore = UsageStatisticsStore::new();
+        let totalRows = usageRows.len() + pricingRows.len();
+        let mut completedRows = 0usize;
+        let mut progressThrottle = Operit1SnapshotProgressThrottle::new();
+        let mut reportRow = || {
+            completedRows += 1;
+            if progressThrottle.shouldPublish(completedRows, totalRows) {
+                publishOperit1SnapshotCountedProgress(
+                    "chats", "迁移用量统计",
+                    format!("正在写入用量统计：{completedRows}/{totalRows} 条。"),
+                    0.77, 0.78, completedRows, totalRows,
+                );
             }
-            let usageRows = connection
-                .query(
-                    r#"
-                    SELECT importKey, occurredAtMs, configId, provider, model, requestCount,
-                        uncachedInputTokens, cachedInputTokens, cacheWriteTokens,
-                        totalInputTokens, outputTokens
-                    FROM token_usage_records
-                    ORDER BY id ASC
-                    "#,
-                    Vec::new(),
-                )
-                .map_err(|error| error.to_string())?;
-            let pricingRows = connection
-                .query(
-                    r#"
-                    SELECT configId, provider, model, billingMode, currency,
-                        inputPricePerMillion, cachedInputPricePerMillion,
-                        cacheWritePricePerMillion, outputPricePerMillion, pricePerRequest
-                    FROM token_stats_models
-                    ORDER BY provider ASC, model ASC, configId ASC
-                    "#,
-                    Vec::new(),
-                )
-                .map_err(|error| error.to_string())?;
-            let statisticsStore = UsageStatisticsStore::new();
-            for row in &usageRows {
-                statisticsStore.recordTokenUsage(
-                    sqliteRowOptionalString(row, 0, "token_usage_records.importKey")?,
-                    sqliteRowOptionalI64(row, 1, "token_usage_records.occurredAtMs")?,
-                    sqliteRowString(row, 2, "token_usage_records.configId")?,
-                    sqliteRowString(row, 3, "token_usage_records.provider")?,
-                    sqliteRowString(row, 4, "token_usage_records.model")?,
-                    sqliteRowI64(row, 5, "token_usage_records.requestCount")?,
-                    sqliteRowOptionalI64(row, 6, "token_usage_records.uncachedInputTokens")?,
-                    sqliteRowOptionalI64(row, 7, "token_usage_records.cachedInputTokens")?,
-                    sqliteRowOptionalI64(row, 8, "token_usage_records.cacheWriteTokens")?,
-                    sqliteRowOptionalI64(row, 9, "token_usage_records.totalInputTokens")?,
-                    sqliteRowOptionalI64(row, 10, "token_usage_records.outputTokens")?,
-                )?;
-            }
-            for row in &pricingRows {
-                statisticsStore.upsertTokenStatsModel(TokenStatsModel {
-                    configId: sqliteRowString(row, 0, "token_stats_models.configId")?,
-                    provider: sqliteRowString(row, 1, "token_stats_models.provider")?,
-                    model: sqliteRowString(row, 2, "token_stats_models.model")?,
-                    billingMode: sqliteRowOptionalString(row, 3, "token_stats_models.billingMode")?,
-                    currency: sqliteRowOptionalString(row, 4, "token_stats_models.currency")?,
-                    inputPricePerMillion: sqliteRowOptionalF64(
-                        row,
-                        5,
-                        "token_stats_models.inputPricePerMillion",
-                    )?,
-                    cachedInputPricePerMillion: sqliteRowOptionalF64(
-                        row,
-                        6,
-                        "token_stats_models.cachedInputPricePerMillion",
-                    )?,
-                    cacheWritePricePerMillion: sqliteRowOptionalF64(
-                        row,
-                        7,
-                        "token_stats_models.cacheWritePricePerMillion",
-                    )?,
-                    outputPricePerMillion: sqliteRowOptionalF64(
-                        row,
-                        8,
-                        "token_stats_models.outputPricePerMillion",
-                    )?,
-                    pricePerRequest: sqliteRowOptionalF64(
-                        row,
-                        9,
-                        "token_stats_models.pricePerRequest",
-                    )?,
-                })?;
-            }
-            Ok((usageRows.len() as i32, pricingRows.len() as i32))
-        })
+        };
+        for row in &usageRows {
+            statisticsStore.recordTokenUsage(
+                sqliteRowOptionalString(row, 0, "token_usage_records.importKey")?,
+                sqliteRowOptionalI64(row, 1, "token_usage_records.occurredAtMs")?,
+                sqliteRowString(row, 2, "token_usage_records.configId")?,
+                sqliteRowString(row, 3, "token_usage_records.provider")?,
+                sqliteRowString(row, 4, "token_usage_records.model")?,
+                sqliteRowI64(row, 5, "token_usage_records.requestCount")?,
+                sqliteRowOptionalI64(row, 6, "token_usage_records.uncachedInputTokens")?,
+                sqliteRowOptionalI64(row, 7, "token_usage_records.cachedInputTokens")?,
+                sqliteRowOptionalI64(row, 8, "token_usage_records.cacheWriteTokens")?,
+                sqliteRowOptionalI64(row, 9, "token_usage_records.totalInputTokens")?,
+                sqliteRowOptionalI64(row, 10, "token_usage_records.outputTokens")?,
+            )?;
+            reportRow();
+        }
+        for row in &pricingRows {
+            statisticsStore.upsertTokenStatsModel(TokenStatsModel {
+                configId: sqliteRowString(row, 0, "token_stats_models.configId")?,
+                provider: sqliteRowString(row, 1, "token_stats_models.provider")?,
+                model: sqliteRowString(row, 2, "token_stats_models.model")?,
+                billingMode: sqliteRowOptionalString(row, 3, "token_stats_models.billingMode")?,
+                currency: sqliteRowOptionalString(row, 4, "token_stats_models.currency")?,
+                inputPricePerMillion: sqliteRowOptionalF64(
+                    row,
+                    5,
+                    "token_stats_models.inputPricePerMillion",
+                )?,
+                cachedInputPricePerMillion: sqliteRowOptionalF64(
+                    row,
+                    6,
+                    "token_stats_models.cachedInputPricePerMillion",
+                )?,
+                cacheWritePricePerMillion: sqliteRowOptionalF64(
+                    row,
+                    7,
+                    "token_stats_models.cacheWritePricePerMillion",
+                )?,
+                outputPricePerMillion: sqliteRowOptionalF64(
+                    row,
+                    8,
+                    "token_stats_models.outputPricePerMillion",
+                )?,
+                pricePerRequest: sqliteRowOptionalF64(
+                    row,
+                    9,
+                    "token_stats_models.pricePerRequest",
+                )?,
+            })?;
+            reportRow();
+        }
+        Ok((usageRows.len() as i32, pricingRows.len() as i32))
     }
 
     #[allow(non_snake_case)]
