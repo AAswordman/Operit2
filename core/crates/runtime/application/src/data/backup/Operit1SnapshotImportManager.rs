@@ -747,7 +747,7 @@ impl Operit1SnapshotImportManager {
                     );
                 }
             };
-            let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
+            let mut archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
                 archiveBridge,
                 connection,
                 fileImportPlan,
@@ -770,6 +770,19 @@ impl Operit1SnapshotImportManager {
             );
             let manager =
                 ChatHistoryManager::new(self.paths.clone()).map_err(|error| error.to_string())?;
+            let existingIds = manager.loadChatHistories().map_err(|error| error.to_string())?
+                .into_iter().map(|chat| chat.id).collect::<HashSet<_>>();
+            let remappedIds = archive.chats.iter().filter(|chat| existingIds.contains(&chat.id))
+                .map(|chat| (chat.id.clone(), Uuid::new_v4().to_string()))
+                .collect::<HashMap<_, _>>();
+            for chat in &mut archive.chats {
+                if let Some(id) = remappedIds.get(&chat.id) {
+                    chat.id = id.clone();
+                }
+                if let Some(id) = chat.parentChatId.as_ref().and_then(|id| remappedIds.get(id)) {
+                    chat.parentChatId = Some(id.clone());
+                }
+            }
             let mut persistedChatProgressThrottle = Operit1SnapshotProgressThrottle::new();
             manager
                 .importChatArchiveWithProgress(archive, |persistedChats, totalChats, _| {
