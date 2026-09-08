@@ -130,19 +130,32 @@ impl Operit1SnapshotArchive {
                 value,
             });
         }
-        let functionalPreferences = datastorePreferences
+        // Operit1 FunctionalConfigManager treats an unwritten/empty mapping as default.
+        let mappingText = datastorePreferences
             .get(ENTRY_FUNCTIONAL_CONFIGS)
-            .ok_or_else(|| "Operit1 snapshot is missing functional configurations".to_string())?;
-        let functionalMapping: Value = serde_json::from_str(requiredPreferenceString(
-            functionalPreferences,
-            KEY_FUNCTION_CONFIG_MAPPING,
-            "Operit1 snapshot is missing function model mappings",
-        )?)
-        .map_err(|error| format!("Operit1 function model mappings are invalid: {error}"))?;
-        let chatMappingJson = functionalMapping
+            .and_then(|preferences| preferences.get(KEY_FUNCTION_CONFIG_MAPPING))
+            .map(|value| value.asString().ok_or_else(||
+                "Operit1 function model mappings must be a string".to_string()))
+            .transpose()?;
+        let mut functionalMappingJson: Value = match mappingText {
+            None | Some("") => serde_json::json!({}),
+            Some(raw) => serde_json::from_str(raw)
+                .map_err(|error| format!("Operit1 function model mappings are invalid: {error}"))?,
+        };
+        if !functionalMappingJson.is_object() {
+            return Err("Operit1 function model mappings must be an object".to_string());
+        }
+        for function in ["CHAT", "SUMMARY", "TITLE_GENERATION", "MEMORY", "UI_CONTROLLER",
+            "TRANSLATION", "GREP", "ROLE_RESPONSE_PLANNER", "IMAGE_RECOGNITION",
+            "AUDIO_RECOGNITION", "VIDEO_RECOGNITION"] {
+            functionalMappingJson.as_object_mut().expect("validated mapping object")
+                .entry(function.to_string())
+                .or_insert_with(|| serde_json::json!({"configId": "default", "modelIndex": 0}));
+        }
+        let chatMappingJson = functionalMappingJson
             .get("CHAT")
             .cloned()
-            .ok_or_else(|| "Operit1 function model mappings are missing CHAT".to_string())?;
+            .unwrap_or_else(|| serde_json::json!({"configId": "default", "modelIndex": 0}));
         Ok(Self {
             source,
             manifest,
