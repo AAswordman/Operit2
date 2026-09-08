@@ -430,7 +430,7 @@ impl Operit1SnapshotImportManager {
             .ok_or_else(|| "Operit1 快照里的聊天模型索引没有对应模型".to_string())?;
         let modelConfig =
             self.importModelConfigFromParsed(&parsed, selected.configId.clone(), selectedModelId)?;
-        let fileImportPlan = SnapshotFileImportPlan::new();
+        let fileImportPlan = SnapshotFileImportPlan::forSnapshot(&parsed)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
             "迁移角色和语音",
@@ -470,7 +470,7 @@ impl Operit1SnapshotImportManager {
             "正在复制工作区、附件和外部资源。",
             0.90,
         ));
-        let fileImportResult = self.importSnapshotFiles(&parsed)?;
+        let fileImportResult = self.importSnapshotFiles(&parsed, &fileImportPlan)?;
         let result = Operit1SnapshotImportResult {
             modelConfig,
             importedDatastoreFiles,
@@ -893,8 +893,10 @@ impl Operit1SnapshotImportManager {
     fn importSnapshotFiles(
         &self,
         parsed: &ParsedOperit1Snapshot,
+        fileImportPlan: &SnapshotFileImportPlan,
     ) -> Result<Operit1SnapshotFileImportResult, String> {
-        let copyPlan = buildSnapshotFileCopyPlan(parsed)?;
+        let copyPlan = fileImportPlan.copyPlan.as_ref()
+            .ok_or_else(|| "Operit1 资源迁移计划尚未生成".to_string())?;
         let totalFileCount = copyPlan.items.len();
         let sourceEntries = copyPlan
             .items
@@ -1635,6 +1637,9 @@ impl Operit1PreferenceValue {
 struct SnapshotFileImportPlan {
     importedFilesRoot: String,
     importedExternalFilesRoot: String,
+    copyPlan: Option<SnapshotFileCopyPlan>,
+    workspaceIds: HashMap<String, String>,
+    legacyPackageName: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1668,7 +1673,36 @@ impl SnapshotFileImportPlan {
         Self {
             importedFilesRoot: RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH.to_string(),
             importedExternalFilesRoot: RUNTIME_IMPORTED_OPERIT1_EXTERNAL_FILES_DIR_PATH.to_string(),
+            copyPlan: None,
+            workspaceIds: HashMap::new(),
+            legacyPackageName: "com.ai.assistance.operit".to_string(),
         }
+    }
+
+    fn forSnapshot(parsed: &ParsedOperit1Snapshot) -> Result<Self, String> {
+        let mut plan = Self::new();
+        plan.legacyPackageName = parsed.archive.manifest.packageName.clone();
+        let importId = Uuid::new_v4().to_string();
+        plan.importedFilesRoot.push_str(&format!("/{importId}"));
+        plan.importedExternalFilesRoot.push_str(&format!("/{importId}"));
+        let mut copyPlan = buildSnapshotFileCopyPlan(parsed)?;
+        for sourceId in &copyPlan.workspaceIds {
+            plan.workspaceIds.insert(sourceId.clone(), Uuid::new_v4().to_string());
+        }
+        for item in &mut copyPlan.items {
+            if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_WORKSPACE_FILES_PREFIX) {
+                let (id, rest) = splitWorkspaceRelativePath(relative)?;
+                let targetId = &plan.workspaceIds[id];
+                item.targetPath = format!("{WORKSPACE_DIR_PATH}/{targetId}/{rest}");
+            } else if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_FILES_PREFIX) {
+                item.targetPath = joinVirtualPath(&plan.importedFilesRoot, relative);
+            } else if let Some(relative) = item.sourceEntry.strip_prefix(ENTRY_EXTERNAL_FILES_PREFIX) {
+                item.targetPath = joinVirtualPath(&plan.importedExternalFilesRoot, relative);
+            }
+        }
+        copyPlan.workspaceIds = plan.workspaceIds.values().cloned().collect();
+        plan.copyPlan = Some(copyPlan);
+        Ok(plan)
     }
 
     #[allow(non_snake_case)]
@@ -1756,18 +1790,27 @@ impl SnapshotFileImportPlan {
 
     #[allow(non_snake_case)]
     fn rewriteWorkspacePath(&self, workspace: &str) -> Result<String, String> {
-        let pathText = workspace.trim().replace('\\', "/");
-        if pathText.is_empty() {
-            return Ok(workspace.to_string());
+        let normalized = workspace.trim().replace('\\', "/");
+        let pathText = normalized.strip_prefix("file://").unwrap_or(&normalized);
+        for prefix in [
+            format!("/data/user/0/{}/files/", self.legacyPackageName),
+            format!("/data/data/{}/files/", self.legacyPackageName),
+        ] {
+            if let Some(relative) = pathText.strip_prefix(&prefix) {
+                return self.rewriteWorkspaceRelativePath(relative);
+            }
         }
-        if let Some(relative) = pathText.strip_prefix(OPERIT1_INTERNAL_FILES_PREFIX) {
-            return self.rewriteWorkspaceRelativePath(relative);
-        }
-        if let Some(relative) = pathText.strip_prefix(OPERIT1_DATA_DATA_FILES_PREFIX) {
-            return self.rewriteWorkspaceRelativePath(relative);
-        }
-        if let Some(relative) = pathText.strip_prefix(OPERIT1_EXTERNAL_DOWNLOAD_PREFIX) {
-            return self.rewriteWorkspaceRelativePath(relative);
+        for prefix in [OPERIT1_EXTERNAL_DOWNLOAD_PREFIX, "/sdcard/Download/Operit/"] {
+            if let Some(relative) = pathText.strip_prefix(prefix) {
+                if let Some(workspaceRelative) = relative.strip_prefix("workspace/") {
+                    let (id, rest) = splitWorkspaceRelativePath(workspaceRelative)?;
+                    if let Some(targetId) = self.workspaceIds.get(id) {
+                        return Ok(workspaceVfsPath(targetId, rest));
+                    }
+                }
+                // Shared Download files are absent from the official raw snapshot.
+                return Ok(workspace.to_string());
+            }
         }
         Ok(workspace.to_string())
     }
@@ -1777,7 +1820,8 @@ impl SnapshotFileImportPlan {
         validateRelativePath(relative)?;
         if let Some(workspaceRelative) = relative.strip_prefix("workspace/") {
             let (workspaceId, rest) = splitWorkspaceRelativePath(workspaceRelative)?;
-            return Ok(workspaceVfsPath(workspaceId, rest));
+            let targetId = self.workspaceIds.get(workspaceId).map(String::as_str).unwrap_or(workspaceId);
+            return Ok(workspaceVfsPath(targetId, rest));
         }
         Ok(joinVirtualPath(&self.importedFilesRoot, relative))
     }
@@ -1787,7 +1831,8 @@ impl SnapshotFileImportPlan {
         validateRelativePath(relative)?;
         if let Some(workspaceRelative) = relative.strip_prefix("workspace/") {
             let (workspaceId, rest) = splitWorkspaceRelativePath(workspaceRelative)?;
-            return Ok(workspaceVfsPath(workspaceId, rest));
+            let targetId = self.workspaceIds.get(workspaceId).map(String::as_str).unwrap_or(workspaceId);
+            return Ok(workspaceVfsPath(targetId, rest));
         }
         Ok(joinVirtualPath(&self.importedExternalFilesRoot, relative))
     }
@@ -1799,7 +1844,8 @@ impl SnapshotFileImportPlan {
             .strip_prefix("workspace/")
             .ok_or_else(|| format!("Operit1 工作区路径不是 workspace 子目录：{relative}"))?;
         let (workspaceId, rest) = splitWorkspaceRelativePath(workspaceRelative)?;
-        Ok(workspaceVfsPath(workspaceId, rest))
+        let targetId = self.workspaceIds.get(workspaceId).map(String::as_str).unwrap_or(workspaceId);
+        Ok(workspaceVfsPath(targetId, rest))
     }
 }
 
