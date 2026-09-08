@@ -325,6 +325,10 @@ object AndroidRuntimeAssets {
             probe_and_append_bind_arg(){
               bind_source="${'$'}1"
               bind_target="${'$'}2"
+              if [ "${'$'}{PROOT_COLLECT_BINDS:-0}" = "1" ]; then
+                append_proot_bind_arg "${'$'}bind_source" "${'$'}bind_target"
+                return 0
+              fi
               if ! can_access_bind_source "${'$'}bind_source"; then
                 return 0
               fi
@@ -376,7 +380,17 @@ object AndroidRuntimeAssets {
               if ! resolve_proot_runtime; then
                 return 1
               fi
+              # Test the accessible bind set once. Repeated Linux cold starts
+              # per directory can otherwise exceed the PTY startup deadline.
+              PROOT_COLLECT_BINDS=1
 $prootBindSetup
+              PROOT_COLLECT_BINDS=0
+              if ! run_proot_probe ${'$'}PROOT_BIND_ARGS; then
+                # Keep the original per-directory fallback for devices with
+                # storage mounts that exist but cannot be used by PRoot.
+                PROOT_BIND_ARGS=""
+$prootBindSetup
+              fi
               if [ -n "${'$'}PROOT_BIND_ARGS" ]; then
                 set -- ${'$'}PROOT_BIND_ARGS
               else
