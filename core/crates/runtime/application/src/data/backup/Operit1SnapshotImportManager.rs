@@ -3052,12 +3052,7 @@ where
         let timestamp = sqliteRowI64(row, 2, "messages.timestamp")?;
         let sender = sqliteRowString(row, 0, "messages.sender")?;
         let content = sqliteRowString(row, 1, "messages.content")?;
-        let parts = if sender == "ai" {
-            MessagePartCodec::parseAssistantMarkup(&content)
-                .map_err(|error| format!("Operit1 assistant message markup is invalid: {error}"))?
-        } else {
-            vec![MessagePart::markdown("part-0".to_string(), 0, content)]
-        };
+        let parts = parseOperit1MessageParts(&sender, content)?;
         messages.push(OperitArchivedMessage {
             baseMessage: ChatMessage {
                 sender,
@@ -3200,7 +3195,16 @@ fn readOperit1RoomV20MessageVariants(
 /// Converts one legacy text payload into the runtime's canonical message parts.
 fn parseOperit1MessageParts(sender: &str, content: String) -> Result<Vec<MessagePart>, String> {
     if sender == "ai" {
-        MessagePartCodec::parseAssistantMarkup(&content)
+        // Operit1 accepts empty XML tags; v2's live streaming parser requires paired tags.
+        // Expand only those legacy semantic tags, retaining attributes and all text bytes.
+        static EMPTY_TAGS: OnceLock<regex::Regex> = OnceLock::new();
+        let emptyTags = EMPTY_TAGS.get_or_init(|| regex::Regex::new(
+            r#"(?is)<(?P<tag>tool_result(?:_[A-Za-z0-9_]+)?|tool(?:_[A-Za-z0-9_]+)?|status|thinking|think)\b(?P<attrs>(?:"[^"]*"|'[^']*'|[^'">])*)/\s*>"#,
+        ).expect("legacy self-closing markup pattern is valid"));
+        let normalized = emptyTags.replace_all(&content, |captures: &regex::Captures<'_>| {
+            format!("<{}{}></{}>", &captures["tag"], &captures["attrs"], &captures["tag"])
+        });
+        MessagePartCodec::parseAssistantMarkup(&normalized)
             .map_err(|error| format!("Operit1 assistant message markup is invalid: {error}"))
     } else {
         Ok(vec![MessagePart::markdown(
