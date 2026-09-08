@@ -1893,12 +1893,7 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .deleteMessageVariant(chatId.clone(), timestamp, variantIndex)
             .expect("ChatHistoryManager.deleteMessageVariant must remove the requested variant");
-        self.updateOpenedChatMessage(&chatId, timestamp, |message| {
-            message.variantCount = (message.variantCount - 1).max(1);
-            if message.selectedVariantIndex == variantIndex {
-                message.selectedVariantIndex = 0;
-            }
-        });
+        self.reloadCurrentChatDisplayHistory(chatId);
     }
 
     #[allow(non_snake_case)]
