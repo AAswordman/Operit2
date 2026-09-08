@@ -629,10 +629,12 @@ impl ChatHistoryManager {
     #[allow(non_snake_case)]
     fn saveArchivedChat(
         &self,
-        archivedChat: OperitArchivedChat,
+        mut archivedChat: OperitArchivedChat,
         createBinding: bool,
     ) -> ChatHistoryManagerResult<()> {
         let chatId = archivedChat.id.clone();
+        // Metadata conversion must not clone the imported message bodies.
+        let archivedMessages = std::mem::take(&mut archivedChat.messages);
         let history = archivedChat
             .toChatHistory()
             .map_err(ChatHistoryManagerError::IllegalArgument)?;
@@ -644,27 +646,30 @@ impl ChatHistoryManager {
 
         let mut variants = Vec::new();
         let mut partEntities = Vec::new();
-        let messages = archivedChat
-            .messages
+        let messages = archivedMessages
             .into_iter()
             .enumerate()
             .map(|(index, archivedMessage)| {
-                let baseMessage = archivedMessage.baseMessage;
+                let mut baseMessage = archivedMessage.baseMessage;
+                let messageTimestamp = baseMessage.timestamp;
                 for variant in archivedMessage.variants {
-                    partEntities.extend(messagePartEntities(
-                        &chatId,
-                        baseMessage.timestamp,
-                        variant.variantIndex,
-                        &variant.parts,
-                    ));
-                    variants.push(variant.toEntity(chatId.clone(), baseMessage.timestamp));
+                    let variantIndex = variant.variantIndex;
+                    variants.push(variant.toEntity(chatId.clone(), messageTimestamp));
+                    partEntities.extend(variant.parts.into_iter().map(|part| {
+                        MessagePartEntity::fromMessagePart(
+                            chatId.clone(), messageTimestamp, variantIndex, part,
+                        )
+                    }));
                 }
-                partEntities.extend(messagePartEntities(
-                    &chatId,
-                    baseMessage.timestamp,
-                    0,
-                    &baseMessage.parts,
-                ));
+                partEntities.extend(
+                    std::mem::take(&mut baseMessage.parts)
+                        .into_iter()
+                        .map(|part| {
+                            MessagePartEntity::fromMessagePart(
+                                chatId.clone(), messageTimestamp, 0, part,
+                            )
+                        }),
+                );
                 MessageEntity::fromChatMessage(chatId.clone(), baseMessage, index as i32, 0)
             })
             .collect::<Vec<_>>();
