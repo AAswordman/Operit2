@@ -1986,7 +1986,7 @@ class _ModelSettingsEditorDialogState
     _enableSummaryByMessageCount =
         widget.initialSummary.enableSummaryByMessageCount;
     _maxContextLengthController = TextEditingController(
-      text: widget.initialContext.maxContextLength.toStringAsFixed(0),
+      text: widget.initialContext.maxContextLength.toString(),
     );
     _summaryThresholdController = TextEditingController(
       text: widget.initialSummary.summaryTokenThreshold.toString(),

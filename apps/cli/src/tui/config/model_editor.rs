@@ -98,7 +98,7 @@ impl EditorState {
             direct_image: config.capabilities.directImage,
             direct_audio: config.capabilities.directAudio,
             direct_video: config.capabilities.directVideo,
-            max_context_length: format!("{:.0}", config.context.maxContextLength),
+            max_context_length: config.context.maxContextLength.to_string(),
             enable_max_context_mode: config.context.enableMaxContextMode,
             enable_summary: config.summary.enableSummary,
             summary_token_threshold: format!("{:.0}", config.summary.summaryTokenThreshold),
