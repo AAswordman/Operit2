@@ -991,10 +991,19 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (mounted && _currentChatId == queueChatId) {
       _inputFocusNode.unfocus();
     }
-    await _viewModel.sendUserMessage(
-      queuedText.trim(),
-      chatIdOverride: queueChatId,
-    );
+    try {
+      await _viewModel.sendUserMessage(
+        queuedText.trim(),
+        chatIdOverride: queueChatId,
+      );
+    } catch (_) {
+      // Core rejects only input that has not entered history.
+      if (cancelCurrentConversation) {
+        await _viewModel.clearPendingQueueAutoDequeueSuppression(queueChatId);
+      }
+      await _viewModel.restorePendingQueueMessage(chatId: queueChatId, message: item);
+      rethrow;
+    }
   }
 
   /// Persists the pending-queue expanded state through the chat runtime.

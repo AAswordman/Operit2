@@ -136,7 +136,12 @@ class ChatViewModel {
     );
     debugPrint('Chat send accepted chatId=${chatIdOverride ?? 'current'}');
     if (attachments.isNotEmpty) {
-      await _chat.clearAttachments();
+      try {
+        await _chat.clearAttachments();
+      } catch (error, stackTrace) {
+        // Core already accepted the input; do not put it back in the queue.
+        debugPrint('Failed to clear accepted attachments: $error\n$stackTrace');
+      }
     }
   }
 

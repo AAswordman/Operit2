@@ -445,7 +445,7 @@ impl ChatServiceCore {
         attachments: Vec<AttachmentInfo>,
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
-    ) {
+    ) -> Result<(), String> {
         let hookChatId = match chatIdOverride.as_ref() {
             Some(chatId) => chatId.clone(),
             None => self
@@ -479,7 +479,7 @@ impl ChatServiceCore {
                         if let Some(message) = decision.message {
                             self.messageProcessingDelegate.showToast(message);
                         }
-                        return;
+                        return Ok(());
                     }
                     CHAT_INPUT_SUBMIT_ACTION_REPLACE | CHAT_INPUT_SUBMIT_ACTION_ALLOW => {
                         if let Some(message) = decision.message {
@@ -504,12 +504,12 @@ impl ChatServiceCore {
         if self.enhancedAiService.is_some() && self.messageCoordinationDelegate.is_some() {
             self.markPendingQueueBlocked(&hookChatId);
         }
-        if let Some(mut service) = self.newEnhancedAiServiceForChat(&hookChatId) {
+        let result = if let Some(mut service) = self.newEnhancedAiServiceForChat(&hookChatId) {
             if let Some(delegate) = self.messageCoordinationDelegate.as_mut() {
                 delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
                 delegate.messageProcessingDelegate =
                     self.messageProcessingDelegate.clone_for_core();
-                delegate
+                let result = delegate
                     .sendUserMessage(
                         &mut service,
                         promptFunctionType,
@@ -527,12 +527,30 @@ impl ChatServiceCore {
                 self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
                 self.messageProcessingDelegate =
                     delegate.messageProcessingDelegate.clone_for_core();
+                result
+            } else {
+                Err("MessageCoordinationDelegate is not initialized".to_string())
+            }
+        } else {
+            Err("EnhancedAIService is not initialized".to_string())
+        };
+        if result.is_err() {
+            // Input was rejected before it entered history. Do not let the Error
+            // state re-arm the same pending item (or the next one) for auto-send.
+            // Pause before returning over the bridge; the editor can then restore
+            // the item without an intervening ready snapshot taking another item.
+            let mut queueStateByChatId = self.pendingQueueStateFlow().value();
+            if let Some(queueState) = queueStateByChatId.get_mut(&hookChatId) {
+                queueState.wasBlocked = false;
+                queueState.suppressNextAutoDequeue = false;
+                self.pendingQueueStateFlow().set_value(queueStateByChatId);
             }
         }
         AppLogger::i(
             "ChatServiceCore",
             &format!("send scheduled chatId={hookChatId}"),
         );
+        result
     }
 
     /// Resumes an AI round on the CoreNode that already owns the chat Binding.
@@ -575,7 +593,7 @@ impl ChatServiceCore {
         let runtimeChatHistory = self
             .chatHistoryDelegate
             .getRuntimeChatHistory(chatId.clone());
-        delegate
+        let result = delegate
             .sendMessageInternal(
                 &mut service,
                 PromptFunctionType::CHAT,
@@ -599,7 +617,7 @@ impl ChatServiceCore {
             .await;
         self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
         self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
-        Ok(())
+        result
     }
 
     /// Resumes a route continuation using the context transported with the route change.
@@ -632,7 +650,7 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.switchChat(chatId.clone(), false);
         delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
         delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
-        delegate
+        let result = delegate
             .sendMessageInternal(
                 &mut service,
                 resumeContext.promptFunctionType,
@@ -656,7 +674,7 @@ impl ChatServiceCore {
             .await;
         self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
         self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
-        Ok(())
+        result
     }
 
     /// Marks the source chat as paused while route synchronization is in progress.
@@ -1346,8 +1364,8 @@ impl ChatServiceCore {
             None,
             ChatTurnOptions::default(),
         )
-        .await;
-        true
+        .await
+        .is_ok()
     }
 
     /// Regenerates one AI message in place while preserving the surrounding chat history.

@@ -342,6 +342,13 @@ pub struct SendUserMessageProcessingResult {
     pub nextWindowSize: Option<i64>,
 }
 
+/// Distinguishes rejection before accepting the input from an AI failure afterwards.
+#[derive(Debug)]
+pub struct SendUserMessageProcessingFailure {
+    pub error: operit_providers::chat::llmprovider::AIService::AiServiceError,
+    pub userMessagePersisted: bool,
+}
+
 /// Request data used to regenerate one AI message variant.
 pub struct RegenerateAiMessageVariantRequest<'a> {
     pub enhancedAiService: &'a mut EnhancedAIService,
@@ -1230,7 +1237,7 @@ impl MessageProcessingDelegate {
         mut request: SendUserMessageProcessingRequest<'_>,
     ) -> Result<
         SendUserMessageProcessingResult,
-        operit_providers::chat::llmprovider::AIService::AiServiceError,
+        SendUserMessageProcessingFailure,
     > {
         let chatId = request.chatId.clone();
         let originalMessageText = request.messageText.trim().to_string();
@@ -1292,7 +1299,9 @@ impl MessageProcessingDelegate {
                             },
                         );
                     }
-                    return Err(error);
+                    return Err(SendUserMessageProcessingFailure {
+                        error, userMessagePersisted: false,
+                    });
                 }
             };
         let shouldAddUserMessageToChat = request.turnOptions.persistTurn
@@ -1485,7 +1494,9 @@ impl MessageProcessingDelegate {
                         },
                     );
                 }
-                return Err(error);
+                return Err(SendUserMessageProcessingFailure {
+                    error, userMessagePersisted: userMessageAdded,
+                });
             }
         };
         let sharedResponseStream = completionStream.clone();
@@ -2031,9 +2042,11 @@ impl MessageProcessingDelegate {
                 }),
             )
             .map_err(|error| {
-                operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
-                    error.to_string(),
-                )
+                let message = error.to_string();
+                SendUserMessageProcessingFailure {
+                    error: operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(message),
+                    userMessagePersisted: userMessageAdded,
+                }
             })?;
         Ok(SendUserMessageProcessingResult {
             aiMessage,
@@ -2081,7 +2094,8 @@ impl MessageProcessingDelegate {
                     ..ChatTurnOptions::default()
                 },
             })
-            .await?;
+            .await
+            .map_err(|failure| failure.error)?;
         Ok(ChatMessage {
             timestamp: targetMessageTimestamp,
             ..result.aiMessage

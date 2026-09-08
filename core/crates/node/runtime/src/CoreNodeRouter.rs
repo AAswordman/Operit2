@@ -3792,7 +3792,8 @@ mod tests {
                     None,
                     ChatTurnOptions::default(),
                 )
-                .await;
+                .await
+                .expect("routed send must be accepted");
         }
 
         assert_eq!(target.callCount.load(Ordering::SeqCst), 1);
