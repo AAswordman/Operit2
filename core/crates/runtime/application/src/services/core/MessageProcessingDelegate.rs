@@ -2031,9 +2031,19 @@ impl MessageProcessingDelegate {
                 }),
             )
             .map_err(|error| {
-                operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
-                    error.to_string(),
-                )
+                let message = error.to_string();
+                sharedResponseStream.close();
+                if let Some(session) = workspaceToolHookSession.as_ref() {
+                    workspaceToolHookHandler.removeToolHook(session.hookId());
+                    session.close();
+                }
+                if self.cleanupRuntimeAfterTurn(chatId.clone(), turnId) {
+                    self.finishChatExecutionForTurn(
+                        chatId.clone(), turnId,
+                        InputProcessingState::Error { message: message.clone() },
+                    );
+                }
+                operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(message)
             })?;
         Ok(SendUserMessageProcessingResult {
             aiMessage,
