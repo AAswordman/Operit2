@@ -1568,7 +1568,7 @@ fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand
         nativeLibraryDir.to_string_lossy(),
         runtimeDir.to_string_lossy()
     );
-    let commandText = r#"cd "$OPERIT_WORKING_DIR" && while true; do __operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status"; IFS= read -r __operit_command || exit 0; eval "$__operit_command"; done"#;
+    let commandText = r#"cd "$OPERIT_WORKING_DIR" || exit; __operit_status=0; while true; do printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status"; IFS= read -r __operit_command || exit 0; eval "$__operit_command"; __operit_status=$?; done"#;
     let shell = Path::new("/system/bin/sh");
     let argv = vec![cstringPath(shell)?, cstring("-c")?, cstring(commandText)?];
     let envp = vec![
