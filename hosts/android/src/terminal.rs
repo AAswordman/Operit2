@@ -50,6 +50,7 @@ extern "C" {
 #[derive(Clone, Default)]
 pub struct AndroidTerminalHost {
     state: Arc<Mutex<AndroidTerminalState>>,
+    sessionCreation: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]
@@ -292,6 +293,8 @@ impl TerminalHost for AndroidTerminalHost {
     }
 
     fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo> {
+        let _creation = self.sessionCreation.lock()
+            .map_err(|_| HostError::new("android terminal session creation mutex poisoned"))?;
         let normalizedSessionName = nonBlank(sessionName, "session_name")?;
         let normalizedTerminalType = PRIMARY_TERMINAL_TYPE.to_string();
         let key = sessionKey(&normalizedTerminalType, &normalizedSessionName);
@@ -506,6 +509,8 @@ fn hiddenAndroidPtySessionId(
     executorLabel: &str,
     terminalType: &str,
 ) -> HostResult<String> {
+    let _creation = host.sessionCreation.lock()
+        .map_err(|_| HostError::new("android terminal session creation mutex poisoned"))?;
     {
         let mut state = host.lockState()?;
         if let Some(sessionId) = state.hiddenExecutorKeyToSessionId.get(executorKey).cloned() {
