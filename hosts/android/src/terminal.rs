@@ -1685,6 +1685,12 @@ fn forkPtyExecve(
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
+        // Build allocations before fork. Another application thread may own
+        // the allocator lock when forkpty creates the single-threaded child.
+        let mut argv = command.argv.iter().map(|item| item.as_ptr()).collect::<Vec<_>>();
+        argv.push(ptr::null());
+        let mut envp = command.envp.iter().map(|item| item.as_ptr()).collect::<Vec<_>>();
+        envp.push(ptr::null());
         let pid =
             unsafe { libc::forkpty(&mut masterFd, ptr::null_mut(), &mut termios, &mut winsize) };
         if pid < 0 {
@@ -1701,19 +1707,8 @@ fn forkPtyExecve(
                     );
                     libc::_exit(1);
                 }
-                let mut argv = command
-                    .argv
-                    .iter()
-                    .map(|item| item.as_ptr())
-                    .collect::<Vec<_>>();
-                argv.push(ptr::null());
-                let mut envp = command
-                    .envp
-                    .iter()
-                    .map(|item| item.as_ptr())
-                    .collect::<Vec<_>>();
-                envp.push(ptr::null());
                 libc::execve(command.executable.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                // exec failed; report with async-signal-safe syscalls only.
                 libc::write(
                     libc::STDERR_FILENO,
                     b"execve failed\n".as_ptr().cast(),
