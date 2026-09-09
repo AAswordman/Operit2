@@ -148,11 +148,14 @@ impl AndroidTerminalHost {
     }
 
     pub fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
-        let state = self.lockState()?;
-        let session = state.ptySessions.get(sessionId).ok_or_else(|| {
-            HostError::new(format!("Android PTY session does not exist: {sessionId}"))
-        })?;
-        writeAndroidPtyBytes(&session.writer, data)
+        let writer = {
+            let state = self.lockState()?;
+            state.ptySessions.get(sessionId).ok_or_else(|| {
+                HostError::new(format!("Android PTY session does not exist: {sessionId}"))
+            })?.writer.clone()
+        };
+        // Backpressure in one PTY must not block closing it or using another.
+        writeAndroidPtyBytes(&writer, data)
     }
 
     pub fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
@@ -427,15 +430,14 @@ impl TerminalHost for AndroidTerminalHost {
                 "At least one of input or control is required",
             ));
         }
-        let mut state = self.lockState()?;
-        let session = state
-            .ptySessions
-            .get_mut(&normalizedSessionId)
-            .ok_or_else(|| {
+        let writer = {
+            let state = self.lockState()?;
+            state.ptySessions.get(&normalizedSessionId).ok_or_else(|| {
                 HostError::new(format!("Terminal session does not exist: {sessionId}"))
-            })?;
+            })?.writer.clone()
+        };
         let acceptedChars =
-            applyAndroidPtyTerminalInput(session, input, control.and_then(normalizeControl))?;
+            applyAndroidPtyTerminalInput(&writer, input, control.and_then(normalizeControl))?;
         Ok(TerminalInputOutput {
             sessionId: normalizedSessionId,
             acceptedChars,
@@ -1253,10 +1255,32 @@ fn parseAndroidExitCode(exitCodeText: &str) -> HostResult<i32> {
 }
 
 fn writeAndroidPtyBytes(writer: &Arc<Mutex<RawFd>>, data: &[u8]) -> HostResult<usize> {
-    let fd = *writer
-        .lock()
-        .map_err(|_| HostError::new("android pty writer mutex poisoned"))?;
-    writePtyFd(fd, data)
+    let mut written = 0;
+    let mut progressAt = Instant::now();
+    while written < data.len() {
+        let count = {
+            let fd = writer.lock()
+                .map_err(|_| HostError::new("android pty writer mutex poisoned"))?;
+            if *fd < 0 {
+                return Err(HostError::new("Android PTY session is closed"));
+            }
+            // The fd is nonblocking. Release ownership between attempts so the
+            // reader can drain output while the child is blocked printing it.
+            writePtyFd(*fd, &data[written..])?
+        };
+        if count > 0 {
+            written += count;
+            progressAt = Instant::now();
+        } else {
+            if progressAt.elapsed() >= Duration::from_secs(5) {
+                return Err(HostError::new(format!(
+                    "Android PTY stopped accepting input ({written}/{} bytes written)", data.len()
+                )));
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    Ok(written)
 }
 
 fn closeAndroidPtyProcess(pid: AndroidPid, fd: RawFd) {
@@ -1276,13 +1300,13 @@ fn closeAndroidPtyProcess(pid: AndroidPid, fd: RawFd) {
 }
 
 fn applyAndroidPtyTerminalInput(
-    session: &mut AndroidPtySession,
+    writer: &Arc<Mutex<RawFd>>,
     input: Option<&str>,
     control: Option<&str>,
 ) -> HostResult<usize> {
     let mut acceptedChars = 0;
     if let Some(input) = input {
-        writeAndroidPtyBytes(&session.writer, input.as_bytes())?;
+        writeAndroidPtyBytes(writer, input.as_bytes())?;
         acceptedChars += input.chars().count();
     }
     if let Some(control) = control {
@@ -1290,7 +1314,7 @@ fn applyAndroidPtyTerminalInput(
             "enter" => "\r".to_string(),
             value => controlToSequence(value, input)?,
         };
-        writeAndroidPtyBytes(&session.writer, sequence.as_bytes())?;
+        writeAndroidPtyBytes(writer, sequence.as_bytes())?;
         acceptedChars += sequence.chars().count();
     }
     Ok(acceptedChars)
@@ -1722,6 +1746,14 @@ fn forkPtyExecve(
                 libc::_exit(1);
             }
         }
+        // A blocking master write while holding the fd mutex also blocks the
+        // sole reader. A child printing before reading then deadlocks both ends.
+        let flags = unsafe { libc::fcntl(masterFd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(masterFd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            let error = std::io::Error::last_os_error();
+            closeAndroidPtyProcess(pid, masterFd);
+            return Err(HostError::new(format!("Unable to configure Android PTY: {error}")));
+        }
         Ok((pid, masterFd))
     }
 }
@@ -1775,8 +1807,12 @@ fn readPtyFd(fd: RawFd) -> HostResult<Vec<u8>> {
         let mut output = vec![0u8; available as usize];
         let count = unsafe { libc::read(fd, output.as_mut_ptr().cast(), output.len()) };
         if count < 0 {
-            androidLogError(&format!("read failed fd={fd} available={available}"));
-            return Err(HostError::new("read failed for Android PTY"));
+            let error = std::io::Error::last_os_error();
+            if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) {
+                return Ok(Vec::new());
+            }
+            androidLogError(&format!("read failed fd={fd} available={available}: {error}"));
+            return Err(HostError::new(format!("read failed for Android PTY: {error}")));
         }
         output.truncate(count as usize);
         Ok(output)
@@ -1796,8 +1832,12 @@ fn writePtyFd(fd: RawFd, data: &[u8]) -> HostResult<usize> {
     {
         let count = unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) };
         if count < 0 {
-            androidLogError(&format!("write failed fd={fd} bytes={}", data.len()));
-            return Err(HostError::new("write failed for Android PTY"));
+            let error = std::io::Error::last_os_error();
+            if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) {
+                return Ok(0);
+            }
+            androidLogError(&format!("write failed fd={fd} bytes={}: {error}", data.len()));
+            return Err(HostError::new(format!("write failed for Android PTY: {error}")));
         }
         Ok(count as usize)
     }
