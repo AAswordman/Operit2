@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::ffi::CString;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -342,7 +342,7 @@ impl TerminalHost for AndroidTerminalHost {
     ) -> HostResult<TerminalCommandOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let normalizedCommand = nonBlank(command, "command")?;
-        let (terminalType, commandOutput, writer) = {
+        let (terminalType, commandOutput, writer, script) = {
             let mut state = self.lockState()?;
             let session = state
                 .ptySessions
@@ -350,18 +350,23 @@ impl TerminalHost for AndroidTerminalHost {
                 .ok_or_else(|| {
                     HostError::new(format!("Terminal session does not exist: {sessionId}"))
                 })?;
+            // Prepare before marking the session running so file errors leave it idle.
+            let script =
+                AndroidTerminalCommandScript::prepare(&session.terminalType, &normalizedCommand)?;
             session.commandRunning = true;
             clearAndroidPtyCommandOutput(&session.commandOutput)?;
             (
                 session.terminalType.clone(),
                 session.commandOutput.clone(),
                 session.writer.clone(),
+                script,
             )
         };
-        let commandInput = format!("{normalizedCommand}\r");
+        // Submit one shell command so intermediate script lines cannot publish prompts.
+        let commandInput = format!("{}\r", script.shellCommand);
         writeAndroidPtyBytes(&writer, commandInput.as_bytes())?;
         let result =
-            executeAndroidPtyCommandInSession(commandOutput, &normalizedCommand, timeoutMs)?;
+            executeAndroidPtyCommandInSession(commandOutput, &script.shellCommand, timeoutMs)?;
         {
             let mut state = self.lockState()?;
             if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
@@ -490,6 +495,37 @@ impl TerminalHost for AndroidTerminalHost {
             content,
             commandRunning: session.commandRunning,
         })
+    }
+}
+
+struct AndroidTerminalCommandScript {
+    path: PathBuf,
+    shellCommand: String,
+}
+
+impl AndroidTerminalCommandScript {
+    fn prepare(terminalType: &str, command: &str) -> HostResult<Self> {
+        let name = format!("operit-command-{}.sh", Uuid::new_v4());
+        let (directory, shellPath) = if terminalType == "bash" {
+            (requiredAndroidRuntimePath("OPERIT_ANDROID_ROOTFS_DIR")?.join("tmp"), format!("/tmp/{name}"))
+        } else {
+            let directory = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
+            let shellPath = directory.join(&name).to_string_lossy().into_owned();
+            (directory, shellPath)
+        };
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join(name);
+        std::fs::write(&path, command.as_bytes())?;
+        Ok(Self {
+            path,
+            shellCommand: format!(". '{}'", shellPath.replace('\'', r#"'"'"'"#)),
+        })
+    }
+}
+
+impl Drop for AndroidTerminalCommandScript {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
