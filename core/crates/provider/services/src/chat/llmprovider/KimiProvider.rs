@@ -46,12 +46,6 @@ impl KimiProvider {
         let Some(object) = body.as_object_mut() else {
             return Ok(body);
         };
-        object.insert(
-            "thinking".to_string(),
-            json!({
-                "type": if request.enable_thinking { "enabled" } else { "disabled" }
-            }),
-        );
         if request.enable_thinking {
             let useToolCall = self.inner.enable_tool_call && !request.available_tools.is_empty();
             let providerReadyHistory = self

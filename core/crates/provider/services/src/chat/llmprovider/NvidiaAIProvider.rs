@@ -42,19 +42,6 @@ impl NvidiaAIProvider {
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
         let mut body = self.inner.create_request_body(request)?;
-        if let Value::Object(object) = &mut body {
-            object.insert(
-                "chat_template_kwargs".to_string(),
-                serde_json::json!({ "enable_thinking": request.enable_thinking }),
-            );
-            let model_name_lower = self.inner.model_name.to_lowercase();
-            if request.enable_thinking
-                && model_name_lower.contains("gpt-oss")
-                && !object.contains_key("reasoning_effort")
-            {
-                object.insert("reasoning_effort".to_string(), serde_json::json!("medium"));
-            }
-        }
         Ok(body)
     }
 }

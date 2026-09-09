@@ -1,14 +1,15 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
-use serde_json::{Map, Value, json};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
-    AIService, AiServiceError, SendMessageRequest, TokenCounts, response_stream_from_chunks,
-    retry_error_text, retry_message,
+    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
+    SendMessageRequest, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
@@ -16,11 +17,11 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
-use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::stream::RevisableTextStream::{
-    RevisableTextStreamLike, empty_revisable_event_channel, with_event_channel,
+    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
 };
 use operit_util::stream::Stream::FnStream;
+use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 
 #[derive(Clone)]
 pub struct ClaudeProvider {
@@ -165,10 +166,23 @@ impl ClaudeProvider {
                 self.build_tool_definitions_for_claude(&request.available_tools)?,
             );
         }
-        self.add_parameters(&mut object, &request.model_parameters);
-        self.apply_thinking_format(&mut object, request);
-        self.apply_stable_cache_breakpoints(&mut object);
-        Ok(Value::Object(object))
+        let mut request_object = Value::Object(object);
+        ThinkingConfigurationApplier::apply(
+            &mut request_object,
+            &self.provider_type,
+            &self.model_name,
+            &self.api_endpoint,
+            request.enable_thinking,
+            request.thinking_quality_level,
+            &request.thinking_configurations,
+            &request.thinking_option_id,
+        )?;
+        let object = request_object
+            .as_object_mut()
+            .expect("thinking request remains an object");
+        self.add_parameters(object, &request.model_parameters);
+        self.apply_stable_cache_breakpoints(object);
+        Ok(request_object)
     }
 
     pub fn build_messages_and_count_tokens(
@@ -1310,12 +1324,10 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0]["type"], "image");
         assert_eq!(blocks[0]["source"]["media_type"], "image/png");
-        assert!(
-            !blocks[0]["source"]["data"]
-                .as_str()
-                .unwrap_or_default()
-                .is_empty()
-        );
+        assert!(!blocks[0]["source"]["data"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty());
         assert_eq!(blocks[1]["text"], "look");
     }
 }

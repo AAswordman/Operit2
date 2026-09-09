@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:operit2/core/browser/BrowserSessions.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
+import 'package:operit2/core/host/browser/RuntimeBrowserSessionRegistry.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
@@ -57,6 +58,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   static final GeneratedCoreProxyClients _coreClients =
       GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
   final BrowserSessions _browserSessions = BrowserSessions();
+  final RuntimeBrowserSessionRegistry _browserSessionRegistry =
+      RuntimeBrowserSessionRegistry.instance;
   final WorkspaceBrowserViewStore _browserViewStore =
       WorkspaceBrowserViewStore.instance;
   final WorkspaceWebVisitSessionRegistry _webVisitSessionRegistry =
@@ -77,6 +80,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
       const <WorkspaceTerminalSessionInfo>[];
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
+  final ValueNotifier<int> _browserSessionCount = ValueNotifier<int>(0);
   StreamSubscription<List<WorkspaceTerminalSessionInfo>>?
   _terminalSessionSubscription;
 
@@ -84,7 +88,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   void initState() {
     super.initState();
     unawaited(_browserViewStore.ensureLoaded());
+    _browserSessionRegistry.addListener(_handleBrowserSessionRegistryChanged);
+    _handleBrowserSessionRegistryChanged();
     _registerWebVisitControls();
+    unawaited(_refreshTerminalSessionEntries());
     _terminalSessionSubscription = _terminalSessions.watchSessions().listen(
       (sessions) {
         if (!mounted) {
@@ -110,6 +117,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void dispose() {
     _webVisitSessionRegistry.clearControls();
+    _browserSessionRegistry.removeListener(
+      _handleBrowserSessionRegistryChanged,
+    );
     for (final entry in _webVisitCompleters.entries) {
       final completer = entry.value;
       if (!completer.isCompleted) {
@@ -125,6 +135,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _webVisitCompleters.clear();
     unawaited(_terminalSessionSubscription?.cancel());
     _terminalSessionCount.dispose();
+    _browserSessionCount.dispose();
     super.dispose();
   }
 
@@ -292,7 +303,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       tab: tab,
       workspacePath: widget.workspacePath,
       terminalSessionCountListenable: _terminalSessionCount,
-      browserSessionCountListenable: _browserViewStore.sessionCount,
+      browserSessionCountListenable: _browserSessionCount,
       onListWorkspaceFiles: widget.onListWorkspaceFiles,
       onListWorkspaceBindingDirectories:
           widget.onListWorkspaceBindingDirectories,
@@ -646,6 +657,20 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   ) {
     _terminalSessionEntries = sessions;
     _terminalSessionCount.value = sessions.length;
+  }
+
+  /// Updates terminal session entries from the runtime snapshot.
+  Future<void> _refreshTerminalSessionEntries() async {
+    final sessions = await _terminalSessions.listSessions();
+    if (!mounted) {
+      return;
+    }
+    _updateTerminalSessionEntries(sessions);
+  }
+
+  /// Updates the browser session counter from the owner registry.
+  void _handleBrowserSessionRegistryChanged() {
+    _browserSessionCount.value = _browserSessionRegistry.sessions.length;
   }
 
   void _removeTerminalTabsForSession(String sessionId) {

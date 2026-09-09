@@ -1478,6 +1478,13 @@ impl EnhancedAIService {
                     chat_history: requestHistory.clone(),
                     model_parameters: modelParameters.clone(),
                     enable_thinking: enableThinking,
+                    thinking_quality_level: self
+                        .provider_runtime_context
+                        .support()
+                        .thinkingQualityLevel()
+                        .map_err(AiServiceError::RequestFailed)?,
+                    thinking_configurations: runtime.modelConfig.thinkingConfigurations.clone(),
+                    thinking_option_id: runtime.modelConfig.thinkingOptionId.clone(),
                     stream,
                     available_tools: availableTools.clone(),
                     preserve_think_in_history: false,
@@ -2008,6 +2015,13 @@ impl EnhancedAIService {
                     chat_history: currentChatHistory,
                     model_parameters: modelParameters,
                     enable_thinking: enableThinking,
+                    thinking_quality_level: self
+                        .provider_runtime_context
+                        .support()
+                        .thinkingQualityLevel()
+                        .map_err(AiServiceError::RequestFailed)?,
+                    thinking_configurations: runtime.modelConfig.thinkingConfigurations.clone(),
+                    thinking_option_id: runtime.modelConfig.thinkingOptionId.clone(),
                     stream,
                     available_tools: availableTools,
                     preserve_think_in_history: false,

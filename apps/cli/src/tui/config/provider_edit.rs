@@ -44,10 +44,13 @@ pub(crate) struct FormState {
     pub(crate) type_selector_filtered: Vec<usize>,
 }
 
+/// Returns every built-in provider type name shown by the selector.
 fn all_provider_type_names() -> Vec<String> {
     let variants = [
         ApiProviderType::OPENAI,
+        ApiProviderType::XAI,
         ApiProviderType::OPENAI_RESPONSES,
+        ApiProviderType::OPENAI_CODEX,
         ApiProviderType::OPENAI_RESPONSES_GENERIC,
         ApiProviderType::OPENAI_GENERIC,
         ApiProviderType::ANTHROPIC,
@@ -66,6 +69,7 @@ fn all_provider_type_names() -> Vec<String> {
         ApiProviderType::SILICONFLOW,
         ApiProviderType::IFLOW,
         ApiProviderType::OPENROUTER,
+        ApiProviderType::OPENCODE,
         ApiProviderType::FOUR_ROUTER,
         ApiProviderType::NOUS_PORTAL,
         ApiProviderType::INFINIAI,
@@ -78,6 +82,7 @@ fn all_provider_type_names() -> Vec<String> {
         ApiProviderType::LOCAL_MODEL,
         ApiProviderType::PPINFRA,
         ApiProviderType::NOVITA,
+        ApiProviderType::MINIMAX,
         ApiProviderType::OTHER,
     ];
     variants.iter().map(|v| v.name().to_string()).collect()

@@ -42,14 +42,6 @@ impl DoubaoAIProvider {
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
         let mut body = self.inner.create_request_body(request)?;
-        if let Value::Object(object) = &mut body {
-            object.insert(
-                "thinking".to_string(),
-                serde_json::json!({
-                    "type": if request.enable_thinking { "enabled" } else { "disabled" }
-                }),
-            );
-        }
         Ok(body)
     }
 }

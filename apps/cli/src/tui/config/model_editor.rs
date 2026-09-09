@@ -24,6 +24,8 @@ pub(crate) enum MainFocus {
     EnableSummary,
     SummaryDetails,
     StructuredTools,
+    ThinkingConfigurations,
+    ThinkingOption,
     BuiltinTool(usize),
 }
 
@@ -71,6 +73,11 @@ pub(crate) struct EditorState {
     // Request
     pub(crate) supports_structured_tools: bool,
 
+    // Thinking
+    pub(crate) thinking_configurations: String,
+    pub(crate) thinking_option_id: String,
+    pub(crate) thinking_options: Vec<String>,
+
     // UI state
     pub(crate) level: EditorLevel,
     pub(crate) focus_index: usize,
@@ -109,6 +116,9 @@ impl EditorState {
             ),
             builtin_tools: config.builtinTools.clone(),
             supports_structured_tools: config.request.supportsStructuredTools,
+            thinking_configurations: config.thinkingConfigurations.clone(),
+            thinking_option_id: config.thinkingOptionId.clone(),
+            thinking_options: Vec::new(),
             level: EditorLevel::Main,
             focus_index: 0,
             editing_field: false,
@@ -131,6 +141,8 @@ impl EditorState {
             items.push(MainFocus::SummaryDetails);
         }
         items.push(MainFocus::StructuredTools);
+        items.push(MainFocus::ThinkingConfigurations);
+        items.push(MainFocus::ThinkingOption);
         items.extend((0..self.builtin_tools.len()).map(MainFocus::BuiltinTool));
         items
     }
@@ -189,6 +201,8 @@ impl EditorState {
                     .unwrap_or(10),
             },
             builtin_tools: self.builtin_tools.clone(),
+            thinking_configurations: self.thinking_configurations.clone(),
+            thinking_option_id: self.thinking_option_id.clone(),
         }
     }
 
@@ -227,6 +241,29 @@ impl EditorState {
             text.config_editor_tool_call(),
             self.tool_call,
             text,
+        );
+
+        items.push(ListItem::new(vec![Line::from(Span::styled(
+            "── Thinking ──",
+            Style::default().fg(theme::ACCENT_DIM),
+        ))]));
+        self.push_edit_item(
+            &mut items,
+            MainFocus::ThinkingOption,
+            "Thinking option",
+            &self.thinking_option_id,
+        );
+        if !self.thinking_options.is_empty() {
+            items.push(ListItem::new(vec![Line::from(Span::styled(
+                format!("Available options: {}", self.thinking_options.join(", ")),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ))]));
+        }
+        self.push_edit_item(
+            &mut items,
+            MainFocus::ThinkingConfigurations,
+            "Thinking rules JSON",
+            &self.thinking_configurations,
         );
         self.push_toggle_item(
             &mut items,
@@ -617,4 +654,6 @@ pub(crate) struct EditorChanges {
     pub(crate) request: ModelRequestSpec,
     pub(crate) summary: ModelSummarySettings,
     pub(crate) builtin_tools: Vec<ModelBuiltinTool>,
+    pub(crate) thinking_configurations: String,
+    pub(crate) thinking_option_id: String,
 }

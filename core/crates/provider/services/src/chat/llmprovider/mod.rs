@@ -58,6 +58,8 @@ pub mod RequestConcurrencyRegistry;
 pub mod SlidingWindowRateLimiter;
 #[path = "StructuredToolCallBridge.rs"]
 pub mod StructuredToolCallBridge;
+#[path = "ThinkingConfiguration.rs"]
+pub mod ThinkingConfiguration;
 #[path = "ToolPkgJsAiProviderService.rs"]
 pub mod ToolPkgJsAiProviderService;
 #[path = "UnsafeModelSsl.rs"]

@@ -1,16 +1,17 @@
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
-use serde_json::{Map, Value, json};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
-    AIService, AiServiceError, SendMessageRequest, SharedAiResponseStream, TokenCounts,
-    response_stream_from_chunks, retry_error_text, retry_message,
+    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
+    SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
@@ -21,13 +22,13 @@ use operit_model::ModelParameter::ModelParameter;
 use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
+use operit_util::stream::RevisableTextStream::{
+    RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
+};
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
 use operit_util::TokenCacheManager::TokenCacheManager;
-use operit_util::stream::RevisableTextStream::{
-    RevisableTextStreamLike, TextStreamEvent, TextStreamEventType,
-};
 
 const PROVIDER_TRANSPORT_LOG_TAG: &str = "ProviderTransport";
 
@@ -645,7 +646,22 @@ impl OpenAIProvider {
         json_object.insert("model".to_string(), json!(self.model_name));
         json_object.insert("stream".to_string(), json!(request.stream));
 
-        self.apply_model_parameters(&mut json_object, &request.model_parameters);
+        let mut request_object = Value::Object(json_object);
+        ThinkingConfigurationApplier::apply(
+            &mut request_object,
+            &self.provider_type,
+            &self.model_name,
+            &self.api_endpoint,
+            request.enable_thinking,
+            request.thinking_quality_level,
+            &request.thinking_configurations,
+            &request.thinking_option_id,
+        )?;
+        let json_object = request_object
+            .as_object_mut()
+            .expect("thinking request remains an object");
+
+        self.apply_model_parameters(json_object, &request.model_parameters);
 
         let effectiveEnableToolCall = self.enable_tool_call && !request.available_tools.is_empty();
         let mut toolsJson = None;
@@ -664,9 +680,9 @@ impl OpenAIProvider {
         )?;
         json_object.insert("messages".to_string(), messagesArray);
 
-        self.customize_final_request_object(&mut json_object);
+        self.customize_final_request_object(json_object);
 
-        Ok(Value::Object(json_object))
+        Ok(request_object)
     }
 
     pub fn customize_final_request_object(&self, _request_object: &mut Map<String, Value>) {}
@@ -1420,11 +1436,9 @@ impl OpenAIProvider {
             if let Some(object) = normalized.as_object_mut() {
                 object.insert(
                     "type".to_string(),
-                    json!(
-                        eventType
-                            .trim_start_matches("response.")
-                            .replace("image_generation_call.", "image_generation.")
-                    ),
+                    json!(eventType
+                        .trim_start_matches("response.")
+                        .replace("image_generation_call.", "image_generation.")),
                 );
             }
             normalizedStorage = normalized;
@@ -2144,7 +2158,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        OpenAIProvider, StreamingState, TokenCounts, ToolCallState, takeNextStreamingLine,
+        takeNextStreamingLine, OpenAIProvider, StreamingState, TokenCounts, ToolCallState,
     };
     use crate::chat::llmprovider::AIService::SendMessageRequest;
     use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
@@ -2209,6 +2223,9 @@ mod tests {
             chat_history,
             model_parameters: Vec::new(),
             enable_thinking: false,
+            thinking_quality_level: 1,
+            thinking_configurations: "[]".to_string(),
+            thinking_option_id: String::new(),
             stream: false,
             available_tools: Vec::new(),
             preserve_think_in_history: false,
@@ -2242,12 +2259,10 @@ mod tests {
             .and_then(serde_json::Value::as_array)
             .expect("user content must be an array");
         assert_eq!(content[0]["type"], "image_url");
-        assert!(
-            content[0]["image_url"]["url"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("data:image/png;base64,")
-        );
+        assert!(content[0]["image_url"]["url"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("data:image/png;base64,"));
         assert_eq!(content[1]["text"], "look");
     }
 

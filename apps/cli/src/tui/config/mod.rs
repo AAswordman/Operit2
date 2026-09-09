@@ -729,18 +729,40 @@ impl ConfigUi {
                         .current_model_provider()
                         .map(|p| p.name.clone())
                         .unwrap_or_default();
-                    if let Ok(config) = core
+                    let config = match core
                         .preferences_model_config_manager()
                         .getResolvedModelConfig(&pid, &model.id)
                         .await
                     {
-                        self.state = ConfigState::ModelEditor(model_editor::EditorState::new(
-                            pid,
-                            provider_name,
-                            model.id.clone(),
-                            &config,
-                        ));
-                    }
+                        Ok(config) => config,
+                        Err(error) => {
+                            self.error_message = Some(error.to_string());
+                            return Ok(false);
+                        }
+                    };
+                    let settings = match core
+                        .preferences_model_config_manager()
+                        .getThinkingSettingsForModel(&pid, &model.id)
+                        .await
+                    {
+                        Ok(settings) => settings,
+                        Err(error) => {
+                            self.error_message = Some(error.to_string());
+                            return Ok(false);
+                        }
+                    };
+                    let mut editor = model_editor::EditorState::new(
+                        pid,
+                        provider_name,
+                        model.id.clone(),
+                        &config,
+                    );
+                    editor.thinking_options = settings
+                        .options
+                        .into_iter()
+                        .map(|option| option.id)
+                        .collect();
+                    self.state = ConfigState::ModelEditor(editor);
                 }
             }
             (ConfigState::ModelList { .. }, KC::Char('s')) => {
@@ -988,6 +1010,22 @@ impl ConfigUi {
                         .preferences_model_config_manager()
                         .updateSummaryForModel(&pid, &mid, changes.summary)
                         .await;
+                    match core
+                        .preferences_model_config_manager()
+                        .updateThinkingSettingsForModel(
+                            &pid,
+                            &mid,
+                            changes.thinking_configurations,
+                            changes.thinking_option_id,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(error) => {
+                            self.error_message = Some(error.to_string());
+                            return Ok(false);
+                        }
+                    }
                     if !changes.builtin_tools.is_empty() {
                         let _ = core
                             .preferences_model_config_manager()
@@ -1056,6 +1094,10 @@ impl ConfigUi {
                         Some(model_editor::MainFocus::StructuredTools) => {
                             editor.supports_structured_tools = !editor.supports_structured_tools
                         }
+                        Some(model_editor::MainFocus::ThinkingConfigurations)
+                        | Some(model_editor::MainFocus::ThinkingOption) => {
+                            editor.editing_field = !editor.editing_field
+                        }
                         Some(model_editor::MainFocus::BuiltinTool(index)) => {
                             if let Some(tool) = editor.builtin_tools.get_mut(index) {
                                 tool.enabled = !tool.enabled;
@@ -1095,6 +1137,18 @@ impl ConfigUi {
                             editor.max_context_length.push(c);
                         }
                     }
+                    model_editor::EditorLevel::Main
+                        if editor.focused_main_item()
+                            == Some(model_editor::MainFocus::ThinkingConfigurations) =>
+                    {
+                        editor.thinking_configurations.push(c);
+                    }
+                    model_editor::EditorLevel::Main
+                        if editor.focused_main_item()
+                            == Some(model_editor::MainFocus::ThinkingOption) =>
+                    {
+                        editor.thinking_option_id.push(c);
+                    }
                     model_editor::EditorLevel::Summary => {
                         if c.is_ascii_digit() || c == '.' {
                             match editor.focused_summary_item() {
@@ -1119,6 +1173,18 @@ impl ConfigUi {
                                 == Some(model_editor::MainFocus::MaxContextLength) =>
                         {
                             editor.max_context_length.pop();
+                        }
+                        model_editor::EditorLevel::Main
+                            if editor.focused_main_item()
+                                == Some(model_editor::MainFocus::ThinkingConfigurations) =>
+                        {
+                            editor.thinking_configurations.pop();
+                        }
+                        model_editor::EditorLevel::Main
+                            if editor.focused_main_item()
+                                == Some(model_editor::MainFocus::ThinkingOption) =>
+                        {
+                            editor.thinking_option_id.pop();
                         }
                         model_editor::EditorLevel::Summary => match editor.focused_summary_item() {
                             Some(model_editor::SummaryFocus::TokenThreshold) => {

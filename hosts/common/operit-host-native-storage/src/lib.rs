@@ -86,7 +86,7 @@ impl RuntimeStorageWriteSession for NativeRuntimeStorageWriteSession {
 /// Stages streamed archive uploads in the runtime-private temporary directory.
 #[derive(Clone, Debug)]
 pub struct NativeArchiveStagingHost {
-    runtimeRoot: PathBuf,
+    stagingRoot: PathBuf,
     uploads: Arc<Mutex<HashMap<String, NativeArchiveUpload>>>,
 }
 
@@ -98,17 +98,28 @@ struct NativeArchiveUpload {
 }
 
 impl NativeArchiveStagingHost {
-    /// Creates native archive staging rooted under one runtime data directory.
+    /// Creates native archive staging beside one runtime data directory.
     pub fn new(runtimeRoot: PathBuf) -> Self {
         Self {
-            runtimeRoot,
+            stagingRoot: Self::stagingRootForRuntimeRoot(&runtimeRoot),
             uploads: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
+    /// Resolves the archive staging root owned by one runtime root.
+    fn stagingRootForRuntimeRoot(runtimeRoot: &Path) -> PathBuf {
+        let parent = runtimeRoot
+            .parent()
+            .expect("runtime root must have a parent for archive staging");
+        let name = runtimeRoot
+            .file_name()
+            .expect("runtime root must have a final segment for archive staging");
+        parent.join("archive_staging").join(name)
+    }
+
     /// Returns the private directory containing staged archive files.
     fn stagingRoot(&self) -> PathBuf {
-        self.runtimeRoot.join("temp").join("archive_staging")
+        self.stagingRoot.clone()
     }
 
     /// Validates an opaque archive identifier supplied by the Core API.
@@ -319,12 +330,12 @@ impl RuntimeStorageWriteHost for NativeRuntimeStorageHost {
         let parent = targetPath
             .parent()
             .ok_or_else(|| HostError::new("Runtime storage file has no parent directory"))?;
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(storageFsPath(parent)?)?;
         let temporaryPath = Self::writeTemporaryPath(&targetPath)?;
         let file = fs::OpenOptions::new()
             .create_new(true)
             .write(true)
-            .open(&temporaryPath)?;
+            .open(storageFsPath(&temporaryPath)?)?;
         Ok(Box::new(NativeRuntimeStorageWriteSession {
             targetPath,
             temporaryPath,
@@ -432,8 +443,10 @@ fn atomicReplace(source: &Path, target: &Path) -> HostResult<()> {
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
 
-    let source = widePath(source.as_os_str());
-    let target = widePath(target.as_os_str());
+    let sourcePath = windowsExtendedPath(source)?;
+    let targetPath = windowsExtendedPath(target)?;
+    let source = widePath(sourcePath.as_os_str());
+    let target = widePath(targetPath.as_os_str());
     let result = unsafe {
         MoveFileExW(
             source.as_ptr(),
@@ -445,6 +458,42 @@ fn atomicReplace(source: &Path, target: &Path) -> HostResult<()> {
         return Err(std::io::Error::last_os_error().into());
     }
     Ok(())
+}
+
+/// Converts a storage path into the representation required by local file APIs.
+#[cfg(not(windows))]
+#[allow(non_snake_case)]
+fn storageFsPath(path: &Path) -> HostResult<PathBuf> {
+    Ok(path.to_path_buf())
+}
+
+/// Converts a storage path into extended-length Windows syntax for local file APIs.
+#[cfg(windows)]
+#[allow(non_snake_case)]
+fn storageFsPath(path: &Path) -> HostResult<PathBuf> {
+    windowsExtendedPath(path)
+}
+
+/// Converts one Windows path to extended-length syntax.
+#[cfg(windows)]
+#[allow(non_snake_case)]
+fn windowsExtendedPath(path: &Path) -> HostResult<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let text = absolute.to_string_lossy();
+    if text.starts_with(r"\\?\") || text.starts_with(r"\??\") {
+        return Ok(absolute);
+    }
+    if text.starts_with(r"\\") {
+        return Ok(PathBuf::from(format!(
+            r"\\?\UNC\{}",
+            text.trim_start_matches('\\')
+        )));
+    }
+    Ok(PathBuf::from(format!(r"\\?\{}", text)))
 }
 
 /// Encodes one Windows path as a null-terminated UTF-16 string.
@@ -679,6 +728,7 @@ mod tests {
             std::env::temp_dir().join(format!("operit-archive-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("temporary archive test root must be created");
         let host = NativeArchiveStagingHost::new(root.clone());
+        let stagingRoot = host.stagingRoot();
 
         host.createArchive("archive", 4)
             .expect("archive must be created");
@@ -699,6 +749,7 @@ mod tests {
         host.removeArchive("archive")
             .expect("sealed archive must be removed");
         fs::remove_dir_all(root).expect("temporary archive test root must be removed");
+        fs::remove_dir_all(stagingRoot).expect("temporary archive staging root must be removed");
     }
 
     /// Verifies that native runtime storage appends without rewriting earlier content.

@@ -23,6 +23,10 @@ const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
 const Duration _messageJumpRetryDelay = Duration(milliseconds: 90);
 const Duration _messageJumpSettleDelay = Duration(milliseconds: 280);
 const double _messageJumpPositionTolerance = 2;
+const Duration _bottomFollowMinimumDuration = Duration(milliseconds: 70);
+const Duration _bottomFollowMaximumDuration = Duration(milliseconds: 360);
+const double _bottomFollowPixelsPerSecond = 520;
+const double _bottomFollowPositionTolerance = 1;
 
 class ChatArea extends StatefulWidget {
   const ChatArea({
@@ -130,6 +134,7 @@ class _ChatAreaState extends State<ChatArea> {
   bool _pendingMessageJumpStabilityCheckRequested = false;
   bool _pendingMessageJumpScheduled = false;
   bool _pendingMessageJumpInFlight = false;
+  bool _bottomJumpScheduled = false;
 
   /// Builds the scrollable message area and its navigation overlay.
   @override
@@ -174,6 +179,7 @@ class _ChatAreaState extends State<ChatArea> {
                     itemCount: itemCount,
                     itemBuilder: (context, index) {
                       late final Widget child;
+                      Object? liveBottomStreamKey;
                       if (widget.hasOlderDisplayHistory && index == 0) {
                         child = _DisplayWindowAction(
                           text: 'Load more history',
@@ -191,6 +197,10 @@ class _ChatAreaState extends State<ChatArea> {
                             widget.messages[index - messageStartIndex];
                         final messageIndex = index - messageStartIndex;
                         child = _messageRowFor(messageIndex, message);
+                        if (messageIndex == widget.messages.length - 1 &&
+                            _isStreamingMessage(messageIndex)) {
+                          liveBottomStreamKey = message.contentStream;
+                        }
                       } else if (widget.hasNewerDisplayHistory &&
                           index == messageEndIndex) {
                         child = _DisplayWindowAction(
@@ -223,7 +233,13 @@ class _ChatAreaState extends State<ChatArea> {
                             messageStartIndex,
                             messageEndIndex,
                           ),
-                          child: _ChatAreaContentColumn(child: child),
+                          child: liveBottomStreamKey != null
+                              ? _LiveBottomStreamSizeObserver(
+                                  key: ObjectKey(liveBottomStreamKey),
+                                  onSizeGrown: _scheduleBottomFollow,
+                                  child: _ChatAreaContentColumn(child: child),
+                                )
+                              : _ChatAreaContentColumn(child: child),
                         ),
                       );
                     },
@@ -284,11 +300,11 @@ class _ChatAreaState extends State<ChatArea> {
     if (_scrollViewportDimension != viewportDimension) {
       _scrollViewportDimension = viewportDimension;
       _scheduleViewportResizeUpdate();
-      _scheduleBottomFollow();
+      _scheduleBottomJump();
       return false;
     }
     _scheduleMessageAnchorCollection();
-    _scheduleBottomFollow();
+    _scheduleBottomJump();
     return false;
   }
 
@@ -401,9 +417,40 @@ class _ChatAreaState extends State<ChatArea> {
     return metrics.pixels >= metrics.maxScrollExtent - 2;
   }
 
-  /// Schedules a single automatic jump to the current bottom extent.
+  /// Schedules one immediate automatic alignment with the current bottom extent.
+  void _scheduleBottomJump() {
+    if (_bottomJumpScheduled ||
+        _hasLiveBottomStream() ||
+        !widget.autoScrollToBottomListenable.value ||
+        widget.hasNewerDisplayHistory ||
+        widget.isLoadingDisplayWindow ||
+        !widget.scrollController.hasClients) {
+      return;
+    }
+    _bottomJumpScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bottomJumpScheduled = false;
+      if (!mounted ||
+          _hasLiveBottomStream() ||
+          !widget.autoScrollToBottomListenable.value ||
+          widget.hasNewerDisplayHistory ||
+          widget.isLoadingDisplayWindow ||
+          !widget.scrollController.hasClients) {
+        return;
+      }
+      final position = widget.scrollController.position;
+      final target = position.maxScrollExtent;
+      if ((target - position.pixels).abs() <= _bottomFollowPositionTolerance) {
+        return;
+      }
+      widget.scrollController.jumpTo(target);
+    });
+  }
+
+  /// Schedules one smooth automatic alignment with the current bottom extent.
   void _scheduleBottomFollow() {
     if (_bottomFollowScheduled ||
+        !_hasLiveBottomStream() ||
         !widget.autoScrollToBottomListenable.value ||
         widget.hasNewerDisplayHistory ||
         widget.isLoadingDisplayWindow ||
@@ -414,6 +461,7 @@ class _ChatAreaState extends State<ChatArea> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bottomFollowScheduled = false;
       if (!mounted ||
+          !_hasLiveBottomStream() ||
           !widget.autoScrollToBottomListenable.value ||
           widget.hasNewerDisplayHistory ||
           widget.isLoadingDisplayWindow ||
@@ -422,11 +470,26 @@ class _ChatAreaState extends State<ChatArea> {
       }
       final position = widget.scrollController.position;
       final target = position.maxScrollExtent;
-      if ((target - position.pixels).abs() <= 1) {
+      final distance = target - position.pixels;
+      if (distance <= _bottomFollowPositionTolerance) {
         return;
       }
-      widget.scrollController.jumpTo(target);
+      unawaited(
+        widget.scrollController.animateTo(
+          target,
+          duration: _bottomFollowDuration(distance),
+          curve: Curves.linear,
+        ),
+      );
     });
+  }
+
+  /// Reports whether the visible bottom message is receiving live AI output.
+  bool _hasLiveBottomStream() {
+    final message = widget.messages.lastOrNull;
+    return message != null &&
+        message.sender == 'ai' &&
+        message.contentStream != null;
   }
 
   Future<void> _scrollToBottomFromNavigator() async {
@@ -714,7 +777,13 @@ class _ChatAreaState extends State<ChatArea> {
     final bottomInsetChanged =
         oldWidget.bottomContentInset != widget.bottomContentInset;
     if (messagesChanged || bottomInsetChanged) {
-      _scheduleBottomFollow();
+      _scheduleBottomJump();
+      _scheduleMessageAnchorCollection();
+      _schedulePendingMessageJump();
+    } else if (oldWidget.isLoading != widget.isLoading ||
+        oldWidget.errorMessage != widget.errorMessage ||
+        oldWidget.hasNewerDisplayHistory != widget.hasNewerDisplayHistory ||
+        oldWidget.isLoadingDisplayWindow != widget.isLoadingDisplayWindow) {
       _scheduleMessageAnchorCollection();
       _schedulePendingMessageJump();
     }
@@ -757,7 +826,8 @@ class _ChatAreaState extends State<ChatArea> {
       colorScheme,
     );
     final cached = _messageRowCache[message.timestamp];
-    if (cached != null &&
+    final cachedMessageMatches =
+        cached != null &&
         cached.index == messageIndex &&
         cached.selected == selected &&
         cached.selectionMode == selectionMode &&
@@ -766,7 +836,8 @@ class _ChatAreaState extends State<ChatArea> {
             widget.currentCharacterCardAvatarUri &&
         cached.themePreferenceSnapshot == themePreferenceSnapshot &&
         cached.messageThemeColors == messageThemeColors &&
-        _sameMessageForRender(cached.message, message)) {
+        _sameMessageForRender(cached.message, message);
+    if (cachedMessageMatches) {
       return cached.widget;
     }
 
@@ -895,6 +966,21 @@ class _ChatAreaState extends State<ChatArea> {
     final message = widget.messages[index];
     return message.sender == 'ai' && message.contentStream != null;
   }
+}
+
+/// Computes a distance-scaled duration for bottom-follow animations.
+Duration _bottomFollowDuration(double distance) {
+  final milliseconds =
+      (distance.abs() /
+              _bottomFollowPixelsPerSecond *
+              Duration.millisecondsPerSecond)
+          .round()
+          .clamp(
+            _bottomFollowMinimumDuration.inMilliseconds,
+            _bottomFollowMaximumDuration.inMilliseconds,
+          )
+          .toInt();
+  return Duration(milliseconds: milliseconds);
 }
 
 /// Displays controls for selecting the active response variant of one AI message.
@@ -1190,8 +1276,10 @@ Color? _optionalColor(int? value) {
 
 /// Reports whether one cached message row can be reused unchanged.
 bool _sameMessageForRender(ChatUiMessage left, ChatUiMessage right) {
+  final contentStreamSame = identical(left.contentStream, right.contentStream);
   return left.sender == right.sender &&
-      _sameMessagePartsForRender(left, right) &&
+      (_sameMessagePartsForRender(left, right) ||
+          _sameLiveAiStreamForRender(left, right, contentStreamSame)) &&
       left.timestamp == right.timestamp &&
       left.roleName == right.roleName &&
       left.selectedVariantIndex == right.selectedVariantIndex &&
@@ -1208,7 +1296,19 @@ bool _sameMessageForRender(ChatUiMessage left, ChatUiMessage right) {
       left.isFavorite == right.isFavorite &&
       left.isVariantPreview == right.isVariantPreview &&
       left.completedAt == right.completedAt &&
-      identical(left.contentStream, right.contentStream);
+      contentStreamSame;
+}
+
+/// Reports whether one live AI stream should keep its mounted row.
+bool _sameLiveAiStreamForRender(
+  ChatUiMessage left,
+  ChatUiMessage right,
+  bool contentStreamSame,
+) {
+  return left.sender == 'ai' &&
+      right.sender == 'ai' &&
+      contentStreamSame &&
+      left.contentStream != null;
 }
 
 /// Compares canonical message parts by value for message-row cache reuse.
@@ -1230,6 +1330,57 @@ bool _sameMessagePartsForRender(ChatUiMessage left, ChatUiMessage right) {
     }
   }
   return true;
+}
+
+/// Observes live bottom row growth after its first layout.
+class _LiveBottomStreamSizeObserver extends SingleChildRenderObjectWidget {
+  const _LiveBottomStreamSizeObserver({
+    super.key,
+    required this.onSizeGrown,
+    required super.child,
+  });
+
+  final VoidCallback onSizeGrown;
+
+  /// Creates the render object that records row dimensions.
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _LiveBottomStreamSizeRenderObject(onSizeGrown);
+  }
+
+  /// Updates the callback used by the retained render object.
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _LiveBottomStreamSizeRenderObject renderObject,
+  ) {
+    renderObject.onSizeGrown = onSizeGrown;
+  }
+}
+
+/// Reports height increases for the live bottom row.
+class _LiveBottomStreamSizeRenderObject extends RenderProxyBox {
+  _LiveBottomStreamSizeRenderObject(this.onSizeGrown);
+
+  VoidCallback onSizeGrown;
+  Size? _lastSize;
+
+  /// Notifies after the first measured layout when the row height grows.
+  @override
+  void performLayout() {
+    final previousSize = _lastSize;
+    super.performLayout();
+    final currentSize = size;
+    _lastSize = currentSize;
+    if (previousSize == null ||
+        currentSize.height - previousSize.height <=
+            _bottomFollowPositionTolerance) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      onSizeGrown();
+    });
+  }
 }
 
 class _EmptyChatArea extends StatelessWidget {

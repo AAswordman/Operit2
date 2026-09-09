@@ -221,7 +221,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _isLoadingDisplayWindow = false;
   bool _isPreparingChatSwitch = false;
   String? _pendingChatSwitchTargetId;
-  bool _bottomScrollScheduled = false;
   late bool _workspaceOpen;
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
@@ -1326,6 +1325,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _updateTopBarTitle();
     if (workspaceChanged && mounted) {
       setState(() {});
+      _updateTopBarActions();
       _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
     }
     _syncPendingQueueAfterSnapshot();
@@ -1544,7 +1544,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _sendMessageAfterNextFrame(text, chatId);
   }
 
-  /// Schedules one automatic alignment with the latest message for this frame.
+  /// Requests the latest display window before ChatArea follows layout growth.
   void _scheduleScrollToBottom() {
     if (!_autoScrollToBottom) {
       return;
@@ -1560,21 +1560,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       );
       return;
     }
-    if (_bottomScrollScheduled) {
-      return;
-    }
-    _bottomScrollScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _bottomScrollScheduled = false;
-      if (!mounted || !_scrollController.hasClients) {
-        return;
-      }
-      final position = _scrollController.position;
-      final target = position.maxScrollExtent;
-      if ((target - position.pixels).abs() > 1) {
-        _scrollController.jumpTo(target);
-      }
-    });
   }
 
   /// Sends the submitted text after layout has accepted the optimistic UI state.
@@ -1924,6 +1909,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return <Widget>[
         WorkspaceTopBarButton(
           open: _workspaceOpen,
+          hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
           onPressed: _toggleWorkspace,
         ),
       ];

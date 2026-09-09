@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
@@ -140,19 +141,22 @@ impl DeepseekProvider {
             )?,
         );
         json_object.insert("stream".to_string(), json!(request.stream));
-        json_object.insert(
-            "thinking".to_string(),
-            json!({
-                "type": if request.enable_thinking { "enabled" } else { "disabled" }
-            }),
-        );
-        if request.enable_thinking && !json_object.contains_key("reasoning_effort") {
-            if let Some(effort) = self.resolve_deepseek_thinking_effort()? {
-                json_object.insert("reasoning_effort".to_string(), json!(effort));
-            }
-        }
+        let mut request_object = Value::Object(json_object);
+        ThinkingConfigurationApplier::apply(
+            &mut request_object,
+            &self.provider_type,
+            &self.model_name,
+            &self.api_endpoint,
+            request.enable_thinking,
+            request.thinking_quality_level,
+            &request.thinking_configurations,
+            &request.thinking_option_id,
+        )?;
+        let json_object = request_object
+            .as_object_mut()
+            .expect("thinking request remains an object");
 
-        self.apply_model_parameters(&mut json_object, &request.model_parameters);
+        self.apply_model_parameters(json_object, &request.model_parameters);
 
         if effectiveEnableToolCall {
             let tools = StructuredToolCallBridge::buildToolsArray(Some(&request.available_tools));
@@ -178,7 +182,7 @@ impl DeepseekProvider {
             );
         }
 
-        Ok(Value::Object(json_object))
+        Ok(request_object)
     }
 
     pub fn build_messages_with_reasoning(

@@ -6,10 +6,12 @@ class WorkspaceTopBarButton extends StatelessWidget {
   const WorkspaceTopBarButton({
     super.key,
     required this.open,
+    required this.hasBoundWorkspace,
     required this.onPressed,
   });
 
   final bool open;
+  final bool hasBoundWorkspace;
   final VoidCallback onPressed;
 
   @override
@@ -23,7 +25,7 @@ class WorkspaceTopBarButton extends StatelessWidget {
         child: IconButton(
           onPressed: onPressed,
           icon: Icon(
-            open ? Icons.code : Icons.code_off,
+            hasBoundWorkspace ? Icons.code : Icons.code_off,
             color: open ? colorScheme.primary : colorScheme.onSurface,
           ),
           tooltip: open ? 'Close workspace' : 'Workspace',

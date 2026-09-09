@@ -397,6 +397,9 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
   ) async {
     final config = await widget.clients.preferencesModelConfigManager
         .getResolvedModelConfig(providerId: provider.id, modelId: model.id);
+    final thinkingSettings = await widget
+        .clients.preferencesModelConfigManager
+        .getThinkingSettingsForModel(providerId: provider.id, modelId: model.id);
     if (!mounted) {
       return;
     }
@@ -408,6 +411,9 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       initialBuiltinTools: config.builtinTools,
       initialContext: config.context,
       initialSummary: config.summary,
+      initialThinkingConfigurations: config.thinkingConfigurations,
+      initialThinkingOptionId: config.thinkingOptionId,
+      thinkingSettings: thinkingSettings,
       onTest: () => _testModelConnection(provider, model),
     );
     if (result == null || !mounted) {
@@ -450,6 +456,16 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         modelId: model.id,
         summary: changed.summary,
       );
+    }
+    if (changed.thinkingConfigurations != config.thinkingConfigurations ||
+        changed.thinkingOptionId != config.thinkingOptionId) {
+      await widget.clients.preferencesModelConfigManager
+          .updateThinkingSettingsForModel(
+            providerId: provider.id,
+            modelId: model.id,
+            thinkingConfigurations: changed.thinkingConfigurations,
+            thinkingOptionId: changed.thinkingOptionId,
+          );
     }
     if (!mounted) {
       return;
@@ -1886,12 +1902,16 @@ class _ModelSettingsChange {
     required this.builtinTools,
     required this.context,
     required this.summary,
+    required this.thinkingConfigurations,
+    required this.thinkingOptionId,
   });
 
   final core_proxy.ModelCapabilities capabilities;
   final List<core_proxy.ModelBuiltinTool> builtinTools;
   final core_proxy.ModelContextSpec context;
   final core_proxy.ModelSummarySettings summary;
+  final String thinkingConfigurations;
+  final String thinkingOptionId;
 }
 
 sealed class _ModelSettingsEditorResult {
@@ -1916,6 +1936,9 @@ class _ModelSettingsEditorDialog extends StatefulWidget {
     required this.initialBuiltinTools,
     required this.initialContext,
     required this.initialSummary,
+    required this.initialThinkingConfigurations,
+    required this.initialThinkingOptionId,
+    required this.thinkingSettings,
     required this.onTest,
   });
 
@@ -1925,6 +1948,9 @@ class _ModelSettingsEditorDialog extends StatefulWidget {
   final List<core_proxy.ModelBuiltinTool> initialBuiltinTools;
   final core_proxy.ModelContextSpec initialContext;
   final core_proxy.ModelSummarySettings initialSummary;
+  final String initialThinkingConfigurations;
+  final String initialThinkingOptionId;
+  final core_proxy.ThinkingSettingsDescriptor thinkingSettings;
   final Future<core_proxy.ModelConnectionTestReport?> Function() onTest;
 
   static Future<_ModelSettingsEditorResult?> show({
@@ -1935,6 +1961,9 @@ class _ModelSettingsEditorDialog extends StatefulWidget {
     required List<core_proxy.ModelBuiltinTool> initialBuiltinTools,
     required core_proxy.ModelContextSpec initialContext,
     required core_proxy.ModelSummarySettings initialSummary,
+    required String initialThinkingConfigurations,
+    required String initialThinkingOptionId,
+    required core_proxy.ThinkingSettingsDescriptor thinkingSettings,
     required Future<core_proxy.ModelConnectionTestReport?> Function() onTest,
   }) {
     return showDialog<_ModelSettingsEditorResult>(
@@ -1946,6 +1975,9 @@ class _ModelSettingsEditorDialog extends StatefulWidget {
         initialBuiltinTools: initialBuiltinTools,
         initialContext: initialContext,
         initialSummary: initialSummary,
+        initialThinkingConfigurations: initialThinkingConfigurations,
+        initialThinkingOptionId: initialThinkingOptionId,
+        thinkingSettings: thinkingSettings,
         onTest: onTest,
       ),
     );
@@ -1969,6 +2001,8 @@ class _ModelSettingsEditorDialogState
   late final TextEditingController _maxContextLengthController;
   late final TextEditingController _summaryThresholdController;
   late final TextEditingController _summaryMessageCountController;
+  late final TextEditingController _thinkingConfigurationsController;
+  late String _thinkingOptionId;
   String? _maxContextLengthError;
   bool _testingConnection = false;
 
@@ -1994,6 +2028,10 @@ class _ModelSettingsEditorDialogState
     _summaryMessageCountController = TextEditingController(
       text: widget.initialSummary.summaryMessageCountThreshold.toString(),
     );
+    _thinkingConfigurationsController = TextEditingController(
+      text: widget.initialThinkingConfigurations,
+    );
+    _thinkingOptionId = widget.initialThinkingOptionId;
   }
 
   @override
@@ -2001,6 +2039,7 @@ class _ModelSettingsEditorDialogState
     _maxContextLengthController.dispose();
     _summaryThresholdController.dispose();
     _summaryMessageCountController.dispose();
+    _thinkingConfigurationsController.dispose();
     super.dispose();
   }
 
@@ -2101,6 +2140,8 @@ class _ModelSettingsEditorDialogState
             summaryMessageCountThreshold:
                 int.tryParse(_summaryMessageCountController.text) ?? 0,
           ),
+          thinkingConfigurations: _thinkingConfigurationsController.text,
+          thinkingOptionId: _thinkingOptionId,
         ),
       ),
     );
@@ -2216,6 +2257,45 @@ class _ModelSettingsEditorDialogState
               Text(
                 l10n.settingsModelSummary,
                 style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                l10n.settingsModelThinking,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              if (widget.thinkingSettings.options.isNotEmpty)
+                DropdownButtonFormField<String>(
+                  initialValue: _thinkingOptionId,
+                  decoration: InputDecoration(
+                    labelText: l10n.settingsModelThinkingOption,
+                  ),
+                  items: <DropdownMenuItem<String>>[
+                    DropdownMenuItem<String>(
+                      value: '',
+                      child: Text(l10n.settingsWebAccessPortAutomatic),
+                    ),
+                    ...widget.thinkingSettings.options.map(
+                      (option) => DropdownMenuItem<String>(
+                        value: option.id,
+                        child: Text(option.label),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() => _thinkingOptionId = value);
+                  },
+                ),
+              TextField(
+                controller: _thinkingConfigurationsController,
+                minLines: 4,
+                maxLines: 10,
+                decoration: InputDecoration(
+                  labelText: l10n.settingsModelThinkingRules,
+                ),
               ),
               const SizedBox(height: 10),
               _ModelSettingsSwitch(

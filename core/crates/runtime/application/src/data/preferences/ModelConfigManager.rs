@@ -13,13 +13,16 @@ use operit_model::ModelConfigData::{
     default_deepseek_provider, local_model_provider, ApiProviderType, AvailableProviderModel,
     AvailableProviderModelSource, ModelCapabilities, ModelConfigDefaults, ModelContextSpec,
     ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary, ProviderProfile,
-    ResolvedModelConfig,
+    ResolvedModelConfig, DEFAULT_THINKING_CONFIGURATIONS,
 };
 use operit_model::ModelParameter::ModelParameter;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
     ModelConfigConnectionTester, ModelConnectionTestReport,
 };
 use operit_providers::chat::llmprovider::ModelListFetcher::ModelListFetcher;
+use operit_providers::chat::llmprovider::ThinkingConfiguration::{
+    ThinkingConfigurationApplier, ThinkingControl, ThinkingSettingsDescriptor,
+};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
@@ -55,6 +58,8 @@ pub enum ModelConfigError {
     ModelListFetch(String),
     #[error("connection test error: {0}")]
     ConnectionTest(String),
+    #[error("invalid thinking configuration: {0}")]
+    InvalidThinkingConfiguration(String),
     #[error("built-in provider operation is not allowed: {0}")]
     BuiltInProvider(String),
 }
@@ -77,7 +82,7 @@ pub struct ModelConfigManager {
 }
 
 impl ModelConfigManager {
-    const PREFERENCES_VERSION: u32 = 1;
+    const PREFERENCES_VERSION: u32 = 2;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
@@ -471,6 +476,62 @@ impl ModelConfigManager {
         self.updateModelProfile(providerId, model)
     }
 
+    /// Resolves model-specific thinking controls for configuration clients.
+    pub fn getThinkingSettingsForModel(
+        &self,
+        providerId: &str,
+        modelId: &str,
+    ) -> Result<ThinkingSettingsDescriptor, ModelConfigError> {
+        let (provider, model) = self.findModel(providerId, modelId)?;
+        ThinkingConfigurationApplier::describe(
+            &provider.providerTypeId,
+            &model.id,
+            &provider.endpoint,
+            &model.thinkingConfigurations,
+        )
+        .map_err(ModelConfigError::InvalidThinkingConfiguration)
+    }
+
+    /// Updates declarative thinking rules and the selected model-specific option.
+    pub fn updateThinkingSettingsForModel(
+        &self,
+        providerId: &str,
+        modelId: &str,
+        thinkingConfigurations: String,
+        thinkingOptionId: String,
+    ) -> Result<ModelProfile, ModelConfigError> {
+        ThinkingConfigurationApplier::validate(&thinkingConfigurations)
+            .map_err(ModelConfigError::InvalidThinkingConfiguration)?;
+        let mut model = self.getModelProfile(providerId, modelId)?;
+        let provider = self.getProviderProfile(providerId)?;
+        let descriptor = ThinkingConfigurationApplier::describe(
+            &provider.providerTypeId,
+            &model.id,
+            &provider.endpoint,
+            &thinkingConfigurations,
+        )
+        .map_err(ModelConfigError::InvalidThinkingConfiguration)?;
+        if descriptor.control != ThinkingControl::Levels && !thinkingOptionId.is_empty() {
+            return Err(ModelConfigError::InvalidThinkingConfiguration(
+                "thinking option is only valid for level-based controls".to_string(),
+            ));
+        }
+        if descriptor.control == ThinkingControl::Levels
+            && !thinkingOptionId.is_empty()
+            && !descriptor
+                .options
+                .iter()
+                .any(|option| option.id == thinkingOptionId)
+        {
+            return Err(ModelConfigError::InvalidThinkingConfiguration(format!(
+                "thinking option is not supported: {thinkingOptionId}"
+            )));
+        }
+        model.thinkingConfigurations = thinkingConfigurations;
+        model.thinkingOptionId = thinkingOptionId;
+        self.updateModelProfile(providerId, model)
+    }
+
     /// Tests connectivity for one provider/model configuration.
     pub async fn testModelConnection(
         &self,
@@ -628,6 +689,8 @@ impl ModelConfigManager {
             builtinTools,
             request,
             parameters: model.parameters.clone(),
+            thinkingConfigurations: model.thinkingConfigurations.clone(),
+            thinkingOptionId: model.thinkingOptionId.clone(),
             summary: model.summary.clone(),
             localRuntime: model.localRuntime.clone(),
         })
@@ -675,6 +738,45 @@ impl ModelConfigManager {
                     providerIds.push(localProvider.id);
                 }
                 Self::writeProviderList(preferences, &providerIds)
+            }
+            1 => {
+                let providerIds = Self::readProviderList(preferences)?;
+                for providerId in providerIds {
+                    let providerKey = stringPreferencesKey(&format!("provider_{providerId}"));
+                    let providerJson = preferences.get(&providerKey).ok_or_else(|| {
+                        PreferencesDataStoreError::Message(format!(
+                            "model configuration migration could not find provider: {providerId}"
+                        ))
+                    })?;
+                    let mut provider: serde_json::Value = serde_json::from_str(providerJson)?;
+                    let models = provider
+                        .get_mut("models")
+                        .and_then(serde_json::Value::as_array_mut)
+                        .ok_or_else(|| {
+                            PreferencesDataStoreError::Message(format!(
+                                "model configuration migration has invalid models: {providerId}"
+                            ))
+                        })?;
+                    for model in models {
+                        let model = model.as_object_mut().ok_or_else(|| {
+                            PreferencesDataStoreError::Message(format!(
+                                "model configuration migration has invalid model: {providerId}"
+                            ))
+                        })?;
+                        model
+                            .entry("thinkingConfigurations".to_string())
+                            .or_insert_with(|| {
+                                serde_json::Value::String(
+                                    DEFAULT_THINKING_CONFIGURATIONS.to_string(),
+                                )
+                            });
+                        model
+                            .entry("thinkingOptionId".to_string())
+                            .or_insert_with(|| serde_json::Value::String(String::new()));
+                    }
+                    preferences.set(&providerKey, serde_json::to_string(&provider)?);
+                }
+                Ok(())
             }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }

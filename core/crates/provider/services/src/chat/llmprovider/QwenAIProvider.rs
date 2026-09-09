@@ -47,59 +47,7 @@ impl QwenAIProvider {
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
         let mut body = self.inner.create_request_body(request)?;
-        let siliconFlowBudget =
-            if self.inner.provider_type == "SILICONFLOW" && request.enable_thinking {
-                self.resolve_silicon_flow_thinking_budget(&body)?
-            } else {
-                None
-            };
-        if let Value::Object(object) = &mut body {
-            if self.inner.provider_type == "SILICONFLOW" {
-                object
-                    .entry("enable_thinking".to_string())
-                    .or_insert_with(|| serde_json::json!(request.enable_thinking));
-                if request.enable_thinking && !object.contains_key("thinking_budget") {
-                    if let Some(budget) = siliconFlowBudget {
-                        object.insert("thinking_budget".to_string(), serde_json::json!(budget));
-                    }
-                }
-            } else if request.enable_thinking && !object.contains_key("enable_thinking") {
-                object.insert("enable_thinking".to_string(), serde_json::json!(true));
-            }
-        }
         Ok(body)
-    }
-
-    fn resolve_silicon_flow_thinking_budget(
-        &self,
-        requestJson: &Value,
-    ) -> Result<Option<i32>, AiServiceError> {
-        let qualityLevel = self
-            .runtime_context
-            .support()
-            .thinkingQualityLevel()
-            .map_err(AiServiceError::RequestFailed)?;
-        let requestedBudget = match qualityLevel.clamp(1, 4) {
-            1 => None,
-            2 => Some(4_096),
-            3 => Some(8_192),
-            4 => Some(16_384),
-            _ => None,
-        };
-        let Some(requestedBudget) = requestedBudget else {
-            return Ok(None);
-        };
-        let modelMaxTokens = requestJson
-            .get("max_tokens")
-            .and_then(Value::as_i64)
-            .map(|value| value as i32)
-            .filter(|value| *value > 1);
-        if let Some(maxTokens) = modelMaxTokens {
-            let capped = requestedBudget.min(maxTokens - 1);
-            Ok((capped > 0).then_some(capped))
-        } else {
-            Ok(Some(requestedBudget))
-        }
     }
 }
 

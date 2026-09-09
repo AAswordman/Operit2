@@ -4,11 +4,25 @@ use super::ApiKeyInfo::ApiKeyInfo;
 use super::BillingMode::BillingMode;
 use super::ModelParameter::ModelParameter;
 
+#[path = "../collects/ThinkingConfigurations.rs"]
+mod ThinkingConfigurationRows;
+
+/// Provides the declarative thinking rules persisted by every new model profile.
+pub const DEFAULT_THINKING_CONFIGURATIONS: &str =
+    ThinkingConfigurationRows::THINKING_CONFIGURATIONS;
+
+/// Builds the initial persisted thinking rule set for new model profiles.
+fn defaultThinkingConfigurations() -> String {
+    DEFAULT_THINKING_CONFIGURATIONS.to_string()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum ApiProviderType {
     OPENAI,
+    XAI,
     OPENAI_RESPONSES,
+    OPENAI_CODEX,
     OPENAI_RESPONSES_GENERIC,
     OPENAI_GENERIC,
     ANTHROPIC,
@@ -27,6 +41,7 @@ pub enum ApiProviderType {
     SILICONFLOW,
     IFLOW,
     OPENROUTER,
+    OPENCODE,
     FOUR_ROUTER,
     NOUS_PORTAL,
     INFINIAI,
@@ -39,15 +54,19 @@ pub enum ApiProviderType {
     LOCAL_MODEL,
     PPINFRA,
     NOVITA,
+    MINIMAX,
     OTHER,
 }
 
 impl ApiProviderType {
     #[allow(non_snake_case)]
+    /// Parses a stable provider type id into its enum representation.
     pub fn fromProviderTypeId(providerTypeId: &str) -> Option<Self> {
         match providerTypeId.trim().to_ascii_uppercase().as_str() {
             "OPENAI" => Some(Self::OPENAI),
+            "XAI" => Some(Self::XAI),
             "OPENAI_RESPONSES" => Some(Self::OPENAI_RESPONSES),
+            "OPENAI_CODEX" => Some(Self::OPENAI_CODEX),
             "OPENAI_RESPONSES_GENERIC" => Some(Self::OPENAI_RESPONSES_GENERIC),
             "OPENAI_GENERIC" => Some(Self::OPENAI_GENERIC),
             "ANTHROPIC" => Some(Self::ANTHROPIC),
@@ -66,6 +85,7 @@ impl ApiProviderType {
             "SILICONFLOW" => Some(Self::SILICONFLOW),
             "IFLOW" => Some(Self::IFLOW),
             "OPENROUTER" => Some(Self::OPENROUTER),
+            "OPENCODE" => Some(Self::OPENCODE),
             "FOUR_ROUTER" => Some(Self::FOUR_ROUTER),
             "NOUS_PORTAL" => Some(Self::NOUS_PORTAL),
             "INFINIAI" => Some(Self::INFINIAI),
@@ -78,15 +98,19 @@ impl ApiProviderType {
             "LOCAL_MODEL" => Some(Self::LOCAL_MODEL),
             "PPINFRA" => Some(Self::PPINFRA),
             "NOVITA" => Some(Self::NOVITA),
+            "MINIMAX" => Some(Self::MINIMAX),
             "OTHER" => Some(Self::OTHER),
             _ => None,
         }
     }
 
+    /// Returns the stable provider type id used in persisted configuration.
     pub fn name(&self) -> &'static str {
         match self {
             Self::OPENAI => "OPENAI",
+            Self::XAI => "XAI",
             Self::OPENAI_RESPONSES => "OPENAI_RESPONSES",
+            Self::OPENAI_CODEX => "OPENAI_CODEX",
             Self::OPENAI_RESPONSES_GENERIC => "OPENAI_RESPONSES_GENERIC",
             Self::OPENAI_GENERIC => "OPENAI_GENERIC",
             Self::ANTHROPIC => "ANTHROPIC",
@@ -105,6 +129,7 @@ impl ApiProviderType {
             Self::SILICONFLOW => "SILICONFLOW",
             Self::IFLOW => "IFLOW",
             Self::OPENROUTER => "OPENROUTER",
+            Self::OPENCODE => "OPENCODE",
             Self::FOUR_ROUTER => "FOUR_ROUTER",
             Self::NOUS_PORTAL => "NOUS_PORTAL",
             Self::INFINIAI => "INFINIAI",
@@ -117,6 +142,7 @@ impl ApiProviderType {
             Self::LOCAL_MODEL => "LOCAL_MODEL",
             Self::PPINFRA => "PPINFRA",
             Self::NOVITA => "NOVITA",
+            Self::MINIMAX => "MINIMAX",
             Self::OTHER => "OTHER",
         }
     }
@@ -428,6 +454,8 @@ pub struct ModelProfile {
     pub builtinToolsOverride: Option<Vec<ModelBuiltinTool>>,
     pub requestOverride: Option<ModelRequestSpec>,
     pub parameters: Vec<ModelParameter<serde_json::Value>>,
+    pub thinkingConfigurations: String,
+    pub thinkingOptionId: String,
     pub summary: ModelSummarySettings,
     pub localRuntime: LocalModelRuntimeSettings,
 }
@@ -442,6 +470,8 @@ impl ModelProfile {
             builtinToolsOverride: None,
             requestOverride: None,
             parameters: Vec::new(),
+            thinkingConfigurations: defaultThinkingConfigurations(),
+            thinkingOptionId: String::new(),
             summary: ModelSummarySettings::default(),
             localRuntime: LocalModelRuntimeSettings::default(),
         }
@@ -511,6 +541,8 @@ pub struct ResolvedModelConfig {
     pub builtinTools: Vec<ModelBuiltinTool>,
     pub request: ModelRequestSpec,
     pub parameters: Vec<ModelParameter<serde_json::Value>>,
+    pub thinkingConfigurations: String,
+    pub thinkingOptionId: String,
     pub summary: ModelSummarySettings,
     pub localRuntime: LocalModelRuntimeSettings,
 }

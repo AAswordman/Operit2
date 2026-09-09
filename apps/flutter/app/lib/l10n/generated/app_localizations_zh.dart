@@ -1574,6 +1574,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelSummary => '自动总结';
 
   @override
+  String get settingsModelThinking => '思考';
+
+  @override
+  String get settingsModelThinkingOption => '思考档位';
+
+  @override
+  String get settingsModelThinkingRules => '思考规则 JSON';
+
+  @override
   String get settingsModelMediaHistory => '媒体历史';
 
   @override

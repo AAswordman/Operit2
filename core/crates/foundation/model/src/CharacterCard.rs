@@ -4,14 +4,20 @@ use std::collections::HashMap;
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct CharacterCardToolAccessConfig {
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub allowedBuiltinTools: Vec<String>,
+    #[serde(default)]
     pub allowedPackages: Vec<String>,
+    #[serde(default)]
     pub allowedSkills: Vec<String>,
+    #[serde(default)]
     pub allowedMcpServers: Vec<String>,
 }
 
 impl CharacterCardToolAccessConfig {
+    /// Returns a copy with whitespace-trimmed and deduplicated allow-list entries.
     pub fn normalized(&self) -> CharacterCardToolAccessConfig {
         CharacterCardToolAccessConfig {
             enabled: self.enabled,
@@ -22,12 +28,14 @@ impl CharacterCardToolAccessConfig {
         }
     }
 
+    /// Reports whether this config selects any external tool source.
     pub fn hasExternalSelections(&self) -> bool {
         !self.allowedPackages.is_empty()
             || !self.allowedSkills.is_empty()
             || !self.allowedMcpServers.is_empty()
     }
 
+    /// Normalizes one allow-list while preserving the first observed order.
     fn normalizeEntries(values: &[String]) -> Vec<String> {
         let mut result = Vec::new();
         for value in values {
@@ -80,6 +88,7 @@ impl CharacterCardChatModelBindingMode {
     pub const FOLLOW_GLOBAL: &'static str = "FOLLOW_GLOBAL";
     pub const FIXED_MODEL: &'static str = "FIXED_MODEL";
 
+    /// Normalizes a stored chat-model binding mode.
     pub fn normalize(mode: Option<&str>) -> String {
         if mode == Some(Self::FIXED_MODEL) {
             Self::FIXED_MODEL.to_string()
@@ -95,6 +104,7 @@ impl CharacterCardMemoryBindingMode {
     pub const CHARACTER: &'static str = "CHARACTER";
     pub const SHARED: &'static str = "SHARED";
 
+    /// Normalizes a stored character memory binding mode.
     pub fn normalize(mode: Option<&str>) -> String {
         if mode == Some(Self::SHARED) {
             Self::SHARED.to_string()
@@ -166,6 +176,7 @@ pub struct OperitTavernExtension {
     pub character_card: OperitCharacterCardPayload,
 }
 
+/// Returns the current Operit Tavern extension schema id.
 fn default_operit_character_card_schema() -> String {
     "operit_character_card_v1".to_string()
 }
@@ -211,10 +222,12 @@ pub struct OperitCharacterCardPayload {
     pub toolAccessConfig: Option<CharacterCardToolAccessConfig>,
 }
 
+/// Returns the default chat-model binding mode for imported character payloads.
 fn default_character_chat_model_binding_mode() -> String {
     CharacterCardChatModelBindingMode::FOLLOW_GLOBAL.to_string()
 }
 
+/// Returns the default memory binding mode for imported character payloads.
 fn default_character_memory_binding_mode() -> String {
     CharacterCardMemoryBindingMode::CHARACTER.to_string()
 }
@@ -234,6 +247,7 @@ pub struct OperitAttachedTagPayload {
 }
 
 impl Default for OperitAttachedTagPayload {
+    /// Builds an empty attached-tag payload with the default tag type.
     fn default() -> Self {
         Self {
             id: String::new(),
@@ -245,6 +259,7 @@ impl Default for OperitAttachedTagPayload {
     }
 }
 
+/// Returns the default attached tag type.
 fn default_attached_tag_type() -> String {
     "CUSTOM".to_string()
 }
@@ -270,6 +285,7 @@ pub struct TavernChubExtension {
 }
 
 impl Default for TavernChubExtension {
+    /// Builds an empty Tavern chub extension payload.
     fn default() -> Self {
         Self {
             id: 0,
@@ -313,6 +329,7 @@ pub struct TavernCharacterBook {
 }
 
 impl Default for TavernCharacterBook {
+    /// Builds an empty Tavern character book payload.
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -363,6 +380,7 @@ pub struct TavernBookEntry {
 }
 
 impl Default for TavernBookEntry {
+    /// Builds an empty Tavern book entry payload.
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -385,10 +403,12 @@ impl Default for TavernBookEntry {
     }
 }
 
+/// Returns the default true flag used by Tavern payloads.
 fn default_true() -> bool {
     true
 }
 
+/// Returns the default Tavern entry probability.
 fn default_probability() -> i32 {
     100
 }

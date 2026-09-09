@@ -12,7 +12,9 @@ pub struct ModelCatalog;
 
 const MODEL_CATALOG_PROVIDER_ROWS: &str = r#"
 OPENAI|OpenAI|https://api.openai.com/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
+XAI|xAI|https://api.x.ai/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 OPENAI_RESPONSES|OpenAI Responses|https://api.openai.com/v1/responses|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
+OPENAI_CODEX|OpenAI Codex|https://chatgpt.com/backend-api/codex/responses|
 OPENAI_RESPONSES_GENERIC|OpenAI Responses Generic||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 OPENAI_GENERIC|OpenAI Generic||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 ANTHROPIC|Anthropic|https://api.anthropic.com/v1/messages|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
@@ -31,6 +33,7 @@ MISTRAL|Mistral|https://codestral.mistral.ai/v1/chat/completions|list_models:GET
 SILICONFLOW|SiliconFlow|https://api.siliconflow.cn/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::true,balance:GET:/v1/user/info:$.data.balance::true
 IFLOW|iFlow|https://apis.iflow.cn/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 OPENROUTER|OpenRouter|https://openrouter.ai/api/v1/chat/completions|list_models:GET:/api/v1/models:$.data:$.id:$.pricing.prompt:$.pricing.input_cache_read:$.pricing.completion::USD:$.context_length:$.architecture.input_modalities~image:$.architecture.input_modalities~audio:$.architecture.input_modalities~video::$.supported_parameters~tools:$.supported_parameters~tools:true,balance:GET:/api/v1/credits:$.data.total_credits::true
+OPENCODE|OpenCode|https://opencode.ai/zen|
 FOUR_ROUTER|4Router|https://4router.net/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 NOUS_PORTAL|Nous Portal|https://inference-api.nousresearch.com/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 INFINIAI|InfiniAI|https://cloud.infini-ai.com/maas/v1/chat/completions|list_models:GET:/maas/v1/models:$.data:$.id:::::::::::::true
@@ -43,6 +46,7 @@ OPENAI_LOCAL|OpenAI Local|http://localhost:8000/v1/chat/completions|list_models:
 LOCAL_MODEL|Local Models||
 PPINFRA|PPInfra|https://api.ppinfra.com/openai/v1/chat/completions|list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
 NOVITA|Novita AI|https://api.novita.ai/openai/v1/chat/completions|list_models:GET:/openai/v1/models:$.data:$.id:::::::::::::true
+MINIMAX|MiniMax|https://api.minimaxi.com/v1/chat/completions|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 OTHER|Other||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 "#;
 

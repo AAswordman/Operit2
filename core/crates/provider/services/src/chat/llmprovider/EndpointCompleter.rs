@@ -85,6 +85,8 @@ impl EndpointCompleter {
             }
             ApiProviderType::GOOGLE
             | ApiProviderType::GEMINI_GENERIC
+            | ApiProviderType::OPENAI_CODEX
+            | ApiProviderType::OPENCODE
             | ApiProviderType::LOCAL_MODEL => endpoint.to_string(),
             _ => Self::completeEndpoint(endpoint),
         }
@@ -167,6 +169,30 @@ mod tests {
                 ApiProviderType::OPENAI_RESPONSES_GENERIC,
             ),
             "https://api.openai.com/v1/responses"
+        );
+    }
+
+    /// Keeps Codex endpoints unchanged because Codex uses its own response route.
+    #[test]
+    fn complete_endpoint_keeps_codex_endpoint() {
+        assert_eq!(
+            EndpointCompleter::completeEndpointForProviderType(
+                "https://chatgpt.com/backend-api/codex/responses",
+                ApiProviderType::OPENAI_CODEX,
+            ),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
+    }
+
+    /// Keeps OpenCode endpoints unchanged because OpenCode resolves its route internally.
+    #[test]
+    fn complete_endpoint_keeps_opencode_endpoint() {
+        assert_eq!(
+            EndpointCompleter::completeEndpointForProviderType(
+                "https://opencode.ai/zen",
+                ApiProviderType::OPENCODE,
+            ),
+            "https://opencode.ai/zen"
         );
     }
 }

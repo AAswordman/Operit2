@@ -452,6 +452,118 @@ pub fn run_model_command(
                 "updated": true
             }));
         }
+        "thinking-show" => {
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model thinking-show <provider-id> <model-id>",
+            )?;
+            let modelId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model thinking-show <provider-id> <model-id>",
+            )?;
+            let manager = command.modelManager();
+            let config = manager
+                .getResolvedModelConfig(providerId, modelId)
+                .map_err(|error| error.to_string())?;
+            let descriptor = manager
+                .getThinkingSettingsForModel(providerId, modelId)
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("Thinking for {providerId}:{modelId}"));
+            output.push_stdout_line(format!("Control: {:?}", descriptor.control));
+            output.push_stdout_line(format!("Required: {}", descriptor.required));
+            output.push_stdout_line(format!("Selected option: {}", config.thinkingOptionId));
+            output.push_stdout_line(format!("Options: {}", descriptor.options.len()));
+            for option in &descriptor.options {
+                output.push_stdout_line(format!("- {}", option.id));
+            }
+            output.push_stdout_line("Rules:");
+            output.push_stdout_line(config.thinkingConfigurations.clone());
+            output.setJsonStdout(json!({
+                "providerId": providerId,
+                "modelId": modelId,
+                "thinkingConfigurations": config.thinkingConfigurations,
+                "thinkingOptionId": config.thinkingOptionId,
+                "settings": descriptor,
+            }));
+        }
+        "thinking-set-rules" => {
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
+            )?;
+            let modelId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
+            )?;
+            let thinkingConfigurations = requiredArg(
+                args,
+                3,
+                "usage: operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
+            )?
+            .to_string();
+            let manager = command.modelManager();
+            let current = manager
+                .getModelProfile(providerId, modelId)
+                .map_err(|error| error.to_string())?;
+            let model = manager
+                .updateThinkingSettingsForModel(
+                    providerId,
+                    modelId,
+                    thinkingConfigurations,
+                    current.thinkingOptionId,
+                )
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("Updated thinking rules for {providerId}:{modelId}"));
+            output.setJsonStdout(json!({
+                "providerId": providerId,
+                "modelId": modelId,
+                "thinkingConfigurations": model.thinkingConfigurations,
+                "thinkingOptionId": model.thinkingOptionId,
+                "updated": true,
+            }));
+        }
+        "thinking-set-option" => {
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
+            )?;
+            let modelId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
+            )?;
+            let thinkingOptionId = requiredArg(
+                args,
+                3,
+                "usage: operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
+            )?
+            .to_string();
+            let manager = command.modelManager();
+            let current = manager
+                .getModelProfile(providerId, modelId)
+                .map_err(|error| error.to_string())?;
+            let model = manager
+                .updateThinkingSettingsForModel(
+                    providerId,
+                    modelId,
+                    current.thinkingConfigurations,
+                    thinkingOptionId,
+                )
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("Updated thinking option for {providerId}:{modelId}"));
+            output.setJsonStdout(json!({
+                "providerId": providerId,
+                "modelId": modelId,
+                "thinkingConfigurations": model.thinkingConfigurations,
+                "thinkingOptionId": model.thinkingOptionId,
+                "updated": true,
+            }));
+        }
         "function-list" => {
             let mut rows = functionTypes()
                 .into_iter()
@@ -679,6 +791,7 @@ fn print_resolved_model_config(config: &ResolvedModelConfig, output: &mut CoreCo
     output.push_stdout_line(format!("Tool calls: {}", config.capabilities.toolCall));
     output.push_stdout_line(format!("Builtin tools: {}", config.builtinTools.len()));
     output.push_stdout_line(format!("Parameters: {}", config.parameters.len()));
+    output.push_stdout_line(format!("Thinking option: {}", config.thinkingOptionId));
     print_summary_settings(&config.providerId, &config.modelId, &config.summary, output);
     print_pricing(config.pricing.as_ref(), output);
 }
@@ -801,6 +914,8 @@ fn resolved_model_config_json(config: &ResolvedModelConfig) -> Value {
         "builtinTools": &config.builtinTools,
         "request": &config.request,
         "parameters": &config.parameters,
+        "thinkingConfigurations": &config.thinkingConfigurations,
+        "thinkingOptionId": &config.thinkingOptionId,
         "summary": &config.summary,
         "localRuntime": &config.localRuntime
     })
@@ -855,6 +970,9 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>",
         "operit2 model summary-show [provider-id] [model-id]",
         "operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>",
+        "operit2 model thinking-show <provider-id> <model-id>",
+        "operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
+        "operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
         "operit2 model function-list",
         "operit2 model function-show <function-type>",
         "operit2 model function-set <function-type> <provider-id> <model-id>",

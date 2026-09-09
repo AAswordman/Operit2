@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::OpenAIProvider;
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
@@ -131,7 +132,7 @@ impl OpenAIResponsesProvider {
             self.responsesApiEndpoint.clone(),
             self.api_key.clone(),
             self.modelName.clone(),
-            self.responsesProviderType.clone(),
+            "OPENAI_RESPONSES_PARENT".to_string(),
             self.customHeaders.clone(),
             self.supportsVision,
             self.supportsAudio,
@@ -141,7 +142,16 @@ impl OpenAIResponsesProvider {
         let mut requestObject = OpenAIResponsesPayloadAdapter::to_responses_request(
             parent.create_request_body(request)?,
         );
-        self.apply_responses_reasoning_effort(&mut requestObject, request.enable_thinking)?;
+        ThinkingConfigurationApplier::apply(
+            &mut requestObject,
+            &self.responsesProviderType,
+            &self.modelName,
+            &self.responsesApiEndpoint,
+            request.enable_thinking,
+            request.thinking_quality_level,
+            &request.thinking_configurations,
+            &request.thinking_option_id,
+        )?;
 
         let messagesArray = requestObject
             .get("input")

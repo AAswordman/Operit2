@@ -278,6 +278,7 @@ impl AIServiceFactory {
 
         let spec = match provider_type {
             ApiProviderType::OPENAI
+            | ApiProviderType::XAI
             | ApiProviderType::OPENAI_GENERIC
             | ApiProviderType::OPENAI_LOCAL => Self::open_ai_provider(
                 api_endpoint,
@@ -302,6 +303,11 @@ impl AIServiceFactory {
                     supports_video,
                     enable_tool_call,
                 )
+            }
+            ApiProviderType::OPENAI_CODEX => {
+                return Err(AiServiceError::ProviderNotImplemented(
+                    "OPENAI_CODEX chat inference".to_string(),
+                ));
             }
             ApiProviderType::ANTHROPIC | ApiProviderType::ANTHROPIC_GENERIC => {
                 Self::claude_provider(
@@ -369,6 +375,7 @@ impl AIServiceFactory {
             | ApiProviderType::ALIPAY_BAILING
             | ApiProviderType::PPINFRA
             | ApiProviderType::NOVITA
+            | ApiProviderType::MINIMAX
             | ApiProviderType::OTHER => Self::open_ai_provider(
                 api_endpoint,
                 api_key_provider,
@@ -446,6 +453,11 @@ impl AIServiceFactory {
                 supports_video,
                 enable_tool_call,
             ),
+            ApiProviderType::OPENCODE => {
+                return Err(AiServiceError::ProviderNotImplemented(
+                    "OPENCODE chat inference".to_string(),
+                ));
+            }
             ApiProviderType::FOUR_ROUTER => Self::four_router_provider(
                 api_endpoint,
                 api_key_provider,

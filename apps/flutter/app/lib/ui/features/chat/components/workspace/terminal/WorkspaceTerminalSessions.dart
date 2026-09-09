@@ -6,8 +6,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 
 /// Uses the generated Core terminal session state directly in Flutter.
-typedef WorkspaceTerminalSessionInfo =
-    core_proxy.RuntimeTerminalSessionInfo;
+typedef WorkspaceTerminalSessionInfo = core_proxy.RuntimeTerminalSessionInfo;
 
 /// Adds the terminal title used only by the Flutter presentation layer.
 extension WorkspaceTerminalSessionInfoPresentation
@@ -32,7 +31,7 @@ class WorkspaceTerminalSessions {
       _clients.servicesRuntimeTerminalService;
 
   Future<List<WorkspaceTerminalSessionInfo>> listSessions() async {
-    return _terminal.terminalSessionsFlow().first;
+    return _terminal.listTerminalSessions();
   }
 
   Stream<List<WorkspaceTerminalSessionInfo>> watchSessions() {
@@ -69,9 +68,7 @@ class WorkspaceTerminalSessions {
   }
 
   Future<WorkspaceTerminalScreen> getSessionScreen(String sessionId) async {
-    return _terminal.getTerminalSessionScreen(
-      sessionId: sessionId,
-    );
+    return _terminal.getTerminalSessionScreen(sessionId: sessionId);
   }
 
   Future<void> inputSession({

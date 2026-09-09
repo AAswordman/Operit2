@@ -3008,6 +3008,24 @@ abstract class AppLocalizations {
   /// **'Auto summary'**
   String get settingsModelSummary;
 
+  /// No description provided for @settingsModelThinking.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking'**
+  String get settingsModelThinking;
+
+  /// No description provided for @settingsModelThinkingOption.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking option'**
+  String get settingsModelThinkingOption;
+
+  /// No description provided for @settingsModelThinkingRules.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking rules JSON'**
+  String get settingsModelThinkingRules;
+
   /// No description provided for @settingsModelMediaHistory.
   ///
   /// In en, this message translates to:

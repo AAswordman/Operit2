@@ -169,6 +169,190 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
 }
 
 #[cfg(any(
+    windows,
+    all(target_os = "linux", not(target_env = "ohos")),
+    target_os = "android",
+    target_os = "ios",
+    target_os = "macos",
+    target_env = "ohos"
+))]
+#[derive(Clone)]
+struct RuntimeSessionPublishingTerminalHost {
+    inner: Arc<NativeTerminalHost>,
+}
+
+#[cfg(any(
+    windows,
+    all(target_os = "linux", not(target_env = "ohos")),
+    target_os = "android",
+    target_os = "ios",
+    target_os = "macos",
+    target_env = "ohos"
+))]
+impl RuntimeSessionPublishingTerminalHost {
+    /// Creates a terminal host wrapper that publishes runtime session snapshots.
+    fn new(inner: Arc<NativeTerminalHost>) -> Self {
+        Self { inner }
+    }
+
+    /// Publishes the current terminal session snapshot through RuntimeTerminalService.
+    fn publish_sessions(&self) -> operit_host_api::HostResult<()> {
+        operit_runtime::services::publish_terminal_sessions_for_host(self)
+            .map(|_| ())
+            .map_err(operit_host_api::HostError::new)
+    }
+}
+
+#[cfg(any(
+    windows,
+    all(target_os = "linux", not(target_env = "ohos")),
+    target_os = "android",
+    target_os = "ios",
+    target_os = "macos",
+    target_env = "ohos"
+))]
+impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
+    /// Returns terminal capabilities exposed by the wrapped host.
+    fn terminalInfo(&self) -> operit_host_api::HostResult<operit_host_api::TerminalInfo> {
+        self.inner.terminalInfo()
+    }
+
+    /// Starts a PTY session and publishes the updated session list.
+    fn startPtySession(
+        &self,
+        sessionName: &str,
+        terminal: &str,
+        terminalType: &str,
+        workingDir: &str,
+        rows: u16,
+        cols: u16,
+    ) -> operit_host_api::HostResult<String> {
+        let sessionId = self.inner.startPtySession(
+            sessionName,
+            terminal,
+            terminalType,
+            workingDir,
+            rows,
+            cols,
+        )?;
+        self.publish_sessions()?;
+        Ok(sessionId)
+    }
+
+    /// Reads buffered PTY output from the wrapped host.
+    fn readPtySession(&self, sessionId: &str) -> operit_host_api::HostResult<Vec<u8>> {
+        self.inner.readPtySession(sessionId)
+    }
+
+    /// Writes bytes to a PTY session on the wrapped host.
+    fn writePtySession(&self, sessionId: &str, data: &[u8]) -> operit_host_api::HostResult<usize> {
+        self.inner.writePtySession(sessionId, data)
+    }
+
+    /// Resizes a PTY session on the wrapped host.
+    fn resizePtySession(
+        &self,
+        sessionId: &str,
+        rows: u16,
+        cols: u16,
+    ) -> operit_host_api::HostResult<()> {
+        self.inner.resizePtySession(sessionId, rows, cols)
+    }
+
+    /// Polls one PTY session exit state from the wrapped host.
+    fn pollPtyExitCode(&self, sessionId: &str) -> operit_host_api::HostResult<Option<i32>> {
+        self.inner.pollPtyExitCode(sessionId)
+    }
+
+    /// Closes a PTY session and publishes the updated session list.
+    fn closePtySession(&self, sessionId: &str) -> operit_host_api::HostResult<()> {
+        self.inner.closePtySession(sessionId)?;
+        self.publish_sessions()
+    }
+
+    /// Lists terminal sessions from the wrapped host.
+    fn listSessions(
+        &self,
+    ) -> operit_host_api::HostResult<Vec<operit_host_api::TerminalSessionListEntry>> {
+        self.inner.listSessions()
+    }
+
+    /// Creates or returns a named terminal session and publishes the updated session list.
+    fn createOrGetSession(
+        &self,
+        sessionName: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::TerminalSessionInfo> {
+        let session = self.inner.createOrGetSession(sessionName)?;
+        self.publish_sessions()?;
+        Ok(session)
+    }
+
+    /// Executes a command inside an existing terminal session.
+    fn executeInSession(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+    ) -> operit_host_api::HostResult<operit_host_api::TerminalCommandOutput> {
+        self.inner.executeInSession(sessionId, command, timeoutMs)
+    }
+
+    /// Executes a hidden command through the wrapped host.
+    fn executeHiddenCommand(
+        &self,
+        command: &str,
+        executorKey: &str,
+        timeoutMs: u64,
+    ) -> operit_host_api::HostResult<operit_host_api::HiddenTerminalCommandOutput> {
+        self.inner
+            .executeHiddenCommand(command, executorKey, timeoutMs)
+    }
+
+    /// Sends text or control input to an existing terminal session.
+    fn inputInSession(
+        &self,
+        sessionId: &str,
+        input: Option<&str>,
+        control: Option<&str>,
+    ) -> operit_host_api::HostResult<operit_host_api::TerminalInputOutput> {
+        self.inner.inputInSession(sessionId, input, control)
+    }
+
+    /// Closes a terminal session and publishes the updated session list.
+    fn closeSession(
+        &self,
+        sessionId: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::TerminalCloseOutput> {
+        let output = self.inner.closeSession(sessionId)?;
+        self.publish_sessions()?;
+        Ok(output)
+    }
+
+    /// Reads the current terminal screen from the wrapped host.
+    fn getSessionScreen(
+        &self,
+        sessionId: &str,
+    ) -> operit_host_api::HostResult<operit_host_api::TerminalScreenOutput> {
+        self.inner.getSessionScreen(sessionId)
+    }
+}
+
+#[cfg(any(
+    windows,
+    all(target_os = "linux", not(target_env = "ohos")),
+    target_os = "android",
+    target_os = "ios",
+    target_os = "macos",
+    target_env = "ohos"
+))]
+/// Creates the terminal host exposed to the runtime and standard tools.
+fn runtime_terminal_host(
+    terminalHost: Arc<NativeTerminalHost>,
+) -> Arc<dyn operit_host_api::TerminalHost> {
+    Arc::new(RuntimeSessionPublishingTerminalHost::new(terminalHost))
+}
+
+#[cfg(any(
     target_os = "android",
     target_os = "ios",
     target_os = "macos",
@@ -228,7 +412,7 @@ pub(crate) fn create_local_core(
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
     }
-    context = context.withTerminalHost(terminalHost);
+    context = context.withTerminalHost(runtime_terminal_host(terminalHost));
     #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
     {
         context = context.withAudioPlaybackHost(Arc::new(NativeAudioPlaybackHost::fromPlayers(
@@ -505,7 +689,7 @@ pub(crate) fn create_local_core(
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
     }
-    context = context.withTerminalHost(terminalHost);
+    context = context.withTerminalHost(runtime_terminal_host(terminalHost));
     context =
         context.withTtsPlaybackHost(Arc::new(NativeTtsPlaybackHost::new(Arc::new(|command| {
             let payload = RuntimeHostInteractionTtsPlaybackPayload {
@@ -672,7 +856,7 @@ pub(crate) fn create_local_core(
     if let Some(host) = composeDslWebViewHost {
         context = context.withComposeDslWebViewHost(host);
     }
-    context = context.withTerminalHost(terminalHost);
+    context = context.withTerminalHost(runtime_terminal_host(terminalHost));
     context = context.withLocalInferenceHost(Arc::new(NativeLocalInferenceHost::fromExecutor(
         Arc::new(|command| {
             let response = requestOwnerLocalInference(

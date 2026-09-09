@@ -1,15 +1,16 @@
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
-use serde_json::{Map, Value, json};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
-    AIService, AiServiceError, SendMessageRequest, TokenCounts, response_stream_from_chunks,
-    retry_error_text, retry_message,
+    response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
+    SendMessageRequest, TokenCounts,
 };
 use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
@@ -21,11 +22,11 @@ use operit_model::ModelConfigData::{
 use operit_model::ModelParameter::{ModelParameter, ParameterCategory};
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
-use operit_util::ChatMarkupRegex::{ChatMarkupRegex, attr_value, tag_ranges};
 use operit_util::stream::RevisableTextStream::{
-    RevisableTextStreamLike, empty_revisable_event_channel, with_event_channel,
+    empty_revisable_event_channel, with_event_channel, RevisableTextStreamLike,
 };
 use operit_util::stream::Stream::FnStream;
+use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
 #[derive(Clone)]
 pub struct GeminiProvider {
@@ -224,19 +225,33 @@ impl GeminiProvider {
         }
         root.insert("contents".to_string(), Value::Array(contents));
 
-        let mut generation_config = Map::new();
-        if request.enable_thinking {
-            generation_config.insert(
-                "thinkingConfig".to_string(),
-                json!({"includeThoughts": true}),
-            );
-        }
-        self.apply_model_parameters(&mut root, &mut generation_config, &request.model_parameters)?;
+        root.insert("generationConfig".to_string(), Value::Object(Map::new()));
+        let mut request_object = Value::Object(root);
+        ThinkingConfigurationApplier::apply(
+            &mut request_object,
+            &self.provider_type,
+            &self.model_name,
+            &self.api_endpoint,
+            request.enable_thinking,
+            request.thinking_quality_level,
+            &request.thinking_configurations,
+            &request.thinking_option_id,
+        )?;
+        let root = request_object
+            .as_object_mut()
+            .expect("thinking request remains an object");
+        let mut generation_config = root
+            .remove("generationConfig")
+            .expect("thinking request defines generationConfig")
+            .as_object()
+            .expect("generationConfig must be an object")
+            .clone();
+        self.apply_model_parameters(root, &mut generation_config, &request.model_parameters)?;
         root.insert(
             "generationConfig".to_string(),
             Value::Object(generation_config),
         );
-        Ok(Value::Object(root))
+        Ok(request_object)
     }
 
     fn build_contents_and_count_tokens(
@@ -1344,12 +1359,10 @@ mod tests {
 
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
-        assert!(
-            !parts[0]["inline_data"]["data"]
-                .as_str()
-                .unwrap_or_default()
-                .is_empty()
-        );
+        assert!(!parts[0]["inline_data"]["data"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty());
         assert_eq!(parts[1]["text"], "look");
     }
 }

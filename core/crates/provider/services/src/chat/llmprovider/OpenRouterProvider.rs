@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::OpenAIProvider::OpenAIProvider;
+use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{AIService, AiServiceError, SendMessageRequest};
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
@@ -48,7 +49,7 @@ impl OpenRouterProvider {
                 api_endpoint,
                 api_key,
                 model_name,
-                provider_type,
+                "OPENROUTER_PARENT".to_string(),
                 merged_headers,
                 supports_vision,
                 supports_audio,
@@ -64,49 +65,17 @@ impl OpenRouterProvider {
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
         let mut body = self.inner.create_request_body(request)?;
-        let reasoning = if request.enable_thinking {
-            let budget = self.resolve_reasoning_budget(&body)?;
-            if let Some(budget) = budget {
-                serde_json::json!({ "max_tokens": budget })
-            } else {
-                serde_json::json!({})
-            }
-        } else {
-            serde_json::json!({ "enabled": false, "max_tokens": 0 })
-        };
-        if let Value::Object(object) = &mut body {
-            object.insert("reasoning".to_string(), reasoning);
-        }
+        ThinkingConfigurationApplier::apply(
+            &mut body,
+            "OPENROUTER",
+            &self.inner.model_name,
+            &self.inner.api_endpoint,
+            request.enable_thinking,
+            request.thinking_quality_level,
+            &request.thinking_configurations,
+            &request.thinking_option_id,
+        )?;
         Ok(body)
-    }
-
-    fn resolve_reasoning_budget(&self, requestJson: &Value) -> Result<Option<i32>, AiServiceError> {
-        let qualityLevel = self
-            .runtime_context
-            .support()
-            .thinkingQualityLevel()
-            .map_err(AiServiceError::RequestFailed)?;
-        let requestedBudget = match qualityLevel.clamp(1, 4) {
-            1 => None,
-            2 => Some(1024),
-            3 => Some(16_000),
-            4 => Some(32_000),
-            _ => None,
-        };
-        let Some(requestedBudget) = requestedBudget else {
-            return Ok(None);
-        };
-        let modelMaxTokens = requestJson
-            .get("max_tokens")
-            .and_then(Value::as_i64)
-            .map(|value| value as i32)
-            .filter(|value| *value > 1);
-        if let Some(maxTokens) = modelMaxTokens {
-            let capped = (requestedBudget).min(maxTokens - 1);
-            Ok((capped > 0).then_some(capped))
-        } else {
-            Ok(Some(requestedBudget))
-        }
     }
 }
 

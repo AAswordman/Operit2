@@ -1636,6 +1636,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelSummary => 'Auto summary';
 
   @override
+  String get settingsModelThinking => 'Thinking';
+
+  @override
+  String get settingsModelThinkingOption => 'Thinking option';
+
+  @override
+  String get settingsModelThinkingRules => 'Thinking rules JSON';
+
+  @override
   String get settingsModelMediaHistory => 'Media history';
 
   @override

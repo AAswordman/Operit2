@@ -103,6 +103,68 @@ void main() {
     expect(find.byType(StreamingCursor), findsOneWidget);
   });
 
+  testWidgets('keeps live AI row mounted when persisted parts update', (
+    tester,
+  ) async {
+    final streamController = StreamController<MarkdownStreamEvent>();
+    final contentStream = streamController.stream;
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(true);
+    addTearDown(() async {
+      await streamController.close();
+      scrollController.dispose();
+      autoScrollToBottom.dispose();
+    });
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(parts: const <MessagePart>[], stream: contentStream),
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+    streamController
+      ..add(_markdownBlockStart())
+      ..add(_markdownBlockChunk('before snapshot'));
+    await tester.pump(const Duration(milliseconds: 250));
+    final previousMessageWidget = tester.widget<CursorStyleChatMessage>(
+      find.byType(CursorStyleChatMessage),
+    );
+
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(
+          parts: const <MessagePart>[
+            MessagePart(
+              partId: 'part-0',
+              sequence: 0,
+              kind: MessagePartKind.markdown,
+              content: 'persisted partial',
+              toolCallId: null,
+              toolName: null,
+              attributes: <String, String>{},
+            ),
+          ],
+          stream: contentStream,
+        ),
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+      ),
+    );
+    await tester.pump();
+    final currentMessageWidget = tester.widget<CursorStyleChatMessage>(
+      find.byType(CursorStyleChatMessage),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(identical(currentMessageWidget, previousMessageWidget), isTrue);
+
+    streamController.add(_markdownBlockChunk(' after snapshot'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.textContaining('before snapshot after snapshot'), findsWidgets);
+  });
+
   testWidgets('interpolates the cursor position across a stream line break', (
     tester,
   ) async {

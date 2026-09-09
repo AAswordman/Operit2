@@ -90,7 +90,9 @@ impl ApiPreferences {
     fn decodeProviderModelFromKeySuffix(encoded: &str) -> String {
         let mut providerNames = vec![
             ApiProviderType::OPENAI.name(),
+            ApiProviderType::XAI.name(),
             ApiProviderType::OPENAI_RESPONSES.name(),
+            ApiProviderType::OPENAI_CODEX.name(),
             ApiProviderType::OPENAI_RESPONSES_GENERIC.name(),
             ApiProviderType::OPENAI_GENERIC.name(),
             ApiProviderType::ANTHROPIC.name(),
@@ -109,6 +111,7 @@ impl ApiPreferences {
             ApiProviderType::SILICONFLOW.name(),
             ApiProviderType::IFLOW.name(),
             ApiProviderType::OPENROUTER.name(),
+            ApiProviderType::OPENCODE.name(),
             ApiProviderType::FOUR_ROUTER.name(),
             ApiProviderType::NOUS_PORTAL.name(),
             ApiProviderType::INFINIAI.name(),
@@ -121,6 +124,7 @@ impl ApiPreferences {
             ApiProviderType::LOCAL_MODEL.name(),
             ApiProviderType::PPINFRA.name(),
             ApiProviderType::NOVITA.name(),
+            ApiProviderType::MINIMAX.name(),
             ApiProviderType::OTHER.name(),
         ];
         providerNames.sort_by_key(|name| std::cmp::Reverse(name.len()));

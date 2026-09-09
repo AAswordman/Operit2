@@ -147,7 +147,7 @@ fn runtime_terminal_info(info: TerminalInfo) -> RuntimeTerminalInfo {
 }
 
 fn load_terminal_sessions(
-    terminalHost: &Arc<dyn TerminalHost>,
+    terminalHost: &dyn TerminalHost,
 ) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
     terminalHost
         .listSessions()
@@ -161,11 +161,18 @@ fn load_terminal_sessions(
 }
 
 fn publish_terminal_sessions(
-    terminalHost: &Arc<dyn TerminalHost>,
+    terminalHost: &dyn TerminalHost,
 ) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
     let sessions = load_terminal_sessions(terminalHost)?;
     terminal_sessions_flow().set_value(sessions.clone());
     Ok(sessions)
+}
+
+/// Publishes the current terminal session snapshot for non-service terminal callers.
+pub fn publish_terminal_sessions_for_host(
+    terminalHost: &dyn TerminalHost,
+) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
+    publish_terminal_sessions(terminalHost)
 }
 
 fn close_terminal_pty_output_stream(sessionId: &str) {
@@ -213,7 +220,7 @@ fn poll_terminal_pty_output(
 
     match terminalHost.pollPtyExitCode(&sessionId) {
         Ok(Some(_)) => {
-            publish_terminal_sessions(&terminalHost)
+            publish_terminal_sessions(terminalHost.as_ref())
                 .expect("TerminalHost.listSessions must succeed after PTY exit");
             close_terminal_pty_output_stream(&sessionId);
         }
@@ -257,7 +264,7 @@ impl RuntimeTerminalService {
     #[allow(non_snake_case)]
     /// Lists terminal sessions currently known by the host.
     pub fn listTerminalSessions(&self) -> Result<Vec<RuntimeTerminalSessionInfo>, String> {
-        publish_terminal_sessions(&self.terminalHost)
+        publish_terminal_sessions(self.terminalHost.as_ref())
     }
 
     #[allow(non_snake_case)]
@@ -265,7 +272,7 @@ impl RuntimeTerminalService {
     pub fn terminalSessionsFlow(
         &self,
     ) -> Result<StateFlow<Vec<RuntimeTerminalSessionInfo>>, String> {
-        publish_terminal_sessions(&self.terminalHost)?;
+        publish_terminal_sessions(self.terminalHost.as_ref())?;
         Ok(terminal_sessions_flow().asStateFlow())
     }
 
@@ -311,7 +318,7 @@ impl RuntimeTerminalService {
             )
             .map_err(|error| error.message)?;
         self.ensureTerminalPtyOutputStream(sessionId.clone());
-        publish_terminal_sessions(&self.terminalHost)?;
+        publish_terminal_sessions(self.terminalHost.as_ref())?;
         Ok(sessionId)
     }
 
@@ -356,7 +363,7 @@ impl RuntimeTerminalService {
         self.terminalHost
             .closePtySession(&sessionId)
             .map_err(|error| error.message)?;
-        publish_terminal_sessions(&self.terminalHost)?;
+        publish_terminal_sessions(self.terminalHost.as_ref())?;
         Ok(())
     }
 
