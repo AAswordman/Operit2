@@ -27,6 +27,9 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::AssistantMarkupStreamState;
 use operit_model::PromptFunctionType::PromptFunctionType;
+use operit_node_runtime::RuntimeRemoteLinkService::{
+    RuntimeDeviceSpaceTopology, RuntimeRemoteLinkService,
+};
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatState;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
@@ -53,8 +56,13 @@ use super::selection::{
 };
 use super::transcript::TranscriptRenderCache;
 use super::typewriter::TypewriterState;
+use crate::cli::network_control_ui::{
+    network_capabilities, network_device_id, network_device_label_by_id, network_role_id,
+    network_role_summary, new_network_control_id,
+};
 use crate::cli::CliInstallProgress;
 use crate::{build_attachment_info, parse_shell_args, ChatSendArgs, ShellArgs};
+use operit_store::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlRole};
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const RUNTIME_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
@@ -63,6 +71,7 @@ const MAX_PENDING_TERMINAL_EVENTS_PER_FRAME: usize = 64;
 
 pub(super) struct OperitTui {
     pub(super) core: TuiCore,
+    networkControl: RuntimeRemoteLinkService,
     pub(super) initial_shell_args: ShellArgs,
     pub(super) current_chat_id_cache: Option<String>,
     pub(super) current_messages_cache: Vec<ChatMessage>,
@@ -296,6 +305,7 @@ pub(super) enum FocusArea {
 impl OperitTui {
     pub(super) async fn new(
         mut core: TuiCore,
+        networkControl: RuntimeRemoteLinkService,
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
         approval_bridge: TuiApprovalBridge,
@@ -355,6 +365,7 @@ impl OperitTui {
             .map_err(|error| error.to_string())?;
         Ok(Self {
             core,
+            networkControl,
             initial_shell_args,
             current_chat_id_cache: current_chat_id_cache.clone(),
             current_messages_cache,
@@ -1365,6 +1376,11 @@ impl OperitTui {
             "language" => {
                 self.handle_language_command(&parts[1..])?;
             }
+            "network" => {
+                if let Err(error) = self.handle_network_command(&parts[1..]) {
+                    self.status_message = error;
+                }
+            }
             "model" => {
                 self.handle_model_command(&parts[1..]).await?;
             }
@@ -1422,6 +1438,167 @@ impl OperitTui {
             }
             _ => {
                 self.status_message = self.text().unknown_command(command);
+            }
+        }
+        Ok(())
+    }
+
+    /// Executes a Space control command through the runtime-owned authorization service.
+    fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
+        const USAGE: &str = "network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy>";
+        match args.first().map(String::as_str) {
+            None | Some("show") if args.len() <= 1 => {
+                let state = self.networkControl.deviceSpaceControl()?;
+                let topology = self.networkControl.deviceSpaceTopology()?;
+                self.status_message = format!(
+                    "network {} · {} devices · {} identities",
+                    if state.initialized {
+                        "ready"
+                    } else {
+                        "not initialized"
+                    },
+                    topology.devices.len(),
+                    state.roles.len(),
+                );
+            }
+            Some("bootstrap") if args.len() == 1 => {
+                self.networkControl.bootstrapDeviceSpaceControl()?;
+                self.status_message = "network control initialized".to_string();
+            }
+            Some("audit") if args.len() == 1 => {
+                let audit = self.networkControl.deviceSpaceControlAudit()?;
+                let items = audit
+                    .into_iter()
+                    .map(|record| {
+                        format!(
+                            "{} {}",
+                            if record.accepted {
+                                "accepted"
+                            } else {
+                                "rejected"
+                            },
+                            record.summary,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                self.open_list_popup("Network audit".to_string(), items);
+            }
+            Some("devices") if args.len() == 1 => {
+                let topology = self.networkControl.deviceSpaceTopology()?;
+                let items = topology
+                    .devices
+                    .iter()
+                    .map(|device| {
+                        let label = network_device_label_by_id(&topology, &device.deviceId)?;
+                        let identity = device
+                            .currentIdentity
+                            .as_ref()
+                            .map(|value| value.displayName.as_str())
+                            .unwrap_or("No identity");
+                        Ok(format!("{label} · identity: {identity}"))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                self.open_list_popup("Network devices".to_string(), items);
+            }
+            Some("identities") if args.len() == 1 => {
+                let state = self.networkControl.deviceSpaceControl()?;
+                let items = state
+                    .roles
+                    .values()
+                    .map(network_role_summary)
+                    .collect::<Vec<_>>();
+                self.open_list_popup("Network identities".to_string(), items);
+            }
+            Some("identity") if args.len() >= 2 => {
+                if args[1] == "list" && args.len() == 2 {
+                    let state = self.networkControl.deviceSpaceControl()?;
+                    let items = state
+                        .roles
+                        .values()
+                        .map(network_role_summary)
+                        .collect::<Vec<_>>();
+                    self.open_list_popup("Network identities".to_string(), items);
+                    return Ok(());
+                }
+                if args[1] == "define" && args.len() >= 4 {
+                    let role_id = new_network_control_id("identity");
+                    self.networkControl
+                        .defineDeviceSpaceRole(NetworkControlRole {
+                            roleId: role_id,
+                            displayName: args[2].clone(),
+                            capabilities: network_capabilities(&args[3..])?,
+                        })?;
+                    self.status_message = format!("network identity defined: {}", args[2]);
+                    return Ok(());
+                }
+                if args[1] == "set" && args.len() == 4 {
+                    let state = self.networkControl.deviceSpaceControl()?;
+                    let topology = self.networkControl.deviceSpaceTopology()?;
+                    let device_id = network_device_id(&topology, &args[2])?;
+                    let device_label = network_device_label_by_id(&topology, &device_id)?;
+                    let identity_id = network_role_id(&state, &args[3])?;
+                    let identity_label = state
+                        .roles
+                        .get(&identity_id)
+                        .map(|role| role.displayName.clone())
+                        .ok_or_else(|| format!("network identity does not exist: {}", args[3]))?;
+                    self.networkControl.setDeviceSpaceIdentity(
+                        NetworkControlIdentityAssignment {
+                            nodeId: device_id,
+                            roleId: identity_id,
+                        },
+                    )?;
+                    self.status_message =
+                        format!("network identity set: {device_label} · {identity_label}");
+                    return Ok(());
+                }
+                if args[1] == "clear" && args.len() == 3 {
+                    let topology = self.networkControl.deviceSpaceTopology()?;
+                    let device_id = network_device_id(&topology, &args[2])?;
+                    self.networkControl.clearDeviceSpaceIdentity(device_id)?;
+                    self.status_message = format!("network identity cleared: {}", args[2]);
+                    return Ok(());
+                }
+                Err(USAGE.to_string())?
+            }
+            Some("admit") if args.len() == 2 => {
+                let topology = self.networkControl.deviceSpaceTopology()?;
+                let device_id = network_device_id(&topology, &args[1])?;
+                let device_label = network_device_label_by_id(&topology, &device_id)?;
+                self.networkControl.admitDeviceSpaceMember(device_id)?;
+                self.status_message = format!("network member admitted: {}", device_label);
+            }
+            Some("remove") if args.len() == 2 => {
+                let topology = self.networkControl.deviceSpaceTopology()?;
+                let device_id = network_device_id(&topology, &args[1])?;
+                let device_label = network_device_label_by_id(&topology, &device_id)?;
+                self.networkControl.removeDeviceSpaceMember(device_id)?;
+                self.status_message = format!("network member removed: {}", device_label);
+            }
+            Some("disconnect") if args.len() == 2 => {
+                let topology = self.networkControl.deviceSpaceTopology()?;
+                let device_id = network_device_id(&topology, &args[1])?;
+                let device_label = network_device_label_by_id(&topology, &device_id)?;
+                self.networkControl.disconnectDeviceSpaceNode(device_id)?;
+                self.status_message = format!("network node disconnected: {}", device_label);
+            }
+            Some("policy") if args.len() == 2 && args[1] == "list" => {
+                let items = self
+                    .networkControl
+                    .deviceSpaceControl()?
+                    .policies
+                    .into_iter()
+                    .map(|(policyId, value)| format!("{policyId}={value}"))
+                    .collect::<Vec<_>>();
+                self.open_list_popup("Network policies".to_string(), items);
+            }
+            Some("policy") if args.len() == 4 && args[1] == "set" => {
+                self.networkControl
+                    .updateDeviceSpacePolicy(args[2].clone(), args[3].clone())?;
+                self.status_message = format!("network policy updated: {}", args[2]);
+            }
+            _ => {
+                self.status_message = USAGE.to_string();
             }
         }
         Ok(())

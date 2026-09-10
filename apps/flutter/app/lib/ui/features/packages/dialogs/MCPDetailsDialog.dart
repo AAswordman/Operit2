@@ -708,7 +708,8 @@ class _MCPConfigEditDialogState extends State<_MCPConfigEditDialog> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
+                  OperitFormStyles.dropdownButtonFormField<String>(
+                    context,
                     initialValue: _type,
                     style: OperitFormStyles.dropdownTextStyle(context),
                     decoration: const InputDecoration(

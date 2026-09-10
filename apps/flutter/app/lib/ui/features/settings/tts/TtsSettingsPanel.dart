@@ -9,6 +9,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../chat/tts/TtsPlaybackController.dart';
 import '../components/SettingsControlStyles.dart';

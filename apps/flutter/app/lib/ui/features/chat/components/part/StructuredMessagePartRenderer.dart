@@ -8,243 +8,13 @@ import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
 import '../../../../common/markdown/MarkdownNodeGrouper.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../common/markdown/StreamMarkdownRendererState.dart';
-import 'CustomXmlRenderer.dart';
 
-class StructuredMessagePartRenderer extends StatefulWidget {
-  const StructuredMessagePartRenderer({
-    super.key,
-    required this.parts,
-    required this.textColor,
-    required this.backgroundColor,
-    required this.showThinkingProcess,
-    this.rendererId,
-    this.onLinkClick,
-    this.onReady,
-    this.initialThinkingExpanded = false,
-    this.allowExpandedThinkingFullHeight = false,
-    this.splitMarkdownContent,
-    required this.nodeGrouper,
-  });
-
-  final List<core_proxy.MessagePart> parts;
-  final Color textColor;
-  final Color backgroundColor;
-  final bool showThinkingProcess;
-  final String? rendererId;
-  final void Function(String url)? onLinkClick;
-  final VoidCallback? onReady;
-  final bool initialThinkingExpanded;
-  final bool allowExpandedThinkingFullHeight;
-  final MarkdownContentSplitter? splitMarkdownContent;
-  final MarkdownNodeGrouper nodeGrouper;
-
-  /// Creates readiness-tracking state for static Markdown parts.
-  @override
-  State<StructuredMessagePartRenderer> createState() =>
-      _StructuredMessagePartRendererState();
-}
-
-class _StructuredMessagePartRendererState
-    extends State<StructuredMessagePartRenderer> {
-  late Set<String> _pendingMarkdownPartIds;
-  var _readinessGeneration = 0;
-  var _readinessScheduled = false;
-
-  /// Initializes the pending static Markdown render set.
-  @override
-  void initState() {
-    super.initState();
-    _resetReadiness();
-  }
-
-  /// Resets readiness when the static Markdown part contents change.
-  @override
-  void didUpdateWidget(covariant StructuredMessagePartRenderer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final previousContent = _markdownContentByPartId(oldWidget.parts);
-    final nextContent = _markdownContentByPartId(widget.parts);
-    if (!mapEquals(previousContent, nextContent)) {
-      _resetReadiness();
-      return;
-    }
-    if (oldWidget.onReady != widget.onReady &&
-        _pendingMarkdownPartIds.isEmpty) {
-      _readinessScheduled = false;
-      _scheduleReadyNotification();
-    }
-  }
-
-  /// Builds direct widgets for persisted semantic message parts.
-  @override
-  Widget build(BuildContext context) {
-    final orderedParts = widget.parts.toList(growable: false)
-      ..sort((left, right) => left.sequence.compareTo(right.sequence));
-    final rendererId = '${widget.rendererId ?? 'structured-message'}-parts';
-    final nodes = _structuredNodesForParts(orderedParts);
-    final groupedItems = widget.nodeGrouper.group(nodes, rendererId);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (final item in groupedItems)
-          if (item is MarkdownSingleItem)
-            _singlePartWidget(orderedParts[item.index])
-          else if (item is MarkdownGroupItem)
-            _partGroupWidget(group: item, nodes: nodes, rendererId: rendererId),
-      ],
-    );
-  }
-
-  /// Builds one keyed semantic message part widget.
-  Widget _singlePartWidget(core_proxy.MessagePart part) {
-    return KeyedSubtree(
-      key: ValueKey<String>(part.partId),
-      child: _partWidget(part),
-    );
-  }
-
-  /// Builds one grouped semantic message part sequence.
-  Widget _partGroupWidget({
-    required MarkdownGroupItem group,
-    required List<MarkdownNodeStable> nodes,
-    required String rendererId,
-  }) {
-    return widget.nodeGrouper.renderGroup(
-      group: group,
-      nodes: nodes,
-      rendererId: rendererId,
-      isVisible: true,
-      isLastNode: group.endIndexInclusive == nodes.length - 1,
-      textColor: widget.textColor,
-      xmlRenderer:
-          ({
-            required String xmlContent,
-            required bool isStreaming,
-            required Color textColor,
-            Stream<String>? xmlStream,
-            Stream<Object>? xmlMarkdownEventStream,
-            String? renderInstanceKey,
-          }) {
-            return _renderStructuredXmlContent(
-              xmlContent: xmlContent,
-              isStreaming: isStreaming,
-              textColor: textColor,
-              xmlStream: xmlStream,
-              xmlMarkdownEventStream: xmlMarkdownEventStream,
-              renderInstanceKey: renderInstanceKey,
-            );
-          },
-      xmlStreamResolver: (_) => null,
-      xmlMarkdownEventStreamResolver: (_) => null,
-      onLinkClick: widget.onLinkClick,
-      fillMaxWidth: true,
-      textStyle: Theme.of(context).textTheme.bodyMedium!,
-    );
-  }
-
-  /// Creates the display widget matching one canonical message-part kind.
-  Widget _partWidget(core_proxy.MessagePart part) {
-    switch (part.kind) {
-      case core_proxy.MessagePartKind.markdown:
-        return StreamMarkdownRenderer(
-          content: part.content,
-          isStreaming: false,
-          textColor: widget.textColor,
-          backgroundColor: widget.backgroundColor,
-          nodeGrouper: widget.nodeGrouper,
-          rendererId: '${widget.rendererId ?? 'message'}-${part.partId}',
-          onLinkClick: widget.onLinkClick,
-          onContentReady: () => _markPartReady(part.partId),
-          splitMarkdownContent: widget.splitMarkdownContent!,
-        );
-      case core_proxy.MessagePartKind.thinking:
-      case core_proxy.MessagePartKind.toolCall:
-      case core_proxy.MessagePartKind.toolResult:
-      case core_proxy.MessagePartKind.status:
-        return _renderStructuredXmlPart(part);
-    }
-  }
-
-  /// Renders one non-Markdown part through the original XML renderer.
-  Widget _renderStructuredXmlPart(core_proxy.MessagePart part) {
-    return _renderStructuredXmlContent(
-      xmlContent: _structuredPartMarkup(part),
-      isStreaming: false,
-      textColor: widget.textColor,
-    );
-  }
-
-  /// Renders one XML payload through the original XML renderer.
-  Widget _renderStructuredXmlContent({
-    required String xmlContent,
-    required bool isStreaming,
-    required Color textColor,
-    Stream<String>? xmlStream,
-    Stream<Object>? xmlMarkdownEventStream,
-    String? renderInstanceKey,
-  }) {
-    return CustomXmlRenderer(
-      key: renderInstanceKey == null
-          ? null
-          : ValueKey<String>(renderInstanceKey),
-      xmlContent: xmlContent,
-      isStreaming: isStreaming,
-      textColor: textColor,
-      xmlStream: xmlStream,
-      xmlMarkdownEventStream: xmlMarkdownEventStream,
-      showThinkingProcess: widget.showThinkingProcess,
-      initialThinkingExpanded: widget.initialThinkingExpanded,
-      allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
-      splitMarkdownContent: widget.splitMarkdownContent!,
-    );
-  }
-
-  /// Restarts readiness tracking for the current static Markdown parts.
-  void _resetReadiness() {
-    _readinessGeneration++;
-    _readinessScheduled = false;
-    _pendingMarkdownPartIds = _markdownContentByPartId(
-      widget.parts,
-    ).keys.toSet();
-    if (_pendingMarkdownPartIds.isEmpty) {
-      _scheduleReadyNotification();
-    }
-  }
-
-  /// Marks one static Markdown part as painted and ready for display.
-  void _markPartReady(String partId) {
-    if (!_pendingMarkdownPartIds.remove(partId)) {
-      return;
-    }
-    if (_pendingMarkdownPartIds.isEmpty) {
-      _scheduleReadyNotification();
-    }
-  }
-
-  /// Notifies the parent after every static Markdown part is ready.
-  void _scheduleReadyNotification() {
-    if (_readinessScheduled) {
-      return;
-    }
-    _readinessScheduled = true;
-    final generation = _readinessGeneration;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          generation != _readinessGeneration ||
-          _pendingMarkdownPartIds.isNotEmpty) {
-        return;
-      }
-      widget.onReady?.call();
-    });
-  }
-}
-
-/// Keeps completed live output visible until structured parts finish their first paint.
+/// Renders live and completed assistant parts through one Markdown surface.
 class StreamingStructuredMessageRenderer extends StatefulWidget {
   const StreamingStructuredMessageRenderer({
     super.key,
     required this.parts,
     required this.contentStream,
-    required this.isStreaming,
     required this.textColor,
     required this.backgroundColor,
     required this.showThinkingProcess,
@@ -259,7 +29,6 @@ class StreamingStructuredMessageRenderer extends StatefulWidget {
 
   final List<core_proxy.MessagePart> parts;
   final Stream<Object>? contentStream;
-  final bool isStreaming;
   final Color textColor;
   final Color backgroundColor;
   final bool showThinkingProcess;
@@ -271,7 +40,7 @@ class StreamingStructuredMessageRenderer extends StatefulWidget {
   final bool allowExpandedThinkingFullHeight;
   final MarkdownContentSplitter? splitMarkdownContent;
 
-  /// Creates state that owns the live-to-structured visual handoff.
+  /// Creates state that keeps one physical stream attached to one renderer.
   @override
   State<StreamingStructuredMessageRenderer> createState() =>
       _StreamingStructuredMessageRendererState();
@@ -281,7 +50,6 @@ class _StreamingStructuredMessageRendererState
     extends State<StreamingStructuredMessageRenderer> {
   Stream<Object>? _retainedContentStream;
   bool _retainedContentStreamDone = false;
-  bool _structuredPartsReady = false;
 
   /// Captures the initial live stream for uninterrupted rendering.
   @override
@@ -289,17 +57,16 @@ class _StreamingStructuredMessageRendererState
     super.initState();
     _retainedContentStream = widget.contentStream;
     _retainedContentStreamDone = widget.contentStream == null;
-    _structuredPartsReady = _retainedContentStream == null;
-    if (widget.contentStream != null || widget.isStreaming) {
+    if (widget.contentStream != null) {
       _logStructuredRenderTrace(
         'init rendererId=${widget.rendererId ?? '<auto>'} '
         'stream=${_streamTraceId(widget.contentStream)} '
-        'parts=${widget.parts.length} streaming=${widget.isStreaming}',
+        'parts=${widget.parts.length}',
       );
     }
   }
 
-  /// Tracks new generation streams while retaining a completed stream for handoff.
+  /// Tracks new generation streams while keeping the active subscription stable.
   @override
   void didUpdateWidget(covariant StreamingStructuredMessageRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -309,26 +76,18 @@ class _StreamingStructuredMessageRendererState
       oldWidget.parts,
       widget.parts,
     );
-    if (partsChanged) {
-      _structuredPartsReady = _retainedContentStream == null;
-    }
     final shouldTrace =
         oldWidget.contentStream != null ||
         nextStream != null ||
-        _retainedContentStream != null ||
-        oldWidget.isStreaming ||
-        widget.isStreaming;
-    if (streamChanged ||
-        partsChanged ||
-        oldWidget.isStreaming != widget.isStreaming) {
+        _retainedContentStream != null;
+    if (streamChanged || partsChanged) {
       if (shouldTrace) {
         _logStructuredRenderTrace(
           'update rendererId=${widget.rendererId ?? '<auto>'} '
           'oldStream=${_streamTraceId(oldWidget.contentStream)} '
           'newStream=${_streamTraceId(nextStream)} '
           'retained=${_streamTraceId(_retainedContentStream)} '
-          'oldParts=${oldWidget.parts.length} newParts=${widget.parts.length} '
-          'oldStreaming=${oldWidget.isStreaming} newStreaming=${widget.isStreaming}',
+          'oldParts=${oldWidget.parts.length} newParts=${widget.parts.length}',
         );
       }
     }
@@ -336,7 +95,6 @@ class _StreamingStructuredMessageRendererState
     if (nextStream != null && _retainedContentStream == null) {
       _retainedContentStream = nextStream;
       _retainedContentStreamDone = false;
-      _structuredPartsReady = false;
       _logStructuredRenderTrace(
         'retain rendererId=${widget.rendererId ?? '<auto>'} '
         'stream=${_streamTraceId(nextStream)}',
@@ -350,38 +108,16 @@ class _StreamingStructuredMessageRendererState
     }
   }
 
-  /// Keeps the completed stream renderer mounted for a stable visual handoff.
+  /// Builds one Markdown renderer for live events and completed message parts.
   @override
   Widget build(BuildContext context) {
-    final retainedStream = _retainedContentStream;
-    final structuredParts = _buildStructuredParts(
-      onReady: retainedStream == null ? null : _markStructuredPartsReady,
-    );
-    if (retainedStream == null) {
-      return structuredParts;
-    }
-    final liveMarkdown = _buildLiveMarkdown(retainedStream);
-    final stackChildren = <Widget>[liveMarkdown];
-    if (widget.contentStream == null && widget.parts.isNotEmpty) {
-      stackChildren.add(
-        Positioned.fill(
-          child: IgnorePointer(
-            child: Offstage(offstage: true, child: structuredParts),
-          ),
-        ),
-      );
-    }
-    return Stack(children: stackChildren);
-  }
-
-  /// Builds the retained live Markdown renderer for a physical content stream.
-  Widget _buildLiveMarkdown(Stream<Object> stream) {
+    final activeContentStream = _activeContentStream;
     return KeyedSubtree(
-      key: const ValueKey<String>('live-markdown'),
+      key: const ValueKey<String>('assistant-markdown-surface'),
       child: StreamMarkdownRenderer(
-        content: '',
-        contentStream: stream,
-        isStreaming: widget.isStreaming || !_retainedContentStreamDone,
+        content: _assistantProtocolMarkupForParts(widget.parts),
+        contentStream: activeContentStream,
+        isStreaming: activeContentStream != null && !_retainedContentStreamDone,
         textColor: widget.textColor,
         backgroundColor: widget.backgroundColor,
         nodeGrouper: widget.nodeGrouper,
@@ -397,24 +133,15 @@ class _StreamingStructuredMessageRendererState
     );
   }
 
-  /// Builds the persisted message-part renderer used after stream completion.
-  Widget _buildStructuredParts({VoidCallback? onReady}) {
-    return KeyedSubtree(
-      key: const ValueKey<String>('structured-parts'),
-      child: StructuredMessagePartRenderer(
-        parts: widget.parts,
-        textColor: widget.textColor,
-        backgroundColor: widget.backgroundColor,
-        showThinkingProcess: widget.showThinkingProcess,
-        rendererId: widget.rendererId,
-        onLinkClick: widget.onLinkClick,
-        onReady: onReady,
-        initialThinkingExpanded: widget.initialThinkingExpanded,
-        allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
-        splitMarkdownContent: widget.splitMarkdownContent,
-        nodeGrouper: widget.nodeGrouper,
-      ),
-    );
+  /// Selects the live stream until canonical message parts can take over.
+  Stream<Object>? get _activeContentStream {
+    if (_retainedContentStream == null) {
+      return null;
+    }
+    if (!_retainedContentStreamDone || widget.parts.isEmpty) {
+      return _retainedContentStream;
+    }
+    return null;
   }
 
   /// Marks the retained live stream as complete.
@@ -422,47 +149,13 @@ class _StreamingStructuredMessageRendererState
     if (_retainedContentStreamDone) {
       return;
     }
-    _retainedContentStreamDone = true;
     _logStructuredRenderTrace(
       'stream_done rendererId=${widget.rendererId ?? '<auto>'} '
       'stream=${_streamTraceId(_retainedContentStream)} '
       'parts=${widget.parts.length}',
     );
-    _releaseRetainedContentStreamIfReady();
-  }
-
-  /// Marks the structured message parts as painted.
-  void _markStructuredPartsReady() {
-    if (widget.parts.isEmpty) {
-      return;
-    }
-    if (_structuredPartsReady) {
-      return;
-    }
-    _structuredPartsReady = true;
-    _logStructuredRenderTrace(
-      'parts_ready rendererId=${widget.rendererId ?? '<auto>'} '
-      'stream=${_streamTraceId(_retainedContentStream)} '
-      'parts=${widget.parts.length}',
-    );
-    _releaseRetainedContentStreamIfReady();
-  }
-
-  /// Releases the retained stream after both handoff sides are ready.
-  void _releaseRetainedContentStreamIfReady() {
-    if (!mounted ||
-        _retainedContentStream == null ||
-        !_retainedContentStreamDone ||
-        !_structuredPartsReady) {
-      return;
-    }
-    _logStructuredRenderTrace(
-      'release rendererId=${widget.rendererId ?? '<auto>'} '
-      'stream=${_streamTraceId(_retainedContentStream)} '
-      'parts=${widget.parts.length}',
-    );
     setState(() {
-      _retainedContentStream = null;
+      _retainedContentStreamDone = true;
     });
   }
 }
@@ -501,53 +194,25 @@ bool _sameMessagePartsForTrace(
   return true;
 }
 
-/// Returns the static Markdown content keyed by semantic part id.
-Map<String, String> _markdownContentByPartId(
-  List<core_proxy.MessagePart> parts,
-) {
-  return <String, String>{
-    for (final part in parts)
-      if (part.kind == core_proxy.MessagePartKind.markdown &&
-          part.content.trim().isNotEmpty)
-        part.partId: part.content,
-  };
-}
-
-/// Creates render nodes from canonical semantic message parts.
-List<MarkdownNodeStable> _structuredNodesForParts(
-  List<core_proxy.MessagePart> parts,
-) {
-  return <MarkdownNodeStable>[
-    for (final part in parts)
-      MarkdownNodeStable(
-        type: _nodeTypeForPart(part),
-        content: _nodeContentForPart(part),
-        isStreaming: false,
-        stableKey: part.partId,
-      ),
-  ];
-}
-
-/// Returns the markdown node type used for one semantic message part.
-MarkdownNodeType _nodeTypeForPart(core_proxy.MessagePart part) {
-  return switch (part.kind) {
-    core_proxy.MessagePartKind.markdown => MarkdownNodeType.plainText,
-    core_proxy.MessagePartKind.thinking ||
-    core_proxy.MessagePartKind.toolCall ||
-    core_proxy.MessagePartKind.toolResult ||
-    core_proxy.MessagePartKind.status => MarkdownNodeType.xmlBlock,
-  };
-}
-
-/// Returns the render source used for one semantic message part.
-String _nodeContentForPart(core_proxy.MessagePart part) {
-  return switch (part.kind) {
-    core_proxy.MessagePartKind.markdown => part.content,
-    core_proxy.MessagePartKind.thinking ||
-    core_proxy.MessagePartKind.toolCall ||
-    core_proxy.MessagePartKind.toolResult ||
-    core_proxy.MessagePartKind.status => _structuredPartMarkup(part),
-  };
+/// Serializes canonical assistant parts into the renderer protocol source.
+String _assistantProtocolMarkupForParts(List<core_proxy.MessagePart> parts) {
+  final orderedParts = parts.toList(growable: false)
+    ..sort((left, right) => left.sequence.compareTo(right.sequence));
+  final markup = StringBuffer();
+  for (final part in orderedParts) {
+    switch (part.kind) {
+      case core_proxy.MessagePartKind.markdown:
+        markup.write(part.content);
+        break;
+      case core_proxy.MessagePartKind.thinking:
+      case core_proxy.MessagePartKind.toolCall:
+      case core_proxy.MessagePartKind.toolResult:
+      case core_proxy.MessagePartKind.status:
+        markup.write(_structuredPartMarkup(part));
+        break;
+    }
+  }
+  return markup.toString();
 }
 
 /// Serializes one canonical non-Markdown part for the established XML renderer.

@@ -884,6 +884,10 @@ ThemeData _themeData(
     textTheme: textTheme,
     inputDecorationTheme: _inputDecorationTheme(colorScheme, textTheme),
     dropdownMenuTheme: _dropdownMenuTheme(colorScheme, textTheme),
+    menuTheme: _menuTheme(colorScheme, textTheme),
+    menuButtonTheme: _menuButtonTheme(colorScheme, textTheme),
+    popupMenuTheme: _popupMenuTheme(colorScheme, textTheme),
+    buttonTheme: _buttonTheme(colorScheme),
     dialogTheme: _dialogTheme(colorScheme, textTheme),
     // ignore: deprecated_member_use
     progressIndicatorTheme: const ProgressIndicatorThemeData(year2023: false),
@@ -909,13 +913,87 @@ ThemeData _themeData(
   );
 }
 
+/// Builds the shared theme for Material 3 DropdownMenu widgets.
 DropdownMenuThemeData _dropdownMenuTheme(
   ColorScheme colorScheme,
   TextTheme textTheme,
 ) {
+  final menuShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(8),
+  );
   return DropdownMenuThemeData(
     textStyle: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface),
+    menuStyle: MenuStyle(
+      backgroundColor: WidgetStatePropertyAll(colorScheme.surfaceContainerHigh),
+      shadowColor: WidgetStatePropertyAll(
+        colorScheme.shadow.withValues(alpha: 0.18),
+      ),
+      surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+      elevation: const WidgetStatePropertyAll(3),
+      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 4)),
+      shape: WidgetStatePropertyAll(menuShape),
+    ),
   );
+}
+
+/// Builds the shared menu theme used by MenuAnchor and MenuItemButton.
+MenuThemeData _menuTheme(ColorScheme colorScheme, TextTheme textTheme) {
+  final menuShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(8),
+  );
+  return MenuThemeData(
+    style: MenuStyle(
+      backgroundColor: WidgetStatePropertyAll(colorScheme.surfaceContainerHigh),
+      shadowColor: WidgetStatePropertyAll(
+        colorScheme.shadow.withValues(alpha: 0.18),
+      ),
+      surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+      elevation: const WidgetStatePropertyAll(3),
+      padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 4)),
+      shape: WidgetStatePropertyAll(menuShape),
+    ),
+  );
+}
+
+/// Builds the shared item style used inside MenuAnchor menus.
+MenuButtonThemeData _menuButtonTheme(
+  ColorScheme colorScheme,
+  TextTheme textTheme,
+) {
+  return MenuButtonThemeData(
+    style: ButtonStyle(
+      foregroundColor: WidgetStatePropertyAll(colorScheme.onSurface),
+      textStyle: WidgetStatePropertyAll(textTheme.bodyMedium),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      minimumSize: const WidgetStatePropertyAll(Size(0, 40)),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      ),
+    ),
+  );
+}
+
+/// Builds the shared popup menu theme used by PopupMenuButton.
+PopupMenuThemeData _popupMenuTheme(
+  ColorScheme colorScheme,
+  TextTheme textTheme,
+) {
+  return PopupMenuThemeData(
+    color: colorScheme.surfaceContainerHigh,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    menuPadding: const EdgeInsets.symmetric(vertical: 4),
+    elevation: 3,
+    shadowColor: colorScheme.shadow.withValues(alpha: 0.18),
+    surfaceTintColor: Colors.transparent,
+    textStyle: textTheme.bodyMedium?.copyWith(color: colorScheme.onSurface),
+  );
+}
+
+/// Builds the legacy button theme values still used by DropdownButton.
+ButtonThemeData _buttonTheme(ColorScheme colorScheme) {
+  return ButtonThemeData(alignedDropdown: true, colorScheme: colorScheme);
 }
 
 DialogThemeData _dialogTheme(ColorScheme colorScheme, TextTheme textTheme) {

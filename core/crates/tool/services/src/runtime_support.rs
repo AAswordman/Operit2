@@ -185,6 +185,16 @@ pub struct RuntimeChatSendRequest {
     pub turnOptions: ChatTurnOptions,
 }
 
+/// Carries one functional model request from the tool layer to the owning runtime.
+#[derive(Clone, Debug)]
+#[allow(non_snake_case)]
+pub struct RuntimeChatCallRequest {
+    pub functionType: operit_model::FunctionType::FunctionType,
+    pub turns: Vec<operit_model::PromptTurn::PromptTurn>,
+    pub recordTokenUsage: bool,
+    pub enableThinking: bool,
+}
+
 /// Describes one device exposed to Core routing tools.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(non_snake_case)]
@@ -339,6 +349,13 @@ pub trait ToolRuntimeSupport: Send + Sync {
         &'a self,
         request: RuntimeChatSendRequest,
     ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
+
+    /// Calls a functional model without adding messages to chat history.
+    #[allow(non_snake_case)]
+    fn callChatModel<'a>(
+        &'a self,
+        request: RuntimeChatCallRequest,
+    ) -> ToolRuntimeSupportFuture<'a, Result<String, String>>;
 
     /// Lists character cards through parent-owned preferences.
     #[allow(non_snake_case)]

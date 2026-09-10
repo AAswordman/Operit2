@@ -1,3 +1,7 @@
+use super::network_control_ui::{
+    network_capabilities, network_device_id, network_device_label_by_id, network_device_labels,
+    network_role_id, network_role_summary, new_network_control_id,
+};
 use super::*;
 use crate::{
     create_cli_core_application, create_cli_core_application_configured,
@@ -22,6 +26,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
     RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
 };
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
+use operit_store::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlRole};
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
@@ -38,6 +43,7 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("discover") => run_link_discover_command(&args[1..]).await,
         Some("connect") => run_link_connect_command(&args[1..]).await,
         Some("space") => run_link_space_command(&args[1..]).await,
+        Some("control") => run_link_control_command(&args[1..]).await,
         Some("hello") => run_link_hello_command(&args[1..]).await,
         Some("sessions") => run_link_sessions_command().await,
         Some("transport") => run_link_transport_command(&args[1..]).await,
@@ -206,15 +212,9 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
         emit_cli_json(serde_json::json!({ "spaces": spaces }));
     } else {
         for space in spaces {
-            println!(
-                "{} ({}) — {} devices",
-                space.spaceName, space.spaceId, space.memberCount
-            );
+            println!("{} — {} devices", space.spaceName, space.memberCount);
             for device in space.devices {
-                println!(
-                    "  {} ({}) — {}",
-                    device.displayName, device.deviceId, device.baseUrl
-                );
+                println!("  {} — {}", device.displayName, device.baseUrl);
             }
         }
     }
@@ -233,12 +233,8 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
         .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client"))
         .await?;
     if !cli_json_mode() {
-        println!(
-            "Pairing with {} ({})",
-            pairing.coreDeviceInfo.displayName(),
-            pairing.coreDeviceId
-        );
-        println!("Pairing started: {}", pairing.pairingId);
+        println!("Pairing with {}", pairing.coreDeviceInfo.displayName());
+        println!("Pairing started");
         println!("Check the server terminal for the pairing code.");
         print!("Pairing code: ");
     }
@@ -262,11 +258,7 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
             "transport": link_transport_name(&session.transport),
         }));
     } else {
-        println!(
-            "Paired device {} ({})",
-            session.remoteDeviceInfo.displayName(),
-            session.coreDeviceId
-        );
+        println!("Paired device {}", session.remoteDeviceInfo.displayName());
         println!("Saved as: {name}");
         println!("Join its device space with: operit2 cli link space join {name}");
     }
@@ -291,7 +283,8 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             if cli_json_mode() {
                 emit_cli_json(serde_json::to_value(&space).map_err(|error| error.to_string())?);
             } else {
-                println!("{}", serde_json::to_string_pretty(&space).map_err(|error| error.to_string())?);
+                println!("Device space: {}", space.spaceName);
+                println!("Devices: {}", space.members.len());
             }
             Ok(())
         }
@@ -302,21 +295,30 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("status") if args.len() == 2 => {
-            let status = service.pairedDeviceStatus(args[1].clone()).await?;
+            let topology = service.deviceSpaceTopology()?;
+            let device_id = network_device_id(&topology, &args[1])?;
+            let device_label = network_device_label_by_id(&topology, &device_id)?;
+            let status = service.pairedDeviceStatus(device_id).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({ "status": format!("{status:?}") })); }
-            else { println!("Status: {status:?}"); }
+            else { println!("{device_label}: {status:?}"); }
             Ok(())
         }
         Some("disconnect") if args.len() == 2 => {
-            service.disconnectDeviceSpaceConnection(args[1].clone())?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({ "deviceId": args[1], "disconnected": true })); }
-            else { println!("Disconnected device {}", args[1]); }
+            let topology = service.deviceSpaceTopology()?;
+            let device_id = network_device_id(&topology, &args[1])?;
+            let device_label = network_device_label_by_id(&topology, &device_id)?;
+            service.disconnectDeviceSpaceConnection(device_id)?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "disconnected": true })); }
+            else { println!("Disconnected device {device_label}"); }
             Ok(())
         }
         Some("remove") if args.len() == 2 => {
-            service.removePairedDevice(args[1].clone())?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({ "deviceId": args[1], "removed": true })); }
-            else { println!("Removed paired device {}", args[1]); }
+            let topology = service.deviceSpaceTopology()?;
+            let device_id = network_device_id(&topology, &args[1])?;
+            let device_label = network_device_label_by_id(&topology, &device_id)?;
+            service.removeDeviceSpaceMember(device_id)?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "removed": true })); }
+            else { println!("Removed device {device_label} from the Space"); }
             Ok(())
         }
         Some("join") if args.len() == 2 => {
@@ -331,7 +333,228 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             else { println!("Left device space; current space: {}", space.spaceName); }
             Ok(())
         }
-        _ => Err("usage: operit2 cli link space <show|status <device-id>|rename <name>|join <paired-session>|disconnect <device-id>|remove <device-id>|leave>".to_string()),
+        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <paired-session>|disconnect <device-name>|remove <device-name>|leave>".to_string()),
+    }
+}
+
+/// Runs authoritative Space control policy commands through the shared runtime service.
+async fn run_link_control_command(args: &[String]) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: operit2 cli link control <show|bootstrap|audit|identity|device|policy>";
+    let mutatesPolicy = matches!(
+        args.first().map(String::as_str),
+        Some("bootstrap") | Some("identity") | Some("device") | Some("policy")
+    );
+    let coreApplication = if mutatesPolicy {
+        create_cli_core_application("client").await?
+    } else {
+        create_cli_core_application_without_space_sync("client").await?
+    };
+    let service = coreApplication.accessServices();
+    match args.first().map(String::as_str) {
+        Some("show") if args.len() == 1 => {
+            let state = service.deviceSpaceControl()?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!(state));
+            } else {
+                println!(
+                    "Network control: {} · {} identities · {} devices",
+                    if state.initialized {
+                        "ready"
+                    } else {
+                        "not initialized"
+                    },
+                    state.roles.len(),
+                    service.deviceSpaceTopology()?.devices.len(),
+                );
+            }
+            Ok(())
+        }
+        Some("bootstrap") if args.len() == 1 => {
+            let state = service.bootstrapDeviceSpaceControl()?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!(state));
+            } else {
+                println!("Network control initialized");
+            }
+            Ok(())
+        }
+        Some("audit") if args.len() == 1 => {
+            let audit = service.deviceSpaceControlAudit()?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!(audit));
+            } else {
+                for record in audit {
+                    println!(
+                        "{} · {}",
+                        if record.accepted {
+                            "accepted"
+                        } else {
+                            "rejected"
+                        },
+                        record.summary,
+                    );
+                }
+            }
+            Ok(())
+        }
+        Some("identity") => {
+            run_link_control_identity_command(&service, &coreApplication, &args[1..])
+        }
+        Some("device") => run_link_control_device_command(&service, &args[1..]),
+        Some("policy") => run_link_control_policy_command(&service, &args[1..]),
+        _ => Err(USAGE.to_string()),
+    }
+}
+
+/// Runs identity definition, assignment, and revocation commands.
+fn run_link_control_identity_command(
+    service: &operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+    coreApplication: &operit_core_application::CoreApplication,
+    args: &[String],
+) -> Result<(), String> {
+    const USAGE: &str = "usage: operit2 cli link control identity <list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve>...|set <device-name> <identity-name>|clear <device-name>>";
+    match args {
+        [command] if command == "list" => {
+            let state = service.deviceSpaceControl()?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!(state.roles));
+            } else {
+                for role in state.roles.values() {
+                    println!("{}", network_role_summary(role));
+                }
+            }
+            Ok(())
+        }
+        [command, displayName, capabilities @ ..]
+            if command == "define" && !capabilities.is_empty() =>
+        {
+            let roleId = new_network_control_id("role");
+            let capabilities = network_capabilities(capabilities)?;
+            service.defineDeviceSpaceRole(NetworkControlRole {
+                roleId: roleId.clone(),
+                displayName: displayName.clone(),
+                capabilities,
+            })?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({
+                    "roleId": roleId,
+                    "name": displayName,
+                    "defined": true
+                }));
+            } else {
+                println!("Identity created: {displayName}");
+            }
+            Ok(())
+        }
+        [command, deviceName, roleName] if command == "set" => {
+            let state = service.deviceSpaceControl()?;
+            let topology = service.deviceSpaceTopology()?;
+            let deviceId = network_device_id(&topology, deviceName)?;
+            let roleId = network_role_id(&state, roleName)?;
+            let roleLabel = state
+                .roles
+                .get(&roleId)
+                .map(|role| role.displayName.clone())
+                .ok_or_else(|| format!("network role does not exist: {roleName}"))?;
+            service.setDeviceSpaceIdentity(NetworkControlIdentityAssignment {
+                nodeId: deviceId.clone(),
+                roleId: roleId.clone(),
+            })?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({
+                    "deviceId": deviceId,
+                    "identityId": roleId,
+                    "set": true
+                }));
+            } else {
+                println!("Set identity \"{roleLabel}\" on \"{deviceName}\"");
+            }
+            Ok(())
+        }
+        [command, deviceName] if command == "clear" => {
+            let topology = service.deviceSpaceTopology()?;
+            let deviceId = network_device_id(&topology, deviceName)?;
+            service.clearDeviceSpaceIdentity(deviceId.clone())?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({ "deviceId": deviceId, "cleared": true }));
+            } else {
+                println!("Cleared identity from \"{deviceName}\"");
+            }
+            Ok(())
+        }
+        _ => Err(USAGE.to_string()),
+    }
+}
+
+/// Runs member removal and connection prohibition commands.
+fn run_link_control_device_command(
+    service: &operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+    args: &[String],
+) -> Result<(), String> {
+    const USAGE: &str = "usage: operit2 cli link control device <list|admit <device-name>|remove <device-name>|disconnect <device-name>>";
+    match args {
+        [command] if command == "list" => {
+            let topology = service.deviceSpaceTopology()?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!(topology.devices));
+            } else {
+                for label in network_device_labels(&topology).values() {
+                    println!("{label}");
+                }
+            }
+            Ok(())
+        }
+        [command, deviceName] if matches!(command.as_str(), "admit" | "remove" | "disconnect") => {
+            let topology = service.deviceSpaceTopology()?;
+            let deviceId = network_device_id(&topology, deviceName)?;
+            let deviceLabel = network_device_label_by_id(&topology, &deviceId)?;
+            if command == "admit" {
+                service.admitDeviceSpaceMember(deviceId)?;
+            } else if command == "remove" {
+                service.removeDeviceSpaceMember(deviceId)?;
+            } else {
+                service.disconnectDeviceSpaceNode(deviceId)?;
+            }
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({ command: true }));
+            } else {
+                println!("{} device \"{}\"", command, deviceLabel);
+            }
+            Ok(())
+        }
+        _ => Err(USAGE.to_string()),
+    }
+}
+
+/// Updates one explicitly named policy value.
+fn run_link_control_policy_command(
+    service: &operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+    args: &[String],
+) -> Result<(), String> {
+    const USAGE: &str = "usage: operit2 cli link control policy <list|set <policy-name> <value>>";
+    match args {
+        [command] if command == "list" => {
+            let policies = service.deviceSpaceControl()?.policies;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!(policies));
+            } else {
+                for (name, value) in policies {
+                    println!("{name}: {value}");
+                }
+            }
+            Ok(())
+        }
+        [command, policyId, value] if command == "set" => {
+            service.updateDeviceSpacePolicy(policyId.clone(), value.clone())?;
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({ "policy": policyId, "updated": true }));
+            } else {
+                println!("Policy updated: {policyId}");
+            }
+            Ok(())
+        }
+        _ => Err(USAGE.to_string()),
     }
 }
 
@@ -344,11 +567,10 @@ async fn run_link_sessions_command() -> Result<(), String> {
     } else {
         for (name, session) in sessions {
             println!(
-                "{} — {} — {} — {}",
+                "{} — {} — {}",
                 name,
                 session.remoteDeviceInfo.displayName(),
-                session.baseUrl,
-                session.coreDeviceId
+                session.baseUrl
             );
             println!("  Transport: {}", link_transport_name(&session.transport));
         }
@@ -909,7 +1131,10 @@ fn print_link_usage() {
     println!(
         "operit2 cli link connect <url> --token <token> --save <name> [--transport <http|ws>]"
     );
-    println!("operit2 cli link space <show|status <device-id>|rename <name>|join <paired-session>|disconnect <device-id>|remove <device-id>|leave>");
+    println!("operit2 cli link space <show|status <device-name>|rename <name>|join <paired-session>|disconnect <device-name>|remove <device-name>|leave>");
+    println!("operit2 cli link control <show|bootstrap|audit|identity|device|policy>");
+    println!("  identity list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve>...|set <device-name> <identity-name>|clear <device-name>");
+    println!("  device list|admit <device-name>|remove <device-name>|disconnect <device-name>");
     println!("operit2 cli link sessions");
     println!("operit2 cli link transport <session> <http|ws>");
     println!("operit2 cli link session-delete <name>");

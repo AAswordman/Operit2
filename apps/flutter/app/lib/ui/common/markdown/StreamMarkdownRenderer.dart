@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -225,6 +226,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     });
   }
 
+  /// Subscribes to Markdown events and schedules incremental node syncs.
   void _subscribe(Stream<Object> stream) {
     _logRendererTrace(
       'subscribe rendererId=$_rendererId stream=${_streamTraceId(stream)}',
@@ -233,21 +235,22 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       (event) {
         _streamEventCount += 1;
         _applyMarkdownEvent(event);
-        _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
+        if (!_streamDone) {
+          _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
+        }
       },
       onDone: () {
-        _rendererState.eventBuilder.complete();
-        _streamDone = true;
-        _rendererState.streamParsingCompletedSuccessfully = true;
-        _renderTimer?.cancel();
-        _renderTimer = null;
+        if (mounted) {
+          setState(_completeLiveStreamRender);
+        } else {
+          _completeLiveStreamRender();
+        }
         _logRendererTrace(
           'done rendererId=$_rendererId stream=${_streamTraceId(stream)} '
           'events=$_streamEventCount '
           'chars=${_rendererState.collectedContent.length} '
           'nodes=${_rendererState.renderNodes.length}',
         );
-        _flushRenderNodes();
         _notifyStreamDone();
       },
       onError: (Object error, StackTrace stackTrace) {
@@ -258,6 +261,18 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         );
       },
     );
+  }
+
+  /// Completes live parsing and synchronizes the final render nodes.
+  void _completeLiveStreamRender() {
+    if (!_streamDone) {
+      _rendererState.eventBuilder.complete();
+    }
+    _streamDone = true;
+    _rendererState.streamParsingCompletedSuccessfully = true;
+    _renderTimer?.cancel();
+    _renderTimer = null;
+    _synchronizeRenderNodes(isStreaming: false);
   }
 
   /// Reports that the live Markdown stream has reached its terminal event.
@@ -279,6 +294,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     debugPrint('ChatRenderTrace markdown.$message');
   }
 
+  /// Synchronizes mutable Markdown nodes into visible render nodes.
   void _flushRenderNodes() {
     _renderTimer = null;
     if (!mounted) {
@@ -287,6 +303,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     setState(() => _synchronizeRenderNodes(isStreaming: !_streamDone));
   }
 
+  /// Rebuilds stable render nodes while preserving existing animation keys.
   void _synchronizeRenderNodes({required bool isStreaming}) {
     final nextNodes = _rendererState.eventBuilder.toStableNodes(
       isStreaming: isStreaming,
@@ -313,6 +330,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _scheduleNodeFadeIn(keysToReveal);
   }
 
+  /// Applies one normalized Markdown stream event to the mutable node builder.
   void _applyMarkdownEvent(Object event) {
     final normalized = _NormalizedMarkdownEvent.from(event);
     final parentBlockId = normalized.parentBlockId;
@@ -385,9 +403,11 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         );
         break;
       case 'completed':
-        _rendererState.eventBuilder.complete();
-        _streamDone = true;
-        _rendererState.streamParsingCompletedSuccessfully = true;
+        if (mounted) {
+          setState(_completeLiveStreamRender);
+        } else {
+          _completeLiveStreamRender();
+        }
         _notifyStreamDone();
         break;
       case 'savepoint':
@@ -439,6 +459,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     super.dispose();
   }
 
+  /// Builds the Markdown node column inside a stable selection boundary.
   @override
   Widget build(BuildContext context) {
     final content = _MarkdownNodeColumn(
@@ -456,7 +477,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
       splitMarkdownContent: widget.splitMarkdownContent,
     );
-    if (widget.isStreaming || !widget.selectionRoot) {
+    if (!widget.selectionRoot) {
       return content;
     }
     return SelectionArea(child: content);

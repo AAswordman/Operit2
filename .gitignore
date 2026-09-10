@@ -188,8 +188,8 @@ apps/flutter/app/ohos/entry/src/main/resources/rawfile/ohos-vroot/
 
 # Plugin packaging outputs
 plugins/**/*.toolpkg
-core/crates/operit-runtime/assets/plugins/**/*.toolpkg
-core/crates/operit-runtime/assets/plugins/**/*.js
+core/crates/runtime/application/assets/plugins/buildin/**/*.toolpkg
+core/crates/runtime/application/assets/plugins/buildin/**/*.js
 plugins/**/build/
 plugins/**/out/
 plugins/**/.cache/

@@ -15,19 +15,19 @@ use operit_model::MessagePart::{MessagePart, MessagePartKind};
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
-use operit_providers::chat::EnhancedAIService::{
-    EnhancedAIService, ResumeRequest, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
-};
 use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
 use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
 use operit_providers::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
+use operit_providers::chat::EnhancedAIService::{
+    EnhancedAIService, ResumeRequest, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
+};
 use operit_store::PreferencesDataStore::FlowLike;
+use operit_util::stream::RevisableTextStream::with_event_channel_shared;
+use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
 use operit_util::ImagePoolManager::ImagePoolManager;
-use operit_util::stream::RevisableTextStream::with_event_channel_shared;
-use operit_util::stream::Stream::Stream;
 
 const DEFAULT_CHAT_KEY: &str = "__DEFAULT_CHAT__";
 const MESSAGE_PROCESS_TIMING_TAG: &str = "MessageProcessTiming";
@@ -1374,11 +1374,9 @@ mod tests {
         assert_eq!(turns[0].content, "before");
         assert!(turns[1].content.starts_with("<tool name=\"switch_core\""));
         assert_eq!(turns[1].tool_name.as_deref(), Some("switch_core"));
-        assert!(
-            turns[2]
-                .content
-                .starts_with("<tool_result name=\"switch_core\"")
-        );
+        assert!(turns[2]
+            .content
+            .starts_with("<tool_result name=\"switch_core\""));
         assert_eq!(turns[2].tool_name.as_deref(), Some("switch_core"));
         assert_eq!(turns[3].content, "after");
     }

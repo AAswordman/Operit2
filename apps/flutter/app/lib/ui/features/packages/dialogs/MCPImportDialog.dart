@@ -653,7 +653,8 @@ class _FormConfigPane extends StatelessWidget {
             validator: _required,
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
+          OperitFormStyles.dropdownButtonFormField<String>(
+            context,
             initialValue: type,
             style: OperitFormStyles.dropdownTextStyle(context),
             decoration: const InputDecoration(labelText: '传输'),

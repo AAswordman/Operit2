@@ -367,6 +367,8 @@ class ChatScreenContent extends StatelessWidget {
       scrollController: scrollController,
       currentChatId: currentChatId,
       currentCharacterCardAvatarUri: currentCharacterCardAvatarUri,
+      clients: viewModel.clients,
+      packageManager: viewModel.clients.application.packageManager(),
       autoScrollToBottomListenable: autoScrollToBottomListenable,
       hasOlderDisplayHistory: hasOlderDisplayHistory,
       hasNewerDisplayHistory: hasNewerDisplayHistory,

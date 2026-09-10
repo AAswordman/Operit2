@@ -16,6 +16,10 @@ use operit_link::{
 };
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
+use operit_store::NetworkControlStore::{
+    NetworkControlAuditRecord, NetworkControlIdentityAssignment, NetworkControlRole,
+    NetworkControlState, NetworkControlStore,
+};
 use operit_store::PreferencesDataStore::{
     combine2, mutableStateFlow, CoroutineScope, SharingStarted, StateFlow,
 };
@@ -99,6 +103,14 @@ pub struct RuntimeDeviceSpaceDevice {
     pub model: String,
     pub coreVersion: Option<String>,
     pub online: bool,
+    pub currentIdentity: Option<RuntimeDeviceSpaceIdentity>,
+}
+
+/// Describes the identity and effective capabilities currently assigned to one device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeDeviceSpaceIdentity {
+    pub displayName: String,
+    pub capabilities: Vec<String>,
 }
 
 /// Describes the current health state of one direct device-space connection.
@@ -124,6 +136,7 @@ pub struct RuntimeDeviceSpaceConnection {
 pub struct RuntimeDeviceSpaceTopology {
     pub currentDeviceId: String,
     pub devices: Vec<RuntimeDeviceSpaceDevice>,
+    pub removedDevices: Vec<RuntimeDeviceSpaceDevice>,
     pub connections: Vec<RuntimeDeviceSpaceConnection>,
 }
 
@@ -134,6 +147,7 @@ pub struct RuntimeRemoteLinkService {
     nodeRouter: CoreNodeRouter,
     linkAccessStore: LinkAccessStore,
     spaceStore: CoreSpaceStore,
+    networkControlStore: NetworkControlStore,
 }
 
 impl RuntimeRemoteLinkService {
@@ -159,40 +173,139 @@ impl RuntimeRemoteLinkService {
     ) -> Self {
         let localRuntime = Arc::new(localRuntime);
         let spaceStore = CoreSpaceStore::new(localRuntime.runtimeStorageHost());
+        let networkControlStore = NetworkControlStore::new(localRuntime.runtimeStorageHost())
+            .expect("RuntimeRemoteLinkService requires network control storage");
         Self {
             localRuntime,
             nodeRouter,
             linkAccessStore,
             spaceStore,
+            networkControlStore,
         }
     }
 
     /// Returns the converged Space membership owned by this CoreNode.
     #[allow(non_snake_case)]
     pub fn deviceSpace(&self) -> Result<CoreSpace, String> {
-        self.spaceStore.initialize()
+        let mut space = self.spaceStore.initialize()?;
+        let removedNodeIds = self.networkControlStore.currentState()?.removedNodeIds;
+        space
+            .members
+            .retain(|nodeId| !removedNodeIds.contains(nodeId));
+        Ok(space)
+    }
+
+    /// Creates the initial administrator policy for this device's new single-device Space.
+    #[allow(non_snake_case)]
+    pub fn bootstrapDeviceSpaceControl(&self) -> Result<NetworkControlState, String> {
+        self.networkControlStore.bootstrapCurrentSpace()
+    }
+
+    /// Returns current identity definitions, device assignments, and removal state.
+    #[allow(non_snake_case)]
+    pub fn deviceSpaceControl(&self) -> Result<NetworkControlState, String> {
+        self.networkControlStore.currentState()
+    }
+
+    /// Returns accepted and rejected authorization commands for the current Space.
+    #[allow(non_snake_case)]
+    pub fn deviceSpaceControlAudit(&self) -> Result<Vec<NetworkControlAuditRecord>, String> {
+        let localNodeId = self.nodeRouter.localNodeId();
+        if !self
+            .networkControlStore
+            .nodeHasCapability(&localNodeId, "network.audit.read", None)?
+        {
+            return Err("current device cannot read the Space control audit".to_string());
+        }
+        self.networkControlStore.audit()
+    }
+
+    /// Defines one custom role from named capabilities.
+    #[allow(non_snake_case)]
+    pub fn defineDeviceSpaceRole(&self, role: NetworkControlRole) -> Result<(), String> {
+        self.networkControlStore.defineRole(role).map(|_| ())
+    }
+
+    /// Sets one existing identity as the device's current identity.
+    #[allow(non_snake_case)]
+    pub fn setDeviceSpaceIdentity(
+        &self,
+        assignment: NetworkControlIdentityAssignment,
+    ) -> Result<(), String> {
+        self.networkControlStore.setIdentity(assignment).map(|_| ())
+    }
+
+    /// Clears the current identity from one device.
+    #[allow(non_snake_case)]
+    pub fn clearDeviceSpaceIdentity(&self, nodeId: String) -> Result<(), String> {
+        self.networkControlStore.clearIdentity(nodeId).map(|_| ())
+    }
+
+    /// Updates one named Space policy setting under the current administrator policy.
+    #[allow(non_snake_case)]
+    pub fn updateDeviceSpacePolicy(&self, policyId: String, value: String) -> Result<(), String> {
+        self.networkControlStore
+            .updatePolicy(policyId, value)
+            .map(|_| ())
+    }
+
+    /// Restores an existing Space member to ordinary membership before it reconnects or rejoins.
+    #[allow(non_snake_case)]
+    pub fn admitDeviceSpaceMember(&self, deviceId: String) -> Result<(), String> {
+        self.networkControlStore.admitMember(deviceId).map(|_| ())
+    }
+
+    /// Removes a member authorization and immediately ends its local Peer Link.
+    #[allow(non_snake_case)]
+    pub fn removeDeviceSpaceMember(&self, deviceId: String) -> Result<(), String> {
+        self.networkControlStore.removeMember(deviceId.clone())?;
+        disconnectPeerLink(&self.nodeRouter.localNodeId(), &deviceId)
+    }
+
+    /// Prohibits one device from direct connection and route transit immediately.
+    #[allow(non_snake_case)]
+    pub fn disconnectDeviceSpaceNode(&self, deviceId: String) -> Result<(), String> {
+        self.networkControlStore.disconnectNode(deviceId.clone())?;
+        disconnectPeerLink(&self.nodeRouter.localNodeId(), &deviceId)
     }
 
     /// Returns the synchronized device metadata and direct-connection graph.
     #[allow(non_snake_case)]
     pub fn deviceSpaceTopology(&self) -> Result<RuntimeDeviceSpaceTopology, String> {
         let space = self.spaceStore.initialize()?;
+        let controlState = self.networkControlStore.currentState()?;
+        let removedNodeIds = controlState.removedNodeIds.clone();
         let profiles = self.spaceStore.deviceProfiles()?;
         let currentDeviceId = self.nodeRouter.localNodeId();
         let activePeers = activePeerNodeIds(&currentDeviceId)?;
+        let removedDevices = removedNodeIds
+            .iter()
+            .map(|deviceId| {
+                let profile = profiles.get(deviceId).ok_or_else(|| {
+                    format!("Device profile is missing for removed device: {deviceId}")
+                })?;
+                Ok(runtimeDeviceSpaceDevice(
+                    profile,
+                    false,
+                    runtimeDeviceSpaceIdentity(&controlState, deviceId),
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let devices = space
             .members
             .into_iter()
+            .filter(|deviceId| !removedNodeIds.contains(deviceId))
             .map(|deviceId| {
                 let profile = profiles.get(&deviceId).ok_or_else(|| {
                     format!("Device profile is missing in the current device space: {deviceId}")
                 })?;
-                let online = deviceId == currentDeviceId
-                    || self
-                        .spaceStore
-                        .reachableNextHopThroughPeers(deviceId.clone(), activePeers.clone())?
-                        .is_some();
-                Ok(runtimeDeviceSpaceDevice(profile, online))
+                let online =
+                    deviceId == currentDeviceId || self.nodeRouter.nodeIsReachable(&deviceId)?;
+                Ok(runtimeDeviceSpaceDevice(
+                    profile,
+                    online,
+                    runtimeDeviceSpaceIdentity(&controlState, &deviceId),
+                ))
             })
             .collect::<Result<Vec<_>, String>>()?;
         let devicesById = devices
@@ -203,6 +316,10 @@ impl RuntimeRemoteLinkService {
             .spaceStore
             .deviceConnections()?
             .into_iter()
+            .filter(|connection| {
+                !removedNodeIds.contains(&connection.firstDeviceId)
+                    && !removedNodeIds.contains(&connection.secondDeviceId)
+            })
             .map(|connection| {
                 let first = devicesById.get(&connection.firstDeviceId).ok_or_else(|| {
                     format!(
@@ -236,6 +353,7 @@ impl RuntimeRemoteLinkService {
         Ok(RuntimeDeviceSpaceTopology {
             currentDeviceId,
             devices,
+            removedDevices,
             connections,
         })
     }
@@ -247,7 +365,12 @@ impl RuntimeRemoteLinkService {
         userName: String,
     ) -> Result<RuntimeDeviceSpaceDevice, String> {
         let profile = self.spaceStore.writeLocalDeviceUserName(userName)?;
-        Ok(runtimeDeviceSpaceDevice(&profile, true))
+        let controlState = self.networkControlStore.currentState()?;
+        Ok(runtimeDeviceSpaceDevice(
+            &profile,
+            true,
+            runtimeDeviceSpaceIdentity(&controlState, &profile.nodeId),
+        ))
     }
 
     /// Adopts Space membership received through an explicit authenticated join.
@@ -296,10 +419,22 @@ impl RuntimeRemoteLinkService {
         {
             return Err("paired device is not present in its advertised device space".to_string());
         }
-        let merged = self.spaceStore.merge(peerSpace)?;
-        let deviceProfiles = self.spaceStore.deviceProfilesForCurrentSpace()?;
-        let accepted = session.adoptDeviceSpace(merged, deviceProfiles).await?;
-        self.spaceStore.adopt(accepted)?;
+        let localNodeId = self.nodeRouter.localNodeId();
+        let localSpace = self.spaceStore.initialize()?;
+        if localSpace.spaceId == peerSpace.spaceId
+            && peerSpace
+                .members
+                .iter()
+                .any(|nodeId| nodeId == &localNodeId)
+        {
+            self.spaceStore
+                .observePairedDeviceSpace(record.coreDeviceId.clone(), peerSpace)?;
+        } else {
+            let merged = self.spaceStore.mergedProjection(peerSpace)?;
+            let deviceProfiles = self.spaceStore.deviceProfilesForCurrentSpace()?;
+            let accepted = session.adoptDeviceSpace(merged, deviceProfiles).await?;
+            self.spaceStore.adopt(accepted)?;
+        }
         self.persistenceSyncService()
             .synchronizePeer(name, 512, true)
             .await?;
@@ -428,6 +563,14 @@ impl RuntimeRemoteLinkService {
         if !space.members.iter().any(|member| member == &targetNodeId) {
             return Err(format!(
                 "route change target is not a member of the current device space: {targetNodeId}"
+            ));
+        }
+        if !self
+            .networkControlStore
+            .nodeHasCapability(&targetNodeId, "runtime.execute", None)?
+        {
+            return Err(format!(
+                "route change target cannot execute runtime work: {targetNodeId}"
             ));
         }
         let localNodeId = self.nodeRouter.localNodeId();
@@ -716,36 +859,7 @@ impl RuntimeRemoteLinkService {
         if deviceId == localDeviceId {
             return Err("current device cannot disconnect itself".to_string());
         }
-        let connections = self.spaceStore.deviceConnections()?;
-        kickPeerLink(&localDeviceId, &deviceId)?;
-        let mut reachable = BTreeSet::from([localDeviceId.clone()]);
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for connection in &connections {
-                if connection.firstDeviceId == deviceId || connection.secondDeviceId == deviceId {
-                    continue;
-                }
-                let firstReachable = reachable.contains(&connection.firstDeviceId);
-                let secondReachable = reachable.contains(&connection.secondDeviceId);
-                if firstReachable && reachable.insert(connection.secondDeviceId.clone()) {
-                    changed = true;
-                }
-                if secondReachable && reachable.insert(connection.firstDeviceId.clone()) {
-                    changed = true;
-                }
-            }
-        }
-        let removedNodeIds = space
-            .members
-            .into_iter()
-            .filter(|member| !reachable.contains(member))
-            .collect::<BTreeSet<_>>();
-        if removedNodeIds.is_empty() {
-            return Ok(());
-        }
-        self.spaceStore.removeMembers(removedNodeIds)?;
-        Ok(())
+        kickPeerLink(&localDeviceId, &deviceId)
     }
 
     /// Removes every local pairing record associated with one device.
@@ -1095,6 +1209,7 @@ impl RuntimeRemoteLinkService {
 fn runtimeDeviceSpaceDevice(
     profile: &CoreSpaceDeviceProfile,
     online: bool,
+    currentIdentity: Option<RuntimeDeviceSpaceIdentity>,
 ) -> RuntimeDeviceSpaceDevice {
     RuntimeDeviceSpaceDevice {
         deviceId: profile.nodeId.clone(),
@@ -1104,7 +1219,24 @@ fn runtimeDeviceSpaceDevice(
         model: profile.model.clone(),
         coreVersion: profile.coreVersion.clone(),
         online,
+        currentIdentity,
     }
+}
+
+/// Projects the one active identity assigned to a device into the runtime topology.
+#[allow(non_snake_case)]
+fn runtimeDeviceSpaceIdentity(
+    state: &NetworkControlState,
+    nodeId: &str,
+) -> Option<RuntimeDeviceSpaceIdentity> {
+    let identityId = state.deviceIdentityIds.get(nodeId)?;
+    let role = state.roles.get(identityId)?;
+    let mut capabilities = role.capabilities.iter().cloned().collect::<Vec<_>>();
+    capabilities.sort();
+    Some(RuntimeDeviceSpaceIdentity {
+        displayName: role.displayName.clone(),
+        capabilities,
+    })
 }
 
 /// Computes one connection status from both endpoint reachability and versions.

@@ -13,6 +13,21 @@ pub struct JsToolBinding {
     pub tool: BuiltinToolName,
 }
 
+/// Declares one versioned JavaScript Tools method implementation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JsToolApiVariant {
+    /// Contains the JavaScript namespace containing the gated method.
+    pub namespace: &'static str,
+    /// Contains the public method name controlled by the gate.
+    pub method: &'static str,
+    /// Contains the ToolPkg API version that selects this implementation.
+    pub since: &'static str,
+    /// Contains the exclusive upper ToolPkg API version for this implementation.
+    pub until: Option<&'static str>,
+    /// Contains an optional variant-specific JavaScript parameter list.
+    pub arguments: Option<&'static [&'static str]>,
+}
+
 /// Contains every active JavaScript Tools method binding.
 #[rustfmt::skip]
 pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
@@ -21,6 +36,8 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "Chat", method: "deleteChat", tool: BuiltinToolName::DeleteChat },
     JsToolBinding { namespace: "Chat", method: "findChat", tool: BuiltinToolName::FindChat },
     JsToolBinding { namespace: "Chat", method: "getMessages", tool: BuiltinToolName::GetChatMessages },
+    JsToolBinding { namespace: "Chat", method: "getMessagesRange", tool: BuiltinToolName::GetChatMessagesRange },
+    JsToolBinding { namespace: "Chat", method: "call", tool: BuiltinToolName::CallChatModel },
     JsToolBinding { namespace: "Chat", method: "listAll", tool: BuiltinToolName::ListChats },
     JsToolBinding { namespace: "Chat", method: "listCharacterCards", tool: BuiltinToolName::ListCharacterCards },
     JsToolBinding { namespace: "Chat", method: "listChats", tool: BuiltinToolName::ListChats },
@@ -147,3 +164,12 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "System.terminal", method: "input", tool: BuiltinToolName::InputInTerminalSession },
     JsToolBinding { namespace: "System.terminal", method: "screen", tool: BuiltinToolName::GetTerminalSessionScreen },
 ];
+
+/// Contains every versioned implementation applied to generated Tools methods.
+pub const JS_TOOL_API_VARIANTS: &[JsToolApiVariant] = &[JsToolApiVariant {
+    namespace: "Chat",
+    method: "call",
+    since: "2.0.0",
+    until: None,
+    arguments: None,
+}];

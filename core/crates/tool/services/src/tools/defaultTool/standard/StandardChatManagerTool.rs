@@ -1,13 +1,17 @@
 use operit_host_api::TimeUtils::currentTimeMillis;
 use regex::Regex;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::runtime_support::{RuntimeChatSendRequest, RuntimeChatSlot, ToolRuntimeSupport};
+use crate::runtime_support::{
+    RuntimeChatCallRequest, RuntimeChatSendRequest, RuntimeChatSlot, ToolRuntimeSupport,
+};
 use crate::tools::ToolResultDataClasses::{
     stringResultData, AgentStatusResultData, CharacterCardInfo, CharacterCardListResultData,
-    ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData,
-    ChatMessageInfo, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData,
-    ChatTitleUpdateResultData, JsNullable, JsOptional, MessageSendResultData, ToolResultData,
+    ChatCallResultData, ChatCallTurnData, ChatCreationResultData, ChatDeleteResultData,
+    ChatFindResultData, ChatInfo, ChatListResultData, ChatMessageInfo, ChatMessagesResultData,
+    ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, JsNullable,
+    JsOptional, MessageSendResultData, ToolResultData,
 };
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{
@@ -15,7 +19,10 @@ use crate::ToolExecutionManager::{
 };
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::FunctionType::FunctionType;
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use serde_json::{json, Value};
 
 #[derive(Clone)]
 /// Defines built-in chat management tool names and runtime holder state.
@@ -37,8 +44,10 @@ pub enum ChatManagerToolOperation {
     DeleteChat,
     SendMessageToAi,
     SendMessageToAiStreaming,
+    CallChatModel,
     ListCharacterCards,
     GetChatMessages,
+    GetChatMessagesRange,
 }
 
 #[derive(Clone)]
@@ -427,6 +436,46 @@ impl StandardChatManagerTool {
         )
     }
 
+    /// Calls a configured functional model without persisting a chat turn.
+    #[allow(non_snake_case)]
+    pub fn callChatModel(&self, tool: &AITool) -> ToolResult {
+        let functionType = match parseFunctionType(parameterValue(tool, "function_type")) {
+            Ok(value) => value,
+            Err(error) => return toolError(tool, error),
+        };
+        let turns = match parsePromptTurns(parameterValue(tool, "turns")) {
+            Ok(value) => value,
+            Err(error) => return toolError(tool, error),
+        };
+        let recordTokenUsage = match parseChatCallBoolean(tool, "record_token_usage", true) {
+            Ok(value) => value,
+            Err(error) => return toolError(tool, error),
+        };
+        let enableThinking = match parseChatCallBoolean(tool, "enable_thinking", false) {
+            Ok(value) => value,
+            Err(error) => return toolError(tool, error),
+        };
+        let request = RuntimeChatCallRequest {
+            functionType,
+            turns,
+            recordTokenUsage,
+            enableThinking,
+        };
+        let output = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())
+            .and_then(|runtime| runtime.block_on(self.runtimeSupport.callChatModel(request)))
+        {
+            Ok(value) => value,
+            Err(error) => return toolError(tool, format!("Error calling chat model: {error}")),
+        };
+        successData(
+            tool,
+            ToolResultData::ChatCallResultData(parseChatCallOutput(&output)),
+        )
+    }
+
     #[allow(non_snake_case)]
     /// Lists character cards available to chat sessions.
     pub fn listCharacterCards(&self, tool: &AITool) -> ToolResult {
@@ -503,6 +552,8 @@ impl StandardChatManagerTool {
                     chatId,
                     order,
                     limit,
+                    start: None,
+                    end: None,
                     messages: messages
                         .into_iter()
                         .filter(|message| message.sender != "summary")
@@ -520,6 +571,110 @@ impl StandardChatManagerTool {
             Err(error) => toolError(tool, format!("Error getting chat messages: {error}")),
         }
     }
+
+    #[allow(non_snake_case)]
+    /// Loads an inclusive zero-based message range from a chat.
+    pub fn getChatMessagesRange(&self, tool: &AITool) -> ToolResult {
+        let chatId = parameterValue(tool, "chat_id");
+        if chatId.trim().is_empty() {
+            return toolError(tool, "Invalid parameter: missing chat_id".to_string());
+        }
+        let order = match optionalParameterValue(tool, "order") {
+            Some(value) if value.trim().is_empty() => "asc".to_string(),
+            Some(value)
+                if value.eq_ignore_ascii_case("asc") || value.eq_ignore_ascii_case("desc") =>
+            {
+                value.to_ascii_lowercase()
+            }
+            Some(_) => {
+                return toolError(
+                    tool,
+                    "Invalid parameter: order must be asc/desc".to_string(),
+                )
+            }
+            None => "asc".to_string(),
+        };
+        let start = match optionalParameterValue(tool, "start") {
+            Some(value) if !value.trim().is_empty() => match value.parse::<i32>() {
+                Ok(value) => value,
+                Err(_) => {
+                    return toolError(
+                        tool,
+                        "Invalid parameter: start must be an integer".to_string(),
+                    )
+                }
+            },
+            _ => {
+                return toolError(
+                    tool,
+                    "Invalid parameter: start and end are required".to_string(),
+                )
+            }
+        };
+        let end = match optionalParameterValue(tool, "end") {
+            Some(value) if !value.trim().is_empty() => match value.parse::<i32>() {
+                Ok(value) => value,
+                Err(_) => {
+                    return toolError(
+                        tool,
+                        "Invalid parameter: end must be an integer".to_string(),
+                    )
+                }
+            },
+            _ => {
+                return toolError(
+                    tool,
+                    "Invalid parameter: start and end are required".to_string(),
+                )
+            }
+        };
+        let limit = match end
+            .checked_sub(start)
+            .and_then(|value| value.checked_add(1))
+        {
+            Some(value) if start >= 0 && end >= start => value,
+            _ => {
+                return toolError(
+                    tool,
+                    "Invalid parameter: range requires 0 <= start <= end".to_string(),
+                )
+            }
+        };
+        let manager = match ChatHistoryManager::default() {
+            Ok(manager) => manager,
+            Err(error) => return toolError(tool, format!("Error opening chat history: {error}")),
+        };
+        match manager.getChatTitle(chatId.clone()) {
+            Ok(Some(_)) => {}
+            Ok(None) => return toolError(tool, format!("Chat does not exist: {chatId}")),
+            Err(error) => return toolError(tool, format!("Error loading chat: {error}")),
+        }
+        match manager.loadChatMessagesRange(chatId.clone(), order.clone(), start, end) {
+            Ok(messages) => successData(
+                tool,
+                ToolResultData::ChatMessagesResultData(ChatMessagesResultData {
+                    chatId,
+                    order,
+                    limit,
+                    start: Some(start),
+                    end: Some(end),
+                    messages: messages
+                        .into_iter()
+                        .filter(|message| message.sender != "summary")
+                        .map(|message| ChatMessageInfo {
+                            content: message.displayText(),
+                            sender: message.sender,
+                            timestamp: message.timestamp,
+                            roleName: message.roleName,
+                            provider: message.provider,
+                            modelName: message.modelName,
+                        })
+                        .collect(),
+                }),
+            ),
+            Err(error) => toolError(tool, format!("Error getting chat messages range: {error}")),
+        }
+    }
 }
 
 impl ToolExecutor for ChatManagerToolExecutor {
@@ -533,7 +688,8 @@ impl ToolExecutor for ChatManagerToolExecutor {
             | ChatManagerToolOperation::FindChat
             | ChatManagerToolOperation::AgentStatus
             | ChatManagerToolOperation::ListCharacterCards
-            | ChatManagerToolOperation::GetChatMessages => ToolEffect::READ,
+            | ChatManagerToolOperation::GetChatMessages
+            | ChatManagerToolOperation::GetChatMessagesRange => ToolEffect::READ,
             ChatManagerToolOperation::StartChatService
             | ChatManagerToolOperation::StopChatService
             | ChatManagerToolOperation::CreateNewChat
@@ -542,6 +698,7 @@ impl ToolExecutor for ChatManagerToolExecutor {
             | ChatManagerToolOperation::DeleteChat
             | ChatManagerToolOperation::SendMessageToAi
             | ChatManagerToolOperation::SendMessageToAiStreaming => ToolEffect::WRITE,
+            ChatManagerToolOperation::CallChatModel => ToolEffect::READ,
         };
         Ok(ToolAccessSpec {
             effect,
@@ -562,8 +719,10 @@ impl ToolExecutor for ChatManagerToolExecutor {
             ChatManagerToolOperation::DeleteChat => self.tools.deleteChat(tool),
             ChatManagerToolOperation::SendMessageToAi => self.tools.sendMessageToAi(tool),
             ChatManagerToolOperation::SendMessageToAiStreaming => self.tools.sendMessageToAi(tool),
+            ChatManagerToolOperation::CallChatModel => self.tools.callChatModel(tool),
             ChatManagerToolOperation::ListCharacterCards => self.tools.listCharacterCards(tool),
             ChatManagerToolOperation::GetChatMessages => self.tools.getChatMessages(tool),
+            ChatManagerToolOperation::GetChatMessagesRange => self.tools.getChatMessagesRange(tool),
         };
         vec![result]
     }
@@ -590,10 +749,54 @@ fn validateChatTool(operation: ChatManagerToolOperation, tool: &AITool) -> ToolV
                 return invalid("chat_id is required.");
             }
         }
+        ChatManagerToolOperation::GetChatMessagesRange => {
+            if parameterValue(tool, "chat_id").trim().is_empty() {
+                return invalid("chat_id is required.");
+            }
+            if let Some(order) = optionalParameterValue(tool, "order") {
+                if !order.trim().is_empty()
+                    && !order.eq_ignore_ascii_case("asc")
+                    && !order.eq_ignore_ascii_case("desc")
+                {
+                    return invalid("order must be asc/desc.");
+                }
+            }
+            let start = match optionalParameterValue(tool, "start") {
+                Some(value) if !value.trim().is_empty() => match value.parse::<i32>() {
+                    Ok(value) => value,
+                    Err(_) => return invalid("start must be an integer."),
+                },
+                _ => return invalid("start is required."),
+            };
+            let end = match optionalParameterValue(tool, "end") {
+                Some(value) if !value.trim().is_empty() => match value.parse::<i32>() {
+                    Ok(value) => value,
+                    Err(_) => return invalid("end must be an integer."),
+                },
+                _ => return invalid("end is required."),
+            };
+            if start < 0
+                || end < start
+                || end
+                    .checked_sub(start)
+                    .and_then(|value| value.checked_add(1))
+                    .is_none()
+            {
+                return invalid("range requires 0 <= start <= end.");
+            }
+        }
         ChatManagerToolOperation::SendMessageToAi
         | ChatManagerToolOperation::SendMessageToAiStreaming => {
             if parameterValue(tool, "message").trim().is_empty() {
                 return invalid("message is required.");
+            }
+        }
+        ChatManagerToolOperation::CallChatModel => {
+            if parameterValue(tool, "function_type").trim().is_empty() {
+                return invalid("function_type is required.");
+            }
+            if parameterValue(tool, "turns").trim().is_empty() {
+                return invalid("turns is required.");
             }
         }
         ChatManagerToolOperation::StartChatService
@@ -608,6 +811,294 @@ fn validateChatTool(operation: ChatManagerToolOperation, tool: &AITool) -> ToolV
     }
 }
 
+/// Parses a functional model enum using the public uppercase wire names.
+fn parseFunctionType(value: String) -> Result<FunctionType, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "CHAT" => Ok(FunctionType::CHAT),
+        "SUMMARY" => Ok(FunctionType::SUMMARY),
+        "TITLE_GENERATION" => Ok(FunctionType::TITLE_GENERATION),
+        "MEMORY" => Ok(FunctionType::MEMORY),
+        "UI_CONTROLLER" => Ok(FunctionType::UI_CONTROLLER),
+        "TRANSLATION" => Ok(FunctionType::TRANSLATION),
+        "GREP" => Ok(FunctionType::GREP),
+        "ROLE_RESPONSE_PLANNER" => Ok(FunctionType::ROLE_RESPONSE_PLANNER),
+        "IMAGE_RECOGNITION" => Ok(FunctionType::IMAGE_RECOGNITION),
+        "AUDIO_RECOGNITION" => Ok(FunctionType::AUDIO_RECOGNITION),
+        "VIDEO_RECOGNITION" => Ok(FunctionType::VIDEO_RECOGNITION),
+        other => Err(format!("Invalid functionType: {other}")),
+    }
+}
+
+/// Parses the Kotlin-compatible boolean spellings used by call_chat_model.
+fn parseChatCallBoolean(tool: &AITool, name: &str, defaultValue: bool) -> Result<bool, String> {
+    let value = tool
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == name)
+        .map(|parameter| parameter.value.trim().to_ascii_lowercase());
+    match value.as_deref() {
+        None | Some("") => Ok(defaultValue),
+        Some("true") | Some("1") | Some("yes") => Ok(true),
+        Some("false") | Some("0") | Some("no") => Ok(false),
+        Some(_) => Err(format!(
+            "{} must be true/false",
+            if name == "record_token_usage" {
+                "recordTokenUsage"
+            } else {
+                "enableThinking"
+            }
+        )),
+    }
+}
+
+/// Parses the Kotlin-compatible PromptTurn JSON contract used by functional calls.
+fn parsePromptTurns(value: String) -> Result<Vec<PromptTurn>, String> {
+    let decoded = serde_json::from_str::<Value>(value.trim())
+        .map_err(|_| "turns must be a JSON array".to_string())?;
+    let items = decoded
+        .as_array()
+        .ok_or_else(|| "turns must be a JSON array".to_string())?;
+    if items.is_empty() {
+        return Err("turns must contain at least one PromptTurn".to_string());
+    }
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| parsePromptTurn(index, item))
+        .collect()
+}
+
+/// Parses one PromptTurn object with the same validation rules as the Kotlin implementation.
+fn parsePromptTurn(index: usize, value: &Value) -> Result<PromptTurn, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("turns[{index}] must be an object"))?;
+    let kindValue = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("turns[{index}].kind is required"))?;
+    let kind = match kindValue.to_ascii_uppercase().as_str() {
+        "SYSTEM" => PromptTurnKind::SYSTEM,
+        "USER" => PromptTurnKind::USER,
+        "ASSISTANT" => PromptTurnKind::ASSISTANT,
+        "TOOL_CALL" => PromptTurnKind::TOOL_CALL,
+        "TOOL_RESULT" => PromptTurnKind::TOOL_RESULT,
+        "SUMMARY" => PromptTurnKind::SUMMARY,
+        _ => return Err(format!("Invalid turns[{index}].kind: {kindValue}")),
+    };
+    let content = object
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("turns[{index}].content must be a string"))?;
+    let toolName = match object.get("toolName") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_string())
+        }
+        Some(_) => return Err(format!("turns[{index}].toolName must be a string")),
+    };
+    let metadata = match object.get("metadata") {
+        None | Some(Value::Null) => HashMap::new(),
+        Some(Value::Object(value)) => value
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+        Some(_) => return Err(format!("turns[{index}].metadata must be an object")),
+    };
+    Ok(PromptTurn {
+        kind,
+        content: content.to_string(),
+        tool_name: toolName,
+        metadata,
+    })
+}
+
+#[derive(Clone)]
+/// Represents one tool markup range and its optional public tool name.
+struct ChatCallToolMatch {
+    start: usize,
+    end: usize,
+    content: String,
+    toolName: Option<String>,
+}
+
+/// Collects paired and self-closing tool calls in the order used by the Kotlin parser.
+fn collectChatCallToolMatches(content: &str) -> Vec<ChatCallToolMatch> {
+    let mut matches = operit_util::ChatMarkupRegex::ChatMarkupRegex::tool_call_matches(content)
+        .into_iter()
+        .map(|matched| ChatCallToolMatch {
+            start: matched.start,
+            end: matched.end,
+            content: content[matched.start..matched.end].trim().to_string(),
+            toolName: Some(matched.name),
+        })
+        .collect::<Vec<_>>();
+    let mut cursor = 0;
+    while let Some(relativeStart) = content[cursor..].find('<') {
+        let start = cursor + relativeStart;
+        let Some(tagName) = operit_util::ChatMarkupRegex::ChatMarkupRegex::extract_opening_tag_name(
+            &content[start..],
+        ) else {
+            cursor = start + 1;
+            continue;
+        };
+        if !operit_util::ChatMarkupRegex::ChatMarkupRegex::is_tool_tag_name(Some(&tagName)) {
+            cursor = start + 1;
+            continue;
+        }
+        let Some(relativeEnd) = content[start..].find('>') else {
+            break;
+        };
+        let end = start + relativeEnd + 1;
+        let raw = &content[start..end];
+        if raw.trim_end().ends_with("/>") {
+            matches.push(ChatCallToolMatch {
+                start,
+                end,
+                content: raw.trim().to_string(),
+                toolName: operit_util::ChatMarkupRegex::attr_value(raw, "name")
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+            });
+        }
+        cursor = end;
+    }
+    matches.sort_by_key(|matched| matched.start);
+    matches
+}
+
+/// Collects all complete and self-closing tool markup ranges for response text cleanup.
+fn collectToolMarkupRanges(content: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(relativeStart) = content[cursor..].find('<') {
+        let start = cursor + relativeStart;
+        let Some(tagName) = operit_util::ChatMarkupRegex::ChatMarkupRegex::extract_opening_tag_name(
+            &content[start..],
+        ) else {
+            cursor = start + 1;
+            continue;
+        };
+        if !operit_util::ChatMarkupRegex::ChatMarkupRegex::is_tool_tag_name(Some(&tagName)) {
+            cursor = start + 1;
+            continue;
+        }
+        let Some(relativeOpenEnd) = content[start..].find('>') else {
+            break;
+        };
+        let openEnd = start + relativeOpenEnd + 1;
+        let opening = &content[start..openEnd];
+        if opening.trim_end().ends_with("/>") {
+            ranges.push((start, openEnd));
+            cursor = openEnd;
+            continue;
+        }
+        let close = format!("</{}>", tagName.to_ascii_lowercase());
+        let lowerTail = content[start..].to_ascii_lowercase();
+        let Some(relativeClose) = lowerTail.find(&close) else {
+            cursor = start + 1;
+            continue;
+        };
+        let end = start + relativeClose + close.len();
+        ranges.push((start, end));
+        cursor = end;
+    }
+    ranges
+}
+
+/// Removes response markup ranges while preserving all ordinary model text.
+fn removeRanges(content: &str, ranges: &[(usize, usize)]) -> String {
+    let mut output = content.to_string();
+    for (start, end) in ranges.iter().rev() {
+        output.replace_range(*start..*end, "");
+    }
+    output
+}
+
+/// Converts one raw model response into the legacy ChatCallResultData protocol.
+fn parseChatCallOutput(rawContent: &str) -> ChatCallResultData {
+    let mut metadata = BTreeMap::new();
+    for (start, end) in operit_util::ChatMarkupRegex::tag_ranges(rawContent, "meta") {
+        let tag = &rawContent[start..end];
+        if let Some(provider) = operit_util::ChatMarkupRegex::attr_value(tag, "provider") {
+            if let Some(body) = operit_util::ChatMarkupRegex::tag_body(tag, "meta") {
+                let entry = json!({ "provider": provider, "payload": body.trim() });
+                let values = metadata
+                    .entry("protocolMeta".to_string())
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Value::Array(values) = values {
+                    values.push(entry);
+                }
+            }
+        }
+    }
+    let content = removeProtocolMetadata(rawContent);
+    let matches = collectChatCallToolMatches(&content);
+    let mut turns = Vec::new();
+    let mut cursor = 0;
+    for matched in matches {
+        if matched.start > cursor {
+            appendAssistantTurn(&mut turns, &content[cursor..matched.start]);
+        }
+        turns.push(ChatCallTurnData {
+            kind: "TOOL_CALL".to_string(),
+            content: matched.content,
+            toolName: matched.toolName,
+            metadata: BTreeMap::new(),
+        });
+        cursor = matched.end;
+    }
+    if cursor < content.len() {
+        appendAssistantTurn(&mut turns, &content[cursor..]);
+    }
+    let text = removeRanges(&content, &collectToolMarkupRanges(&content));
+    let finishReason = if turns.iter().any(|turn| turn.kind == "TOOL_CALL") {
+        "tool_call"
+    } else {
+        "stop"
+    };
+    ChatCallResultData {
+        text: text.trim().to_string(),
+        turns,
+        finishReason: finishReason.to_string(),
+        metadata,
+        receivedAt: currentTimeMillis(),
+    }
+}
+
+/// Removes provider metadata tags while preserving all other response content.
+fn removeProtocolMetadata(rawContent: &str) -> String {
+    let mut ranges = Vec::new();
+    for (start, end) in operit_util::ChatMarkupRegex::tag_ranges(rawContent, "meta") {
+        let tag = &rawContent[start..end];
+        if operit_util::ChatMarkupRegex::attr_value(tag, "provider").is_some() {
+            ranges.push((start, end));
+        }
+    }
+    let mut output = rawContent.to_string();
+    for (start, end) in ranges.into_iter().rev() {
+        output.replace_range(start..end, "");
+    }
+    output.trim().to_string()
+}
+
+/// Adds one non-empty assistant response segment to the result turn list.
+fn appendAssistantTurn(turns: &mut Vec<ChatCallTurnData>, segment: &str) {
+    let text = segment.trim();
+    if !text.is_empty() {
+        turns.push(ChatCallTurnData {
+            kind: "ASSISTANT".to_string(),
+            content: text.to_string(),
+            toolName: None,
+            metadata: BTreeMap::new(),
+        });
+    }
+}
+
+/// Reads and trims one required-style tool parameter.
 fn parameterValue(tool: &AITool, name: &str) -> String {
     tool.parameters
         .iter()

@@ -2300,11 +2300,23 @@ abstract class AppLocalizations {
   /// **'OpenAI'**
   String get settingsModelProviderTypeOpenai;
 
+  /// No description provided for @settingsModelProviderTypeXai.
+  ///
+  /// In en, this message translates to:
+  /// **'xAI'**
+  String get settingsModelProviderTypeXai;
+
   /// No description provided for @settingsModelProviderTypeOpenaiResponses.
   ///
   /// In en, this message translates to:
   /// **'OpenAI Responses'**
   String get settingsModelProviderTypeOpenaiResponses;
+
+  /// No description provided for @settingsModelProviderTypeOpenaiCodex.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI Codex'**
+  String get settingsModelProviderTypeOpenaiCodex;
 
   /// No description provided for @settingsModelProviderTypeOpenaiResponsesGeneric.
   ///
@@ -2413,6 +2425,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'OpenRouter'**
   String get settingsModelProviderTypeOpenrouter;
+
+  /// No description provided for @settingsModelProviderTypeOpencode.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenCode'**
+  String get settingsModelProviderTypeOpencode;
 
   /// No description provided for @settingsModelProviderTypeFourRouter.
   ///
@@ -2731,6 +2749,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Novita AI'**
   String get settingsModelProviderTypeNovita;
+
+  /// No description provided for @settingsModelProviderTypeMinimax.
+  ///
+  /// In en, this message translates to:
+  /// **'MiniMax'**
+  String get settingsModelProviderTypeMinimax;
 
   /// No description provided for @settingsModelProviderTypeOther.
   ///
@@ -6218,6 +6242,312 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Single-item JSON export and restore'**
   String get settingsDataAdvancedBackupOptionsDescription;
+
+  /// No description provided for @settingsRuntimeNetworkControl.
+  ///
+  /// In en, this message translates to:
+  /// **'Network control'**
+  String get settingsRuntimeNetworkControl;
+
+  /// No description provided for @settingsRuntimeNetworkControlDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Roles, identities, device authority, and audit'**
+  String get settingsRuntimeNetworkControlDescription;
+
+  /// No description provided for @settingsRuntimeControlInitialize.
+  ///
+  /// In en, this message translates to:
+  /// **'Initialize control'**
+  String get settingsRuntimeControlInitialize;
+
+  /// No description provided for @settingsRuntimeControlRoles.
+  ///
+  /// In en, this message translates to:
+  /// **'Roles'**
+  String get settingsRuntimeControlRoles;
+
+  /// No description provided for @settingsRuntimeControlIdentities.
+  ///
+  /// In en, this message translates to:
+  /// **'Identities'**
+  String get settingsRuntimeControlIdentities;
+
+  /// No description provided for @settingsRuntimeControlAudit.
+  ///
+  /// In en, this message translates to:
+  /// **'Audit'**
+  String get settingsRuntimeControlAudit;
+
+  /// No description provided for @settingsRuntimeControlAddRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Add role'**
+  String get settingsRuntimeControlAddRole;
+
+  /// No description provided for @settingsRuntimeControlGrantRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant role'**
+  String get settingsRuntimeControlGrantRole;
+
+  /// No description provided for @settingsRuntimeControlAddIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'Add identity'**
+  String get settingsRuntimeControlAddIdentity;
+
+  /// No description provided for @settingsRuntimeControlBindDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Bind device'**
+  String get settingsRuntimeControlBindDevice;
+
+  /// No description provided for @settingsRuntimeControlRoleName.
+  ///
+  /// In en, this message translates to:
+  /// **'Role name'**
+  String get settingsRuntimeControlRoleName;
+
+  /// No description provided for @settingsRuntimeControlCapabilities.
+  ///
+  /// In en, this message translates to:
+  /// **'What can this role do?'**
+  String get settingsRuntimeControlCapabilities;
+
+  /// No description provided for @settingsRuntimeControlManagedDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices this role can manage (empty = all)'**
+  String get settingsRuntimeControlManagedDevices;
+
+  /// No description provided for @settingsRuntimeControlIdentityName.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity name'**
+  String get settingsRuntimeControlIdentityName;
+
+  /// No description provided for @settingsRuntimeControlDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Device'**
+  String get settingsRuntimeControlDevice;
+
+  /// No description provided for @settingsRuntimeControlDeviceId.
+  ///
+  /// In en, this message translates to:
+  /// **'Device ID'**
+  String get settingsRuntimeControlDeviceId;
+
+  /// No description provided for @settingsRuntimeControlNoAudit.
+  ///
+  /// In en, this message translates to:
+  /// **'No control commands recorded'**
+  String get settingsRuntimeControlNoAudit;
+
+  /// No description provided for @settingsRuntimeControlNoBindings.
+  ///
+  /// In en, this message translates to:
+  /// **'No device bindings'**
+  String get settingsRuntimeControlNoBindings;
+
+  /// No description provided for @settingsRuntimeControlGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted'**
+  String get settingsRuntimeControlGranted;
+
+  /// No description provided for @settingsRuntimeControlRevoked.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoked'**
+  String get settingsRuntimeControlRevoked;
+
+  /// No description provided for @settingsRuntimeControlRemoveDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove device'**
+  String get settingsRuntimeControlRemoveDevice;
+
+  /// No description provided for @settingsRuntimeControlDisconnectDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect device'**
+  String get settingsRuntimeControlDisconnectDevice;
+
+  /// No description provided for @settingsRuntimeControlRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed'**
+  String get settingsRuntimeControlRemoved;
+
+  /// No description provided for @settingsRuntimeControlDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnected'**
+  String get settingsRuntimeControlDisconnected;
+
+  /// No description provided for @settingsRuntimeControlAdmitDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Readmit device'**
+  String get settingsRuntimeControlAdmitDevice;
+
+  /// No description provided for @settingsRuntimeControlAllDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'All devices'**
+  String get settingsRuntimeControlAllDevices;
+
+  /// No description provided for @settingsRuntimeControlManages.
+  ///
+  /// In en, this message translates to:
+  /// **'Manages'**
+  String get settingsRuntimeControlManages;
+
+  /// No description provided for @settingsRuntimeControlCurrentIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'Current identity'**
+  String get settingsRuntimeControlCurrentIdentity;
+
+  /// No description provided for @settingsRuntimeControlCurrentCapabilities.
+  ///
+  /// In en, this message translates to:
+  /// **'Current capabilities'**
+  String get settingsRuntimeControlCurrentCapabilities;
+
+  /// No description provided for @settingsRuntimeControlManageIdentities.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage identities'**
+  String get settingsRuntimeControlManageIdentities;
+
+  /// No description provided for @settingsRuntimeControlAssignIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'Set device identity'**
+  String get settingsRuntimeControlAssignIdentity;
+
+  /// No description provided for @settingsRuntimeControlClearIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear device identity'**
+  String get settingsRuntimeControlClearIdentity;
+
+  /// No description provided for @settingsRuntimeControlIdentityDefinitions.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity definitions'**
+  String get settingsRuntimeControlIdentityDefinitions;
+
+  /// No description provided for @settingsRuntimeControlIdentityAssignment.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity assignment'**
+  String get settingsRuntimeControlIdentityAssignment;
+
+  /// No description provided for @settingsRuntimeControlNoIdentity.
+  ///
+  /// In en, this message translates to:
+  /// **'No identity assigned'**
+  String get settingsRuntimeControlNoIdentity;
+
+  /// No description provided for @settingsRuntimeControlOnline.
+  ///
+  /// In en, this message translates to:
+  /// **'Online'**
+  String get settingsRuntimeControlOnline;
+
+  /// No description provided for @settingsRuntimeControlOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get settingsRuntimeControlOffline;
+
+  /// No description provided for @settingsRuntimeControlCapabilityAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Everything'**
+  String get settingsRuntimeControlCapabilityAll;
+
+  /// No description provided for @settingsRuntimeControlCapabilityAuditRead.
+  ///
+  /// In en, this message translates to:
+  /// **'View audit history'**
+  String get settingsRuntimeControlCapabilityAuditRead;
+
+  /// No description provided for @settingsRuntimeControlCapabilityNetworkRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Relay network traffic'**
+  String get settingsRuntimeControlCapabilityNetworkRelay;
+
+  /// No description provided for @settingsRuntimeControlCapabilityStorageProvide.
+  ///
+  /// In en, this message translates to:
+  /// **'Provide storage'**
+  String get settingsRuntimeControlCapabilityStorageProvide;
+
+  /// No description provided for @settingsRuntimeControlCapabilityRuntimeExecute.
+  ///
+  /// In en, this message translates to:
+  /// **'Run tasks'**
+  String get settingsRuntimeControlCapabilityRuntimeExecute;
+
+  /// No description provided for @settingsRuntimeControlCapabilityNetworkUser.
+  ///
+  /// In en, this message translates to:
+  /// **'Use the network'**
+  String get settingsRuntimeControlCapabilityNetworkUser;
+
+  /// No description provided for @settingsRuntimeControlCapabilityViewDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'View devices and current identities'**
+  String get settingsRuntimeControlCapabilityViewDevices;
+
+  /// No description provided for @settingsRuntimeControlCapabilityApproval.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve authorizations'**
+  String get settingsRuntimeControlCapabilityApproval;
+
+  /// No description provided for @settingsRuntimeControlRoleAdministrator.
+  ///
+  /// In en, this message translates to:
+  /// **'Administrator'**
+  String get settingsRuntimeControlRoleAdministrator;
+
+  /// No description provided for @settingsRuntimeControlRoleAuditor.
+  ///
+  /// In en, this message translates to:
+  /// **'Auditor'**
+  String get settingsRuntimeControlRoleAuditor;
+
+  /// No description provided for @settingsRuntimeControlRoleRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Relay node'**
+  String get settingsRuntimeControlRoleRelay;
+
+  /// No description provided for @settingsRuntimeControlRoleStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage node'**
+  String get settingsRuntimeControlRoleStorage;
+
+  /// No description provided for @settingsRuntimeControlRoleRunner.
+  ///
+  /// In en, this message translates to:
+  /// **'Task runner'**
+  String get settingsRuntimeControlRoleRunner;
+
+  /// No description provided for @settingsRuntimeControlRoleUser.
+  ///
+  /// In en, this message translates to:
+  /// **'User'**
+  String get settingsRuntimeControlRoleUser;
 }
 
 class _AppLocalizationsDelegate

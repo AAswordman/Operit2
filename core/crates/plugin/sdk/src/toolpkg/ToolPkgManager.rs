@@ -403,11 +403,16 @@ impl ToolPkgManager {
             self.isToolPkgContainer(normalizedContainer),
             "ToolPkg execution context requires a registered container"
         );
+        let apiVersion = self
+            .getToolPkgContainerRuntime(normalizedContainer)
+            .expect("registered ToolPkg execution context requires a container runtime")
+            .apiVersion;
         let engine =
             self.executionEngineFactory
                 .createToolPkgExecutionEngine(ToolPkgExecutionContext {
                     context_key: normalizedKey.to_string(),
                     container_package_name: normalizedContainer.to_string(),
+                    api_version: apiVersion,
                     text_resource_host: Arc::new(self.clone()),
                 });
         engines.insert(
@@ -450,11 +455,16 @@ impl ToolPkgManager {
             self.isToolPkgContainer(normalizedContainer),
             "ToolPkg execution context requires a registered container"
         );
+        let apiVersion = self
+            .getToolPkgContainerRuntime(normalizedContainer)
+            .expect("registered ToolPkg execution context requires a container runtime")
+            .apiVersion;
         let engine =
             self.executionEngineFactory
                 .createToolPkgExecutionEngine(ToolPkgExecutionContext {
                     context_key: normalizedKey.to_string(),
                     container_package_name: normalizedContainer.to_string(),
+                    api_version: apiVersion,
                     text_resource_host: Arc::new(self.clone()),
                 });
         engines.insert(
@@ -717,6 +727,10 @@ impl ToolPkgHookDispatcher for ToolPkgManager {
         params.insert(
             "containerPackageName".to_string(),
             Value::String(runtime.packageName.clone()),
+        );
+        params.insert(
+            "__operit_toolpkg_api_version".to_string(),
+            Value::String(runtime.apiVersion.clone()),
         );
         params.insert(
             "__operit_ui_package_name".to_string(),

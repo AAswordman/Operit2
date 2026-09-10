@@ -529,6 +529,12 @@ fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManager
     registerChatTool(
         handler,
         &chatTools,
+        BuiltinToolName::CallChatModel,
+        ChatManagerToolOperation::CallChatModel,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
         BuiltinToolName::ListCharacterCards,
         ChatManagerToolOperation::ListCharacterCards,
     );
@@ -537,6 +543,12 @@ fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManager
         &chatTools,
         BuiltinToolName::GetChatMessages,
         ChatManagerToolOperation::GetChatMessages,
+    );
+    registerChatTool(
+        handler,
+        &chatTools,
+        BuiltinToolName::GetChatMessagesRange,
+        ChatManagerToolOperation::GetChatMessagesRange,
     );
 }
 

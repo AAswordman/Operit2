@@ -35,6 +35,7 @@ use operit_plugin_sdk::javascript::{
     JsToolPkgIpcRequest, JsToolPkgResourceRequest, JsToolPkgWasmArg, JsToolPkgWasmRequest,
     ToolPkgExecutionContext, ToolPkgMainRegistrationCapture, ToolPkgTextResourceHost,
 };
+use operit_plugin_sdk::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
 use operit_util::stream::Stream::{CollectFuture, Stream};
@@ -1185,6 +1186,12 @@ impl JsEngineState {
         });
 
         let mut effectiveParams = params.clone();
+        if let Some(context) = self.toolPkgContext.as_ref() {
+            effectiveParams.insert(
+                "__operit_toolpkg_api_version".to_string(),
+                Value::String(context.api_version.clone()),
+            );
+        }
         let explicitLanguage = effectiveParams
             .get("__operit_package_lang")
             .and_then(Value::as_str)
@@ -1270,6 +1277,9 @@ impl JsEngineState {
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
         self.initJavaScriptEnvironment()
             .map_err(JsExecutionError::initialization)?;
+        let apiRuntime = buildToolPkgApiRuntimeScript();
+        self.evalJavaScriptVoid(&apiRuntime)
+            .map_err(JsExecutionError::runtime)?;
         let bridge = buildToolPkgRegistrationBridgeScript(true);
         self.evalJavaScriptVoid(&bridge)
             .map_err(JsExecutionError::runtime)?;

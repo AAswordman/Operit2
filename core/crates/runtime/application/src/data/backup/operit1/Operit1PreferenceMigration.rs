@@ -101,10 +101,7 @@ impl SnapshotFileImportPlan {
         }
         let pathText = trimmed.replace('\\', "/");
         let localPath = pathText.strip_prefix("file://").unwrap_or(&pathText);
-        if let Some(relative) = localPath.strip_prefix(OPERIT1_INTERNAL_FILES_PREFIX) {
-            return self.rewriteInternalFilesRelativePath(relative);
-        }
-        if let Some(relative) = localPath.strip_prefix(OPERIT1_DATA_DATA_FILES_PREFIX) {
+        if let Some(relative) = operit1InternalFilesRelativePath(localPath) {
             return self.rewriteInternalFilesRelativePath(relative);
         }
         if let Some(relative) = localPath.strip_prefix(OPERIT1_EXTERNAL_DOWNLOAD_PREFIX) {
@@ -128,10 +125,7 @@ impl SnapshotFileImportPlan {
         if pathText.is_empty() {
             return Ok(workspace.to_string());
         }
-        if let Some(relative) = pathText.strip_prefix(OPERIT1_INTERNAL_FILES_PREFIX) {
-            return self.rewriteWorkspaceRelativePath(relative);
-        }
-        if let Some(relative) = pathText.strip_prefix(OPERIT1_DATA_DATA_FILES_PREFIX) {
+        if let Some(relative) = operit1InternalFilesRelativePath(&pathText) {
             return self.rewriteWorkspaceRelativePath(relative);
         }
         if let Some(relative) = pathText.strip_prefix(OPERIT1_EXTERNAL_DOWNLOAD_PREFIX) {
@@ -169,6 +163,13 @@ impl SnapshotFileImportPlan {
         let (workspaceId, rest) = splitWorkspaceRelativePath(workspaceRelative)?;
         Ok(workspaceVfsPath(workspaceId, rest))
     }
+}
+
+/// Returns the relative path for an Operit1 application-private files URI.
+fn operit1InternalFilesRelativePath(path: &str) -> Option<&str> {
+    OPERIT1_INTERNAL_FILES_PREFIXES
+        .iter()
+        .find_map(|prefix| path.strip_prefix(prefix))
 }
 
 #[allow(non_snake_case)]
@@ -282,4 +283,3 @@ fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, Pa
     );
     mappings
 }
-

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 #[cfg(feature = "test-support")]
 use std::sync::Weak;
@@ -12,7 +12,7 @@ use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
     CoreLinkPushSession, CorePushItem, CorePushRequest, CoreWatchRequest,
 };
-use operit_store::CoreSpaceStore::CoreSpaceStore;
+use operit_store::CoreSpaceStore::{CoreSpaceLinkAdvertisement, CoreSpaceStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use uuid::Uuid;
@@ -24,6 +24,9 @@ use crate::{
 
 const PEER_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
 const PEER_HEARTBEAT_TIMEOUT_MS: i64 = 4_000;
+const PEER_LINK_ADVERTISEMENT_TTL_MS: i64 = 15_000;
+const PEER_LINK_ADVERTISEMENT_REFRESH_MS: i64 = 10_000;
+const PEER_LINK_SAMPLE_WINDOW: usize = 32;
 
 /// Wraps one existing Core request with the Space route required to reach a CoreNode.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,7 +169,15 @@ pub enum PeerFramePayload {
     Response(PeerResponse),
     WatchEvent(PeerWatchEvent),
     WatchClosed(PeerWatchClosed),
-    Heartbeat,
+    Heartbeat(PeerHeartbeat),
+}
+
+/// Carries one sequence-numbered heartbeat probe or its exact echo.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum PeerHeartbeat {
+    Probe { sequence: u64, sentAt: i64 },
+    Ack { sequence: u64, sentAt: i64 },
 }
 
 /// Defines one routed Core operation requested by an adjacent CoreNode.
@@ -253,8 +264,19 @@ pub(crate) struct PeerConnection {
     incomingWatches: Mutex<BTreeMap<String, oneshot::Sender<()>>>,
     incomingPushes: Mutex<BTreeMap<String, IncomingPushState>>,
     topologyStore: Option<CoreSpaceStore>,
+    linkMeasurement: StdMutex<PeerLinkMeasurement>,
     lastReceivedAt: AtomicI64,
     closed: AtomicBool,
+}
+
+/// Tracks bounded recent heartbeat outcomes for one directed Peer Link.
+struct PeerLinkMeasurement {
+    nextHeartbeatSequence: u64,
+    pendingProbeSentAt: BTreeMap<u64, i64>,
+    outcomes: VecDeque<bool>,
+    smoothedRttMs: Option<u64>,
+    advertisementSequence: u64,
+    lastAdvertisementAt: i64,
 }
 
 /// Stores an incoming routed push while preserving sequence order.
@@ -645,6 +667,14 @@ impl PeerConnection {
             incomingWatches: Mutex::new(BTreeMap::new()),
             incomingPushes: Mutex::new(BTreeMap::new()),
             topologyStore,
+            linkMeasurement: StdMutex::new(PeerLinkMeasurement {
+                nextHeartbeatSequence: 1,
+                pendingProbeSentAt: BTreeMap::new(),
+                outcomes: VecDeque::new(),
+                smoothedRttMs: None,
+                advertisementSequence: 0,
+                lastAdvertisementAt: 0,
+            }),
             lastReceivedAt: AtomicI64::new(currentTimeMillis()),
             closed: AtomicBool::new(false),
         })
@@ -709,8 +739,126 @@ impl PeerConnection {
             PeerFramePayload::Request(request) => {
                 self.scheduleIncomingRequest(frame.messageId, request)
             }
-            PeerFramePayload::Heartbeat => Ok(()),
+            PeerFramePayload::Heartbeat(heartbeat) => self.receiveHeartbeat(heartbeat).await,
         }
+    }
+
+    /// Answers probes and records measured round-trip outcomes from heartbeat acknowledgements.
+    async fn receiveHeartbeat(&self, heartbeat: PeerHeartbeat) -> Result<(), String> {
+        match heartbeat {
+            PeerHeartbeat::Probe { sequence, sentAt } => {
+                self.sender
+                    .send(PeerFrame {
+                        messageId: format!("peer-heartbeat-ack-{}", Uuid::new_v4().simple()),
+                        payload: PeerFramePayload::Heartbeat(PeerHeartbeat::Ack {
+                            sequence,
+                            sentAt,
+                        }),
+                    })
+                    .await
+            }
+            PeerHeartbeat::Ack { sequence, sentAt } => {
+                let now = currentTimeMillis();
+                let mut measurement = self
+                    .linkMeasurement
+                    .lock()
+                    .map_err(|error| error.to_string())?;
+                let Some(probeSentAt) = measurement.pendingProbeSentAt.remove(&sequence) else {
+                    return Ok(());
+                };
+                if probeSentAt != sentAt {
+                    return Err(
+                        "Peer heartbeat acknowledgement timestamp does not match probe".to_string(),
+                    );
+                }
+                let rttMs = u64::try_from(now.saturating_sub(sentAt)).unwrap_or(0);
+                measurement.outcomes.push_back(true);
+                while measurement.outcomes.len() > PEER_LINK_SAMPLE_WINDOW {
+                    measurement.outcomes.pop_front();
+                }
+                measurement.smoothedRttMs = Some(match measurement.smoothedRttMs {
+                    Some(previous) => previous.saturating_mul(7).saturating_add(rttMs) / 8,
+                    None => rttMs,
+                });
+                drop(measurement);
+                self.publishLinkMeasurement(now)
+            }
+        }
+    }
+
+    /// Records an expired heartbeat probe as loss and sends the newest directed link advertisement.
+    fn sendHeartbeatProbe(&self) -> Result<PeerFrame, String> {
+        let now = currentTimeMillis();
+        let mut measurement = self
+            .linkMeasurement
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let expired = measurement
+            .pendingProbeSentAt
+            .iter()
+            .filter(|(_, sentAt)| now.saturating_sub(**sentAt) >= PEER_HEARTBEAT_TIMEOUT_MS)
+            .map(|(sequence, _)| *sequence)
+            .collect::<Vec<_>>();
+        for sequence in expired {
+            measurement.pendingProbeSentAt.remove(&sequence);
+            measurement.outcomes.push_back(false);
+        }
+        while measurement.outcomes.len() > PEER_LINK_SAMPLE_WINDOW {
+            measurement.outcomes.pop_front();
+        }
+        let sequence = measurement.nextHeartbeatSequence;
+        measurement.nextHeartbeatSequence = measurement.nextHeartbeatSequence.saturating_add(1);
+        measurement.pendingProbeSentAt.insert(sequence, now);
+        Ok(PeerFrame {
+            messageId: format!("peer-heartbeat-{}", Uuid::new_v4().simple()),
+            payload: PeerFramePayload::Heartbeat(PeerHeartbeat::Probe {
+                sequence,
+                sentAt: now,
+            }),
+        })
+    }
+
+    /// Publishes the latest local directed link measurement when it is ready to participate in routing.
+    fn publishLinkMeasurement(&self, now: i64) -> Result<(), String> {
+        let Some(topologyStore) = &self.topologyStore else {
+            return Ok(());
+        };
+        let mut measurement = self
+            .linkMeasurement
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let Some(smoothedRttMs) = measurement.smoothedRttMs else {
+            return Ok(());
+        };
+        if now.saturating_sub(measurement.lastAdvertisementAt) < PEER_LINK_ADVERTISEMENT_REFRESH_MS
+        {
+            return Ok(());
+        }
+        let sampleCount = u64::try_from(measurement.outcomes.len()).unwrap_or(0);
+        let losses = measurement
+            .outcomes
+            .iter()
+            .filter(|outcome| !**outcome)
+            .count() as u64;
+        let lossPermille = if sampleCount == 0 {
+            0
+        } else {
+            u16::try_from(losses.saturating_mul(1000) / sampleCount).unwrap_or(1000)
+        };
+        measurement.advertisementSequence = measurement.advertisementSequence.saturating_add(1);
+        measurement.lastAdvertisementAt = now;
+        let advertisement = CoreSpaceLinkAdvertisement {
+            targetNodeId: self.peerNodeId.clone(),
+            channelEpoch: self.channelId.clone(),
+            sequence: measurement.advertisementSequence,
+            measuredAt: now,
+            expiresAt: now.saturating_add(PEER_LINK_ADVERTISEMENT_TTL_MS),
+            smoothedRttMs,
+            lossPermille,
+            congestionPermille: 0,
+        };
+        drop(measurement);
+        topologyStore.publishLocalLinkAdvertisement(advertisement)
     }
 
     /// Executes one incoming request without blocking ordered frame delivery.
@@ -1209,13 +1357,15 @@ fn startPeerHeartbeat(connection: Arc<PeerConnection>) -> Result<(), String> {
                     if senderConnection.closed.load(Ordering::Acquire) {
                         return;
                     }
-                    let result = senderConnection
-                        .sender
-                        .send(PeerFrame {
-                            messageId: format!("peer-heartbeat-{}", Uuid::new_v4().simple()),
-                            payload: PeerFramePayload::Heartbeat,
-                        })
-                        .await;
+                    let frame = match senderConnection.sendHeartbeatProbe() {
+                        Ok(frame) => frame,
+                        Err(error) => {
+                            senderConnection
+                                .close(format!("Peer Link heartbeat measurement failed: {error}"));
+                            return;
+                        }
+                    };
+                    let result = senderConnection.sender.send(frame).await;
                     if let Err(error) = result {
                         senderConnection.close(format!("Peer Link heartbeat send failed: {error}"));
                         return;

@@ -3,7 +3,7 @@
 /**
  * Contains every concrete payload returned by the built-in tool runtime.
  */
-export type ToolResultData = BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
+export type ToolResultData = BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
 
 /**
  * Captures the UI node and Android surface reached when an automation run finishes.
@@ -845,6 +845,58 @@ export interface MessageSendResultData {
 }
 
 /**
+ * Contains the output of one non-persistent functional model call.
+ */
+export interface ChatCallResultData {
+  /**
+   * Contains the cleaned assistant text.
+   */
+  text: string;
+  /**
+   * Contains parsed assistant and tool-call segments.
+   */
+  turns: ChatCallTurnData[];
+  /**
+   * Identifies why the model call ended.
+   */
+  finishReason: string;
+  /**
+   * Contains protocol metadata extracted from the response.
+   */
+  metadata: Record<string, unknown>;
+  /**
+   * Records the completion timestamp.
+   */
+  receivedAt: number;
+  /**
+   * Formats the functional model text for legacy tool output.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes one segment returned by a functional model call.
+ */
+export interface ChatCallTurnData {
+  /**
+   * Identifies the segment role.
+   */
+  kind: string;
+  /**
+   * Contains the segment content.
+   */
+  content: string;
+  /**
+   * Identifies the tool called by this segment.
+   */
+  toolName?: string;
+  /**
+   * Carries segment metadata.
+   */
+  metadata: Record<string, unknown>;
+}
+
+/**
  * Describes one chat message together with its role, provider, model, and timestamp.
  */
 export interface ChatMessageInfo {
@@ -864,6 +916,14 @@ export interface ChatMessagesResultData {
   order: string;
   limit: number;
   messages: ChatMessageInfo[];
+  /**
+   * Contains the inclusive first message index for a range query.
+   */
+  start?: number;
+  /**
+   * Contains the inclusive last message index for a range query.
+   */
+  end?: number;
 }
 
 /**

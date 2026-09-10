@@ -4,6 +4,8 @@ pub mod CoreNodeBindingStore;
 pub mod CoreNodeIdentityStore;
 #[path = "CoreSpaceStore.rs"]
 pub mod CoreSpaceStore;
+#[path = "NetworkControlStore.rs"]
+pub mod NetworkControlStore;
 #[path = "ObjectBoxStore.rs"]
 pub mod ObjectBoxStore;
 #[path = "PreferencesDataStore.rs"]

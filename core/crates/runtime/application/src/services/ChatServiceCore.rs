@@ -1,10 +1,10 @@
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
-    CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED, CHAT_INPUT_EVENT_SUBMITTED,
+    ChatInputHookContext, ChatInputHookResult, ToolPkgChatInputHookBridge,
+    CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMITTED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
     CHAT_INPUT_SUBMIT_ACTION_ALLOW, CHAT_INPUT_SUBMIT_ACTION_BLOCK,
-    CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE, ChatInputHookContext,
-    ChatInputHookResult, ToolPkgChatInputHookBridge,
+    CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE,
 };
 use crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
@@ -17,8 +17,8 @@ use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
 use crate::ui::features::chat::webview::workspace::WorkspaceUtils;
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use operit_host_api::FileSystemHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{
@@ -37,19 +37,19 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PendingQueueMessageItem::PendingQueueMessageItem;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_store::PreferencesDataStore::{
-    MutableStateFlow, StateFlow, combine2, combine3, mutableStateFlow,
-};
-use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
 use operit_store::repository::UsageStatisticsStore::UsageStatisticsStore;
-use operit_tools::ConversationMarkupManager::ToolResult;
-use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_store::PreferencesDataStore::{
+    combine2, combine3, mutableStateFlow, MutableStateFlow, StateFlow,
+};
+use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::runtime_support::CoreRouteResumeContext;
-use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::ConversationMarkupManager::ToolResult;
+use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
 use operit_util::AppLogger::AppLogger;
 use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};

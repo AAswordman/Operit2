@@ -175,7 +175,8 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                DropdownButtonFormField<String>(
+                OperitFormStyles.dropdownButtonFormField<String>(
+                  context,
                   key: ValueKey<String>(_providerType),
                   initialValue: _providerType,
                   decoration: const InputDecoration(labelText: '供应商类型'),
@@ -293,7 +294,8 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
     }
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: DropdownButtonFormField<String>(
+      child: OperitFormStyles.dropdownButtonFormField<String>(
+        context,
         key: ValueKey<String?>(selectedModel),
         initialValue: selectedModel,
         isExpanded: true,

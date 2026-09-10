@@ -276,6 +276,7 @@ class MarketGridCard extends StatelessWidget {
   const MarketGridCard({
     super.key,
     required this.title,
+    this.apiVersion,
     required this.description,
     required this.author,
     required this.downloads,
@@ -289,6 +290,7 @@ class MarketGridCard extends StatelessWidget {
   });
 
   final String title;
+  final String? apiVersion;
   final String description;
   final String author;
   final int downloads;
@@ -330,13 +332,29 @@ class MarketGridCard extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        if (apiVersion != null) ...<Widget>[
+                          const SizedBox(width: 6),
+                          Text(
+                            'API $apiVersion',
+                            style: textTheme.labelSmall?.copyWith(
+                              color: colorScheme.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     if (description.trim().isNotEmpty) ...<Widget>[
                       const SizedBox(height: 4),

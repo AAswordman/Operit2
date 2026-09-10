@@ -239,6 +239,32 @@ impl MessageDao {
         )
     }
 
+    /// Loads an ascending message range using a zero-based offset and limit.
+    pub fn getMessagesForChatAscRange(
+        &self,
+        chatId: &str,
+        offset: i32,
+        limit: i32,
+    ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
+        self.selectMessages(
+            "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC LIMIT ?3 OFFSET ?2",
+            sqliteParams![chatId, offset, limit],
+        )
+    }
+
+    /// Loads a descending message range using a zero-based offset and limit.
+    pub fn getMessagesForChatDescRange(
+        &self,
+        chatId: &str,
+        offset: i32,
+        limit: i32,
+    ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
+        self.selectMessages(
+            "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp DESC LIMIT ?3 OFFSET ?2",
+            sqliteParams![chatId, offset, limit],
+        )
+    }
+
     pub fn getMessagesForChatAfterTimestampExclusiveAsc(
         &self,
         chatId: &str,

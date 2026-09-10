@@ -1,12 +1,13 @@
 use operit_access_runtime::{
     coreNodeTransportClient,
-    CoreNodePeerLink::{isPeerLinkActive, openOutboundPeerLink},
+    CoreNodePeerLink::{disconnectPeerLink, isPeerLinkActive, openOutboundPeerLink},
     LinkAccessStore, PairedRemoteSession, PairedRemoteSessionRecord,
 };
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushRequest, CoreValue};
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDevicePresence, CoreSpaceStore};
+use operit_store::NetworkControlStore::NetworkControlStore;
 use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncReference, RuntimeFileSyncStore};
 use operit_store::SyncOperationStore::{
     subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation,
@@ -24,18 +25,20 @@ use crate::RuntimeRemoteLinkDiscovery::{
     subscribeRemoteDeviceAnnouncements, RuntimeRemoteDiscoveryEndpoint,
 };
 
-const SYNC_DOMAINS: [&str; 5] = [
+const SYNC_DOMAINS: [&str; 6] = [
     "preferences",
     "chat",
     "binding",
     "objectbox",
     "runtime_file",
+    "network_control",
 ];
 const SPACE_SYNC_PREPARATION_DELAY_MS: u64 = 0;
 const SYNC_BLOB_CHUNK_BYTES: i64 = 64 * 1024;
 
 static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Arc<SpacePersistenceSyncState>>>> =
     OnceLock::new();
+static PEER_LINK_OPEN_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 /// Stores the runtime state owned by one CoreNode persistence worker.
 struct SpacePersistenceSyncState {
@@ -208,14 +211,19 @@ impl SpacePersistenceSyncService {
         Ok(())
     }
 
-    /// Exchanges every pending persistent operation with all direct outbound peers once.
+    /// Exchanges Space projections through direct pairings, then synchronizes every reachable member.
     pub async fn synchronizeOnce(&self) -> Result<(), String> {
         self.state.spaceStore.initialize()?;
         let sessions = self.state.linkAccessStore.outboundSessions()?;
         self.validateDirectPeerSessions(&sessions)?;
         let localNodeId = self.state.nodeRouter.localNodeId();
+        let control = NetworkControlStore::new(self.state.localRuntime.runtimeStorageHost())?;
         let mut errors = Vec::new();
         for (name, record) in sessions {
+            if control.nodeIsDisconnected(&record.coreDeviceId)? {
+                disconnectPeerLink(&localNodeId, &record.coreDeviceId)?;
+                continue;
+            }
             if let Err(error) = self.ensurePeerLink(&localNodeId, &record).await {
                 errors.push(format!(
                     "CoreNode {} Peer Link: {error}",
@@ -223,10 +231,29 @@ impl SpacePersistenceSyncService {
                 ));
                 continue;
             }
-            if let Err(error) = self.synchronizePeer(name, 512, false).await {
+            if let Err(error) = self.exchangePairedDeviceSpaceProjection(&record).await {
                 errors.push(format!(
-                    "CoreNode {} persistence sync: {error}",
+                    "CoreNode {} Space projection exchange: {error}",
                     record.coreDeviceId
+                ));
+            }
+        }
+        let space = self.state.spaceStore.space()?;
+        for targetNodeId in space.members {
+            if targetNodeId == localNodeId {
+                continue;
+            }
+            let reachable = self.state.nodeRouter.nodeIsReachable(&targetNodeId)?;
+            if !reachable {
+                continue;
+            }
+            if let Err(error) = self
+                .synchronizeReachablePeer(targetNodeId.clone(), 512, false)
+                .await
+            {
+                errors.push(format!(
+                    "CoreNode {} reachable persistence sync: {error}",
+                    targetNodeId
                 ));
             }
         }
@@ -823,6 +850,15 @@ impl SpacePersistenceSyncService {
         localNodeId: &str,
         record: &PairedRemoteSessionRecord,
     ) -> Result<(), String> {
+        let control = NetworkControlStore::new(self.state.localRuntime.runtimeStorageHost())?;
+        if control.nodeIsDisconnected(&record.coreDeviceId)? {
+            disconnectPeerLink(localNodeId, &record.coreDeviceId)?;
+            return Err(format!(
+                "CoreNode {} is revoked from direct connections and routing",
+                record.coreDeviceId
+            ));
+        }
+        let _peerLinkOpenGuard = peerLinkOpenLock().lock().await;
         if isPeerLinkActive(localNodeId, &record.coreDeviceId)? {
             return Ok(());
         }
@@ -866,6 +902,12 @@ impl SpacePersistenceSyncService {
             .await;
         decodeCoreResponse(response.result.map_err(|error| error.to_string())?)
     }
+}
+
+/// Returns the process-wide guard that serializes direct Peer Link carrier opens.
+#[allow(non_snake_case)]
+fn peerLinkOpenLock() -> &'static tokio::sync::Mutex<()> {
+    PEER_LINK_OPEN_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 /// Reports whether the paired CoreNode owns one verified synchronization blob.

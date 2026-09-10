@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use operit_host_api::{
     FileEntry, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HttpHost,
     HttpRequestData, RuntimeStorageHost, SystemOperationHost,
@@ -13,20 +13,20 @@ use crate::runtime_support::{
     RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
 };
 use operit_host_api::HostManager::HostManager;
+use operit_tools::files::PathMapper::PathMapper;
+use operit_tools::files::VisualFileSystem::VisualFileSystem;
+use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
+use operit_tools::tools::ToolResultDataClasses::{
+    stringResultData, BinaryFileContentData, DirectoryListingData, FileApplyResultData,
+    FileContentData, FileEntry as ToolFileEntry, FileExistsData, FileInfoData, FileOperationData,
+    FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,
+    ToolResultData,
+};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
 use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolParameter,
     ToolValidationResult,
-};
-use operit_tools::files::PathMapper::PathMapper;
-use operit_tools::files::VisualFileSystem::VisualFileSystem;
-use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
-use operit_tools::tools::ToolResultDataClasses::{
-    BinaryFileContentData, DirectoryListingData, FileApplyResultData, FileContentData,
-    FileEntry as ToolFileEntry, FileExistsData, FileInfoData, FileOperationData,
-    FilePartContentData, FindFilesResultData, GrepFileMatch, GrepLineMatch, GrepResultData,
-    ToolResultData, stringResultData,
 };
 use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};

@@ -133,7 +133,6 @@ class ChatShareImageSurface extends StatelessWidget {
                   for (var index = 0; index < messages.length; index++) ...[
                     CursorStyleChatMessage(
                       message: messages[index],
-                      isStreaming: false,
                       splitMarkdownContent: splitMarkdownContent,
                     ),
                     if (index != messages.length - 1) const SizedBox(height: 8),

@@ -4,6 +4,34 @@ use super::{JsDate, JsFuture};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Describes one prompt turn supplied to a non-persistent functional model call.
+pub struct ChatPromptTurn {
+    /// Identifies the prompt role.
+    pub kind: String,
+    /// Contains the prompt content.
+    pub content: String,
+    /// Identifies the tool associated with the turn.
+    #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
+    pub toolName: Option<String>,
+    /// Carries caller-defined prompt metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Configures one non-persistent functional model call.
+pub struct ChatCallOptions {
+    /// Selects the configured functional model.
+    pub functionType: String,
+    /// Supplies the prompt turns sent to the functional model.
+    pub turns: Vec<ChatPromptTurn>,
+    /// Controls whether provider token usage is recorded.
+    pub recordTokenUsage: Option<bool>,
+    /// Controls model thinking for this request.
+    pub enableThinking: Option<bool>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Selects how a chat-list query is matched against conversation metadata.
 pub enum ChatHostListChatsParamsMatch {
@@ -81,6 +109,16 @@ pub struct ChatHostGetMessagesOptions {
     pub order: Option<ChatHostGetMessagesOptionsOrder>,
     /// Limits the maximum number of messages returned.
     pub limit: Option<f64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Configures ordering and inclusive index bounds when reading a message range.
+pub struct ChatHostGetMessagesRangeOptions {
+    /// Selects chronological or reverse-chronological message order.
+    pub order: Option<ChatHostGetMessagesOptionsOrder>,
+    /// Selects the zero-based first message index.
+    pub start: Option<f64>,
+    /// Selects the zero-based last message index.
+    pub end: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Selects the initial presentation mode used when the chat service opens.
@@ -205,6 +243,18 @@ pub trait ChatHost: Send + Sync {
         chatId: String,
         options: Option<ChatHostGetMessagesOptions>,
     ) -> JsFuture<ChatMessagesResultData>;
+    /// Gets an inclusive index range of messages from a specific chat.
+    /// @param chatId - The ID of the chat to read
+    /// @param options - The order and inclusive start/end indexes
+    ///
+    fn getMessagesRange(
+        &self,
+        chatId: String,
+        options: Option<ChatHostGetMessagesRangeOptions>,
+    ) -> JsFuture<ChatMessagesResultData>;
+    /// Calls a configured functional model without adding a turn to chat history.
+    /// @since ToolPkg API 2.0.0
+    fn call(&self, options: ChatCallOptions) -> JsFuture<ChatCallResultData>;
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Selects the application surface that owns a chat turn.

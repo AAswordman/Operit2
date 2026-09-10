@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
+import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
 import 'package:operit2/ui/features/chat/components/part/CustomXmlRenderer.dart';
 import 'package:operit2/ui/features/chat/components/part/FileDiffDisplay.dart';
 import 'package:operit2/ui/features/chat/components/part/StructuredMessagePartRenderer.dart';
@@ -21,7 +22,7 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
-          body: StructuredMessagePartRenderer(
+          body: StreamingStructuredMessageRenderer(
             parts: const <MessagePart>[
               MessagePart(
                 partId: 'thinking',
@@ -36,12 +37,15 @@ void main() {
             textColor: Colors.black,
             backgroundColor: Colors.white,
             showThinkingProcess: true,
+            contentStream: null,
+            streamState: StreamMarkdownRendererState(),
             splitMarkdownContent: _splitMarkdownContent,
             nodeGrouper: const NoopMarkdownNodeGrouper(),
           ),
         ),
       ),
     );
+    await tester.pumpAndSettle();
 
     expect(find.byType(CustomXmlRenderer), findsOneWidget);
     expect(find.byType(ExpansionTile), findsNothing);
@@ -120,6 +124,7 @@ void main() {
         ),
       ], nodeGrouper: const NoopMarkdownNodeGrouper()),
     );
+    await tester.pumpAndSettle();
 
     expect(find.text('✓ Task completed'), findsOneWidget);
   });
@@ -140,6 +145,7 @@ void main() {
         ),
       ], nodeGrouper: const NoopMarkdownNodeGrouper()),
     );
+    await tester.pumpAndSettle();
 
     expect(find.byType(CompactToolDisplay), findsOneWidget);
     expect(find.byType(DetailedToolDisplay), findsNothing);
@@ -171,6 +177,7 @@ void main() {
         ),
       ], nodeGrouper: const NoopMarkdownNodeGrouper()),
     );
+    await tester.pumpAndSettle();
 
     expect(find.text('permission denied'), findsOneWidget);
     expect(find.byType(FileDiffDisplay), findsOneWidget);
@@ -223,6 +230,7 @@ void main() {
         nodeGrouper: const ThinkToolsXmlNodeGrouper(showThinkingProcess: true),
       ),
     );
+    await tester.pumpAndSettle();
 
     expect(find.text('思考与工具调用（1）'), findsOneWidget);
     expect(find.text('思考过程'), findsNothing);
@@ -241,11 +249,13 @@ Widget _messagePartApp(
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
-      body: StructuredMessagePartRenderer(
+      body: StreamingStructuredMessageRenderer(
         parts: parts,
+        contentStream: null,
         textColor: Colors.black,
         backgroundColor: Colors.white,
         showThinkingProcess: true,
+        streamState: StreamMarkdownRendererState(),
         splitMarkdownContent: _splitMarkdownContent,
         nodeGrouper: nodeGrouper,
       ),

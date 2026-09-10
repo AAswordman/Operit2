@@ -25,6 +25,7 @@ use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingStore, BINDING_SYNC_DOMAIN};
+use operit_store::NetworkControlStore::{NetworkControlStore, NETWORK_CONTROL_SYNC_DOMAIN};
 use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::PreferencesDataStore::{PreferencesDataStore, PreferencesSyncedEntry};
@@ -590,6 +591,7 @@ impl OperitApplication {
             });
         }
         let bindingStore = self.runtimeBindingStore()?;
+        let networkControlStore = self.runtimeNetworkControlStore()?;
         let mut applied = 0usize;
         let mut syncClock = store.localClock().map_err(|error| error.to_string())?;
         let mut persistentOperations = Vec::new();
@@ -609,6 +611,12 @@ impl OperitApplication {
                     bindingStore.applyBootstrapOperation(&operation)?;
                 } else {
                     bindingStore.applySyncedOperation(&operation)?;
+                }
+            } else if operation.domain == NETWORK_CONTROL_SYNC_DOMAIN {
+                if forceApply {
+                    networkControlStore.applyBootstrapOperation(&operation)?;
+                } else {
+                    networkControlStore.applySyncedOperation(&operation)?;
                 }
             } else {
                 if !forceApply
@@ -841,6 +849,15 @@ impl OperitApplication {
             "RuntimeStorageHost is not registered for persistent Binding storage".to_string()
         })?;
         CoreNodeBindingStore::new(storageHost)
+    }
+
+    /// Creates the synchronized Space authorization and control store owned by this application.
+    #[allow(non_snake_case)]
+    fn runtimeNetworkControlStore(&self) -> Result<NetworkControlStore, String> {
+        let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for network control storage".to_string()
+        })?;
+        NetworkControlStore::new(storageHost)
     }
 
     /// Creates the content-addressed runtime file store owned by this application instance.

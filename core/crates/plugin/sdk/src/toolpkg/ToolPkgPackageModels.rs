@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::toolpkg::ToolPkgParser::ToolPkgManifestRequirement;
+
 /// Summarizes one ToolPkg subpackage and its enabled state.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -24,13 +26,47 @@ pub struct ToolPkgContainerDetails {
     pub displayName: String,
     pub description: String,
     pub version: String,
+    pub apiVersion: String,
+    pub logoResourceKey: Option<String>,
+    pub logoMimeType: Option<String>,
     pub author: Vec<String>,
+    pub requires: Vec<ToolPkgManifestRequirement>,
     pub resourceCount: usize,
     pub workspaceTemplateCount: usize,
     pub uiModuleCount: usize,
     pub toolboxUiModules: Vec<ToolPkgToolboxUiModule>,
     pub subpackages: Vec<ToolPkgSubpackageInfo>,
     pub workspaceTemplates: Vec<ToolPkgWorkspaceTemplate>,
+}
+
+/// Contains the raw logo resource bytes exposed for ToolPkg presentation.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ToolPkgLogoBytes {
+    pub resourceKey: String,
+    pub mimeType: String,
+    pub fileName: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Describes one enabled ToolPkg context-menu item for a chat message.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatMessageMenuItem {
+    pub containerPackageName: String,
+    pub itemId: String,
+    pub title: String,
+    pub icon: Option<String>,
+    pub order: i32,
+    pub dialog: Option<ToolPkgChatMessageMenuDialog>,
+}
+
+/// Describes the dialog surface declared by a chat message context-menu item.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatMessageMenuDialog {
+    pub screen: String,
+    pub title: String,
 }
 
 /// Describes one workspace template exposed by a ToolPkg container.

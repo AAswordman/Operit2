@@ -668,6 +668,7 @@ class _MarketListPaneState extends State<_MarketListPane> {
         updatedAt: (item) => item.updatedAt,
         itemBuilder: (item) => MarketGridCard(
           title: item.title,
+          apiVersion: item.latestVersion?.apiVersion,
           description: item.description,
           author: item.publisher?.login ?? item.author?.login ?? '',
           downloads: _entryDownloads(item),

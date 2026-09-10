@@ -15,6 +15,7 @@ use crate::PreferencesDataStore::{emptyPreferences, stringPreferencesKey, Prefer
 use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 
 const CORE_SPACE_RECORD_KEY: &str = "record";
+const UNMEASURED_DIRECT_PEER_COST: u64 = 1_000_000_000;
 
 /// Describes the converged Space membership visible to one CoreNode.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +46,19 @@ pub struct CoreSpaceDeviceConnection {
     pub secondDeviceId: String,
 }
 
+/// Publishes the measured quality of one directed active Peer Link.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreSpaceLinkAdvertisement {
+    pub targetNodeId: String,
+    pub channelEpoch: String,
+    pub sequence: u64,
+    pub measuredAt: i64,
+    pub expiresAt: i64,
+    pub smoothedRttMs: u64,
+    pub lossPermille: u16,
+    pub congestionPermille: u16,
+}
+
 /// Describes one synchronized device availability announcement.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreSpaceDevicePresence {
@@ -72,6 +86,7 @@ struct CoreSpaceMemberRecord {
 struct CoreSpaceTopologyRecord {
     nodeId: String,
     peers: Vec<String>,
+    links: Vec<CoreSpaceLinkAdvertisement>,
     updatedAt: i64,
 }
 
@@ -127,20 +142,30 @@ impl CoreSpaceStore {
 
     /// Joins an explicitly selected peer Space while preserving the peer identity.
     pub fn merge(&self, peerSpace: CoreSpace) -> Result<CoreSpace, String> {
+        let merged = self.mergedProjection(peerSpace)?;
+        self.writeSpaceProjection(
+            merged.spaceId,
+            merged.spaceName,
+            merged.spaceRevision,
+            merged.members.into_iter().collect(),
+        )
+    }
+
+    /// Builds the exact membership projection proposed by joining the current Space to one peer.
+    #[allow(non_snake_case)]
+    pub fn mergedProjection(&self, peerSpace: CoreSpace) -> Result<CoreSpace, String> {
         validateCoreSpace(&peerSpace)?;
         let localSpace = self.initialize()?;
-        let members = localSpace
-            .members
-            .into_iter()
-            .chain(peerSpace.members)
-            .collect::<BTreeSet<_>>();
-        let nextRevision = nextSpaceRevision(localSpace.spaceRevision, peerSpace.spaceRevision)?;
-        self.writeSpaceProjection(
-            peerSpace.spaceId,
-            peerSpace.spaceName,
-            nextRevision,
-            members,
-        )
+        Ok(CoreSpace {
+            spaceId: peerSpace.spaceId,
+            spaceName: peerSpace.spaceName,
+            spaceRevision: nextSpaceRevision(localSpace.spaceRevision, peerSpace.spaceRevision)?,
+            members: localSpace
+                .members
+                .into_iter()
+                .chain(peerSpace.members)
+                .collect(),
+        })
     }
 
     /// Adopts a joined Space projection produced by an explicit pairing workflow.
@@ -285,25 +310,6 @@ impl CoreSpaceStore {
             updatedAt: now,
         })?;
         self.space()
-    }
-
-    /// Removes selected members by publishing a new local Space projection.
-    pub fn removeMembers(&self, removedNodeIds: BTreeSet<String>) -> Result<CoreSpace, String> {
-        let localSpace = self.initialize()?;
-        let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
-        if removedNodeIds.contains(&identity.nodeId) {
-            return Err("The current device cannot be removed from its own Space".to_string());
-        }
-        let members = localSpace
-            .members
-            .into_iter()
-            .filter(|nodeId| !removedNodeIds.contains(nodeId))
-            .collect::<BTreeSet<_>>();
-        if members.is_empty() {
-            return Err("A device Space must retain the current device".to_string());
-        }
-        let nextRevision = nextSpaceRevision(localSpace.spaceRevision, localSpace.spaceRevision)?;
-        self.writeSpaceProjection(newSpaceId(), localSpace.spaceName, nextRevision, members)
     }
 
     /// Returns whether the supplied CoreNode is a member of the current Space.
@@ -504,16 +510,61 @@ impl CoreSpaceStore {
     #[allow(non_snake_case)]
     pub fn setDirectPeers(&self, peerNodeIds: Vec<String>) -> Result<(), String> {
         let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
-        let peers = peerNodeIds.into_iter().collect::<BTreeSet<_>>();
-        for peerNodeId in &peers {
+        let peerSet = peerNodeIds.into_iter().collect::<BTreeSet<_>>();
+        for peerNodeId in &peerSet {
             validateNodeId(peerNodeId)?;
             if peerNodeId == &identity.nodeId {
                 return Err("A device cannot register itself as a direct peer".to_string());
             }
         }
+        let peers = peerSet.into_iter().collect::<Vec<_>>();
+        let topology = self.topologyRecords()?;
+        let links = topology
+            .get(&identity.nodeId)
+            .map(|record| {
+                record
+                    .links
+                    .iter()
+                    .filter(|link| peers.contains(&link.targetNodeId))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.writeTopologyRecord(&CoreSpaceTopologyRecord {
+            nodeId: identity.nodeId.clone(),
+            peers: peers.clone(),
+            links,
+            updatedAt: currentTimeMillis(),
+        })
+    }
+
+    /// Publishes the newest locally measured quality for one active direct Peer Link.
+    #[allow(non_snake_case)]
+    pub fn publishLocalLinkAdvertisement(
+        &self,
+        advertisement: CoreSpaceLinkAdvertisement,
+    ) -> Result<(), String> {
+        validateLinkAdvertisement(&advertisement)?;
+        let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
+        if advertisement.targetNodeId == identity.nodeId {
+            return Err("A device cannot publish a link to itself".to_string());
+        }
+        let topology = self.topologyRecords()?;
+        let Some(record) = topology.get(&identity.nodeId) else {
+            return Err("Local device topology is not initialized".to_string());
+        };
+        let peers = record.peers.clone();
+        if !peers.iter().any(|peer| peer == &advertisement.targetNodeId) {
+            return Err("Link advertisement target is not an active direct peer".to_string());
+        }
+        let mut links = record.links.clone();
+        links.retain(|link| link.targetNodeId != advertisement.targetNodeId);
+        links.push(advertisement);
+        links.sort_by(|left, right| left.targetNodeId.cmp(&right.targetNodeId));
         self.writeTopologyRecord(&CoreSpaceTopologyRecord {
             nodeId: identity.nodeId,
-            peers: peers.iter().cloned().collect(),
+            peers,
+            links,
             updatedAt: currentTimeMillis(),
         })
     }
@@ -540,45 +591,28 @@ impl CoreSpaceStore {
         Ok(connections.into_iter().collect())
     }
 
-    /// Resolves the direct peer that begins the shortest route to one Space member.
-    #[allow(non_snake_case)]
-    pub fn nextHop(&self, targetNodeId: String) -> Result<String, String> {
-        let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
-        let topology = self.topologyRecords()?;
-        let directPeerNodeIds = topology
-            .get(&identity.nodeId)
-            .ok_or_else(|| {
-                format!(
-                    "Device space connections are missing an announcement for {}",
-                    identity.nodeId
-                )
-            })?
-            .peers
-            .iter()
-            .cloned()
-            .collect();
-        self.nextHopThroughPeers(targetNodeId, directPeerNodeIds)
-    }
-
-    /// Resolves the shortest route whose first hop belongs to the supplied active peer set.
-    #[allow(non_snake_case)]
-    pub fn nextHopThroughPeers(
-        &self,
-        targetNodeId: String,
-        directPeerNodeIds: BTreeSet<String>,
-    ) -> Result<String, String> {
-        self.reachableNextHopThroughPeers(targetNodeId.clone(), directPeerNodeIds)?
-            .ok_or_else(|| {
-                format!("Device is not reachable in the current device space: {targetNodeId}")
-            })
-    }
-
-    /// Resolves an active first hop when the supplied peer set proves the target reachable.
+    /// Resolves an active first hop with Dijkstra over non-expired directed link measurements.
     #[allow(non_snake_case)]
     pub fn reachableNextHopThroughPeers(
         &self,
         targetNodeId: String,
         directPeerNodeIds: BTreeSet<String>,
+    ) -> Result<Option<String>, String> {
+        let transitNodeIds = self.space()?.members.into_iter().collect();
+        self.reachableNextHopThroughPeersWithTransitNodes(
+            targetNodeId,
+            directPeerNodeIds,
+            transitNodeIds,
+        )
+    }
+
+    /// Resolves a weighted first hop while allowing only selected members to forward a later hop.
+    #[allow(non_snake_case)]
+    pub fn reachableNextHopThroughPeersWithTransitNodes(
+        &self,
+        targetNodeId: String,
+        directPeerNodeIds: BTreeSet<String>,
+        transitNodeIds: BTreeSet<String>,
     ) -> Result<Option<String>, String> {
         validateNodeId(&targetNodeId)?;
         let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
@@ -590,39 +624,97 @@ impl CoreSpaceStore {
                 "Device is not a member of the current device space: {targetNodeId}"
             ));
         }
+        let members = self.space()?.members.into_iter().collect::<BTreeSet<_>>();
         let topology = self.topologyRecords()?;
-        let mut queue = std::collections::VecDeque::new();
-        let mut visited = BTreeSet::new();
-        visited.insert(identity.nodeId.clone());
-        let Some(localTopology) = topology.get(&identity.nodeId) else {
-            return Ok(None);
-        };
-        for peerNodeId in localTopology
-            .peers
-            .iter()
-            .filter(|peerNodeId| directPeerNodeIds.contains(*peerNodeId))
-        {
-            visited.insert(peerNodeId.clone());
-            if peerNodeId == &targetNodeId {
-                return Ok(Some(peerNodeId.clone()));
+        let now = currentTimeMillis();
+        let mut distances = BTreeMap::<String, u64>::new();
+        let mut firstHops = BTreeMap::<String, String>::new();
+        let mut settled = BTreeSet::<String>::new();
+        distances.insert(identity.nodeId.clone(), 0);
+        let localTopology = topology.get(&identity.nodeId);
+        for peerNodeId in &directPeerNodeIds {
+            if peerNodeId == &identity.nodeId || !members.contains(peerNodeId) {
+                continue;
             }
-            queue.push_back((peerNodeId.clone(), peerNodeId.clone()));
+            let measuredCost = localTopology
+                .and_then(|record| {
+                    record
+                        .links
+                        .iter()
+                        .find(|link| link.targetNodeId == *peerNodeId && link.expiresAt > now)
+                })
+                .map(linkCost);
+            distances.insert(
+                peerNodeId.clone(),
+                measuredCost.unwrap_or(UNMEASURED_DIRECT_PEER_COST),
+            );
+            firstHops.insert(peerNodeId.clone(), peerNodeId.clone());
         }
-        while let Some((nodeId, firstHop)) = queue.pop_front() {
-            let Some(record) = topology.get(&nodeId) else {
+
+        loop {
+            let next = distances
+                .iter()
+                .filter(|(nodeId, _)| !settled.contains(*nodeId))
+                .filter_map(|(nodeId, cost)| {
+                    let firstHop = match firstHops.get(nodeId) {
+                        Some(firstHop) => firstHop.clone(),
+                        None if nodeId == &identity.nodeId => String::new(),
+                        None => return None,
+                    };
+                    Some((nodeId.clone(), *cost, firstHop))
+                })
+                .min_by(|left, right| {
+                    left.1
+                        .cmp(&right.1)
+                        .then(left.2.cmp(&right.2))
+                        .then(left.0.cmp(&right.0))
+                });
+            let Some((nodeId, cost, firstHop)) = next else {
+                return Ok(None);
+            };
+            if nodeId == targetNodeId {
+                return Ok(firstHops.get(&nodeId).cloned());
+            }
+            settled.insert(nodeId.clone());
+            if nodeId != identity.nodeId && !transitNodeIds.contains(&nodeId) {
+                continue;
+            }
+            let Some(topologyRecord) = topology.get(&nodeId) else {
                 continue;
             };
-            for peerNodeId in &record.peers {
-                if !visited.insert(peerNodeId.clone()) {
+            for link in &topologyRecord.links {
+                if link.expiresAt <= now
+                    || !members.contains(&link.targetNodeId)
+                    || !topologyRecord.peers.contains(&link.targetNodeId)
+                {
                     continue;
                 }
-                if peerNodeId == &targetNodeId {
-                    return Ok(Some(firstHop));
+                if nodeId == identity.nodeId && !directPeerNodeIds.contains(&link.targetNodeId) {
+                    continue;
                 }
-                queue.push_back((peerNodeId.clone(), firstHop.clone()));
+                if settled.contains(&link.targetNodeId) {
+                    continue;
+                }
+                let candidateFirstHop = if nodeId == identity.nodeId {
+                    link.targetNodeId.clone()
+                } else {
+                    firstHop.clone()
+                };
+                let candidateCost = cost.saturating_add(linkCost(link));
+                let replace = match distances.get(&link.targetNodeId) {
+                    Some(existingCost) if *existingCost < candidateCost => false,
+                    Some(existingCost) if *existingCost == candidateCost => firstHops
+                        .get(&link.targetNodeId)
+                        .map(|existingFirstHop| candidateFirstHop < *existingFirstHop)
+                        .unwrap_or(true),
+                    _ => true,
+                };
+                if replace {
+                    distances.insert(link.targetNodeId.clone(), candidateCost);
+                    firstHops.insert(link.targetNodeId.clone(), candidateFirstHop);
+                }
             }
         }
-        Ok(None)
     }
 
     /// Reads every synchronized member record stored by this CoreNode.
@@ -996,13 +1088,56 @@ fn validateSpaceName(spaceName: &str) -> Result<(), String> {
 /// Validates one synchronized CoreNode topology announcement.
 fn validateTopologyRecord(record: &CoreSpaceTopologyRecord) -> Result<(), String> {
     validateNodeId(&record.nodeId)?;
+    let peers = record.peers.iter().cloned().collect::<BTreeSet<_>>();
+    if peers.len() != record.peers.len() {
+        return Err("Device space topology has duplicate direct peers".to_string());
+    }
     for peerNodeId in &record.peers {
         validateNodeId(peerNodeId)?;
         if peerNodeId == &record.nodeId {
             return Err("Device space connections cannot contain a self edge".to_string());
         }
     }
+    let mut targets = BTreeSet::new();
+    for link in &record.links {
+        validateLinkAdvertisement(link)?;
+        if link.targetNodeId == record.nodeId {
+            return Err("Device space link metrics cannot contain a self edge".to_string());
+        }
+        if !peers.contains(&link.targetNodeId) {
+            return Err("Device space link advertisement has no direct peer edge".to_string());
+        }
+        if !targets.insert(link.targetNodeId.clone()) {
+            return Err("Device space topology has duplicate directed links".to_string());
+        }
+    }
     Ok(())
+}
+
+/// Validates one directed Peer Link quality observation before it enters route selection.
+fn validateLinkAdvertisement(advertisement: &CoreSpaceLinkAdvertisement) -> Result<(), String> {
+    validateNodeId(&advertisement.targetNodeId)?;
+    if advertisement.channelEpoch.trim().is_empty() {
+        return Err("Device space link advertisement channel epoch must not be empty".to_string());
+    }
+    if advertisement.sequence == 0 {
+        return Err("Device space link advertisement sequence must be positive".to_string());
+    }
+    if advertisement.measuredAt <= 0 || advertisement.expiresAt <= advertisement.measuredAt {
+        return Err("Device space link advertisement has an invalid lifetime".to_string());
+    }
+    if advertisement.lossPermille > 1000 || advertisement.congestionPermille > 1000 {
+        return Err("Device space link advertisement metric exceeds one permille".to_string());
+    }
+    Ok(())
+}
+
+/// Calculates the integer route cost for one directed Peer Link measurement.
+fn linkCost(link: &CoreSpaceLinkAdvertisement) -> u64 {
+    1_000_u64
+        .saturating_add(link.smoothedRttMs.saturating_mul(10))
+        .saturating_add(u64::from(link.lossPermille).saturating_mul(25))
+        .saturating_add(u64::from(link.congestionPermille).saturating_mul(10))
 }
 
 /// Validates one CoreNode identifier used by Space membership.
@@ -1029,7 +1164,12 @@ mod tests {
     use operit_host_api::{HostError, RuntimeStorageEntry, RuntimeStorageHost};
     use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 
+    use crate::NetworkControlStore::{
+        NetworkControlCommand, NetworkControlCommandRecord, NetworkControlIdentityAssignment,
+        NetworkControlRole, NetworkControlStore, NETWORK_CONTROL_SYNC_DOMAIN,
+    };
     use crate::SyncOperationStore::SyncOperationStore;
+    use crate::SyncOperationStore::{NewSyncOperation, SyncOperationSemantics};
 
     #[derive(Clone, Default)]
     struct MemoryStorageHost {
@@ -1154,6 +1294,84 @@ mod tests {
         }
     }
 
+    /// Builds one non-expired directed link measurement for route selection tests.
+    fn testLink(targetNodeId: &str, rttMs: u64) -> CoreSpaceLinkAdvertisement {
+        let now = currentTimeMillis();
+        CoreSpaceLinkAdvertisement {
+            targetNodeId: targetNodeId.to_string(),
+            channelEpoch: format!("test-channel-{targetNodeId}"),
+            sequence: 1,
+            measuredAt: now,
+            expiresAt: now + 60_000,
+            smoothedRttMs: rttMs,
+            lossPermille: 0,
+            congestionPermille: 0,
+        }
+    }
+
+    /// Writes a directed topology record used only by graph algorithm tests.
+    fn writeTestTopology(
+        store: &CoreSpaceStore,
+        nodeId: &str,
+        links: Vec<CoreSpaceLinkAdvertisement>,
+    ) {
+        let peers = links
+            .iter()
+            .map(|link| link.targetNodeId.clone())
+            .collect::<Vec<_>>();
+        store
+            .writeTopologyRecord(&CoreSpaceTopologyRecord {
+                nodeId: nodeId.to_string(),
+                peers,
+                links,
+                updatedAt: currentTimeMillis(),
+            })
+            .expect("test topology record must write");
+    }
+
+    /// Adds one member to the current Space projection for control-policy tests.
+    fn addTestSpaceMember(store: &CoreSpaceStore, nodeId: &str) {
+        let space = store
+            .initialize()
+            .expect("test Space must initialize before adding a member");
+        let members = space
+            .members
+            .into_iter()
+            .chain(std::iter::once(nodeId.to_string()))
+            .collect::<BTreeSet<_>>();
+        store
+            .writeSpaceProjection(
+                space.spaceId,
+                space.spaceName,
+                space.spaceRevision + 1,
+                members,
+            )
+            .expect("test Space member projection must write");
+        store
+            .writeDeviceProfile(&CoreSpaceDeviceProfile {
+                nodeId: nodeId.to_string(),
+                displayName: format!("Device {nodeId}"),
+                userName: String::new(),
+                platform: "test".to_string(),
+                model: "test".to_string(),
+                coreVersion: Some("test".to_string()),
+                updatedAt: currentTimeMillis(),
+            })
+            .expect("test member device profile must write");
+    }
+
+    /// Initializes the local device presentation required by control audit labels.
+    fn initializeTestDeviceProfile(store: &CoreSpaceStore) {
+        store
+            .writeLocalDeviceProfile(
+                "Test device".to_string(),
+                "test".to_string(),
+                "test".to_string(),
+                "test".to_string(),
+            )
+            .expect("test device profile must initialize");
+    }
+
     /// Verifies that repeating the same paired Space observation records no new transaction.
     #[test]
     fn observe_paired_space_is_idempotent_for_identical_membership() {
@@ -1199,5 +1417,410 @@ mod tests {
             .expect("second joined space adoption must succeed");
 
         assert_eq!(localSyncSequence(host), sequenceAfterFirstAdopt);
+    }
+
+    /// Verifies that the weighted router prefers a lower-cost two-hop path over a slow direct link.
+    #[test]
+    fn weighted_route_prefers_low_latency_multi_hop_path() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        let localSpace = store
+            .initializeNamed("local-space".to_string())
+            .expect("test space must initialize");
+        let localNodeId = CoreNodeIdentityStore::new(host)
+            .initialize()
+            .expect("test node identity must initialize")
+            .nodeId;
+        let relayNodeId = "node-relay";
+        let targetNodeId = "node-target";
+        store
+            .writeSpaceProjection(
+                localSpace.spaceId,
+                localSpace.spaceName,
+                localSpace.spaceRevision,
+                BTreeSet::from([
+                    localNodeId.clone(),
+                    relayNodeId.to_string(),
+                    targetNodeId.to_string(),
+                ]),
+            )
+            .expect("test space projection must include route nodes");
+        writeTestTopology(
+            &store,
+            &localNodeId,
+            vec![testLink(targetNodeId, 300), testLink(relayNodeId, 10)],
+        );
+        writeTestTopology(&store, relayNodeId, vec![testLink(targetNodeId, 10)]);
+
+        let nextHop = store
+            .reachableNextHopThroughPeers(
+                targetNodeId.to_string(),
+                BTreeSet::from([targetNodeId.to_string(), relayNodeId.to_string()]),
+            )
+            .expect("weighted path must resolve");
+
+        assert_eq!(nextHop.as_deref(), Some(relayNodeId));
+    }
+
+    /// Verifies that an active direct peer is reachable before its first measurement arrives.
+    #[test]
+    fn active_direct_peer_is_reachable_without_measurement() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        let localSpace = store
+            .initializeNamed("local-space".to_string())
+            .expect("test space must initialize");
+        let localNodeId = CoreNodeIdentityStore::new(host)
+            .initialize()
+            .expect("test node identity must initialize")
+            .nodeId;
+        let targetNodeId = "node-unmeasured";
+        store
+            .writeSpaceProjection(
+                localSpace.spaceId,
+                localSpace.spaceName,
+                localSpace.spaceRevision,
+                BTreeSet::from([localNodeId.clone(), targetNodeId.to_string()]),
+            )
+            .expect("test space projection must include target");
+        store
+            .setDirectPeers(vec![targetNodeId.to_string()])
+            .expect("test direct peer must persist");
+
+        let route = store
+            .reachableNextHopThroughPeers(
+                targetNodeId.to_string(),
+                BTreeSet::from([targetNodeId.to_string()]),
+            )
+            .expect("unmeasured graph lookup must succeed");
+
+        assert_eq!(route.as_deref(), Some(targetNodeId));
+    }
+
+    /// Verifies a non-relay device cannot be selected as a multi-hop forwarding node.
+    #[test]
+    fn weighted_route_requires_relay_transit_capability() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        let localSpace = store
+            .initializeNamed("relay-space".to_string())
+            .expect("test space must initialize");
+        let localNodeId = CoreNodeIdentityStore::new(host)
+            .initialize()
+            .expect("test node identity must initialize")
+            .nodeId;
+        let ordinaryNodeId = "node-ordinary";
+        let relayNodeId = "node-relay";
+        let targetNodeId = "node-target";
+        store
+            .writeSpaceProjection(
+                localSpace.spaceId,
+                localSpace.spaceName,
+                localSpace.spaceRevision,
+                BTreeSet::from([
+                    localNodeId.clone(),
+                    ordinaryNodeId.to_string(),
+                    relayNodeId.to_string(),
+                    targetNodeId.to_string(),
+                ]),
+            )
+            .expect("test space projection must include route nodes");
+        writeTestTopology(
+            &store,
+            &localNodeId,
+            vec![testLink(ordinaryNodeId, 5), testLink(relayNodeId, 20)],
+        );
+        writeTestTopology(&store, ordinaryNodeId, vec![testLink(targetNodeId, 5)]);
+        writeTestTopology(&store, relayNodeId, vec![testLink(targetNodeId, 20)]);
+
+        let nextHop = store
+            .reachableNextHopThroughPeersWithTransitNodes(
+                targetNodeId.to_string(),
+                BTreeSet::from([ordinaryNodeId.to_string(), relayNodeId.to_string()]),
+                BTreeSet::from([relayNodeId.to_string()]),
+            )
+            .expect("constrained weighted route lookup must succeed");
+
+        assert_eq!(nextHop.as_deref(), Some(relayNodeId));
+    }
+
+    /// Verifies custom roles, delegated capabilities, command auditing, and member revocation.
+    #[test]
+    fn network_control_authorizes_custom_roles_and_audits_rejected_commands() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let spaceStore = CoreSpaceStore::new(host.clone());
+        let space = spaceStore
+            .initializeNamed("control-space".to_string())
+            .expect("test Space must initialize");
+        initializeTestDeviceProfile(&spaceStore);
+        let control =
+            NetworkControlStore::new(host.clone()).expect("network control store must initialize");
+        control
+            .bootstrapCurrentSpace()
+            .expect("Space creator must bootstrap administrator policy");
+        addTestSpaceMember(&spaceStore, "peer-archive");
+        control
+            .admitMember("peer-archive".to_string())
+            .expect("administrator must admit the test member");
+        control
+            .defineRole(NetworkControlRole {
+                roleId: "archive_operator".to_string(),
+                displayName: "Archive operator".to_string(),
+                capabilities: BTreeSet::from(["storage.provide".to_string()]),
+            })
+            .expect("administrator must define a custom role");
+        control
+            .setIdentity(NetworkControlIdentityAssignment {
+                nodeId: "peer-archive".to_string(),
+                roleId: "archive_operator".to_string(),
+            })
+            .expect("administrator must grant a custom role");
+        assert!(control
+            .nodeHasCapability("peer-archive", "storage.provide", None)
+            .expect("custom capability query must succeed"));
+
+        let rejected = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH)
+            .appendLocalOperation(
+                "peer-untrusted",
+                NewSyncOperation {
+                    domain: NETWORK_CONTROL_SYNC_DOMAIN.to_string(),
+                    entityType: "command".to_string(),
+                    entityId: "untrusted-role".to_string(),
+                    operation: "apply".to_string(),
+                    semantics: SyncOperationSemantics::Transaction,
+                    payload: serde_json::to_value(NetworkControlCommandRecord {
+                        commandId: "untrusted-role".to_string(),
+                        spaceId: space.spaceId,
+                        issuerNodeId: "peer-untrusted".to_string(),
+                        command: NetworkControlCommand::DefineRole {
+                            role: NetworkControlRole {
+                                roleId: "forged".to_string(),
+                                displayName: "Forged".to_string(),
+                                capabilities: BTreeSet::from(["network.relay".to_string()]),
+                            },
+                        },
+                    })
+                    .expect("untrusted command must serialize"),
+                },
+            )
+            .expect("untrusted command must be present for audit replay");
+        control
+            .applySyncedOperation(&rejected)
+            .expect("received control command must append for audit replay");
+        assert!(control
+            .audit()
+            .expect("control audit must materialize")
+            .iter()
+            .any(|entry| entry.commandId == "untrusted-role" && !entry.accepted));
+
+        control
+            .removeMember("peer-archive".to_string())
+            .expect("administrator must revoke a member");
+        assert!(control
+            .nodeIsRemoved("peer-archive")
+            .expect("member removal must materialize"));
+        assert!(!control
+            .nodeHasCapability("peer-archive", "storage.provide", None)
+            .expect("revoked capability query must succeed"));
+    }
+
+    /// Verifies administrator admission restores a device intentionally disconnected by policy.
+    #[test]
+    fn network_control_admission_clears_disconnected_device_state() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let spaceStore = CoreSpaceStore::new(host.clone());
+        initializeTestDeviceProfile(&spaceStore);
+        let control =
+            NetworkControlStore::new(host).expect("network control store must initialize");
+        control
+            .bootstrapCurrentSpace()
+            .expect("Space creator must bootstrap administrator policy");
+        addTestSpaceMember(&spaceStore, "peer-rejoin");
+        control
+            .admitMember("peer-rejoin".to_string())
+            .expect("administrator must admit the test member");
+        control
+            .disconnectNode("peer-rejoin".to_string())
+            .expect("administrator must disconnect a device");
+        assert!(control
+            .nodeIsDisconnected("peer-rejoin")
+            .expect("disconnection state must materialize"));
+
+        control
+            .admitMember("peer-rejoin".to_string())
+            .expect("administrator must readmit a disconnected device");
+
+        assert!(!control
+            .nodeIsDisconnected("peer-rejoin")
+            .expect("admission must clear disconnection state"));
+    }
+
+    /// Verifies a newly admitted member is ordinary by default and cannot execute runtime work.
+    #[test]
+    fn network_control_admission_assigns_only_the_default_user_role() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let spaceStore = CoreSpaceStore::new(host.clone());
+        initializeTestDeviceProfile(&spaceStore);
+        let control =
+            NetworkControlStore::new(host).expect("network control store must initialize");
+        control
+            .bootstrapCurrentSpace()
+            .expect("Space creator must bootstrap administrator policy");
+        addTestSpaceMember(&spaceStore, "peer-member");
+        control
+            .admitMember("peer-member".to_string())
+            .expect("administrator must admit a member");
+
+        assert!(control
+            .nodeHasCapability("peer-member", "network.user", None)
+            .expect("default user capability must materialize"));
+        assert!(!control
+            .nodeHasCapability("peer-member", "runtime.execute", None)
+            .expect("ordinary member execution capability must materialize"));
+        assert!(!control
+            .nodeHasCapability("peer-member", "network.relay", None)
+            .expect("ordinary member relay capability must materialize"));
+    }
+
+    /// Verifies removal revokes elevated roles and readmission restores only ordinary membership.
+    #[test]
+    fn network_control_removal_does_not_restore_prior_elevated_roles() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let spaceStore = CoreSpaceStore::new(host.clone());
+        initializeTestDeviceProfile(&spaceStore);
+        let control =
+            NetworkControlStore::new(host.clone()).expect("network control store must initialize");
+        control
+            .bootstrapCurrentSpace()
+            .expect("Space creator must bootstrap administrator policy");
+        addTestSpaceMember(&spaceStore, "peer-runner");
+        control
+            .admitMember("peer-runner".to_string())
+            .expect("administrator must admit a member");
+        control
+            .setIdentity(NetworkControlIdentityAssignment {
+                nodeId: "peer-runner".to_string(),
+                roleId: "runner".to_string(),
+            })
+            .expect("administrator must grant runner role");
+        assert!(control
+            .nodeHasCapability("peer-runner", "runtime.execute", None)
+            .expect("runner capability must materialize"));
+
+        control
+            .removeMember("peer-runner".to_string())
+            .expect("administrator must remove the member");
+        control
+            .admitMember("peer-runner".to_string())
+            .expect("administrator must readmit the member");
+
+        assert!(!control
+            .nodeHasCapability("peer-runner", "runtime.execute", None)
+            .expect("readmitted member must not regain runner capability"));
+        assert!(control
+            .nodeHasCapability("peer-runner", "network.user", None)
+            .expect("readmitted member must receive ordinary capability"));
+    }
+
+    /// Verifies identity definitions are immutable and each device has one current identity.
+    #[test]
+    fn network_control_preserves_identity_definition_and_device_state_invariants() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let spaceStore = CoreSpaceStore::new(host.clone());
+        initializeTestDeviceProfile(&spaceStore);
+        let control =
+            NetworkControlStore::new(host.clone()).expect("network control store must initialize");
+        control
+            .bootstrapCurrentSpace()
+            .expect("Space creator must bootstrap administrator policy");
+        addTestSpaceMember(&spaceStore, "peer-identity");
+        control
+            .admitMember("peer-identity".to_string())
+            .expect("administrator must admit the identity test device");
+        control
+            .defineRole(NetworkControlRole {
+                roleId: "archive".to_string(),
+                displayName: "Archive".to_string(),
+                capabilities: BTreeSet::from(["storage.provide".to_string()]),
+            })
+            .expect("administrator must define the archive role");
+        assert!(
+            control
+                .defineRole(NetworkControlRole {
+                    roleId: "archive".to_string(),
+                    displayName: "Replacement archive".to_string(),
+                    capabilities: BTreeSet::from(["storage.provide".to_string()]),
+                })
+                .is_err(),
+            "a role id must have one immutable definition"
+        );
+        control
+            .setIdentity(NetworkControlIdentityAssignment {
+                nodeId: "peer-identity".to_string(),
+                roleId: "archive".to_string(),
+            })
+            .expect("administrator must grant the archive role");
+        control
+            .setIdentity(NetworkControlIdentityAssignment {
+                nodeId: "peer-identity".to_string(),
+                roleId: "user".to_string(),
+            })
+            .expect("setting a new identity must replace the device's current identity");
+        assert_eq!(
+            control
+                .currentState()
+                .expect("control state must materialize")
+                .deviceIdentityIds
+                .get("peer-identity")
+                .map(String::as_str),
+            Some("user"),
+            "each device must expose only its current identity"
+        );
+        control
+            .removeMember("peer-identity".to_string())
+            .expect("administrator must remove the identity test device");
+        assert!(
+            control
+                .currentState()
+                .expect("control state must materialize")
+                .deviceIdentityIds
+                .get("peer-identity")
+                .is_none(),
+            "removal must clear the former member identity"
+        );
+    }
+
+    /// Verifies no command can leave a Space control policy without an administrator.
+    #[test]
+    fn network_control_rejects_removing_or_revoking_the_last_administrator() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let spaceStore = CoreSpaceStore::new(host.clone());
+        initializeTestDeviceProfile(&spaceStore);
+        let administratorNodeId = CoreNodeIdentityStore::new(host.clone())
+            .initialize()
+            .expect("test node identity must initialize")
+            .nodeId;
+        let control =
+            NetworkControlStore::new(host).expect("network control store must initialize");
+        control
+            .bootstrapCurrentSpace()
+            .expect("Space creator must bootstrap administrator policy");
+        assert!(
+            control.removeMember(administratorNodeId.clone()).is_err(),
+            "the last administrator must not be removable"
+        );
+        assert!(
+            control
+                .setIdentity(NetworkControlIdentityAssignment {
+                    nodeId: administratorNodeId.clone(),
+                    roleId: "user".to_string(),
+                })
+                .is_err(),
+            "the last administrator identity must not be replaceable"
+        );
+        assert!(
+            control.clearIdentity(administratorNodeId).is_err(),
+            "the last administrator identity must not be clearable"
+        );
     }
 }

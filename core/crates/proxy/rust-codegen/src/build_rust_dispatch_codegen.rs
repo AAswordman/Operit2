@@ -932,10 +932,7 @@ fn render_call_arm(
     error_types: &HashMap<String, ErrorTypeDefinition>,
 ) -> String {
     let body = render_call_body(method, error_types, "            ");
-    let arm = format!(
-        "        {:?} => {{\n{}        }}\n",
-        method.name, body
-    );
+    let arm = format!("        {:?} => {{\n{}        }}\n", method.name, body);
     render_cfg_attrs(method) + &arm
 }
 

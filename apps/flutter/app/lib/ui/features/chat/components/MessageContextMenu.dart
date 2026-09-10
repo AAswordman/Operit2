@@ -1,14 +1,18 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/interactions/MessagePressShield.dart';
 import '../../../../util/ChatMarkupRegex.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'MessageCopyPreview.dart';
+import '../../packages/screens/ToolPkgUiLauncherScreen.dart';
 
 typedef MessageTimestampAction = Future<void> Function(int timestamp);
 typedef MessageTimestampBoolAction = Future<bool> Function(int timestamp);
@@ -24,6 +28,10 @@ class MessageContextMenu extends StatefulWidget {
   const MessageContextMenu({
     super.key,
     required this.message,
+    required this.chatId,
+    required this.messageIndex,
+    required this.clients,
+    required this.packageManager,
     required this.onToggleFavoriteMessage,
     this.splitMarkdownContent,
     required this.child,
@@ -42,6 +50,10 @@ class MessageContextMenu extends StatefulWidget {
   });
 
   final ChatUiMessage message;
+  final String chatId;
+  final int messageIndex;
+  final GeneratedCoreProxyClients clients;
+  final GeneratedApplicationPackageManagerCoreProxy packageManager;
   final MessageFavoriteAction onToggleFavoriteMessage;
   final MarkdownCopySplitter? splitMarkdownContent;
   final MessageTimestampAction? onDeleteMessage;
@@ -166,12 +178,21 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       position & const Size(1, 1),
       Offset.zero & overlay.size,
     );
-    final action = await showMenu<_MessageMenuAction>(
+    final useEnglish = Localizations.localeOf(context).languageCode == 'en';
+    final toolPkgItems = await widget.packageManager
+        .getToolPkgChatMessageMenuItems(
+          sender: widget.message.sender,
+          useEnglish: useEnglish,
+        );
+    if (!mounted) {
+      return;
+    }
+    final action = await showMenu<_MessageMenuSelection>(
       context: context,
       position: rect,
       constraints: const BoxConstraints(minWidth: 180, maxWidth: 220),
       popUpAnimationStyle: AnimationStyle.noAnimation,
-      items: _menuItems(context),
+      items: _menuItems(context, toolPkgItems),
     );
     if (!mounted || action == null) {
       return;
@@ -185,9 +206,13 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     super.dispose();
   }
 
-  List<PopupMenuEntry<_MessageMenuAction>> _menuItems(BuildContext context) {
+  /// Builds built-in and ToolPkg context-menu entries for the selected message.
+  List<PopupMenuEntry<_MessageMenuSelection>> _menuItems(
+    BuildContext context,
+    List<core_proxy.ToolPkgChatMessageMenuItem> toolPkgItems,
+  ) {
     final message = widget.message;
-    final items = <PopupMenuEntry<_MessageMenuAction>>[
+    final items = <PopupMenuEntry<_MessageMenuSelection>>[
       _menuItem(
         value: _MessageMenuAction.copy,
         icon: Icons.content_copy,
@@ -195,7 +220,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       ),
     ];
     if (message.sender == 'user') {
-      items.addAll(<PopupMenuEntry<_MessageMenuAction>>[
+      items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
         _menuItem(
           value: _MessageMenuAction.editAndResend,
           icon: Icons.edit,
@@ -209,7 +234,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       ]);
     }
     if (message.sender == 'ai') {
-      items.addAll(<PopupMenuEntry<_MessageMenuAction>>[
+      items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
         _menuItem(
           value: _MessageMenuAction.regenerate,
           icon: Icons.refresh,
@@ -236,7 +261,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         );
       }
     }
-    items.addAll(<PopupMenuEntry<_MessageMenuAction>>[
+    items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
       _menuItem(
         value: _MessageMenuAction.delete,
         icon: Icons.delete,
@@ -252,7 +277,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         ),
       );
     }
-    items.addAll(<PopupMenuEntry<_MessageMenuAction>>[
+    items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
       _menuItem(
         value: _MessageMenuAction.insertSummary,
         icon: Icons.summarize,
@@ -270,16 +295,41 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         label: '多选',
       ),
     ]);
+    if (toolPkgItems.isNotEmpty) {
+      items.add(const PopupMenuDivider());
+      items.addAll(
+        toolPkgItems.map(
+          (item) => PopupMenuItem<_MessageMenuSelection>(
+            value: _MessageMenuSelection.toolPkg(item),
+            height: 36,
+            child: Row(
+              children: <Widget>[
+                const Icon(Icons.extension_outlined, size: 16),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    item.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return items;
   }
 
-  PopupMenuItem<_MessageMenuAction> _menuItem({
+  /// Builds one built-in context-menu entry.
+  PopupMenuItem<_MessageMenuSelection> _menuItem({
     required _MessageMenuAction value,
     required IconData icon,
     required String label,
   }) {
-    return PopupMenuItem<_MessageMenuAction>(
-      value: value,
+    return PopupMenuItem<_MessageMenuSelection>(
+      value: _MessageMenuSelection.builtIn(value),
       height: 36,
       child: Row(
         children: <Widget>[
@@ -291,8 +341,14 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     );
   }
 
-  Future<void> _handleAction(_MessageMenuAction action) async {
-    switch (action) {
+  /// Runs the chosen built-in command or ToolPkg menu callback.
+  Future<void> _handleAction(_MessageMenuSelection selection) async {
+    final toolPkgItem = selection.toolPkgItem;
+    if (toolPkgItem != null) {
+      await _runToolPkgMenuItem(toolPkgItem);
+      return;
+    }
+    switch (selection.builtInAction!) {
       case _MessageMenuAction.copy:
         await showModalBottomSheet<void>(
           context: context,
@@ -347,6 +403,97 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         widget.onToggleMultiSelectMode?.call(widget.message.timestamp);
         break;
     }
+  }
+
+  /// Invokes a ToolPkg context-menu callback with the generated message JSON.
+  Future<void> _runToolPkgMenuItem(
+    core_proxy.ToolPkgChatMessageMenuItem item,
+  ) async {
+    final result = await widget.packageManager.invokeToolPkgChatMessageMenuItem(
+      containerPackageName: item.containerPackageName,
+      itemId: item.itemId,
+      chatId: widget.chatId,
+      messageIndex: widget.messageIndex,
+      message: widget.message.toJson(),
+    );
+    final dialog = item.dialog;
+    if (dialog != null) {
+      await _showToolPkgMenuDialog(item: item, result: result);
+    }
+  }
+
+  /// Opens the registered Compose DSL dialog with callback-provided state.
+  Future<void> _showToolPkgMenuDialog({
+    required core_proxy.ToolPkgChatMessageMenuItem item,
+    required String? result,
+  }) async {
+    final dialog = item.dialog!;
+    final response = result == null
+        ? const <String, Object?>{}
+        : _toolPkgJsonObject(jsonDecode(result), 'menu item result');
+    final rawDialog = response['dialog'];
+    final dialogResult = rawDialog == null
+        ? const <String, Object?>{}
+        : _toolPkgJsonObject(rawDialog, 'menu item dialog result');
+    final state = <String, Object?>{
+      'chatId': widget.chatId,
+      'messageIndex': widget.messageIndex,
+      'message': widget.message.toJson(),
+      'menuItemId': item.itemId,
+    };
+    final rawState = dialogResult['state'];
+    if (rawState != null) {
+      state.addAll(_toolPkgJsonObject(rawState, 'menu item dialog state'));
+    }
+    final moduleSpec = <String, Object?>{
+      'id': item.itemId,
+      'runtime': 'compose_dsl',
+      'screen': dialog.screen,
+      'title': dialog.title,
+      'toolPkgId': item.containerPackageName,
+      'menuItemId': item.itemId,
+    };
+    final rawModuleSpec = dialogResult['moduleSpec'];
+    if (rawModuleSpec != null) {
+      moduleSpec.addAll(
+        _toolPkgJsonObject(rawModuleSpec, 'menu item dialog moduleSpec'),
+      );
+    }
+    final rawTitle = dialogResult['title'];
+    final dialogTitle = switch (rawTitle) {
+      null => dialog.title,
+      String title => title,
+      _ => throw StateError('ToolPkg menu item dialog title must be a string'),
+    };
+    final plugin = await widget.packageManager.getToolPkgContainerRuntime(
+      containerPackageName: item.containerPackageName,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (plugin == null) {
+      throw StateError(
+        'ToolPkg container not found: ${item.containerPackageName}',
+      );
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(dialogTitle),
+        content: SizedBox(
+          width: 760,
+          height: 640,
+          child: ToolPkgUiLauncherScreen(
+            clients: widget.clients,
+            plugin: plugin,
+            initialRouteId: dialog.screen,
+            showLauncherChrome: false,
+            initialState: state,
+            initialModuleSpec: moduleSpec,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _confirmDelete() async {
@@ -431,6 +578,32 @@ enum _MessageMenuAction {
   createBranch,
   info,
   multiSelect,
+}
+
+/// Identifies one built-in or ToolPkg message context-menu selection.
+class _MessageMenuSelection {
+  const _MessageMenuSelection.builtIn(this.builtInAction) : toolPkgItem = null;
+
+  const _MessageMenuSelection.toolPkg(this.toolPkgItem) : builtInAction = null;
+
+  final _MessageMenuAction? builtInAction;
+  final core_proxy.ToolPkgChatMessageMenuItem? toolPkgItem;
+}
+
+/// Converts a JSON object while rejecting values with non-string keys.
+Map<String, Object?> _toolPkgJsonObject(Object? value, String fieldName) {
+  if (value is! Map) {
+    throw StateError('ToolPkg $fieldName must be an object');
+  }
+  final object = <String, Object?>{};
+  for (final entry in value.entries) {
+    final key = entry.key;
+    if (key is! String) {
+      throw StateError('ToolPkg $fieldName has a non-string key');
+    }
+    object[key] = entry.value;
+  }
+  return object;
 }
 
 String cleanMessageContent(String content) {

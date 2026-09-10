@@ -13,6 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(env::var_os("OUT_DIR").ok_or("missing build output directory")?);
     let output_dir = build_output.join("types");
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=src/js_sdk/runtime_bindings.rs");
+    println!("cargo:rerun-if-changed=../codegen/src/runtime_bindings.rs");
     generate_js_tools_runtime(
         &manifest_dir.join("src"),
         &manifest_dir.join("src/js_sdk/runtime_bindings.rs"),

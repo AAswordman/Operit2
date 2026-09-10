@@ -3,18 +3,18 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::core::chat::AIMessageManager::{
-    AIMessageManager, BuildUserMessageContentRequest, SendMessageRequest as AIMessageSendRequest,
-    StableContextWindowRequest, logMessageTiming, messageTimingNow,
+    logMessageTiming, messageTimingNow, AIMessageManager, BuildUserMessageContentRequest,
+    SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
 };
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use crate::services::RuntimeHostInteractionService::{
-    RuntimeHostInteractionAppNotificationPayload, publishOwnerAppNotification,
-};
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
+use crate::services::RuntimeHostInteractionService::{
+    publishOwnerAppNotification, RuntimeHostInteractionAppNotificationPayload,
+};
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::WorkspaceBackupManager;
 use operit_host_api::FileSystemHost;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
@@ -35,21 +35,21 @@ use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::{AssistantMarkupStreamState, MessagePartCodec};
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::PromptTurn;
+use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
 };
-use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
-use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use operit_tools::tools::ToolProgressBus::ToolProgressBus;
-use operit_util::AppLogger::AppLogger;
-use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
-use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 use operit_util::stream::RevisableTextStream::{
     RenderableTextStream, ResponseStreamItem, RevisableTextStream,
 };
 use operit_util::stream::Stream::Stream;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+use operit_util::AppLogger::AppLogger;
+use operit_util::ChainLogger::{self, MESSAGE_STORE_CHAIN, RECEIVE_CHAIN, SEND_CHAIN};
+use operit_util::MarkdownRenderStream::{MarkdownRenderEventStream, MarkdownStreamEvent};
 
 /// Maximum text length used when preparing automatic speech previews.
 pub const AUTO_READ_PREVIEW_MAX: usize = 48;
@@ -268,6 +268,44 @@ impl ChatExecutionState {
             isLoading: false,
             inputProcessingState: InputProcessingState::Idle,
         }
+    }
+}
+
+/// Stores the chat runtime statistics delivered to one ToolPkg hook invocation.
+struct ToolPkgChatRuntimeStatistics {
+    activeChatIds: Vec<String>,
+    currentTurnToolInvocationCount: i32,
+    activeConversationCount: i32,
+    currentSessionToolCount: i32,
+}
+
+/// Collects active-chat statistics from one atomic chat execution-state snapshot.
+fn collectToolPkgChatRuntimeStatistics(
+    chatId: &str,
+    executionStates: &HashMap<String, ChatExecutionState>,
+    currentTurnToolInvocationCounts: &HashMap<String, i32>,
+) -> ToolPkgChatRuntimeStatistics {
+    let activeChatIds = executionStates
+        .iter()
+        .filter_map(|(id, state)| state.isLoading.then_some(id.clone()))
+        .collect::<Vec<_>>();
+    let currentTurnToolInvocationCount = *currentTurnToolInvocationCounts
+        .get(chatId)
+        .expect("tool invocation count must be initialized before dispatching a chat runtime hook");
+    let currentSessionToolCount = activeChatIds
+        .iter()
+        .map(|activeChatId| {
+            currentTurnToolInvocationCounts
+                .get(activeChatId)
+                .copied()
+                .expect("active chat tool invocation count must be initialized before dispatching a chat runtime hook")
+        })
+        .sum();
+    ToolPkgChatRuntimeStatistics {
+        activeConversationCount: activeChatIds.len() as i32,
+        activeChatIds,
+        currentTurnToolInvocationCount,
+        currentSessionToolCount,
     }
 }
 
@@ -693,17 +731,49 @@ impl MessageProcessingDelegate {
             .flatten()
     }
 
+    /// Initializes tool invocation accounting for a chat state that is about to be published.
+    #[allow(non_snake_case)]
+    fn initializeCurrentTurnToolInvocationCount(&mut self, chatId: &str) {
+        let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
+        counts.entry(chatId.to_string()).or_insert(0);
+        self.currentTurnToolInvocationCountByChatId = counts.clone();
+        self.currentTurnToolInvocationCountByChatIdFlow
+            .set_value(counts);
+    }
+
+    /// Dispatches a ToolPkg chat runtime state change with active-chat statistics.
+    #[allow(non_snake_case)]
+    fn dispatchToolPkgChatRuntimeStateChange(&self, chatId: &str, state: &InputProcessingState) {
+        let executionStates = self.executionStateByChatIdFlow.value();
+        let counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
+        let statistics = collectToolPkgChatRuntimeStatistics(chatId, &executionStates, &counts);
+        crate::plugins::toolpkg::ToolPkgChatRuntimeHookBridge::ToolPkgChatRuntimeHookBridge::dispatchStateChanged(
+            chatId,
+            state,
+            statistics.activeChatIds,
+            statistics.currentTurnToolInvocationCount,
+            statistics.activeConversationCount,
+            statistics.currentSessionToolCount,
+        );
+    }
+
     /// Updates one chat's observable logical execution state in a single publication.
     #[allow(non_snake_case)]
     fn updateChatExecutionState(
-        &self,
+        &mut self,
         chatId: String,
         update: impl FnOnce(&mut ChatExecutionState),
     ) {
-        let key = Self::chatKey(Some(chatId));
+        let key = Self::chatKey(Some(chatId.clone()));
         let mut states = self.executionStateByChatIdFlow.value();
         update(states.entry(key).or_insert_with(ChatExecutionState::idle));
+        let changedState = states
+            .get(&Self::chatKey(Some(chatId.clone())))
+            .cloned()
+            .expect("chat execution state must exist after update");
         self.executionStateByChatIdFlow.set_value(states);
+        self.initializeCurrentTurnToolInvocationCount(&chatId);
+        self.dispatchToolPkgChatRuntimeStateChange(&chatId, &changedState.inputProcessingState);
     }
 
     /// Recomputes the chat ids that currently own active streaming turns.
@@ -730,7 +800,14 @@ impl MessageProcessingDelegate {
                 .or_insert_with(ChatExecutionState::idle)
                 .isLoading = true;
         }
+        let activeChatIds = states
+            .iter()
+            .filter_map(|(chatId, state)| state.isLoading.then_some(chatId.clone()))
+            .collect::<Vec<_>>();
         self.executionStateByChatIdFlow.set_value(states);
+        for chatId in activeChatIds {
+            self.initializeCurrentTurnToolInvocationCount(&chatId);
+        }
     }
 
     /// Refreshes active streaming chat ids from the current runtime map.
@@ -779,10 +856,16 @@ impl MessageProcessingDelegate {
         let key = Self::chatKey(chatId);
         let mut states = self.executionStateByChatIdFlow.value();
         states
-            .entry(key)
+            .entry(key.clone())
             .or_insert_with(ChatExecutionState::idle)
             .inputProcessingState = state;
+        let changedState = states
+            .get(&key)
+            .cloned()
+            .expect("chat execution state must exist after input processing state update");
         self.executionStateByChatIdFlow.set_value(states);
+        self.initializeCurrentTurnToolInvocationCount(&key);
+        self.dispatchToolPkgChatRuntimeStateChange(&key, &changedState.inputProcessingState);
     }
 
     /// Enables or clears suppression of idle/completed UI state for one chat.
@@ -1206,7 +1289,11 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub fn incrementCurrentTurnToolInvocationCount(&mut self, chatId: String) {
         let mut counts = self.currentTurnToolInvocationCountByChatIdFlow.value();
-        let value = counts.get(&chatId).copied().unwrap_or(0) + 1;
+        let value = counts
+            .get(&chatId)
+            .copied()
+            .expect("tool invocation count must be initialized before incrementing")
+            + 1;
         counts.insert(chatId, value);
         self.currentTurnToolInvocationCountByChatId = counts.clone();
         self.currentTurnToolInvocationCountByChatIdFlow
@@ -2172,6 +2259,47 @@ fn aiMessageNotificationPreview(content: &str) -> String {
         .chars()
         .take(MAX_NOTIFICATION_PREVIEW_CHARACTERS)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collectToolPkgChatRuntimeStatistics, ChatExecutionState};
+    use operit_model::InputProcessingState::InputProcessingState;
+    use std::collections::HashMap;
+
+    /// Builds an active chat execution state for runtime statistic tests.
+    fn activeExecutionState() -> ChatExecutionState {
+        ChatExecutionState {
+            isLoading: true,
+            inputProcessingState: InputProcessingState::Receiving {
+                message: "receiving".to_string(),
+            },
+        }
+    }
+
+    /// Aggregates tool invocation counts across every active chat only.
+    #[test]
+    fn toolpkg_chat_runtime_statistics_sum_active_chat_tool_counts() {
+        let executionStates = HashMap::from([
+            ("chat-a".to_string(), activeExecutionState()),
+            ("chat-b".to_string(), activeExecutionState()),
+            ("chat-c".to_string(), ChatExecutionState::idle()),
+        ]);
+        let counts = HashMap::from([
+            ("chat-a".to_string(), 2),
+            ("chat-b".to_string(), 3),
+            ("chat-c".to_string(), 5),
+        ]);
+
+        let statistics = collectToolPkgChatRuntimeStatistics("chat-a", &executionStates, &counts);
+
+        assert_eq!(statistics.currentTurnToolInvocationCount, 2);
+        assert_eq!(statistics.activeConversationCount, 2);
+        assert_eq!(statistics.currentSessionToolCount, 5);
+        assert_eq!(statistics.activeChatIds.len(), 2);
+        assert!(statistics.activeChatIds.contains(&"chat-a".to_string()));
+        assert!(statistics.activeChatIds.contains(&"chat-b".to_string()));
+    }
 }
 
 impl Default for MessageProcessingDelegate {

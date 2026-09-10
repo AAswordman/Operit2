@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::package::{LocalizedText, ToolPackage};
+use crate::toolpkg::ToolPkgApiVersion::{
+    currentToolPkgApiVersionText, requireSupportedToolPkgApiVersion,
+};
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgTemplateModels::{
     ToolPkgManifestWorkflowTemplate, ToolPkgManifestWorkspaceTemplate,
@@ -116,6 +119,25 @@ pub struct ToolPkgFunctionHookRuntime {
     pub function: String,
     #[serde(rename = "functionSource", alias = "function_source")]
     pub functionSource: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgChatMessageMenuDialogRuntime {
+    pub screen: String,
+    pub title: LocalizedText,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgChatMessageMenuItemRuntime {
+    pub id: String,
+    pub title: LocalizedText,
+    pub icon: Option<String>,
+    pub order: i32,
+    pub senders: Vec<String>,
+    pub function: String,
+    #[serde(rename = "functionSource", alias = "function_source")]
+    pub functionSource: Option<String>,
+    pub dialog: Option<ToolPkgChatMessageMenuDialogRuntime>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -265,6 +287,29 @@ pub struct ToolPkgRegisteredFunctionHook {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgRegisteredChatMessageMenuDialog {
+    pub screen: String,
+    #[serde(default)]
+    pub title: LocalizedText,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgRegisteredChatMessageMenuItem {
+    pub id: String,
+    #[serde(default)]
+    pub title: LocalizedText,
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub order: i32,
+    #[serde(default)]
+    pub senders: Vec<String>,
+    pub function: String,
+    #[serde(rename = "functionSource", alias = "function_source")]
+    pub functionSource: Option<String>,
+    pub dialog: Option<ToolPkgRegisteredChatMessageMenuDialog>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredHostEventHook {
     pub id: String,
     pub source: String,
@@ -344,6 +389,10 @@ pub struct ToolPkgMainRegistration {
     pub chatViewHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatMessageHooks", default)]
     pub chatMessageHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    #[serde(rename = "chatMessageMenuItems", default)]
+    pub chatMessageMenuItems: Vec<ToolPkgRegisteredChatMessageMenuItem>,
+    #[serde(rename = "chatRuntimeHooks", default)]
+    pub chatRuntimeHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "hostEventHooks", default)]
     pub hostEventHooks: Vec<ToolPkgRegisteredHostEventHook>,
     #[serde(rename = "toolLifecycleHooks", default)]
@@ -386,6 +435,9 @@ pub struct ToolPkgContainerRuntime {
     pub displayName: LocalizedText,
     pub description: LocalizedText,
     pub version: String,
+    #[serde(rename = "apiVersion")]
+    pub apiVersion: String,
+    pub requires: Vec<ToolPkgManifestRequirement>,
     pub author: Vec<String>,
     #[serde(rename = "mainEntry")]
     pub mainEntry: String,
@@ -425,6 +477,10 @@ pub struct ToolPkgContainerRuntime {
     pub chatViewHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageHooks")]
     pub chatMessageHooks: Vec<ToolPkgFunctionHookRuntime>,
+    #[serde(rename = "chatMessageMenuItems")]
+    pub chatMessageMenuItems: Vec<ToolPkgChatMessageMenuItemRuntime>,
+    #[serde(rename = "chatRuntimeHooks")]
+    pub chatRuntimeHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "hostEventHooks")]
     pub hostEventHooks: Vec<ToolPkgHostEventHookRuntime>,
     #[serde(rename = "toolLifecycleHooks")]
@@ -447,6 +503,10 @@ pub struct ToolPkgContainerRuntime {
     pub summaryGenerateHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "aiProviders")]
     pub aiProviders: Vec<ToolPkgAiProviderRuntime>,
+    #[serde(rename = "logoResource")]
+    pub logoResource: Option<ToolPkgResourceRuntime>,
+    #[serde(rename = "marketOrigin", default)]
+    pub marketOrigin: Option<ToolPkgMarketOrigin>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -469,6 +529,10 @@ pub struct ToolPkgManifest {
     pub toolpkgId: String,
     #[serde(default)]
     pub version: String,
+    #[serde(rename = "api_version", default = "currentToolPkgApiVersionText")]
+    pub apiVersion: String,
+    #[serde(default)]
+    pub requires: Vec<ToolPkgManifestRequirement>,
     #[serde(default)]
     pub main: String,
     #[serde(rename = "display_name", default)]
@@ -477,6 +541,8 @@ pub struct ToolPkgManifest {
     pub description: LocalizedText,
     #[serde(default, deserialize_with = "deserializeStringOrStringList")]
     pub author: Vec<String>,
+    #[serde(default)]
+    pub logo: Option<String>,
     #[serde(rename = "enabled_by_default", default = "defaultEnabledByDefault")]
     pub enabledByDefault: bool,
     #[serde(rename = "market_only", default)]
@@ -491,6 +557,17 @@ pub struct ToolPkgManifest {
     pub workflowTemplates: Vec<ToolPkgManifestWorkflowTemplate>,
     #[serde(rename = "workspace_templates", default)]
     pub workspaceTemplates: Vec<ToolPkgManifestWorkspaceTemplate>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgManifestRequirement {
+    pub id: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(rename = "min_version", default)]
+    pub minVersion: Option<String>,
+    #[serde(rename = "max_version", default)]
+    pub maxVersion: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -592,7 +669,7 @@ impl ToolPkgArchiveParser {
         FReadEntryText: FnMut(&str) -> Option<String>,
         FReadEntryProtectionHeader: FnMut(&str) -> Option<Vec<u8>>,
         FParseJsPackage: FnMut(&str, &mut dyn FnMut(String, String)) -> Option<ToolPackage>,
-        FParseMainRegistration: FnMut(&str, &str, &str) -> ToolPkgMainRegistrationParseResult,
+        FParseMainRegistration: FnMut(&str, &str, &str, &str) -> ToolPkgMainRegistrationParseResult,
         FReportPackageLoadError: FnMut(String, String),
     {
         let manifestEntryName = findManifestEntry(&entryIndex.entryNames)
@@ -600,6 +677,9 @@ impl ToolPkgArchiveParser {
         let manifestText = readEntryText(&manifestEntryName)
             .ok_or_else(|| "Failed to read manifest entry".to_string())?;
         let manifest = parseToolPkgManifest(&manifestText, &manifestEntryName)?;
+        let apiVersion = requireSupportedToolPkgApiVersion(&manifest.apiVersion)?;
+        let apiVersionText = apiVersion.to_string();
+        let requires = normalizeRequirements("manifest.requires", &manifest.requires)?;
         validateProtectedEntryPolicy(
             &manifest,
             &manifestEntryName,
@@ -752,6 +832,7 @@ impl ToolPkgArchiveParser {
             .iter()
             .map(|resource| (resource.key.to_ascii_lowercase(), resource))
             .collect::<BTreeMap<_, _>>();
+        let logoResource = resolveLogoResource(manifest.logo.as_deref(), &resources)?;
 
         let mut wasmModuleIds = BTreeSet::new();
         let mut wasmModules = Vec::new();
@@ -890,17 +971,20 @@ impl ToolPkgArchiveParser {
         } else {
             localizedTextOf(&manifest.toolpkgId)
         };
-        let mainRegistration =
-            match parseMainRegistration(&mainScriptText, &manifest.toolpkgId, &normalizedMainEntry)
-            {
-                ToolPkgMainRegistrationParseResult::Success { registration } => registration,
-                ToolPkgMainRegistrationParseResult::Failure { message } => {
-                    return Err(format!(
-                        "Failed to parse main registration from '{}': {message}",
-                        manifest.main
-                    ));
-                }
-            };
+        let mainRegistration = match parseMainRegistration(
+            &mainScriptText,
+            &manifest.toolpkgId,
+            &normalizedMainEntry,
+            &apiVersionText,
+        ) {
+            ToolPkgMainRegistrationParseResult::Success { registration } => registration,
+            ToolPkgMainRegistrationParseResult::Failure { message } => {
+                return Err(format!(
+                    "Failed to parse main registration from '{}': {message}",
+                    manifest.main
+                ));
+            }
+        };
 
         let mut registeredUiRoutes = Vec::new();
         for module in &mainRegistration.toolboxUiModules {
@@ -1061,6 +1145,12 @@ impl ToolPkgArchiveParser {
             &mainRegistration.chatMessageHooks,
             TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK,
         )?;
+        let chatMessageMenuItems =
+            validateChatMessageMenuItems(&mainRegistration.chatMessageMenuItems, entryIndex)?;
+        let chatRuntimeHooks = validateFunctionHooks(
+            &mainRegistration.chatRuntimeHooks,
+            TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK,
+        )?;
         let hostEventHooks = validateHostEventHooks(
             &mainRegistration.hostEventHooks,
             TOOLPKG_REGISTRATION_HOST_EVENT_HOOK,
@@ -1126,6 +1216,8 @@ impl ToolPkgArchiveParser {
             displayName: containerDisplayName,
             description: containerDescription,
             version: manifest.version.clone(),
+            apiVersion: apiVersionText,
+            requires,
             author: manifest.author.clone(),
             mainEntry: normalizedMainEntry,
             sourceType,
@@ -1146,6 +1238,8 @@ impl ToolPkgArchiveParser {
             chatInputHooks,
             chatViewHooks,
             chatMessageHooks,
+            chatMessageMenuItems,
+            chatRuntimeHooks,
             hostEventHooks,
             toolLifecycleHooks,
             promptInputHooks,
@@ -1157,6 +1251,8 @@ impl ToolPkgArchiveParser {
             promptEstimateFinalizeHooks,
             summaryGenerateHooks,
             aiProviders,
+            logoResource,
+            marketOrigin: mainRegistration.marketOrigin.clone(),
         };
         Ok(ToolPkgLoadResult {
             containerPackage,
@@ -1631,6 +1727,84 @@ fn validateTagFunctionHooks(
 }
 
 #[allow(non_snake_case)]
+/// Validates chat message menu items and their optional dialog screens.
+fn validateChatMessageMenuItems(
+    items: &[ToolPkgRegisteredChatMessageMenuItem],
+    entryIndex: &ToolPkgEntryIndex,
+) -> Result<Vec<ToolPkgChatMessageMenuItemRuntime>, String> {
+    let mut runtimes = Vec::new();
+    let mut ids = BTreeSet::new();
+    for (index, item) in items.iter().enumerate() {
+        let id = item.id.trim().to_string();
+        if id.is_empty() {
+            return Err(format!(
+                "{TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM}[{index}].id is required"
+            ));
+        }
+        if !ids.insert(id.to_ascii_lowercase()) {
+            return Err(format!("Duplicate chat message menu item id: {id}"));
+        }
+        let function = item.function.trim().to_string();
+        if function.is_empty() {
+            return Err(format!(
+                "{TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM}[{index}].function is required"
+            ));
+        }
+        let mut senders = Vec::new();
+        let mut senderSet = BTreeSet::new();
+        for sender in &item.senders {
+            let normalized = sender.trim().to_ascii_lowercase();
+            if normalized.is_empty() {
+                continue;
+            }
+            if normalized != "user" && normalized != "ai" {
+                return Err(format!(
+                    "{TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM}[{index}].senders contains unsupported sender: {normalized}"
+                ));
+            }
+            if senderSet.insert(normalized.clone()) {
+                senders.push(normalized);
+            }
+        }
+        let dialog = match &item.dialog {
+            Some(dialog) => {
+                let normalizedScreenPath = ToolPkgArchiveParser::normalizeZipEntryPath(
+                    &dialog.screen,
+                )
+                .ok_or_else(|| {
+                    format!(
+                        "{TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM}[{index}].dialog.screen is invalid: {}",
+                        dialog.screen
+                    )
+                })?;
+                if !entryIndex.containsEntry(&normalizedScreenPath) {
+                    return Err(format!(
+                        "{TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM}[{index}].dialog.screen not found: {}",
+                        dialog.screen
+                    ));
+                }
+                Some(ToolPkgChatMessageMenuDialogRuntime {
+                    screen: normalizedScreenPath,
+                    title: dialog.title.clone(),
+                })
+            }
+            None => None,
+        };
+        runtimes.push(ToolPkgChatMessageMenuItemRuntime {
+            id,
+            title: item.title.clone(),
+            icon: item.icon.clone(),
+            order: item.order,
+            senders,
+            function,
+            functionSource: item.functionSource.clone(),
+            dialog,
+        });
+    }
+    Ok(runtimes)
+}
+
+#[allow(non_snake_case)]
 /// Validates ToolPkg AI provider declarations and required handlers.
 fn validateAiProviders(
     providers: &[ToolPkgRegisteredAiProvider],
@@ -1703,6 +1877,151 @@ fn buildAiProviderHandler(
 }
 
 #[allow(non_snake_case)]
+/// Normalizes ToolPkg manifest requirement declarations.
+fn normalizeRequirements(
+    fieldName: &str,
+    requirements: &[ToolPkgManifestRequirement],
+) -> Result<Vec<ToolPkgManifestRequirement>, String> {
+    let mut normalized = Vec::new();
+    let mut ids = BTreeSet::new();
+    for (index, requirement) in requirements.iter().enumerate() {
+        let id = requirement.id.trim().to_string();
+        if id.is_empty() {
+            return Err(format!("{fieldName}[{index}].id is required"));
+        }
+        if !ids.insert(id.to_ascii_lowercase()) {
+            return Err(format!("{fieldName} cannot contain duplicate package IDs"));
+        }
+        let minVersion = normalizeRequirementVersion(
+            fieldName,
+            index,
+            "min_version",
+            requirement.minVersion.as_deref(),
+        )?;
+        let maxVersion = normalizeRequirementVersion(
+            fieldName,
+            index,
+            "max_version",
+            requirement.maxVersion.as_deref(),
+        )?;
+        normalized.push(ToolPkgManifestRequirement {
+            id,
+            description: requirement.description.trim().to_string(),
+            minVersion,
+            maxVersion,
+        });
+    }
+    Ok(normalized)
+}
+
+#[allow(non_snake_case)]
+/// Normalizes and validates one optional package version constraint.
+fn normalizeRequirementVersion(
+    fieldName: &str,
+    index: usize,
+    versionFieldName: &str,
+    value: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    validatePackageVersionText(normalized)
+        .map_err(|error| format!("{fieldName}[{index}].{versionFieldName} is invalid: {error}"))?;
+    Ok(Some(normalized.to_string()))
+}
+
+#[allow(non_snake_case)]
+/// Validates a major.minor.patch package version constraint.
+fn validatePackageVersionText(value: &str) -> Result<(), String> {
+    let parts = value.split('.').collect::<Vec<_>>();
+    if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
+        return Err(format!(
+            "Package version must use major.minor.patch format: '{value}'"
+        ));
+    }
+    for part in parts {
+        if !part.chars().all(|character| character.is_ascii_digit()) {
+            return Err(format!(
+                "Package version must use major.minor.patch format: '{value}'"
+            ));
+        }
+        part.parse::<u32>().map_err(|_| {
+            format!("Package version contains an out-of-range component: '{value}'")
+        })?;
+    }
+    Ok(())
+}
+
+#[allow(non_snake_case)]
+/// Resolves and validates the manifest logo resource.
+fn resolveLogoResource(
+    logoResourceKey: Option<&str>,
+    resources: &[ToolPkgResourceRuntime],
+) -> Result<Option<ToolPkgResourceRuntime>, String> {
+    let key = logoResourceKey.map(str::trim).unwrap_or_default();
+    if key.is_empty() {
+        return Ok(None);
+    }
+    let resource = resources
+        .iter()
+        .find(|resource| resource.key.eq_ignore_ascii_case(key))
+        .ok_or_else(|| format!("manifest.logo must reference an existing resource key: {key}"))?;
+    if ToolPkgArchiveParser::isDirectoryResourceMime(Some(&resource.mime)) {
+        return Err(format!(
+            "manifest.logo must reference a file resource: {key}"
+        ));
+    }
+    let extension = resource
+        .path
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = resolveLogoMime(&resource.mime, &extension);
+    if !isSupportedLogoExtension(&extension) && !isSupportedLogoMime(&mime) {
+        return Err(format!(
+            "manifest.logo must reference an SVG, PNG, JPEG or WebP resource: {key}"
+        ));
+    }
+    let mut logoResource = resource.clone();
+    logoResource.mime = mime;
+    Ok(Some(logoResource))
+}
+
+#[allow(non_snake_case)]
+/// Resolves the display MIME type for one validated ToolPkg logo resource.
+fn resolveLogoMime(declaredMime: &str, extension: &str) -> String {
+    let mime = declaredMime.trim().to_ascii_lowercase();
+    match () {
+        _ if mime == "image/svg+xml" || extension == "svg" => "image/svg+xml".to_string(),
+        _ if mime == "image/png" || extension == "png" => "image/png".to_string(),
+        _ if mime == "image/jpeg" || extension == "jpg" || extension == "jpeg" => {
+            "image/jpeg".to_string()
+        }
+        _ if mime == "image/webp" || extension == "webp" => "image/webp".to_string(),
+        _ => mime,
+    }
+}
+
+#[allow(non_snake_case)]
+/// Returns whether a file extension is accepted for ToolPkg logos.
+fn isSupportedLogoExtension(extension: &str) -> bool {
+    matches!(extension, "svg" | "png" | "jpg" | "jpeg" | "webp")
+}
+
+#[allow(non_snake_case)]
+/// Returns whether a MIME type is accepted for ToolPkg logos.
+fn isSupportedLogoMime(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/svg+xml" | "image/png" | "image/jpeg" | "image/webp"
+    )
+}
+
+#[allow(non_snake_case)]
 /// Returns the human-readable label used for duplicate registration errors.
 fn duplicateLabel(registryName: &str) -> &'static str {
     match registryName {
@@ -1711,6 +2030,9 @@ fn duplicateLabel(registryName: &str) -> &'static str {
         TOOLPKG_REGISTRATION_INPUT_MENU_TOGGLE_PLUGIN => "input menu toggle plugin",
         TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK => "chat input hook",
         TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK => "chat view hook",
+        TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK => "chat message hook",
+        TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM => "chat message menu item",
+        TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK => "chat runtime hook",
         TOOLPKG_REGISTRATION_HOST_EVENT_HOOK => "host event hook",
         TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK => "tool lifecycle hook",
         TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK => "prompt input hook",
@@ -1871,4 +2193,42 @@ where
             .collect());
     }
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod logo_tests {
+    use super::{resolveLogoResource, ToolPkgResourceRuntime};
+
+    /// Verifies a logo MIME type is inferred from a supported resource extension.
+    #[test]
+    fn infers_logo_mime_from_resource_path() {
+        let resources = vec![ToolPkgResourceRuntime {
+            key: "brand".to_string(),
+            path: "assets/brand.png".to_string(),
+            mime: String::new(),
+        }];
+
+        let logo = resolveLogoResource(Some("brand"), &resources)
+            .expect("logo resource should resolve")
+            .expect("logo resource should exist");
+
+        assert_eq!(logo.path, "assets/brand.png");
+        assert_eq!(logo.mime, "image/png");
+    }
+
+    /// Verifies an extension selects the same logo MIME type used by the legacy publisher.
+    #[test]
+    fn resource_extension_selects_logo_mime() {
+        let resources = vec![ToolPkgResourceRuntime {
+            key: "brand".to_string(),
+            path: "assets/brand.webp".to_string(),
+            mime: "image/png".to_string(),
+        }];
+
+        let logo = resolveLogoResource(Some("brand"), &resources)
+            .expect("logo resource should resolve")
+            .expect("logo resource should exist");
+
+        assert_eq!(logo.mime, "image/png");
+    }
 }

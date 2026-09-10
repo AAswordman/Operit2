@@ -9,8 +9,14 @@ fn main() {
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
-    println!("cargo:rerun-if-changed={}", manifest_dir.join("../../runtime/application/src").display());
-    println!("cargo:rerun-if-changed={}", manifest_dir.join("src").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("../../runtime/application/src").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("src").display()
+    );
     let output = scan_core_proxy(CoreProxyScanConfig::from_proxy_manifest_dir(manifest_dir));
     write_rust_proxy_artifacts(
         &out_dir,

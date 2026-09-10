@@ -861,6 +861,8 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
       values: <String, String>{'default': 'DSL test package'},
     ),
     version: '1.0.0',
+    apiVersion: '2.0.0',
+    requires: <core_proxy.ToolPkgManifestRequirement>[],
     author: <String>['Operit'],
     mainEntry: 'dist/main.js',
     sourceType: core_proxy.ToolPkgSourceType.externalValue,
@@ -902,6 +904,8 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
     chatInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatViewHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatMessageHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
+    chatMessageMenuItems: <core_proxy.ToolPkgChatMessageMenuItemRuntime>[],
+    chatRuntimeHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     hostEventHooks: <core_proxy.ToolPkgHostEventHookRuntime>[],
     toolLifecycleHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     promptInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
@@ -913,6 +917,8 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
     promptEstimateFinalizeHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     summaryGenerateHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     aiProviders: <core_proxy.ToolPkgAiProviderRuntime>[],
+    logoResource: null,
+    marketOrigin: null,
   );
 }
 
@@ -926,6 +932,8 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
       values: <String, String>{'default': 'Module only package'},
     ),
     version: '1.0.0',
+    apiVersion: '2.0.0',
+    requires: <core_proxy.ToolPkgManifestRequirement>[],
     author: <String>['Operit'],
     mainEntry: 'dist/main.js',
     sourceType: core_proxy.ToolPkgSourceType.externalValue,
@@ -956,6 +964,8 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
     chatInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatViewHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     chatMessageHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
+    chatMessageMenuItems: <core_proxy.ToolPkgChatMessageMenuItemRuntime>[],
+    chatRuntimeHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     hostEventHooks: <core_proxy.ToolPkgHostEventHookRuntime>[],
     toolLifecycleHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     promptInputHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
@@ -967,6 +977,8 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
     promptEstimateFinalizeHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     summaryGenerateHooks: <core_proxy.ToolPkgFunctionHookRuntime>[],
     aiProviders: <core_proxy.ToolPkgAiProviderRuntime>[],
+    logoResource: null,
+    marketOrigin: null,
   );
 }
 

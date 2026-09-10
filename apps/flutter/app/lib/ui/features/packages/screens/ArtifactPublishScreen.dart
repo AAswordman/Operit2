@@ -490,7 +490,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                 _PublishContinuationPanel(contextInfo: publishContext),
                 const SizedBox(height: 12),
               ],
-              DropdownButtonFormField<String>(
+              OperitFormStyles.dropdownButtonFormField<String>(
+                context,
                 key: ValueKey<String?>(source?.packageName),
                 initialValue: source?.packageName,
                 style: OperitFormStyles.dropdownTextStyle(context),
@@ -593,7 +594,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                 ],
                 if (githubReleaseCatalog != null) ...<Widget>[
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
+                  OperitFormStyles.dropdownButtonFormField<String>(
+                    context,
                     key: ValueKey<String?>(_selectedGitHubReleaseTag),
                     initialValue: _selectedGitHubReleaseTag,
                     isExpanded: true,
@@ -627,7 +629,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                 ],
                 if (selectedGitHubRelease != null) ...<Widget>[
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
+                  OperitFormStyles.dropdownButtonFormField<String>(
+                    context,
                     key: ValueKey<String?>(_selectedGitHubReleaseAssetName),
                     initialValue: _selectedGitHubReleaseAssetName,
                     isExpanded: true,
@@ -690,7 +693,8 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
+              OperitFormStyles.dropdownButtonFormField<String>(
+                context,
                 initialValue: _selectedCategoryId,
                 style: OperitFormStyles.dropdownTextStyle(context),
                 decoration: const InputDecoration(
@@ -1390,6 +1394,7 @@ Future<_PublishResult> _publishArtifact({
     'displayName': resolvedDisplayName,
     'description': trimmedDescription,
     'sourceFileName': source.sourceFileName,
+    'apiVersion': source.apiVersion,
     'minSupportedAppVersion': normalizedMinVersion,
     'maxSupportedAppVersion': normalizedMaxVersion,
   };
@@ -1628,6 +1633,7 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
   final projectId = payload['projectId']?.toString() ?? '';
   final runtimePackageId = payload['runtimePackageId']?.toString() ?? '';
   final assetUrl = payload['downloadUrl']?.toString() ?? '';
+  final apiVersion = _emptyToNull(payload['apiVersion']?.toString());
   if (publishContext != null) {
     final canPatchEntry = publishContext.canEditEntry;
     return clients.providersMarketStatsApiService.publishArtifactVersion(
@@ -1653,6 +1659,7 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
       entryAllowPublicUpdates: canPatchEntry
           ? payload['allowPublicUpdates'] == true
           : null,
+      apiVersion: apiVersion,
     );
   }
   return clients.providersMarketStatsApiService.publishArtifact(
@@ -1676,6 +1683,7 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
     ghReleaseTag: releaseTag,
     assetName: assetName,
     sha256: sha256,
+    apiVersion: apiVersion,
   );
 }
 

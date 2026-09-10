@@ -12,7 +12,6 @@ class CursorStyleChatMessage extends StatelessWidget {
   const CursorStyleChatMessage({
     super.key,
     required this.message,
-    required this.isStreaming,
     this.currentCharacterCardAvatarUri,
     this.splitMarkdownContent,
     this.onDeleteMessage,
@@ -21,7 +20,6 @@ class CursorStyleChatMessage extends StatelessWidget {
   });
 
   final ChatUiMessage message;
-  final bool isStreaming;
   final String? currentCharacterCardAvatarUri;
   final MarkdownContentSplitter? splitMarkdownContent;
   final Future<void> Function(int timestamp)? onDeleteMessage;
@@ -36,7 +34,6 @@ class CursorStyleChatMessage extends StatelessWidget {
       case 'ai':
         return AiMessageComposable(
           message: message,
-          isStreaming: isStreaming,
           useBubbleStyle: false,
           avatarImagePath: currentCharacterCardAvatarUri,
           splitMarkdownContent: splitMarkdownContent,

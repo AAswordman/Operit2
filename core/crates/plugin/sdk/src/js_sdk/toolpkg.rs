@@ -507,6 +507,8 @@ pub enum ToolPkgHookEventName {
     Variant5(ToolPkgChatInputEventName),
     Variant6(ToolPkgChatViewEventName),
     Variant16(ToolPkgChatMessageEventName),
+    Variant17(ToolPkgChatMessageMenuItemEventName),
+    Variant18(ToolPkgChatRuntimeEventName),
     Variant7(ToolPkgHookEventNameVariant7),
     Variant8(ToolPkgToolLifecycleEventName),
     Variant9(ToolPkgPromptInputEventName),
@@ -649,6 +651,60 @@ pub enum ToolPkgChatViewEventName {
 pub enum ToolPkgChatMessageEventName {
     #[serde(rename = "message_persisted")]
     MessagePersisted,
+}
+/// Names the click event dispatched for a chat message context-menu item.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgChatMessageMenuItemEventName {
+    #[serde(rename = "chat_message_menu_item_click")]
+    ChatMessageMenuItemClick,
+}
+/// Identifies a sender supported by chat message context-menu items.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgChatMessageSender {
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "ai")]
+    Ai,
+}
+/// Names chat runtime state-change notifications.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgChatRuntimeEventName {
+    #[serde(rename = "state_changed")]
+    StateChanged,
+}
+/// Identifies a host chat runtime slot.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgChatRuntimeSlotName {
+    #[serde(rename = "main")]
+    Main,
+    #[serde(rename = "floating")]
+    Floating,
+}
+/// Identifies one observable chat runtime processing state.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgChatRuntimeStateName {
+    #[serde(rename = "idle")]
+    Idle,
+    #[serde(rename = "processing")]
+    Processing,
+    #[serde(rename = "connecting")]
+    Connecting,
+    #[serde(rename = "receiving")]
+    Receiving,
+    #[serde(rename = "executing_tool")]
+    ExecutingTool,
+    #[serde(rename = "tool_progress")]
+    ToolProgress,
+    #[serde(rename = "processing_tool_result")]
+    ProcessingToolResult,
+    #[serde(rename = "summarizing")]
+    Summarizing,
+    #[serde(rename = "executing_plan")]
+    ExecutingPlan,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "error")]
+    Error,
 }
 /// Controls chat input handling and optionally supplies replacement text or metadata.
 pub struct ToolPkgChatInputHookObjectResult {
@@ -1052,6 +1108,17 @@ pub type ToolPkgChatInputHookHandler =
 /// Callback invoked after a chat message is persisted.
 pub type ToolPkgChatMessageHookHandler =
     Arc<dyn Fn(ToolPkgChatMessageHookEvent) -> ToolPkgHookReturn + Send + Sync>;
+/// Callback invoked when a chat message context-menu item is selected.
+/// @since ToolPkg API 2.0.0
+pub type ToolPkgChatMessageMenuItemHandler = Arc<
+    dyn Fn(ToolPkgChatMessageMenuItemHookEvent) -> ToolPkgChatMessageMenuItemHookReturn
+        + Send
+        + Sync,
+>;
+/// Callback invoked when a chat runtime state changes.
+/// @since ToolPkg API 2.0.0
+pub type ToolPkgChatRuntimeHookHandler =
+    Arc<dyn Fn(ToolPkgChatRuntimeHookEvent) -> ToolPkgHookReturn + Send + Sync>;
 /// Callback invoked when a navigation entry action event is dispatched.
 pub type ToolPkgNavigationEntryActionHookHandler =
     Arc<dyn Fn(ToolPkgNavigationEntryActionHookEvent) -> ToolPkgHookReturn + Send + Sync>;
@@ -1240,6 +1307,125 @@ pub struct ToolPkgChatMessageEventPayload {
     /// Reports whether the user marked the message as favorite.
     pub isFavorite: Option<bool>,
 }
+/// Describes a chat message supplied to one context-menu item invocation.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatMessageSnapshot {
+    /// Preserves additional JSON properties supplied with this chat message snapshot.
+    pub base_json_object: ToolPkgJsonObject,
+    /// Identifies the persisted message by timestamp.
+    pub timestamp: f64,
+    /// Identifies the message sender.
+    pub sender: String,
+    /// Provides the display role name associated with the message.
+    pub roleName: String,
+    /// Contains the persisted message content.
+    pub content: String,
+    /// Records when assistant generation completed.
+    pub completedAt: f64,
+    /// Identifies the provider used for the message.
+    pub provider: String,
+    /// Identifies the model used for the message.
+    pub modelName: String,
+    /// Stores prompt token usage associated with the message.
+    pub inputTokens: i64,
+    /// Stores completion token usage associated with the message.
+    pub outputTokens: i64,
+    /// Stores cached prompt token usage associated with the message.
+    pub cachedInputTokens: i64,
+    /// Records when the model request was sent.
+    pub sentAt: f64,
+    /// Records model output duration in milliseconds.
+    pub outputDurationMs: f64,
+    /// Records model wait duration in milliseconds.
+    pub waitDurationMs: f64,
+    /// Identifies how the message is displayed by the host.
+    pub displayMode: String,
+    /// Identifies the selected variant index for this timestamp.
+    pub selectedVariantIndex: f64,
+    /// Reports the number of variants stored for this timestamp.
+    pub variantCount: f64,
+    /// Reports whether the user marked the message as favorite.
+    pub isFavorite: bool,
+}
+/// Carries data supplied when a chat message context-menu item is selected.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatMessageMenuItemEventPayload {
+    /// Preserves additional JSON properties supplied with this context-menu event payload.
+    pub base_json_object: ToolPkgJsonObject,
+    /// Identifies the context-menu action.
+    pub action: ToolPkgChatMessageMenuItemEventName,
+    /// Identifies the conversation associated with the message.
+    pub chatId: String,
+    /// Identifies the message position in the currently rendered conversation.
+    pub messageIndex: f64,
+    /// Identifies the selected context-menu item.
+    pub menuItemId: String,
+    /// Contains the selected message snapshot.
+    pub message: ToolPkgChatMessageSnapshot,
+}
+/// Describes dynamic dialog data returned by a context-menu item handler.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatMessageMenuItemDialogResult {
+    /// Preserves additional JSON properties supplied with this dialog result.
+    pub base_json_object: ToolPkgJsonObject,
+    /// Provides a dialog title that overrides the registered title.
+    pub title: Option<String>,
+    /// Carries mutable screen state.
+    pub state: Option<ToolPkgJsonObject>,
+    /// Carries module metadata consumed by the host renderer.
+    pub moduleSpec: Option<ToolPkgJsonObject>,
+}
+/// Describes the result returned by a context-menu item handler.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatMessageMenuItemResult {
+    /// Preserves additional JSON properties supplied with this context-menu result.
+    pub base_json_object: ToolPkgJsonObject,
+    /// Supplies dynamic dialog state for the registered dialog surface.
+    pub dialog: Option<ToolPkgChatMessageMenuItemDialogResult>,
+}
+/// Accepts an object result or no result from a context-menu item handler.
+/// @since ToolPkg API 2.0.0
+pub enum ToolPkgChatMessageMenuItemReturnValue {
+    Variant1(ToolPkgChatMessageMenuItemResult),
+    Null,
+    Void,
+}
+/// Accepts an immediate or asynchronous result from a context-menu item handler.
+/// @since ToolPkg API 2.0.0
+pub enum ToolPkgChatMessageMenuItemHookReturn {
+    Variant1(ToolPkgChatMessageMenuItemReturnValue),
+    Variant2(JsFuture<ToolPkgChatMessageMenuItemReturnValue>),
+}
+/// Carries chat runtime data supplied when a runtime state changes.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatRuntimeEventPayload {
+    /// Preserves additional JSON properties supplied with this runtime event payload.
+    pub base_json_object: ToolPkgJsonObject,
+    /// Identifies the conversation whose state changed.
+    pub chatId: String,
+    /// Identifies the runtime slot that owns the chat.
+    pub slot: ToolPkgChatRuntimeSlotName,
+    /// Identifies the current observable processing state.
+    pub state: ToolPkgChatRuntimeStateName,
+    /// Provides optional display text from the processing state.
+    pub message: Option<String>,
+    /// Identifies the tool named by the processing state.
+    pub toolName: Option<String>,
+    /// Reports tool execution progress when available.
+    pub progress: Option<f64>,
+    /// Reports whether the runtime is actively processing work.
+    pub isActive: bool,
+    /// Lists chat identifiers with active work.
+    pub activeChatIds: Vec<String>,
+    /// Reports tool invocations made in the current turn.
+    pub currentTurnToolInvocationCount: f64,
+    /// Reports known active conversation count.
+    pub activeConversationCount: f64,
+    /// Reports tool invocations accumulated by the current session.
+    pub currentSessionToolCount: f64,
+    /// Records the event timestamp in epoch milliseconds.
+    pub timestamp: f64,
+}
 /// Carries navigation entry action data supplied when the event is dispatched.
 pub struct ToolPkgNavigationEntryActionEventPayload {
     /// Preserves additional JSON properties supplied with this navigation entry action event payload.
@@ -1300,6 +1486,22 @@ pub struct ToolPkgChatMessageHookEvent {
     /// Carries shared dispatch metadata and the typed payload for this chat message hook event.
     pub base_hook_event_base:
         ToolPkgHookEventBase<ToolPkgChatMessageEventName, ToolPkgChatMessageEventPayload>,
+}
+/// Combines shared dispatch metadata with a chat message context-menu event.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatMessageMenuItemHookEvent {
+    /// Carries shared dispatch metadata and the typed payload for this context-menu event.
+    pub base_hook_event_base: ToolPkgHookEventBase<
+        ToolPkgChatMessageMenuItemEventName,
+        ToolPkgChatMessageMenuItemEventPayload,
+    >,
+}
+/// Combines shared dispatch metadata with a chat runtime state-change event.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatRuntimeHookEvent {
+    /// Carries shared dispatch metadata and the typed payload for this runtime event.
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgChatRuntimeEventName, ToolPkgChatRuntimeEventPayload>,
 }
 /// Combines shared dispatch metadata with the typed payload for a navigation entry action hook.
 pub struct ToolPkgNavigationEntryActionHookEvent {
@@ -1717,6 +1919,40 @@ pub struct ToolPkgChatMessageHookRegistration {
     pub id: String,
     /// Provides the callback invoked for this chat message hook registration.
     pub function: ToolPkgChatMessageHookHandler,
+}
+/// Describes the dialog surface registered by a chat message context-menu item.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatMessageMenuDialogRegistration {
+    /// Identifies the Compose DSL screen resource rendered in the dialog.
+    pub screen: String,
+    /// Provides the dialog title.
+    pub title: ToolPkgLocalizedText,
+}
+/// Adds an item to the chat message long-press menu.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatMessageMenuItemRegistration {
+    /// Uniquely identifies this context-menu item registration within the package.
+    pub id: String,
+    /// Provides primary text displayed by the host UI.
+    pub title: ToolPkgLocalizedText,
+    /// Provides the icon name displayed by the host UI.
+    pub icon: Option<String>,
+    /// Controls relative placement in the host menu.
+    pub order: Option<f64>,
+    /// Limits this item to selected message senders.
+    pub senders: Option<Vec<ToolPkgChatMessageSender>>,
+    /// Provides the callback invoked when this item is selected.
+    pub function: ToolPkgChatMessageMenuItemHandler,
+    /// Configures a Compose DSL dialog surface opened from this item.
+    pub dialog: Option<ToolPkgChatMessageMenuDialogRegistration>,
+}
+/// Registers chat runtime state notifications.
+/// @since ToolPkg API 2.0.0
+pub struct ToolPkgChatRuntimeHookRegistration {
+    /// Uniquely identifies this chat runtime hook registration within the package.
+    pub id: String,
+    /// Provides the callback invoked when the chat runtime state changes.
+    pub function: ToolPkgChatRuntimeHookHandler,
 }
 /// Identifies a supported host event timer source.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -2461,6 +2697,13 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
     fn registerChatViewHook(&self, definition: ToolPkgChatViewHookRegistration) -> ();
     /// Registers a callback for persisted chat message notifications.
     fn registerChatMessageHook(&self, definition: ToolPkgChatMessageHookRegistration) -> ();
+    /// Registers a context-menu item for chat messages.
+    /// @since ToolPkg API 2.0.0
+    fn registerChatMessageMenuItem(&self, definition: ToolPkgChatMessageMenuItemRegistration)
+        -> ();
+    /// Registers a callback for chat runtime state changes.
+    /// @since ToolPkg API 2.0.0
+    fn registerChatRuntimeHook(&self, definition: ToolPkgChatRuntimeHookRegistration) -> ();
     /// Registers a typed timer, interval, or broadcast hook.
     fn registerHostEventHook_overload_1<TPayload>(
         &self,
@@ -2552,6 +2795,15 @@ pub trait GlobalHost: Send + Sync {
     fn registerToolPkgChatViewHook(&self, definition: ToolPkgChatViewHookRegistration) -> ();
     /// Registers a callback for persisted chat message notifications. The global binding delegates to the active ToolPkg registry.
     fn registerToolPkgChatMessageHook(&self, definition: ToolPkgChatMessageHookRegistration) -> ();
+    /// Registers a context-menu item for chat messages. The global binding delegates to the active ToolPkg registry.
+    /// @since ToolPkg API 2.0.0
+    fn registerToolPkgChatMessageMenuItem(
+        &self,
+        definition: ToolPkgChatMessageMenuItemRegistration,
+    ) -> ();
+    /// Registers a callback for chat runtime state changes. The global binding delegates to the active ToolPkg registry.
+    /// @since ToolPkg API 2.0.0
+    fn registerToolPkgChatRuntimeHook(&self, definition: ToolPkgChatRuntimeHookRegistration) -> ();
     /// Registers a typed timer, interval, or broadcast hook. The global binding delegates to the active ToolPkg registry.
     fn registerToolPkgHostEventHook_overload_1<TPayload>(
         &self,

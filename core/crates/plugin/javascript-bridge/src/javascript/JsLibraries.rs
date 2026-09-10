@@ -5,6 +5,7 @@ use crate::javascript::JsEmbeddedLibraryLoader::{loadCryptoJs, loadJimpJs, loadP
 use crate::javascript::JsInitRuntimeScriptBuilder;
 use crate::javascript::JsJavaBridge::buildJavaClassBridgeDefinition;
 use operit_host_api::RuntimeStorageHost;
+use operit_plugin_sdk::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslContextBridgeDefinition;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
 use operit_plugin_sdk::JsExecutionScriptBuilder;
@@ -48,6 +49,11 @@ pub fn buildRuntimeBootstrapModules() -> Vec<JsBootstrapModule> {
             "quickjs/init/execution-runtime.js",
             JsExecutionScriptBuilder::buildExecutionRuntimeBridgeScript(),
             &[],
+        ),
+        JsBootstrapModule::new(
+            "quickjs/init/toolpkg-api-runtime.js",
+            buildToolPkgApiRuntimeScript(),
+            &["__operitToolPkgApi"],
         ),
         JsBootstrapModule::new(
             "quickjs/init/toolpkg-bridge.js",
@@ -1711,12 +1717,14 @@ pub fn buildRuntimeBootstrapScript() -> String {
         {}
         {}
         {}
+        {}
         "#,
         JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
         cleanOnExitDirJson,
         executionPreludeJson,
         buildJavaClassBridgeDefinition(),
         buildComposeDslContextBridgeDefinition(),
+        buildToolPkgApiRuntimeScript(),
         buildToolPkgRegistrationBridgeScript(false),
         getJsToolsDefinition(),
         getJsThirdPartyLibraries(),

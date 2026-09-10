@@ -13,7 +13,6 @@ class BubbleStyleChatMessage extends StatelessWidget {
   const BubbleStyleChatMessage({
     super.key,
     required this.message,
-    required this.isStreaming,
     required this.userMessageColor,
     required this.aiMessageColor,
     required this.userTextColor,
@@ -43,7 +42,6 @@ class BubbleStyleChatMessage extends StatelessWidget {
   });
 
   final ChatUiMessage message;
-  final bool isStreaming;
   final Color userMessageColor;
   final Color aiMessageColor;
   final Color userTextColor;
@@ -90,7 +88,6 @@ class BubbleStyleChatMessage extends StatelessWidget {
       case 'ai':
         return BubbleAiMessageComposable(
           message: message,
-          isStreaming: isStreaming,
           backgroundColor: aiMessageColor,
           textColor: aiTextColor,
           transparentSurface: transparentSurface,

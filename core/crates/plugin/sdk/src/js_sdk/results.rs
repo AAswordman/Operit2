@@ -44,6 +44,7 @@ pub enum ToolResultData {
     ChatTitleUpdateResultData(ChatTitleUpdateResultData),
     ChatDeleteResultData(ChatDeleteResultData),
     MessageSendResultData(MessageSendResultData),
+    ChatCallResultData(ChatCallResultData),
     ChatMessagesResultData(ChatMessagesResultData),
     CharacterCardListResultData(CharacterCardListResultData),
     VisitWebResultData(VisitWebResultData),
@@ -124,13 +125,21 @@ impl ToolResultData {
             }
             Self::ChatDeleteResultData(data) => format!("Deleted chat: {}", data.chatId),
             Self::MessageSendResultData(data) => data.toString(),
-            Self::ChatMessagesResultData(data) => format!(
-                "Chat messages: {} (order={}, limit={})\nTotal: {}",
-                data.chatId,
-                data.order,
-                data.limit,
-                data.messages.len()
-            ),
+            Self::ChatCallResultData(data) => data.toString(),
+            Self::ChatMessagesResultData(data) => {
+                let rangeInfo = match (data.start, data.end) {
+                    (Some(start), Some(end)) => format!(", range={start}-{end}"),
+                    _ => String::new(),
+                };
+                format!(
+                    "Chat messages: {} (order={}, limit={}{})\nTotal: {}",
+                    data.chatId,
+                    data.order,
+                    data.limit,
+                    rangeInfo,
+                    data.messages.len()
+                )
+            }
             Self::CharacterCardListResultData(data) => data.toString(),
             Self::VisitWebResultData(data) => data.toString(),
             Self::TerminalInfoResultData(data) => data.toString(),
@@ -983,6 +992,47 @@ pub struct MessageSendResultData {
     pub sentAt: i64,
 }
 #[derive(Clone, Serialize, Deserialize)]
+/// Contains the output of one non-persistent functional model call.
+pub struct ChatCallResultData {
+    /// Contains the cleaned assistant text.
+    pub text: String,
+    /// Contains parsed assistant and tool-call segments.
+    pub turns: Vec<ChatCallTurnData>,
+    /// Identifies why the model call ended.
+    #[serde(rename = "finishReason")]
+    pub finishReason: String,
+    /// Contains protocol metadata extracted from the response.
+    #[serde(default)]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+    /// Records the completion timestamp.
+    #[serde(rename = "receivedAt")]
+    pub receivedAt: i64,
+}
+#[derive(Clone, Serialize, Deserialize)]
+/// Describes one segment returned by a functional model call.
+pub struct ChatCallTurnData {
+    /// Identifies the segment role.
+    pub kind: String,
+    /// Contains the segment content.
+    pub content: String,
+    /// Identifies the tool called by this segment.
+    #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
+    pub toolName: Option<String>,
+    /// Carries segment metadata.
+    #[serde(default)]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+impl ChatCallResultData {
+    /// Formats the functional model text for legacy tool output.
+    pub fn toString(&self) -> String {
+        if self.text.trim().is_empty() {
+            format!("Chat model call finished: {}", self.finishReason)
+        } else {
+            self.text.clone()
+        }
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
 /// Describes one chat message together with its role, provider, model, and timestamp.
 pub struct ChatMessageInfo {
     #[serde(rename = "sender")]
@@ -1009,6 +1059,12 @@ pub struct ChatMessagesResultData {
     pub limit: i32,
     #[serde(rename = "messages")]
     pub messages: Vec<ChatMessageInfo>,
+    /// Contains the inclusive first message index for a range query.
+    #[serde(rename = "start", skip_serializing_if = "Option::is_none")]
+    pub start: Option<i32>,
+    /// Contains the inclusive last message index for a range query.
+    #[serde(rename = "end", skip_serializing_if = "Option::is_none")]
+    pub end: Option<i32>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 /// Describes a character card, including its default status and lifecycle timestamps.

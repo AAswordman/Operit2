@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::convert::Infallible;
 #[cfg(not(target_arch = "wasm32"))]
@@ -63,6 +63,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 };
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
+use operit_store::NetworkControlStore::NetworkControlStore;
 use operit_store::PreferencesDataStore::{
     emptyPreferences, stringPreferencesKey, CoreNodeStateStore, Flow, Preferences,
     PreferencesDataStoreError,
@@ -275,6 +276,7 @@ impl LinkAccessStore {
             operit_runtime::CORE_VERSION.to_string(),
         )?;
         self.syncPairedDeviceProfiles()?;
+        NetworkControlStore::new(self.storage.clone())?.initializeCurrentSpace()?;
         Ok(identity)
     }
 
@@ -2765,9 +2767,10 @@ async fn static_web_access_space_adopt(
     body: Bytes,
 ) -> Response {
     let control = static_web_access_control(&state);
-    if let Err(response) = verify_static_web_access_session(control, &headers, &body).await {
-        return response;
-    }
+    let verified = match verify_static_web_access_session(control, &headers, &body).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let envelope = match operit_link::decodeLink::<RemoteSpaceAdoptEnvelope>(&body) {
         Ok(value) => value,
         Err(error) => {
@@ -2777,11 +2780,11 @@ async fn static_web_access_space_adopt(
             )
         }
     };
-    let spaceStore = CoreSpaceStore::new(control.accessStore.storage.clone());
-    if let Err(error) = spaceStore.importDeviceProfiles(envelope.deviceProfiles) {
-        return encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error));
-    }
-    match spaceStore.adopt(envelope.space) {
+    match acceptAuthenticatedSpaceJoin(
+        control.accessStore.storage.clone(),
+        &verified.deviceId,
+        envelope,
+    ) {
         Ok(space) => encode_link_response(StatusCode::OK, space),
         Err(error) => encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error)),
     }
@@ -2794,9 +2797,10 @@ async fn space_adopt(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(response) = verify_session(&state, &headers, &body).await {
-        return response;
-    }
+    let verified = match verify_session(&state, &headers, &body).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let envelope = match operit_link::decodeLink::<RemoteSpaceAdoptEnvelope>(&body) {
         Ok(value) => value,
         Err(error) => {
@@ -2806,14 +2810,69 @@ async fn space_adopt(
             )
         }
     };
-    let spaceStore = CoreSpaceStore::new(state.accessStore.storage.clone());
-    if let Err(error) = spaceStore.importDeviceProfiles(envelope.deviceProfiles) {
-        return encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error));
-    }
-    match spaceStore.adopt(envelope.space) {
+    match acceptAuthenticatedSpaceJoin(
+        state.accessStore.storage.clone(),
+        &verified.deviceId,
+        envelope,
+    ) {
         Ok(space) => encode_link_response(StatusCode::OK, space),
         Err(error) => encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error)),
     }
+}
+
+/// Accepts exactly one authenticated paired device into the server's current Space.
+#[cfg(not(target_arch = "wasm32"))]
+fn acceptAuthenticatedSpaceJoin(
+    storage: Arc<dyn RuntimeStorageHost>,
+    joiningNodeId: &str,
+    envelope: RemoteSpaceAdoptEnvelope,
+) -> Result<CoreSpace, String> {
+    let spaceStore = CoreSpaceStore::new(storage.clone());
+    let currentSpace = spaceStore.initialize()?;
+    let joiningExistingMember = currentSpace
+        .members
+        .iter()
+        .any(|nodeId| nodeId == joiningNodeId);
+    let mut expectedMembers = currentSpace
+        .members
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    expectedMembers.insert(joiningNodeId.to_string());
+    let proposedMembers = envelope
+        .space
+        .members
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if proposedMembers != expectedMembers {
+        return Err(
+            "join proposal members must equal the current Space plus the authenticated device"
+                .to_string(),
+        );
+    }
+    if envelope.space.spaceId != currentSpace.spaceId
+        || envelope.space.spaceName != currentSpace.spaceName
+    {
+        return Err("join proposal must preserve the server Space identity".to_string());
+    }
+    if joiningExistingMember && envelope.space.spaceRevision != currentSpace.spaceRevision {
+        return Err(
+            "existing Space member must not change the Space revision during pairing".to_string(),
+        );
+    }
+    if !joiningExistingMember
+        && envelope.space.spaceRevision
+            != currentSpace
+                .spaceRevision
+                .checked_add(1)
+                .ok_or_else(|| "Space revision overflow during join".to_string())?
+    {
+        return Err("new Space member must advance the Space revision exactly once".to_string());
+    }
+    NetworkControlStore::new(storage.clone())?.admitMember(joiningNodeId.to_string())?;
+    spaceStore.importDeviceProfiles(envelope.deviceProfiles)?;
+    spaceStore.adopt(envelope.space)
 }
 
 /// Verifies one session request against the pairing-only control state.
@@ -2871,6 +2930,20 @@ async fn verify_static_web_access_session(
         return Err(encode_link_response(
             StatusCode::UNAUTHORIZED,
             remote_session_auth_error("signature mismatch", "signature_mismatch"),
+        ));
+    }
+    let disconnected = NetworkControlStore::new(state.accessStore.storage.clone())
+        .and_then(|store| store.nodeIsDisconnected(&deviceId))
+        .map_err(|error| {
+            encode_link_response(StatusCode::UNAUTHORIZED, CoreLinkError::internal(error))
+        })?;
+    if disconnected {
+        return Err(encode_link_response(
+            StatusCode::UNAUTHORIZED,
+            remote_session_auth_error(
+                "device is prohibited from this Space connection",
+                "disconnected_node",
+            ),
         ));
     }
     Ok(VerifiedRemoteSession {
@@ -3288,6 +3361,15 @@ async fn verify_session_parts(
         return Err(remote_session_auth_error(
             "signature mismatch",
             "signature_mismatch",
+        ));
+    }
+    if NetworkControlStore::new(state.accessStore.storage.clone())
+        .and_then(|store| store.nodeIsDisconnected(deviceId))
+        .map_err(CoreLinkError::internal)?
+    {
+        return Err(remote_session_auth_error(
+            "device is prohibited from this Space connection",
+            "disconnected_node",
         ));
     }
     Ok(VerifiedRemoteSession {

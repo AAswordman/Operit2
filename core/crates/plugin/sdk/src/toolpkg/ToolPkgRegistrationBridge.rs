@@ -26,6 +26,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             chatInputHooks: [],
             chatViewHooks: [],
             chatMessageHooks: [],
+            chatMessageMenuItems: [],
+            chatRuntimeHooks: [],
             hostEventHooks: [],
             toolLifecycleHooks: [],
             promptInputHooks: [],
@@ -234,6 +236,43 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 throw new Error(label + ' requires a serializable screen reference');
             }
             normalized.screen = path;
+            return normalized;
+        }
+
+        function normalizeDialogScreenField(definition, label) {
+            if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+                throw new Error(label + ' expects an object');
+            }
+            var normalized = copyObject(definition, 'screen');
+            var screen = definition.screen;
+            var path = '';
+            if (typeof screen === 'string') {
+                path = screen.trim().replace(/\\/g, '/');
+            } else if (typeof screen === 'function' && typeof screen.__operit_toolpkg_module_path === 'string') {
+                path = screen.__operit_toolpkg_module_path.trim().replace(/\\/g, '/');
+            } else if (
+                screen &&
+                typeof screen === 'object' &&
+                typeof screen.default === 'function' &&
+                typeof screen.default.__operit_toolpkg_module_path === 'string'
+            ) {
+                path = screen.default.__operit_toolpkg_module_path.trim().replace(/\\/g, '/');
+            }
+            if (!path) {
+                throw new Error(label + ' requires a serializable screen reference');
+            }
+            normalized.screen = path;
+            return normalized;
+        }
+
+        function normalizeChatMessageMenuItemDefinition(definition, label) {
+            var normalized = normalizeFunctionField(definition, 'function', label);
+            if (definition.dialog !== undefined && definition.dialog !== null) {
+                if (typeof definition.dialog !== 'object' || Array.isArray(definition.dialog)) {
+                    throw new Error(label + '.dialog expects an object');
+                }
+                normalized.dialog = normalizeDialogScreenField(definition.dialog, label + '.dialog');
+            }
             return normalized;
         }
 
@@ -489,7 +528,19 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             );
         }
 
-        var api = {
+        function requireToolPkgApiRuntime() {
+            var runtime = root.__operitToolPkgApi;
+            if (!runtime || typeof runtime !== 'object') {
+                throw new Error('__operitToolPkgApi is unavailable');
+            }
+            if (typeof runtime.namespace !== 'function' || typeof runtime.method !== 'function') {
+                throw new Error('__operitToolPkgApi is invalid');
+            }
+            return runtime;
+        }
+
+        var toolPkgApi = requireToolPkgApiRuntime();
+        var api = toolPkgApi.namespace('ToolPkg', {
             _m: captureMarketOrigin,
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
@@ -507,6 +558,20 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerChatInputHook: registerFunction('chatInputHooks', 'registerChatInputHook'),
             registerChatViewHook: registerFunction('chatViewHooks', 'registerChatViewHook'),
             registerChatMessageHook: registerFunction('chatMessageHooks', 'registerChatMessageHook'),
+            registerChatMessageMenuItem: toolPkgApi.method().since('2.0.0', function(definition) {
+                capture.chatMessageMenuItems.push(
+                    normalizeSpec(
+                        normalizeChatMessageMenuItemDefinition(
+                            definition,
+                            'registerChatMessageMenuItem'
+                        )
+                    )
+                );
+            }),
+            registerChatRuntimeHook: toolPkgApi.method().since(
+                '2.0.0',
+                registerFunction('chatRuntimeHooks', 'registerChatRuntimeHook')
+            ),
             registerHostEventHook: registerFunction('hostEventHooks', 'registerHostEventHook'),
             registerToolLifecycleHook: registerFunction('toolLifecycleHooks', 'registerToolLifecycleHook'),
             registerPromptInputHook: registerFunction('promptInputHooks', 'registerPromptInputHook'),
@@ -525,7 +590,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerAiProvider: function(definition) {
                 capture.aiProviders.push(normalizeSpec(normalizeAiProviderDefinition(definition, 'registerAiProvider')));
             }
-        };
+        });
 
         root.registerToolPkgToolboxUiModule = api.registerToolboxUiModule;
         root.registerToolPkgUiRoute = api.registerUiRoute;
@@ -538,6 +603,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         root.registerToolPkgChatInputHook = api.registerChatInputHook;
         root.registerToolPkgChatViewHook = api.registerChatViewHook;
         root.registerToolPkgChatMessageHook = api.registerChatMessageHook;
+        root.registerToolPkgChatMessageMenuItem = api.registerChatMessageMenuItem;
+        root.registerToolPkgChatRuntimeHook = api.registerChatRuntimeHook;
         root.registerToolPkgHostEventHook = api.registerHostEventHook;
         root.registerToolPkgToolLifecycleHook = api.registerToolLifecycleHook;
         root.registerToolPkgPromptInputHook = api.registerPromptInputHook;
@@ -557,6 +624,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         root.registerChatInputHook = api.registerChatInputHook;
         root.registerChatViewHook = api.registerChatViewHook;
         root.registerChatMessageHook = api.registerChatMessageHook;
+        root.registerChatMessageMenuItem = api.registerChatMessageMenuItem;
+        root.registerChatRuntimeHook = api.registerChatRuntimeHook;
         root.registerHostEventHook = api.registerHostEventHook;
         root.registerToolLifecycleHook = api.registerToolLifecycleHook;
         root.registerPromptInputHook = api.registerPromptInputHook;
@@ -577,6 +646,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::buildToolPkgRegistrationBridgeScript;
+    use crate::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
     use rquickjs::{Context, Runtime};
 
     /// Verifies runtime marketplace markers can be evaluated repeatedly without capture side effects.
@@ -586,6 +656,18 @@ mod tests {
         let context = Context::full(&runtime).expect("QuickJS context should start");
 
         context.with(|context| {
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.__operitExpose = function(name, value) {
+                        globalThis[name] = value;
+                    };
+                    "#,
+                )
+                .expect("runtime expose should evaluate");
+            context
+                .eval::<(), _>(buildToolPkgApiRuntimeScript())
+                .expect("toolpkg api runtime should evaluate");
             context
                 .eval::<(), _>(buildToolPkgRegistrationBridgeScript(false))
                 .expect("runtime bridge should evaluate");

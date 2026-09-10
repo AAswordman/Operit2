@@ -9,7 +9,8 @@ use crate::package::LocalizedText;
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgParser::{
     ToolPkgMainRegistration, ToolPkgMainRegistrationParseResult, ToolPkgMarketOrigin,
-    ToolPkgRegisteredAiProvider, ToolPkgRegisteredAppLifecycleHook, ToolPkgRegisteredDesktopWidget,
+    ToolPkgRegisteredAiProvider, ToolPkgRegisteredAppLifecycleHook,
+    ToolPkgRegisteredChatMessageMenuItem, ToolPkgRegisteredDesktopWidget,
     ToolPkgRegisteredFunctionHook, ToolPkgRegisteredHostEventHook,
     ToolPkgRegisteredNavigationEntry, ToolPkgRegisteredTagFunctionHook, ToolPkgRegisteredUiModule,
     ToolPkgRegisteredUiRoute,
@@ -26,7 +27,14 @@ impl ToolPkgMainRegistrationScriptParser {
         mainScriptPath: &str,
         jsEngine: &dyn JsExecutionEngine,
     ) -> ToolPkgMainRegistrationParseResult {
-        Self::parseWithTextResources(script, toolPkgId, mainScriptPath, jsEngine, None)
+        Self::parseWithTextResources(
+            script,
+            toolPkgId,
+            mainScriptPath,
+            crate::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION,
+            jsEngine,
+            None,
+        )
     }
 
     /// Parses ToolPkg main-script registrations with archive text resources available to JavaScript.
@@ -35,6 +43,7 @@ impl ToolPkgMainRegistrationScriptParser {
         script: &str,
         toolPkgId: &str,
         mainScriptPath: &str,
+        apiVersion: &str,
         jsEngine: &dyn JsExecutionEngine,
         textResources: Option<Arc<BTreeMap<String, String>>>,
     ) -> ToolPkgMainRegistrationParseResult {
@@ -55,6 +64,10 @@ impl ToolPkgMainRegistrationScriptParser {
         params.insert(
             "__operit_script_screen".to_string(),
             Value::String(mainScriptPath.to_string()),
+        );
+        params.insert(
+            "__operit_toolpkg_api_version".to_string(),
+            Value::String(apiVersion.to_string()),
         );
 
         let capturedResult = jsEngine
@@ -157,6 +170,16 @@ fn parseCapturedRegistration(
         chatMessageHooks: parseRegisteredItems(
             &captured.chatMessageHooks,
             TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK,
+            toolPkgId,
+        )?,
+        chatMessageMenuItems: parseRegisteredItems(
+            &captured.chatMessageMenuItems,
+            TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM,
+            toolPkgId,
+        )?,
+        chatRuntimeHooks: parseRegisteredItems(
+            &captured.chatRuntimeHooks,
+            TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK,
             toolPkgId,
         )?,
         hostEventHooks: parseRegisteredItems(
@@ -401,6 +424,21 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredFunctionHook {
     fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {}
 
     /// Validates the id and function of a generic function hook.
+    fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
+        requireNotBlank(&self.id, "id", registryName, index)?;
+        requireNotBlank(&self.function, "function", registryName, index)
+    }
+}
+
+impl ValidateToolPkgRegistration for ToolPkgRegisteredChatMessageMenuItem {
+    /// Generates a title from the menu item identifier when omitted.
+    fn normalize(&mut self, _registryName: &str, _index: usize, _toolPkgId: &str) {
+        if !hasLocalizedTextContent(&self.title) {
+            self.title = localizedTextOf(self.id.trim());
+        }
+    }
+
+    /// Validates the id and function of a chat message menu item.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.function, "function", registryName, index)

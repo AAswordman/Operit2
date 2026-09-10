@@ -16,14 +16,12 @@ class AiMessageComposable extends StatefulWidget {
   const AiMessageComposable({
     super.key,
     required this.message,
-    required this.isStreaming,
     required this.useBubbleStyle,
     this.avatarImagePath,
     this.splitMarkdownContent,
   });
 
   final ChatUiMessage message;
-  final bool isStreaming;
   final bool useBubbleStyle;
   final String? avatarImagePath;
   final MarkdownContentSplitter? splitMarkdownContent;
@@ -134,7 +132,6 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
           child: StreamingStructuredMessageRenderer(
             parts: widget.message.parts,
             contentStream: widget.message.contentStream,
-            isStreaming: widget.isStreaming,
             textColor: aiTextColor,
             backgroundColor: useCardStyle ? aiBubbleColor : colorScheme.surface,
             nodeGrouper: nodeGrouper,

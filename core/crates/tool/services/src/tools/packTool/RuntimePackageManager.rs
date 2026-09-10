@@ -26,9 +26,10 @@ use operit_plugin_sdk::toolpkg::ToolPkgManager::{
     ToolPkgAssetSource, ToolPkgExecutionEngineFactory, ToolPkgManager, ToolPkgRuntimeChangeListener,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgPackageModels::{
-    ToolPkgContainerDetails, ToolPkgDesktopWidget, ToolPkgNavigationActionHook,
-    ToolPkgNavigationEntry, ToolPkgSubpackageInfo, ToolPkgToolboxUiModule, ToolPkgUiRoute,
-    ToolPkgWorkspaceTemplate, ToolPkgWorkspaceTemplateImportResult,
+    ToolPkgChatMessageMenuItem, ToolPkgContainerDetails, ToolPkgDesktopWidget, ToolPkgLogoBytes,
+    ToolPkgNavigationActionHook, ToolPkgNavigationEntry, ToolPkgSubpackageInfo,
+    ToolPkgToolboxUiModule, ToolPkgUiRoute, ToolPkgWorkspaceTemplate,
+    ToolPkgWorkspaceTemplateImportResult,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgPackageService::{
     ToolPkgPackageHost, ToolPkgPackageService,
@@ -1398,6 +1399,125 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Reads the manifest-declared logo bytes for one ToolPkg container.
+    pub fn readToolPkgLogoBytes(&self, packageName: &str) -> Option<ToolPkgLogoBytes> {
+        self.ensureInitialized();
+        let normalizedPackageName = self.normalizePackageName(packageName);
+        let runtime = self
+            .toolPkgManager()
+            .getToolPkgContainerRuntime(&normalizedPackageName)?;
+        let logoResource = runtime.logoResource.clone()?;
+        let fileName = Path::new(&logoResource.path)
+            .file_name()?
+            .to_str()?
+            .to_string();
+        let bytes = self.readToolPkgResourceBytes(&runtime, &logoResource.path)?;
+        Some(ToolPkgLogoBytes {
+            resourceKey: logoResource.key,
+            mimeType: logoResource.mime,
+            fileName,
+            bytes,
+        })
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns enabled ToolPkg context-menu items applicable to one message sender.
+    pub fn getToolPkgChatMessageMenuItems(
+        &self,
+        sender: &str,
+        useEnglish: bool,
+    ) -> Vec<ToolPkgChatMessageMenuItem> {
+        let normalizedSender = sender.trim().to_ascii_lowercase();
+        let mut items = self
+            .getEnabledToolPkgContainerRuntimes()
+            .into_iter()
+            .flat_map(|runtime| {
+                let normalizedSender = normalizedSender.clone();
+                runtime
+                    .chatMessageMenuItems
+                    .into_iter()
+                    .filter(move |item| {
+                        item.senders.is_empty()
+                            || item
+                                .senders
+                                .iter()
+                                .any(|allowed| allowed == &normalizedSender)
+                    })
+                    .map(move |item| ToolPkgChatMessageMenuItem {
+                        containerPackageName: runtime.packageName.clone(),
+                        itemId: item.id,
+                        title: item.title.resolve(useEnglish),
+                        icon: item.icon,
+                        order: item.order,
+                        dialog: item.dialog.map(|dialog| {
+                            operit_plugin_sdk::toolpkg::ToolPkgPackageModels::ToolPkgChatMessageMenuDialog {
+                                screen: dialog.screen,
+                                title: dialog.title.resolve(useEnglish),
+                            }
+                        }),
+                    })
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.order
+                .cmp(&right.order)
+                .then(left.title.cmp(&right.title))
+                .then(left.containerPackageName.cmp(&right.containerPackageName))
+                .then(left.itemId.cmp(&right.itemId))
+        });
+        items
+    }
+
+    #[allow(non_snake_case)]
+    /// Executes one enabled ToolPkg chat message context-menu item.
+    pub fn invokeToolPkgChatMessageMenuItem(
+        &self,
+        containerPackageName: &str,
+        itemId: &str,
+        chatId: &str,
+        messageIndex: i32,
+        message: serde_json::Value,
+    ) -> Result<Option<String>, String> {
+        let normalizedContainerPackageName = self.normalizePackageName(containerPackageName);
+        let normalizedItemId = itemId.trim();
+        let runtime = self
+            .getEnabledToolPkgContainerRuntimes()
+            .into_iter()
+            .find(|runtime| runtime.packageName == normalizedContainerPackageName)
+            .ok_or_else(|| {
+                format!("Enabled ToolPkg container not found: {normalizedContainerPackageName}")
+            })?;
+        let item = runtime
+            .chatMessageMenuItems
+            .iter()
+            .find(|item| item.id == normalizedItemId)
+            .ok_or_else(|| {
+                format!(
+                    "ToolPkg chat message menu item not found: {}:{}",
+                    runtime.packageName, normalizedItemId
+                )
+            })?;
+        self.runToolPkgMainHook(
+            &runtime.packageName,
+            &item.function,
+            operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CHAT_MESSAGE_MENU_ITEM,
+            Some("chat_message_menu_item_click"),
+            Some(&item.id),
+            item.functionSource.as_deref(),
+            serde_json::json!({
+                "action": "click",
+                "chatId": chatId,
+                "messageIndex": messageIndex,
+                "menuItemId": item.id,
+                "message": message,
+            }),
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[allow(non_snake_case)]
     /// Returns UI routes exposed by ToolPkg modules for one runtime target.
     pub fn getToolPkgUiRoutes(&self, runtime: &str, useEnglish: bool) -> Vec<ToolPkgUiRoute> {
         ToolPkgPackageService::new(self).getToolPkgUiRoutes(runtime, useEnglish)
@@ -1860,6 +1980,7 @@ impl RuntimePackageManager {
                     .unwrap_or_default(),
                 isToolPkg: false,
                 inferredVersion: None,
+                apiVersion: None,
             });
         }
 
@@ -1904,6 +2025,7 @@ impl RuntimePackageManager {
                 } else {
                     Some(runtime.version)
                 },
+                apiVersion: Some(runtime.apiVersion),
             });
         }
 

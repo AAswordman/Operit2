@@ -106,8 +106,12 @@ const OPERIT1_DEFAULT_PROFILE_ID: &str = "default";
 const OPERIT1_SHARED_MEMORY_STORE_ID_PREFIX: &str = "operit1-profile-";
 const ARCHIVE_ENTRY_COPY_BUFFER_BYTES: usize = 256 * 1024;
 const OPERIT1_PROGRESS_REPORT_INTERVAL_MS: i64 = 250;
-const OPERIT1_INTERNAL_FILES_PREFIX: &str = "/data/user/0/com.ai.assistance.operit/files/";
-const OPERIT1_DATA_DATA_FILES_PREFIX: &str = "/data/data/com.ai.assistance.operit/files/";
+const OPERIT1_INTERNAL_FILES_PREFIXES: [&str; 4] = [
+    "/data/user/0/com.ai.assistance.operit/files/",
+    "/data/data/com.ai.assistance.operit/files/",
+    "/data/user/0/com.ai.assistance.operit.debug/files/",
+    "/data/data/com.ai.assistance.operit.debug/files/",
+];
 const OPERIT1_EXTERNAL_DOWNLOAD_PREFIX: &str = "/storage/emulated/0/Download/Operit/";
 const OPERIT1_DEFAULT_AI_AVATAR_URI: &str = "file:///android_asset/operit.png";
 const OPERIT1_OBJECTBOX_KEY_MEMORY: [u8; 4] = [0x18, 0x00, 0x00, 0x10];
@@ -626,9 +630,7 @@ impl Operit1SnapshotImportManager {
         provider.maxConcurrentRequests = config.maxConcurrentRequests;
         provider.models = modelIds
             .iter()
-            .map(|currentModelId| {
-                buildModelProfile(&provider.providerTypeId, currentModelId, &config)
-            })
+            .map(|currentModelId| buildModelProfile(currentModelId, &config))
             .collect::<Result<Vec<_>, String>>()?;
 
         let modelConfigManager = ModelConfigManager::new(self.paths.runtime_dir().to_path_buf());

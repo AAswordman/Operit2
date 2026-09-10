@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
@@ -37,6 +38,8 @@ class ChatArea extends StatefulWidget {
     required this.scrollController,
     required this.currentChatId,
     required this.currentCharacterCardAvatarUri,
+    required this.clients,
+    required this.packageManager,
     required this.autoScrollToBottomListenable,
     required this.hasOlderDisplayHistory,
     required this.hasNewerDisplayHistory,
@@ -74,6 +77,8 @@ class ChatArea extends StatefulWidget {
   final ScrollController scrollController;
   final String? currentChatId;
   final String? currentCharacterCardAvatarUri;
+  final GeneratedCoreProxyClients clients;
+  final GeneratedApplicationPackageManagerCoreProxy packageManager;
   final ValueListenable<bool> autoScrollToBottomListenable;
   final bool hasOlderDisplayHistory;
   final bool hasNewerDisplayHistory;
@@ -179,7 +184,7 @@ class _ChatAreaState extends State<ChatArea> {
                     itemCount: itemCount,
                     itemBuilder: (context, index) {
                       late final Widget child;
-                      Object? liveBottomStreamKey;
+                      var observesLiveBottomGrowth = false;
                       if (widget.hasOlderDisplayHistory && index == 0) {
                         child = _DisplayWindowAction(
                           text: 'Load more history',
@@ -199,7 +204,7 @@ class _ChatAreaState extends State<ChatArea> {
                         child = _messageRowFor(messageIndex, message);
                         if (messageIndex == widget.messages.length - 1 &&
                             _isStreamingMessage(messageIndex)) {
-                          liveBottomStreamKey = message.contentStream;
+                          observesLiveBottomGrowth = true;
                         }
                       } else if (widget.hasNewerDisplayHistory &&
                           index == messageEndIndex) {
@@ -233,13 +238,11 @@ class _ChatAreaState extends State<ChatArea> {
                             messageStartIndex,
                             messageEndIndex,
                           ),
-                          child: liveBottomStreamKey != null
-                              ? _LiveBottomStreamSizeObserver(
-                                  key: ObjectKey(liveBottomStreamKey),
-                                  onSizeGrown: _scheduleBottomFollow,
-                                  child: _ChatAreaContentColumn(child: child),
-                                )
-                              : _ChatAreaContentColumn(child: child),
+                          child: _LiveBottomStreamSizeObserver(
+                            observesGrowth: observesLiveBottomGrowth,
+                            onSizeGrown: _scheduleBottomFollow,
+                            child: _ChatAreaContentColumn(child: child),
+                          ),
                         ),
                       );
                     },
@@ -847,7 +850,6 @@ class _ChatAreaState extends State<ChatArea> {
         ? BubbleStyleChatMessage(
             key: ValueKey<String>(_messageWidgetKey(message)),
             message: message,
-            isStreaming: isStreaming,
             userMessageColor: messageThemeColors.userMessageColor,
             aiMessageColor: messageThemeColors.aiMessageColor,
             userTextColor: messageThemeColors.userTextColor,
@@ -880,7 +882,6 @@ class _ChatAreaState extends State<ChatArea> {
         : CursorStyleChatMessage(
             key: ValueKey<String>(_messageWidgetKey(message)),
             message: message,
-            isStreaming: isStreaming,
             currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
             splitMarkdownContent: widget.splitMarkdownContent,
             onDeleteMessage: widget.onDeleteMessage,
@@ -911,6 +912,10 @@ class _ChatAreaState extends State<ChatArea> {
         : MessageContextMenu(
             key: ValueKey<String>('menu-${_messageWidgetKey(message)}'),
             message: message,
+            chatId: widget.currentChatId!,
+            messageIndex: messageIndex,
+            clients: widget.clients,
+            packageManager: widget.packageManager,
             onToggleFavoriteMessage: widget.onToggleFavoriteMessage,
             onDeleteMessage: widget.onDeleteMessage,
             onDeleteMessagesFrom: widget.onDeleteMessagesFrom,
@@ -1335,17 +1340,21 @@ bool _sameMessagePartsForRender(ChatUiMessage left, ChatUiMessage right) {
 /// Observes live bottom row growth after its first layout.
 class _LiveBottomStreamSizeObserver extends SingleChildRenderObjectWidget {
   const _LiveBottomStreamSizeObserver({
-    super.key,
+    required this.observesGrowth,
     required this.onSizeGrown,
     required super.child,
   });
 
+  final bool observesGrowth;
   final VoidCallback onSizeGrown;
 
   /// Creates the render object that records row dimensions.
   @override
   RenderObject createRenderObject(BuildContext context) {
-    return _LiveBottomStreamSizeRenderObject(onSizeGrown);
+    return _LiveBottomStreamSizeRenderObject(
+      observesGrowth: observesGrowth,
+      onSizeGrown: onSizeGrown,
+    );
   }
 
   /// Updates the callback used by the retained render object.
@@ -1354,16 +1363,37 @@ class _LiveBottomStreamSizeObserver extends SingleChildRenderObjectWidget {
     BuildContext context,
     _LiveBottomStreamSizeRenderObject renderObject,
   ) {
-    renderObject.onSizeGrown = onSizeGrown;
+    renderObject
+      ..observesGrowth = observesGrowth
+      ..onSizeGrown = onSizeGrown;
   }
 }
 
 /// Reports height increases for the live bottom row.
 class _LiveBottomStreamSizeRenderObject extends RenderProxyBox {
-  _LiveBottomStreamSizeRenderObject(this.onSizeGrown);
+  _LiveBottomStreamSizeRenderObject({
+    required bool observesGrowth,
+    required VoidCallback onSizeGrown,
+  }) : _observesGrowth = observesGrowth,
+       _onSizeGrown = onSizeGrown;
 
-  VoidCallback onSizeGrown;
+  bool _observesGrowth;
+  VoidCallback _onSizeGrown;
   Size? _lastSize;
+
+  set observesGrowth(bool value) {
+    if (_observesGrowth == value) {
+      return;
+    }
+    _observesGrowth = value;
+    if (!value) {
+      _lastSize = null;
+    }
+  }
+
+  set onSizeGrown(VoidCallback value) {
+    _onSizeGrown = value;
+  }
 
   /// Notifies after the first measured layout when the row height grows.
   @override
@@ -1371,6 +1401,10 @@ class _LiveBottomStreamSizeRenderObject extends RenderProxyBox {
     final previousSize = _lastSize;
     super.performLayout();
     final currentSize = size;
+    if (!_observesGrowth) {
+      _lastSize = null;
+      return;
+    }
     _lastSize = currentSize;
     if (previousSize == null ||
         currentSize.height - previousSize.height <=
@@ -1378,7 +1412,7 @@ class _LiveBottomStreamSizeRenderObject extends RenderProxyBox {
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      onSizeGrown();
+      _onSizeGrown();
     });
   }
 }

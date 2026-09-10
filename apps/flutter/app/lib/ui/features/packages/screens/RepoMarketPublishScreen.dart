@@ -341,7 +341,8 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
+              OperitFormStyles.dropdownButtonFormField<String>(
+                context,
                 initialValue: _categoryId,
                 style: OperitFormStyles.dropdownTextStyle(context),
                 decoration: const InputDecoration(
@@ -381,7 +382,8 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
+              OperitFormStyles.dropdownButtonFormField<String>(
+                context,
                 initialValue: _refType,
                 style: OperitFormStyles.dropdownTextStyle(context),
                 decoration: const InputDecoration(

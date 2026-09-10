@@ -13,6 +13,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../theme/OperitFormStyles.dart';
 
 const XTypeGroup _memoryJsonFileTypeGroup = XTypeGroup(
   label: 'Operit memory JSON',
@@ -1843,7 +1844,8 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
+                OperitFormStyles.dropdownButtonFormField<String>(
+                  context,
                   initialValue:
                       folderOptions.contains(_folderController.text.trim())
                       ? _folderController.text.trim()

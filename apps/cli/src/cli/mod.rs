@@ -58,6 +58,7 @@ use std::os::unix::fs::PermissionsExt;
 
 mod host_ops;
 pub(crate) mod link;
+pub(crate) mod network_control_ui;
 mod transfer;
 mod web_access;
 

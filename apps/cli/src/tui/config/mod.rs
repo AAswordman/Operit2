@@ -742,7 +742,7 @@ impl ConfigUi {
                     };
                     let settings = match core
                         .preferences_model_config_manager()
-                        .getThinkingSettingsForModel(&pid, &model.id)
+                        .getThinkingSettingsForProvider(&pid, &model.id)
                         .await
                     {
                         Ok(settings) => settings,
@@ -1012,7 +1012,7 @@ impl ConfigUi {
                         .await;
                     match core
                         .preferences_model_config_manager()
-                        .updateThinkingSettingsForModel(
+                        .updateThinkingSettingsForProvider(
                             &pid,
                             &mid,
                             changes.thinking_configurations,

@@ -1,6 +1,12 @@
 #[path = "ToolPkgCommonPluginConstants.rs"]
 pub mod ToolPkgCommonPluginConstants;
 
+#[path = "ToolPkgApiVersion.rs"]
+pub mod ToolPkgApiVersion;
+
+#[path = "ToolPkgApiRuntimeScript.rs"]
+pub mod ToolPkgApiRuntimeScript;
+
 #[path = "ToolPkgComposeDslDebugDumpReceiver.rs"]
 pub mod ToolPkgComposeDslDebugDumpReceiver;
 

@@ -45,6 +45,7 @@ pub struct PromptTurn {
     pub content: String,
     #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
+    #[serde(default)]
     pub metadata: HashMap<String, Value>,
 }
 

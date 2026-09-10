@@ -16,6 +16,7 @@ use operit_link::{
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingRecord, CoreNodeBindingStore};
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
+use operit_store::NetworkControlStore::NetworkControlStore;
 use operit_tools::runtime_support::{
     CoreNodeToolRuntime, RuntimeCoreNodeRouteState, RuntimeCoreNodeStatus,
 };
@@ -50,6 +51,7 @@ pub struct CoreNodeRouter {
     bindingStore: Arc<dyn CoreNodeBindingRuntime>,
     localNodeId: String,
     spaceStore: CoreSpaceStore,
+    networkControlStore: NetworkControlStore,
 }
 
 /// Carries local Core capabilities into the server-side Space router.
@@ -234,6 +236,8 @@ impl CoreNodeRouter {
             .expect("CoreNodeRouter requires a CoreNode identity")
             .nodeId;
         let spaceStore = CoreSpaceStore::new(localCore.runtimeStorageHost());
+        let networkControlStore = NetworkControlStore::new(localCore.runtimeStorageHost())
+            .expect("CoreNodeRouter requires network control storage");
         spaceStore
             .initialize()
             .expect("CoreNodeRouter requires an initialized Space");
@@ -241,6 +245,7 @@ impl CoreNodeRouter {
             .bindCoreNodeToolRuntime(Arc::new(CoreNodeToolRouteRuntime {
                 localNodeId: localNodeId.clone(),
                 spaceStore: spaceStore.clone(),
+                networkControlStore: networkControlStore.clone(),
             }))
             .expect("CoreNodeRouter requires tool routing state registration");
         let router = Self {
@@ -248,6 +253,7 @@ impl CoreNodeRouter {
             bindingStore,
             localNodeId,
             spaceStore,
+            networkControlStore,
         };
         operit_link::installCoreRouteRuntime(Arc::new(router.clone()));
         router
@@ -353,7 +359,12 @@ impl CoreNodeRouter {
     /// Reports whether the active Peer Link graph currently proves one device reachable.
     #[allow(non_snake_case)]
     pub fn nodeIsReachable(&self, targetNodeId: &str) -> Result<bool, String> {
-        coreNodeIsReachable(&self.localNodeId, &self.spaceStore, targetNodeId)
+        coreNodeIsReachable(
+            &self.localNodeId,
+            &self.spaceStore,
+            &self.networkControlStore,
+            targetNodeId,
+        )
     }
 
     /// Opens the generic push session selected by generated CoreNode routing metadata.
@@ -390,6 +401,16 @@ impl CoreNodeRouter {
             return Err(CoreLinkError::new(
                 "CORE_NODE_NOT_IN_SPACE",
                 format!("CoreNode is not a Space member: {targetNodeId}"),
+            ));
+        }
+        if self
+            .networkControlStore
+            .nodeIsDisconnected(&targetNodeId)
+            .map_err(CoreLinkError::internal)?
+        {
+            return Err(CoreLinkError::new(
+                "CORE_NODE_REVOKED",
+                format!("CoreNode is revoked from routing: {targetNodeId}"),
             ));
         }
         let ttl = routeTtl(&space)?;
@@ -444,6 +465,19 @@ impl CoreNodeRouter {
                 format!("CoreNode is not a Space member: {}", request.targetNodeId),
             ));
         }
+        if self
+            .networkControlStore
+            .nodeIsDisconnected(&request.targetNodeId)
+            .map_err(CoreLinkError::internal)?
+        {
+            return Err(CoreLinkError::new(
+                "CORE_NODE_REVOKED",
+                format!(
+                    "Routed request targets a revoked CoreNode: {}",
+                    request.targetNodeId
+                ),
+            ));
+        }
         if request.ttl == 0 {
             return Err(CoreLinkError::new(
                 "CORE_NODE_ROUTE_TTL_EXHAUSTED",
@@ -482,10 +516,32 @@ impl CoreNodeRouter {
         for peerNodeId in excludedPeerNodeIds {
             peers.remove(peerNodeId);
         }
+        let blockedPeers = peers
+            .iter()
+            .map(|peerNodeId| {
+                self.networkControlStore
+                    .nodeIsDisconnected(peerNodeId)
+                    .map(|blocked| (peerNodeId.clone(), blocked))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(CoreLinkError::internal)?;
+        for (peerNodeId, blocked) in blockedPeers {
+            if blocked {
+                peers.remove(&peerNodeId);
+            }
+        }
         let activePeers = peers.iter().cloned().collect::<Vec<_>>();
+        let transitNodeIds = self
+            .networkControlStore
+            .relayNodeIds()
+            .map_err(CoreLinkError::internal)?;
         let nextHop = self
             .spaceStore
-            .reachableNextHopThroughPeers(targetNodeId.clone(), peers)
+            .reachableNextHopThroughPeersWithTransitNodes(
+                targetNodeId.clone(),
+                peers,
+                transitNodeIds,
+            )
             .map_err(CoreLinkError::internal)?;
         if nextHop.is_none() {
             AppLogger::v_with_level(
@@ -530,6 +586,16 @@ impl CoreNodeRouter {
                 format!("Previous CoreNode is not a Space member: {previousNodeId}"),
             ));
         }
+        if self
+            .networkControlStore
+            .nodeIsDisconnected(previousNodeId)
+            .map_err(CoreLinkError::internal)?
+        {
+            return Err(CoreLinkError::new(
+                "PREVIOUS_CORE_NODE_REVOKED",
+                format!("Previous CoreNode is revoked: {previousNodeId}"),
+            ));
+        }
         if !space
             .members
             .iter()
@@ -538,6 +604,19 @@ impl CoreNodeRouter {
             return Err(CoreLinkError::new(
                 "CORE_NODE_NOT_IN_SPACE",
                 format!("CoreNode is not a Space member: {}", request.targetNodeId),
+            ));
+        }
+        if self
+            .networkControlStore
+            .nodeIsDisconnected(&request.targetNodeId)
+            .map_err(CoreLinkError::internal)?
+        {
+            return Err(CoreLinkError::new(
+                "CORE_NODE_REVOKED",
+                format!(
+                    "Routed request targets a revoked CoreNode: {}",
+                    request.targetNodeId
+                ),
             ));
         }
         Ok(request.targetNodeId == self.localNodeId)
@@ -884,7 +963,14 @@ impl CoreNodeRouter {
     #[allow(non_snake_case)]
     async fn executeLocalCall(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        let response = operit_link::withCoreForceLocal(self.localCore.call(request)).await;
+        let applicationObjectId = self.localCore.objectIdForSchema("application");
+        let isApplicationCall =
+            applicationObjectId.is_some_and(|objectId| objectId == request.targetObjectId);
+        let response = if isApplicationCall {
+            self.localCore.callApplication(request).await
+        } else {
+            operit_link::withCoreForceLocal(self.localCore.call(request)).await
+        };
         if response.requestId != requestId {
             return CoreCallResponse::err(
                 requestId,
@@ -1207,6 +1293,7 @@ impl CoreNodeRouter {
 struct CoreNodeToolRouteRuntime {
     localNodeId: String,
     spaceStore: CoreSpaceStore,
+    networkControlStore: NetworkControlStore,
 }
 
 impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
@@ -1229,6 +1316,7 @@ impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
                 reachable: coreNodeIsReachableThroughPeers(
                     &self.localNodeId,
                     &self.spaceStore,
+                    &self.networkControlStore,
                     &nodeId,
                     &peers,
                 )?,
@@ -1247,13 +1335,20 @@ impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
 fn coreNodeIsReachable(
     localNodeId: &str,
     spaceStore: &CoreSpaceStore,
+    networkControlStore: &NetworkControlStore,
     targetNodeId: &str,
 ) -> Result<bool, String> {
     if targetNodeId == localNodeId {
         return Ok(true);
     }
     let peers = activePeerNodeIds(localNodeId)?;
-    coreNodeIsReachableThroughPeers(localNodeId, spaceStore, targetNodeId, &peers)
+    coreNodeIsReachableThroughPeers(
+        localNodeId,
+        spaceStore,
+        networkControlStore,
+        targetNodeId,
+        &peers,
+    )
 }
 
 /// Reports device reachability through one fixed active Peer Link snapshot.
@@ -1261,17 +1356,40 @@ fn coreNodeIsReachable(
 fn coreNodeIsReachableThroughPeers(
     localNodeId: &str,
     spaceStore: &CoreSpaceStore,
+    networkControlStore: &NetworkControlStore,
     targetNodeId: &str,
     peers: &BTreeSet<String>,
 ) -> Result<bool, String> {
     if targetNodeId == localNodeId {
         return Ok(true);
     }
+    if networkControlStore.nodeIsDisconnected(targetNodeId)? {
+        return Ok(false);
+    }
     if !spaceStore.contains(targetNodeId.to_string())? {
         return Ok(false);
     }
+    let blockedPeers = peers
+        .iter()
+        .map(|nodeId| {
+            networkControlStore
+                .nodeIsDisconnected(nodeId)
+                .map(|blocked| (nodeId.clone(), blocked))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut permittedPeers = peers.clone();
+    for (nodeId, blocked) in blockedPeers {
+        if blocked {
+            permittedPeers.remove(&nodeId);
+        }
+    }
+    let transitNodeIds = networkControlStore.relayNodeIds()?;
     spaceStore
-        .reachableNextHopThroughPeers(targetNodeId.to_string(), peers.clone())
+        .reachableNextHopThroughPeersWithTransitNodes(
+            targetNodeId.to_string(),
+            permittedPeers,
+            transitNodeIds,
+        )
         .map(|nextHop| nextHop.is_some())
 }
 
@@ -2610,6 +2728,8 @@ mod tests {
         spaceStore
             .setDirectPeers(vec![targetNodeId.to_string()])
             .expect("test space topology must contain the direct peer");
+        let networkControlStore = NetworkControlStore::new(storage.clone())
+            .expect("test network control store must initialize");
         let bindingStore: Arc<dyn CoreNodeBindingRuntime> = Arc::new(TestBindingRuntime::new(
             bindingKey,
             targetNodeId.to_string(),
@@ -2619,6 +2739,7 @@ mod tests {
             bindingStore,
             localNodeId: localNodeId.to_string(),
             spaceStore,
+            networkControlStore,
         }
     }
 
@@ -2665,6 +2786,8 @@ mod tests {
         spaceStore
             .setDirectPeers(vec![peerNodeId.to_string()])
             .expect("test joined Space topology must contain the direct peer");
+        let networkControlStore = NetworkControlStore::new(storage.clone())
+            .expect("test network control store must initialize");
         let (localRuntime, holder) = testLocalRuntimeWithHolder(storage);
         let bindingStore = Arc::new(TestBindingRuntime::new(
             bindingKey,
@@ -2677,6 +2800,7 @@ mod tests {
                 bindingStore: bindingRuntime,
                 localNodeId: localNodeId.to_string(),
                 spaceStore,
+                networkControlStore,
             },
             holder,
             bindingStore,

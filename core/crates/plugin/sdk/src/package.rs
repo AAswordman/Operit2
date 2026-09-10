@@ -137,4 +137,5 @@ pub struct PublishablePackageSource {
     pub fileExtension: String,
     pub isToolPkg: bool,
     pub inferredVersion: Option<String>,
+    pub apiVersion: Option<String>,
 }

@@ -1457,6 +1457,43 @@ impl ChatHistoryManager {
         self.hydrateMessagesForChat(&chatId, messageEntities)
     }
 
+    /// Loads hydrated messages inside an inclusive zero-based index range.
+    pub fn loadChatMessagesRange(
+        &self,
+        chatId: String,
+        order: String,
+        start: i32,
+        end: i32,
+    ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
+        if start < 0 || end < start {
+            return Err(ChatHistoryManagerError::IllegalArgument(
+                "range requires 0 <= start <= end".to_string(),
+            ));
+        }
+        let limit = end
+            .checked_sub(start)
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| {
+                ChatHistoryManagerError::IllegalArgument(
+                    "range length exceeds supported integer limits".to_string(),
+                )
+            })?;
+        let messageEntities = match order.trim().to_lowercase().as_str() {
+            "asc" => self
+                .messageDao
+                .getMessagesForChatAscRange(&chatId, start, limit)?,
+            "desc" => self
+                .messageDao
+                .getMessagesForChatDescRange(&chatId, start, limit)?,
+            value => {
+                return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                    "order must be asc/desc, got {value}"
+                )))
+            }
+        };
+        self.hydrateMessagesForChat(&chatId, messageEntities)
+    }
+
     /// Searches message content and returns matching chat ids.
     pub fn searchChatIdsByContent(
         &self,

@@ -1,6 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { AgentStatusResultData, AppListData, AppOperationData, AppUsageTimeResultData, BinaryFileContentData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, CharacterCardListResultData, ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, DeviceInfoResultData, DirectoryListingData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData, FileApplyResultData, FileContentData, FileExistsData, FileInfoData, FileOperationData, FilePartContentData, FindFilesResultData, GrepResultData, HiddenTerminalCommandResultData, HttpResponseData, LocationData, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData, MessageSendResultData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, ToolResultData, VisitWebResultData } from "./results";
+import type { AgentStatusResultData, AppListData, AppOperationData, AppUsageTimeResultData, BinaryFileContentData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, CharacterCardListResultData, ChatCallResultData, ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, DeviceInfoResultData, DirectoryListingData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData, FileApplyResultData, FileContentData, FileExistsData, FileInfoData, FileOperationData, FilePartContentData, FindFilesResultData, GrepResultData, HiddenTerminalCommandResultData, HttpResponseData, LocationData, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData, MessageSendResultData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, ToolResultData, VisitWebResultData } from "./results";
 
 /**
  * Maps every built-in tool name to its concrete public result type.
@@ -123,8 +123,10 @@ export interface ToolResultMap {
   delete_chat: ChatDeleteResultData;
   send_message_to_ai: MessageSendResultData;
   send_message_to_ai_streaming: MessageSendResultData;
+  call_chat_model: ChatCallResultData;
   list_character_cards: CharacterCardListResultData;
   get_chat_messages: ChatMessagesResultData;
+  get_chat_messages_range: ChatMessagesResultData;
   query_memory: MemoryQueryResultData;
   get_memory_by_title: MemoryQueryResultData;
   create_memory: string;

@@ -61,12 +61,12 @@ pub fn generate_js_tools_host_implementation(
                 continue;
             };
             let runtime_name = runtime_method_name(&method.sig.ident.to_string());
-            let tool_name = javascript_bindings
+            let binding = javascript_bindings
                 .get(&(namespace.to_string(), runtime_name.clone()))
                 .ok_or_else(|| {
                     format!("missing JavaScript binding for `{namespace}.{runtime_name}`")
                 })?;
-            let tool_variant = rust_variant_name(tool_name);
+            let tool_variant = rust_variant_name(&binding.tool);
             let signature = &method.sig;
             let arguments = method_arguments(signature)?;
             output.push_str(&format!(
@@ -93,10 +93,25 @@ pub fn generate_js_tools_host_implementation(
     Ok(())
 }
 
-/// Reads the canonical ordinary Rust method-to-tool binding table.
+/// Describes one generated JavaScript Tools method binding.
+#[derive(Clone, Debug)]
+struct JsToolBindingSpec {
+    tool: String,
+    api_variants: Vec<JsToolApiVariantSpec>,
+}
+
+/// Describes one versioned generated JavaScript implementation.
+#[derive(Clone, Debug)]
+struct JsToolApiVariantSpec {
+    since: String,
+    until: Option<String>,
+    arguments: Option<Vec<String>>,
+}
+
+/// Reads the canonical Rust method-to-tool bindings and API gates.
 fn parse_rust_tool_bindings(
     path: &Path,
-) -> Result<BTreeMap<(String, String), String>, Box<dyn Error>> {
+) -> Result<BTreeMap<(String, String), JsToolBindingSpec>, Box<dyn Error>> {
     let file = syn::parse_file(&fs::read_to_string(path)?)?;
     let binding_const = file.items.iter().find_map(|item| match item {
         Item::Const(item) if item.ident == "JS_TOOL_BINDINGS" => Some(item),
@@ -110,7 +125,7 @@ fn parse_rust_tool_bindings(
     let Expr::Array(array) = expression else {
         return Err("JS_TOOL_BINDINGS must reference an array literal".into());
     };
-    let mut bindings = BTreeMap::<(String, String), String>::new();
+    let mut bindings = BTreeMap::<(String, String), JsToolBindingSpec>::new();
     for element in &array.elems {
         let Expr::Struct(binding) = element else {
             return Err("JS_TOOL_BINDINGS entries must be JsToolBinding structs".into());
@@ -148,13 +163,165 @@ fn parse_rust_tool_bindings(
             method.ok_or("JsToolBinding method is missing")?,
         );
         if bindings
-            .insert(key.clone(), tool.ok_or("JsToolBinding tool is missing")?)
+            .insert(
+                key.clone(),
+                JsToolBindingSpec {
+                    tool: tool.ok_or("JsToolBinding tool is missing")?,
+                    api_variants: Vec::new(),
+                },
+            )
             .is_some()
         {
             return Err(format!("duplicate JsToolBinding for `{}.{}`", key.0, key.1).into());
         }
     }
+    let api_variant_const = file.items.iter().find_map(|item| match item {
+        Item::Const(item) if item.ident == "JS_TOOL_API_VARIANTS" => Some(item),
+        _ => None,
+    });
+    let api_variant_const = api_variant_const.ok_or("JS_TOOL_API_VARIANTS is missing")?;
+    let expression = match &*api_variant_const.expr {
+        Expr::Reference(reference) => &*reference.expr,
+        expression => expression,
+    };
+    let Expr::Array(array) = expression else {
+        return Err("JS_TOOL_API_VARIANTS must reference an array literal".into());
+    };
+    for element in &array.elems {
+        let Expr::Struct(gate) = element else {
+            return Err("JS_TOOL_API_VARIANTS entries must be JsToolApiVariant structs".into());
+        };
+        let mut namespace = None;
+        let mut method = None;
+        let mut since = None;
+        let mut until = None;
+        let mut arguments = None;
+        for field in &gate.fields {
+            let syn::Member::Named(name) = &field.member else {
+                continue;
+            };
+            match (name.to_string().as_str(), &field.expr) {
+                ("namespace", Expr::Lit(value)) => {
+                    if let Lit::Str(value) = &value.lit {
+                        namespace = Some(value.value());
+                    }
+                }
+                ("method", Expr::Lit(value)) => {
+                    if let Lit::Str(value) = &value.lit {
+                        method = Some(value.value());
+                    }
+                }
+                ("since", Expr::Lit(value)) => {
+                    if let Lit::Str(value) = &value.lit {
+                        since = Some(value.value());
+                    }
+                }
+                ("until", expression) => {
+                    until = Some(parse_optional_string(expression, "until")?);
+                }
+                ("arguments", expression) => {
+                    arguments = parse_optional_string_array(expression)?;
+                }
+                _ => {}
+            }
+        }
+        let key = (
+            namespace.ok_or("JsToolApiVariant namespace is missing")?,
+            method.ok_or("JsToolApiVariant method is missing")?,
+        );
+        let since = since.ok_or("JsToolApiVariant since is missing")?;
+        let until = until.unwrap_or(None);
+        let binding = bindings.get_mut(&key).ok_or_else(|| {
+            format!(
+                "JsToolApiVariant refers to missing binding `{}.{}`",
+                key.0, key.1
+            )
+        })?;
+        if binding
+            .api_variants
+            .iter()
+            .any(|variant| variant.since == since)
+        {
+            return Err(format!(
+                "duplicate JsToolApiVariant for `{}.{}` at {since}",
+                key.0, key.1
+            )
+            .into());
+        }
+        binding.api_variants.push(JsToolApiVariantSpec {
+            since,
+            until,
+            arguments,
+        });
+    }
     Ok(bindings)
+}
+
+/// Parses an optional static string used by one API variant declaration.
+fn parse_optional_string(
+    expression: &Expr,
+    field_name: &str,
+) -> Result<Option<String>, Box<dyn Error>> {
+    match expression {
+        Expr::Path(path) if path.path.is_ident("None") => Ok(None),
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(function) = &*call.func else {
+                return Err(format!("JsToolApiVariant {field_name} must use Some(string)").into());
+            };
+            if !function.path.is_ident("Some") {
+                return Err(format!("JsToolApiVariant {field_name} must use Some(string)").into());
+            }
+            let expression = call.args.first().expect("one Some argument is present");
+            match expression {
+                Expr::Lit(value) => match &value.lit {
+                    Lit::Str(value) => Ok(Some(value.value())),
+                    _ => Err(format!("JsToolApiVariant {field_name} must contain a string").into()),
+                },
+                _ => Err(format!("JsToolApiVariant {field_name} must contain a string").into()),
+            }
+        }
+        _ => Err(format!("JsToolApiVariant {field_name} must be None or Some(string)").into()),
+    }
+}
+
+/// Parses a static string slice used by one API variant declaration.
+fn parse_string_array(expression: &Expr, field_name: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let Expr::Array(array) = expression else {
+        return Err(format!("JsToolApiVariant {field_name} must be a string array").into());
+    };
+    array
+        .elems
+        .iter()
+        .map(|element| match element {
+            Expr::Lit(value) => match &value.lit {
+                Lit::Str(value) => Ok(value.value()),
+                _ => Err(format!("JsToolApiVariant {field_name} must contain strings").into()),
+            },
+            _ => Err(format!("JsToolApiVariant {field_name} must contain strings").into()),
+        })
+        .collect()
+}
+
+/// Parses an optional static string slice used by one API variant declaration.
+fn parse_optional_string_array(expression: &Expr) -> Result<Option<Vec<String>>, Box<dyn Error>> {
+    match expression {
+        Expr::Path(path) if path.path.is_ident("None") => Ok(None),
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(function) = &*call.func else {
+                return Err("JsToolApiVariant arguments must use Some(string array)".into());
+            };
+            if !function.path.is_ident("Some") {
+                return Err("JsToolApiVariant arguments must use Some(string array)".into());
+            }
+            let expression = call.args.first().expect("one Some argument is present");
+            let expression = match expression {
+                Expr::Reference(reference) => &*reference.expr,
+                expression => expression,
+            };
+            Ok(Some(parse_string_array(expression, "arguments")?))
+        }
+        _ => Err("JsToolApiVariant arguments must be None or Some(string array)".into()),
+    }
 }
 
 /// Generates the executable JavaScript Tools namespace from Rust traits and binding contracts.
@@ -256,23 +423,30 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
 "#,
     );
     let mut initialized_namespaces = BTreeSet::new();
+    let mut chat_namespace_open = false;
     for ((namespace, method), overloads) in methods {
-        let tool = bindings
+        let binding = bindings
             .get(&(namespace.clone(), method.clone()))
             .expect("validated binding is present");
+        if chat_namespace_open && namespace != "Chat" {
+            output.push_str("});\n");
+            chat_namespace_open = false;
+        }
         let mut expression = "Tools".to_string();
-        for segment in namespace.split('.') {
-            expression.push_str(&format!("[\"{segment}\"]"));
-            if initialized_namespaces.insert(expression.clone()) {
-                output.push_str(&format!("{expression} = {expression} || {{}};\n"));
+        if namespace != "Chat" {
+            for segment in namespace.split('.') {
+                expression.push_str(&format!("[\"{segment}\"]"));
+                if initialized_namespaces.insert(expression.clone()) {
+                    output.push_str(&format!("{expression} = {expression} || {{}};\n"));
+                }
             }
         }
-        let signature = overloads
+        let canonical_signature = overloads
             .iter()
             .max_by_key(|arguments| arguments.len())
             .expect("host method has one signature")
             .join(", ");
-        let overloads = overloads
+        let canonical_overloads = overloads
             .iter()
             .map(|arguments| {
                 format!(
@@ -286,13 +460,91 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
             })
             .collect::<Vec<_>>()
             .join(", ");
-        output.push_str(&format!(
-            "{expression}[\"{method}\"] = function({signature}) {{\n    return __operitInvokeToolsBinding(\"{namespace}\", \"{method}\", \"{tool}\", [{overloads}], Array.prototype.slice.call(arguments));\n}};\n"
-        ));
+        if namespace == "Chat" {
+            if !chat_namespace_open {
+                output
+                    .push_str("Tools[\"Chat\"] = __operitToolPkgApi.namespace(\"Tools.Chat\", {\n");
+                chat_namespace_open = true;
+            }
+            output.push_str(&format!("\"{method}\": "));
+            if binding.api_variants.is_empty() {
+                output.push_str(&generated_js_function(
+                    &namespace,
+                    &method,
+                    &binding.tool,
+                    &canonical_signature,
+                    &canonical_overloads,
+                ));
+            } else {
+                output.push_str("__operitToolPkgApi.method()");
+                for variant in &binding.api_variants {
+                    let signature = variant
+                        .arguments
+                        .as_ref()
+                        .map(|arguments| arguments.join(", "))
+                        .unwrap_or_else(|| canonical_signature.clone());
+                    let variant_overloads = variant
+                        .arguments
+                        .as_ref()
+                        .map(|arguments| {
+                            format!(
+                                "[{}]",
+                                arguments
+                                    .iter()
+                                    .map(|argument| format!("\"{argument}\""))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        })
+                        .unwrap_or_else(|| canonical_overloads.clone());
+                    let function = generated_js_function(
+                        &namespace,
+                        &method,
+                        &binding.tool,
+                        &signature,
+                        &variant_overloads,
+                    );
+                    if let Some(until) = &variant.until {
+                        output.push_str(&format!(
+                            ".range(\"{}\", \"{}\", {})",
+                            variant.since, until, function
+                        ));
+                    } else {
+                        output.push_str(&format!(".since(\"{}\", {})", variant.since, function));
+                    }
+                }
+            }
+            output.push_str(",\n");
+        } else {
+            let function = generated_js_function(
+                &namespace,
+                &method,
+                &binding.tool,
+                &canonical_signature,
+                &canonical_overloads,
+            );
+            output.push_str(&format!("{expression}[\"{method}\"] = {function};\n"));
+        }
+    }
+    if chat_namespace_open {
+        output.push_str("});\n");
     }
     validate_javascript_syntax(&output)?;
     fs::write(output_path, output)?;
     Ok(())
+}
+
+/// Generates one JavaScript function expression for a Tools API variant.
+fn generated_js_function(
+    namespace: &str,
+    method: &str,
+    tool: &str,
+    signature: &str,
+    overloads: &str,
+) -> String {
+    format!(
+        "function({signature}) {{\n    return __operitInvokeToolsBinding(\"{namespace}\", \"{method}\", \"{tool}\", [{overloads}], Array.prototype.slice.call(arguments));\n}}"
+    )
 }
 
 /// Reads every overload's ordered argument names from active Rust host traits.
@@ -472,6 +724,28 @@ mod tests {
         assert_eq!(
             rust_variant_name("browser_take_screenshot"),
             "BrowserTakeScreenshot"
+        );
+    }
+
+    /// Verifies versioned API variants can declare a distinct parameter shape.
+    #[test]
+    fn parses_variant_arguments() {
+        let expression: Expr =
+            syn::parse_str("Some(&[\"options\"])").expect("variant argument fixture must parse");
+        assert_eq!(
+            parse_optional_string_array(&expression).expect("variant arguments must parse"),
+            Some(vec!["options".to_string()])
+        );
+    }
+
+    /// Verifies versioned API variants can declare an exclusive upper bound.
+    #[test]
+    fn parses_variant_until() {
+        let expression: Expr =
+            syn::parse_str("Some(\"2.1.0\")").expect("variant upper-bound fixture must parse");
+        assert_eq!(
+            parse_optional_string(&expression, "until").expect("variant upper bound must parse"),
+            Some("2.1.0".to_string())
         );
     }
 }

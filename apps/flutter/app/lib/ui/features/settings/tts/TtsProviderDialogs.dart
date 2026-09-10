@@ -132,8 +132,9 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                DropdownButtonFormField<String>(
-                  value: _providerType,
+                OperitFormStyles.dropdownButtonFormField<String>(
+                  context,
+                  initialValue: _providerType,
                   decoration: const InputDecoration(labelText: '供应商类型'),
                   items: _providerCatalogItems(widget.providerCatalogEntries),
                   onChanged: (value) {
@@ -883,8 +884,9 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                DropdownButtonFormField<String>(
-                  value: _providerType,
+                OperitFormStyles.dropdownButtonFormField<String>(
+                  context,
+                  initialValue: _providerType,
                   decoration: const InputDecoration(labelText: '供应商类型'),
                   items: _providerCatalogItems(widget.providerCatalogEntries),
                   onChanged: (value) {

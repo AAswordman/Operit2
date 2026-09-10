@@ -1244,7 +1244,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelProviderTypeOpenai => 'OpenAI';
 
   @override
+  String get settingsModelProviderTypeXai => 'xAI';
+
+  @override
   String get settingsModelProviderTypeOpenaiResponses => 'OpenAI Responses';
+
+  @override
+  String get settingsModelProviderTypeOpenaiCodex => 'OpenAI Codex';
 
   @override
   String get settingsModelProviderTypeOpenaiResponsesGeneric =>
@@ -1301,6 +1307,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelProviderTypeOpenrouter => 'OpenRouter';
+
+  @override
+  String get settingsModelProviderTypeOpencode => 'OpenCode';
 
   @override
   String get settingsModelProviderTypeFourRouter => '4Router';
@@ -1482,6 +1491,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelProviderTypeNovita => 'Novita AI';
+
+  @override
+  String get settingsModelProviderTypeMinimax => 'MiniMax';
 
   @override
   String get settingsModelProviderTypeOther => 'Other';
@@ -3469,4 +3481,165 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsDataAdvancedBackupOptionsDescription =>
       'Single-item JSON export and restore';
+
+  @override
+  String get settingsRuntimeNetworkControl => 'Network control';
+
+  @override
+  String get settingsRuntimeNetworkControlDescription =>
+      'Roles, identities, device authority, and audit';
+
+  @override
+  String get settingsRuntimeControlInitialize => 'Initialize control';
+
+  @override
+  String get settingsRuntimeControlRoles => 'Roles';
+
+  @override
+  String get settingsRuntimeControlIdentities => 'Identities';
+
+  @override
+  String get settingsRuntimeControlAudit => 'Audit';
+
+  @override
+  String get settingsRuntimeControlAddRole => 'Add role';
+
+  @override
+  String get settingsRuntimeControlGrantRole => 'Grant role';
+
+  @override
+  String get settingsRuntimeControlAddIdentity => 'Add identity';
+
+  @override
+  String get settingsRuntimeControlBindDevice => 'Bind device';
+
+  @override
+  String get settingsRuntimeControlRoleName => 'Role name';
+
+  @override
+  String get settingsRuntimeControlCapabilities => 'What can this role do?';
+
+  @override
+  String get settingsRuntimeControlManagedDevices =>
+      'Devices this role can manage (empty = all)';
+
+  @override
+  String get settingsRuntimeControlIdentityName => 'Identity name';
+
+  @override
+  String get settingsRuntimeControlDevice => 'Device';
+
+  @override
+  String get settingsRuntimeControlDeviceId => 'Device ID';
+
+  @override
+  String get settingsRuntimeControlNoAudit => 'No control commands recorded';
+
+  @override
+  String get settingsRuntimeControlNoBindings => 'No device bindings';
+
+  @override
+  String get settingsRuntimeControlGranted => 'Granted';
+
+  @override
+  String get settingsRuntimeControlRevoked => 'Revoked';
+
+  @override
+  String get settingsRuntimeControlRemoveDevice => 'Remove device';
+
+  @override
+  String get settingsRuntimeControlDisconnectDevice => 'Disconnect device';
+
+  @override
+  String get settingsRuntimeControlRemoved => 'Removed';
+
+  @override
+  String get settingsRuntimeControlDisconnected => 'Disconnected';
+
+  @override
+  String get settingsRuntimeControlAdmitDevice => 'Readmit device';
+
+  @override
+  String get settingsRuntimeControlAllDevices => 'All devices';
+
+  @override
+  String get settingsRuntimeControlManages => 'Manages';
+
+  @override
+  String get settingsRuntimeControlCurrentIdentity => 'Current identity';
+
+  @override
+  String get settingsRuntimeControlCurrentCapabilities =>
+      'Current capabilities';
+
+  @override
+  String get settingsRuntimeControlManageIdentities => 'Manage identities';
+
+  @override
+  String get settingsRuntimeControlAssignIdentity => 'Set device identity';
+
+  @override
+  String get settingsRuntimeControlClearIdentity => 'Clear device identity';
+
+  @override
+  String get settingsRuntimeControlIdentityDefinitions =>
+      'Identity definitions';
+
+  @override
+  String get settingsRuntimeControlIdentityAssignment => 'Identity assignment';
+
+  @override
+  String get settingsRuntimeControlNoIdentity => 'No identity assigned';
+
+  @override
+  String get settingsRuntimeControlOnline => 'Online';
+
+  @override
+  String get settingsRuntimeControlOffline => 'Offline';
+
+  @override
+  String get settingsRuntimeControlCapabilityAll => 'Everything';
+
+  @override
+  String get settingsRuntimeControlCapabilityAuditRead => 'View audit history';
+
+  @override
+  String get settingsRuntimeControlCapabilityNetworkRelay =>
+      'Relay network traffic';
+
+  @override
+  String get settingsRuntimeControlCapabilityStorageProvide =>
+      'Provide storage';
+
+  @override
+  String get settingsRuntimeControlCapabilityRuntimeExecute => 'Run tasks';
+
+  @override
+  String get settingsRuntimeControlCapabilityNetworkUser => 'Use the network';
+
+  @override
+  String get settingsRuntimeControlCapabilityViewDevices =>
+      'View devices and current identities';
+
+  @override
+  String get settingsRuntimeControlCapabilityApproval =>
+      'Approve authorizations';
+
+  @override
+  String get settingsRuntimeControlRoleAdministrator => 'Administrator';
+
+  @override
+  String get settingsRuntimeControlRoleAuditor => 'Auditor';
+
+  @override
+  String get settingsRuntimeControlRoleRelay => 'Relay node';
+
+  @override
+  String get settingsRuntimeControlRoleStorage => 'Storage node';
+
+  @override
+  String get settingsRuntimeControlRoleRunner => 'Task runner';
+
+  @override
+  String get settingsRuntimeControlRoleUser => 'User';
 }

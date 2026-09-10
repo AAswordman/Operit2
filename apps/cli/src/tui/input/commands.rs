@@ -7,7 +7,7 @@ pub(super) struct TuiCommandSpec {
     pub(super) description_key: TuiTextKey,
 }
 
-const COMMAND_SPECS: [TuiCommandSpec; 41] = [
+const COMMAND_SPECS: [TuiCommandSpec; 42] = [
     TuiCommandSpec {
         name: "help",
         usage: "/help",
@@ -37,6 +37,11 @@ const COMMAND_SPECS: [TuiCommandSpec; 41] = [
         name: "language",
         usage: "/language [en|zh-CN]",
         description_key: TuiTextKey::CommandLanguageDescription,
+    },
+    TuiCommandSpec {
+        name: "network",
+        usage: "/network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy>",
+        description_key: TuiTextKey::CommandNetworkDescription,
     },
     TuiCommandSpec {
         name: "model",

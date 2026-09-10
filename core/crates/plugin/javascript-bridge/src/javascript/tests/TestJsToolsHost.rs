@@ -805,6 +805,11 @@ macro_rules! impl_rejecting_js_tools_host {
             fn getMessages(&self, _chatId: String, _options: Option<operit_plugin_sdk::js_sdk::chat::ChatHostGetMessagesOptions>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::ChatMessagesResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.getMessages is not part of this test")
             }
+
+            /// Rejects functional model calls in this test host.
+            fn call(&self, _options: operit_plugin_sdk::js_sdk::chat::ChatCallOptions) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::ChatCallResultData> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.call is not part of this test")
+            }
         }
 
         #[allow(non_snake_case)]

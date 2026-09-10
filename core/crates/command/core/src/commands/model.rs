@@ -468,7 +468,7 @@ pub fn run_model_command(
                 .getResolvedModelConfig(providerId, modelId)
                 .map_err(|error| error.to_string())?;
             let descriptor = manager
-                .getThinkingSettingsForModel(providerId, modelId)
+                .getThinkingSettingsForProvider(providerId, modelId)
                 .map_err(|error| error.to_string())?;
             output.push_stdout_line(format!("Thinking for {providerId}:{modelId}"));
             output.push_stdout_line(format!("Control: {:?}", descriptor.control));
@@ -507,10 +507,10 @@ pub fn run_model_command(
             .to_string();
             let manager = command.modelManager();
             let current = manager
-                .getModelProfile(providerId, modelId)
+                .getProviderProfile(providerId)
                 .map_err(|error| error.to_string())?;
-            let model = manager
-                .updateThinkingSettingsForModel(
+            let provider = manager
+                .updateThinkingSettingsForProvider(
                     providerId,
                     modelId,
                     thinkingConfigurations,
@@ -521,8 +521,8 @@ pub fn run_model_command(
             output.setJsonStdout(json!({
                 "providerId": providerId,
                 "modelId": modelId,
-                "thinkingConfigurations": model.thinkingConfigurations,
-                "thinkingOptionId": model.thinkingOptionId,
+                "thinkingConfigurations": provider.thinkingConfigurations,
+                "thinkingOptionId": provider.thinkingOptionId,
                 "updated": true,
             }));
         }
@@ -545,22 +545,24 @@ pub fn run_model_command(
             .to_string();
             let manager = command.modelManager();
             let current = manager
-                .getModelProfile(providerId, modelId)
+                .getProviderProfile(providerId)
                 .map_err(|error| error.to_string())?;
-            let model = manager
-                .updateThinkingSettingsForModel(
+            let provider = manager
+                .updateThinkingSettingsForProvider(
                     providerId,
                     modelId,
                     current.thinkingConfigurations,
                     thinkingOptionId,
                 )
                 .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("Updated thinking option for {providerId}:{modelId}"));
+            output.push_stdout_line(format!(
+                "Updated thinking option for {providerId}:{modelId}"
+            ));
             output.setJsonStdout(json!({
                 "providerId": providerId,
                 "modelId": modelId,
-                "thinkingConfigurations": model.thinkingConfigurations,
-                "thinkingOptionId": model.thinkingOptionId,
+                "thinkingConfigurations": provider.thinkingConfigurations,
+                "thinkingOptionId": provider.thinkingOptionId,
                 "updated": true,
             }));
         }

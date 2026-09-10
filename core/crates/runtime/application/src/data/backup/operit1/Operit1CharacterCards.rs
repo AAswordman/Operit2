@@ -234,6 +234,35 @@ mod tests {
         );
     }
 
+    /// Maps avatar URIs written by the Operit1 Android debug package into runtime storage.
+    #[test]
+    fn rewrites_operit1_debug_package_character_card_avatar_uri() {
+        let cardId = "666eee2e-ea60-4ff6-9c92-04d396386231";
+        let resourceId = "329c80ae-f6f0-4bf8-9bb7-2199150f6f15";
+        let cardIds = vec![cardId.to_string()];
+        let mut preferences = HashMap::new();
+        preferences.insert(
+            format!("character_card_theme_{cardId}_custom_ai_avatar_uri"),
+            Operit1PreferenceValue::String(format!(
+                "file:///data/user/0/com.ai.assistance.operit.debug/files/avatar_{cardId}_{resourceId}.png"
+            )),
+        );
+
+        let avatarUris = buildOperit1CharacterCardAvatarUris(
+            &preferences,
+            &cardIds,
+            &SnapshotFileImportPlan::new(),
+        )
+        .expect("Operit1 debug avatar URI should be rewritten");
+
+        assert_eq!(
+            avatarUris.get(cardId),
+            Some(&format!(
+                "{RUNTIME_IMPORTED_OPERIT1_FILES_DIR_PATH}/avatar_{cardId}_{resourceId}.png"
+            )),
+        );
+    }
+
     /// Keeps one explicitly shared Operit1 avatar URI attached to both character cards.
     #[test]
     fn preserves_shared_operit1_character_card_avatar_uri() {
@@ -931,4 +960,3 @@ fn parseOperit1PromptTagType(value: Option<&str>) -> Result<TagType, String> {
         Some(other) => Err(format!("Operit1 提示标签类型未知：{other}")),
     }
 }
-

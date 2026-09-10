@@ -19,7 +19,6 @@ class BubbleAiMessageComposable extends StatefulWidget {
   const BubbleAiMessageComposable({
     super.key,
     required this.message,
-    required this.isStreaming,
     required this.backgroundColor,
     required this.textColor,
     this.transparentSurface = false,
@@ -40,7 +39,6 @@ class BubbleAiMessageComposable extends StatefulWidget {
   });
 
   final ChatUiMessage message;
-  final bool isStreaming;
   final Color backgroundColor;
   final Color textColor;
   final bool transparentSurface;
@@ -149,7 +147,6 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
           child: StreamingStructuredMessageRenderer(
             parts: widget.message.parts,
             contentStream: widget.message.contentStream,
-            isStreaming: widget.isStreaming,
             textColor: textColor,
             backgroundColor: backgroundColor,
             nodeGrouper: nodeGrouper,

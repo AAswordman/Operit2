@@ -646,6 +646,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           entry.type,
           entry.categoryId ?? '',
           entry.latestVersion?.version ?? '',
+          entry.latestVersion?.apiVersion ?? '',
           entry.stateCode,
         ].where((value) => value.trim().isNotEmpty).toList(growable: false),
         metrics: <UnifiedMarketDetailMetric>[
@@ -762,6 +763,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       ArtifactInfoRow(label: '来源', value: entry.source?.url ?? ''),
       ArtifactInfoRow(label: '版本', value: entry.latestVersion?.version ?? ''),
       ArtifactInfoRow(label: '格式', value: entry.latestVersion?.formatVer ?? ''),
+      ArtifactInfoRow(
+        label: 'ToolPkg API',
+        value: entry.latestVersion?.apiVersion ?? '',
+      ),
       ArtifactInfoRow(
         label: '最低版本',
         value: entry.latestVersion?.minAppVer ?? '',

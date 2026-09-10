@@ -398,7 +398,6 @@ impl Operit1ModelConfig {
 
 #[allow(non_snake_case)]
 fn buildModelProfile(
-    providerTypeId: &str,
     modelId: &str,
     config: &Operit1ModelConfig,
 ) -> Result<ModelProfile, String> {
@@ -434,13 +433,6 @@ fn buildModelProfile(
     model.localRuntime.llamaKvUnified = config.llamaKvUnified;
     model.localRuntime.llamaOffloadKqv = config.llamaOffloadKqv;
     model.parameters = buildModelParameters(config)?;
-    if !config.thinkingConfigurations.trim().is_empty()
-        && config.thinkingConfigurations.trim() != "[]"
-    {
-        model.thinkingConfigurations =
-            convert_thinking_configurations(&config.thinkingConfigurations, providerTypeId)?;
-        model.thinkingOptionId = config.thinkingOptionId.clone();
-    }
     Ok(model)
 }
 

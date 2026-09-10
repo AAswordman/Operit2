@@ -197,9 +197,9 @@ fn print_usage(output: &mut CoreCommandOutput) {
         "comment: operit2 market comment <entryId> <body-or-@file>",
         "comment edit: operit2 market comment edit <commentId> <body-or-@file>",
         "comment delete: operit2 market comment delete <commentId>",
-        "publish artifact: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>",
+        "publish artifact: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [apiVersion-or-]",
         "publish repo: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->",
-        "publish version artifact: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]",
+        "publish version artifact: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-] [apiVersion-or-]",
         "publish version repo: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]",
         "publish update-entry: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->",
         "install: operit2 market install <entryId> <clientAppVersion> [versionId]",
@@ -632,7 +632,7 @@ fn publish_artifact_cli(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     if args.len() < 20 {
-        return Err("usage: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>".to_string());
+        return Err("usage: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [apiVersion-or-]".to_string());
     }
     require_login(core)?;
     let description = read_content_arg(&args[2])?;
@@ -660,6 +660,7 @@ fn publish_artifact_cli(
         &args[17],
         &args[18],
         &args[19],
+        parse_optional_string_arg(args.get(20)),
     )?;
     write_publish_response(resp, output);
     Ok(())
@@ -719,7 +720,7 @@ fn publish_artifact_version_cli(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     if args.len() < 15 {
-        return Err("usage: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
+        return Err("usage: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-] [apiVersion-or-]".to_string());
     }
     require_login(core)?;
     let resp = core.api().publish_artifact_version(
@@ -743,6 +744,7 @@ fn publish_artifact_version_cli(
         parse_optional_content_arg(args.get(17).map(String::as_str).unwrap_or("-"))?,
         parse_optional_string_arg(args.get(18)),
         parse_optional_bool_arg(args.get(19))?,
+        parse_optional_string_arg(args.get(20)),
     )?;
     write_publish_response(resp, output);
     Ok(())

@@ -1201,7 +1201,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelProviderTypeOpenai => 'OpenAI';
 
   @override
+  String get settingsModelProviderTypeXai => 'xAI';
+
+  @override
   String get settingsModelProviderTypeOpenaiResponses => 'OpenAI Responses';
+
+  @override
+  String get settingsModelProviderTypeOpenaiCodex => 'OpenAI Codex';
 
   @override
   String get settingsModelProviderTypeOpenaiResponsesGeneric =>
@@ -1257,6 +1263,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelProviderTypeOpenrouter => 'OpenRouter';
+
+  @override
+  String get settingsModelProviderTypeOpencode => 'OpenCode';
 
   @override
   String get settingsModelProviderTypeFourRouter => '4Router';
@@ -1434,6 +1443,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelProviderTypeNovita => 'Novita AI';
+
+  @override
+  String get settingsModelProviderTypeMinimax => 'MiniMax';
 
   @override
   String get settingsModelProviderTypeOther => '其他';
@@ -3333,4 +3345,157 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsDataAdvancedBackupOptionsDescription => '单项 JSON 导出与恢复';
+
+  @override
+  String get settingsRuntimeNetworkControl => '网络控制';
+
+  @override
+  String get settingsRuntimeNetworkControlDescription => '角色、身份、设备权限与审计';
+
+  @override
+  String get settingsRuntimeControlInitialize => '初始化控制';
+
+  @override
+  String get settingsRuntimeControlRoles => '角色';
+
+  @override
+  String get settingsRuntimeControlIdentities => '身份';
+
+  @override
+  String get settingsRuntimeControlAudit => '审计';
+
+  @override
+  String get settingsRuntimeControlAddRole => '添加角色';
+
+  @override
+  String get settingsRuntimeControlGrantRole => '授予角色';
+
+  @override
+  String get settingsRuntimeControlAddIdentity => '添加身份';
+
+  @override
+  String get settingsRuntimeControlBindDevice => '绑定设备';
+
+  @override
+  String get settingsRuntimeControlRoleName => '角色名称';
+
+  @override
+  String get settingsRuntimeControlCapabilities => '这个角色可以做什么';
+
+  @override
+  String get settingsRuntimeControlManagedDevices => '这个角色可以管理哪些设备（不选表示全部）';
+
+  @override
+  String get settingsRuntimeControlIdentityName => '身份名称';
+
+  @override
+  String get settingsRuntimeControlDevice => '设备';
+
+  @override
+  String get settingsRuntimeControlDeviceId => '设备 ID';
+
+  @override
+  String get settingsRuntimeControlNoAudit => '暂无控制命令记录';
+
+  @override
+  String get settingsRuntimeControlNoBindings => '暂无设备绑定';
+
+  @override
+  String get settingsRuntimeControlGranted => '已授予';
+
+  @override
+  String get settingsRuntimeControlRevoked => '已撤销';
+
+  @override
+  String get settingsRuntimeControlRemoveDevice => '移除设备';
+
+  @override
+  String get settingsRuntimeControlDisconnectDevice => '断开设备';
+
+  @override
+  String get settingsRuntimeControlRemoved => '已移除';
+
+  @override
+  String get settingsRuntimeControlDisconnected => '已断开';
+
+  @override
+  String get settingsRuntimeControlAdmitDevice => '重新接纳设备';
+
+  @override
+  String get settingsRuntimeControlAllDevices => '全部设备';
+
+  @override
+  String get settingsRuntimeControlManages => '可管理';
+
+  @override
+  String get settingsRuntimeControlCurrentIdentity => '当前身份';
+
+  @override
+  String get settingsRuntimeControlCurrentCapabilities => '当前能力';
+
+  @override
+  String get settingsRuntimeControlManageIdentities => '管理身份';
+
+  @override
+  String get settingsRuntimeControlAssignIdentity => '设置设备身份';
+
+  @override
+  String get settingsRuntimeControlClearIdentity => '清除设备身份';
+
+  @override
+  String get settingsRuntimeControlIdentityDefinitions => '身份定义';
+
+  @override
+  String get settingsRuntimeControlIdentityAssignment => '身份分配';
+
+  @override
+  String get settingsRuntimeControlNoIdentity => '未设置身份';
+
+  @override
+  String get settingsRuntimeControlOnline => '在线';
+
+  @override
+  String get settingsRuntimeControlOffline => '离线';
+
+  @override
+  String get settingsRuntimeControlCapabilityAll => '全部权限';
+
+  @override
+  String get settingsRuntimeControlCapabilityAuditRead => '查看审计记录';
+
+  @override
+  String get settingsRuntimeControlCapabilityNetworkRelay => '中继网络流量';
+
+  @override
+  String get settingsRuntimeControlCapabilityStorageProvide => '提供存储空间';
+
+  @override
+  String get settingsRuntimeControlCapabilityRuntimeExecute => '执行任务';
+
+  @override
+  String get settingsRuntimeControlCapabilityNetworkUser => '使用网络';
+
+  @override
+  String get settingsRuntimeControlCapabilityViewDevices => '查看设备与当前身份';
+
+  @override
+  String get settingsRuntimeControlCapabilityApproval => '审批授权';
+
+  @override
+  String get settingsRuntimeControlRoleAdministrator => '管理员';
+
+  @override
+  String get settingsRuntimeControlRoleAuditor => '审计员';
+
+  @override
+  String get settingsRuntimeControlRoleRelay => '中继节点';
+
+  @override
+  String get settingsRuntimeControlRoleStorage => '存储节点';
+
+  @override
+  String get settingsRuntimeControlRoleRunner => '执行节点';
+
+  @override
+  String get settingsRuntimeControlRoleUser => '普通用户';
 }

@@ -454,8 +454,6 @@ pub struct ModelProfile {
     pub builtinToolsOverride: Option<Vec<ModelBuiltinTool>>,
     pub requestOverride: Option<ModelRequestSpec>,
     pub parameters: Vec<ModelParameter<serde_json::Value>>,
-    pub thinkingConfigurations: String,
-    pub thinkingOptionId: String,
     pub summary: ModelSummarySettings,
     pub localRuntime: LocalModelRuntimeSettings,
 }
@@ -470,8 +468,6 @@ impl ModelProfile {
             builtinToolsOverride: None,
             requestOverride: None,
             parameters: Vec::new(),
-            thinkingConfigurations: defaultThinkingConfigurations(),
-            thinkingOptionId: String::new(),
             summary: ModelSummarySettings::default(),
             localRuntime: LocalModelRuntimeSettings::default(),
         }
@@ -494,6 +490,8 @@ pub struct ProviderProfile {
     pub customHeaders: String,
     pub requestLimitPerMinute: i32,
     pub maxConcurrentRequests: i32,
+    pub thinkingConfigurations: String,
+    pub thinkingOptionId: String,
     pub models: Vec<ModelProfile>,
 }
 
@@ -513,6 +511,8 @@ impl ProviderProfile {
             customHeaders: "{}".to_string(),
             requestLimitPerMinute: 0,
             maxConcurrentRequests: 0,
+            thinkingConfigurations: defaultThinkingConfigurations(),
+            thinkingOptionId: String::new(),
             models: Vec::new(),
         }
     }

@@ -1576,6 +1576,7 @@ fn toolpkg_ipc_main_request_uses_bound_resource_host() {
         ToolPkgExecutionContext {
             context_key: "toolpkg_main:message_insert".to_string(),
             container_package_name: "message_insert".to_string(),
+            api_version: "2.0.0".to_string(),
             text_resource_host: Arc::new(StaticToolPkgTextResourceHost {
                 resources: BTreeMap::from([(
                     "dist/shared.js".to_string(),

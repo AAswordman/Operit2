@@ -126,6 +126,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     };
     let mut tui = OperitTui::new(
         tui_core(core_application.localClient()),
+        core_application.accessServices(),
         shell_args,
         initial_chat_id,
         approval_bridge,

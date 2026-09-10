@@ -121,7 +121,9 @@ fn string_list(source: &Map<String, Value>, key: &str) -> Result<Vec<String>, St
                 _ => Err(format!("Operit1 thinking field {key} must contain strings")),
             })
             .collect(),
-        Some(_) => Err(format!("Operit1 thinking field {key} must be a string list")),
+        Some(_) => Err(format!(
+            "Operit1 thinking field {key} must be a string list"
+        )),
     }
 }
 
@@ -142,11 +144,17 @@ fn matcher_values(
 fn action_list(source: &Map<String, Value>, keys: &[&str]) -> Result<Vec<Value>, String> {
     let mut actions = Vec::new();
     for key in keys {
-        let Some(value) = source.get(*key) else { continue };
+        let Some(value) = source.get(*key) else {
+            continue;
+        };
         let entries: Vec<&Value> = match value {
             Value::Array(values) => values.iter().collect(),
             Value::Object(_) => vec![value],
-            _ => return Err(format!("Operit1 thinking field {key} must be an action list")),
+            _ => {
+                return Err(format!(
+                    "Operit1 thinking field {key} must be an action list"
+                ))
+            }
         };
         for entry in entries {
             let object = entry
@@ -167,7 +175,9 @@ fn action_list(source: &Map<String, Value>, keys: &[&str]) -> Result<Vec<Value>,
 
 /// Converts legacy options and preserves direct actions.
 fn options(source: &Map<String, Value>, parameter_label: &str) -> Result<Vec<Value>, String> {
-    let Some(value) = source.get("options") else { return Ok(Vec::new()) };
+    let Some(value) = source.get("options") else {
+        return Ok(Vec::new());
+    };
     let values = value
         .as_array()
         .ok_or_else(|| "Operit1 thinking options must be an array".to_string())?;
@@ -185,7 +195,8 @@ fn options(source: &Map<String, Value>, parameter_label: &str) -> Result<Vec<Val
             let label = optional_string(object, "label")?
                 .filter(|label| !label.is_empty())
                 .unwrap_or_else(|| id.clone());
-            let path = optional_string(object, "path")?.unwrap_or_else(|| parameter_label.to_string());
+            let path =
+                optional_string(object, "path")?.unwrap_or_else(|| parameter_label.to_string());
             Ok(json!({
                 "id": id,
                 "label": label,

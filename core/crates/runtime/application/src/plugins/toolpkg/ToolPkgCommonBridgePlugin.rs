@@ -50,6 +50,9 @@ impl OperitPlugin for ToolPkgCommonBridgePlugin {
         crate::plugins::toolpkg::ToolPkgChatMessageHookBridge::ToolPkgChatMessageHookBridge::register(
             self.runtime.clone(),
         );
+        crate::plugins::toolpkg::ToolPkgChatRuntimeHookBridge::ToolPkgChatRuntimeHookBridge::register(
+            self.runtime.clone(),
+        );
         crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge::register(self.runtime.clone());
         crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::register(
             self.runtime.clone(),
@@ -79,6 +82,7 @@ fn syncToolPkgRegistrations(
     crate::plugins::toolpkg::ToolPkgChatInputHookBridge::ToolPkgChatInputHookBridge::syncToolPkgRegistrations(activeContainers.clone());
     crate::plugins::toolpkg::ToolPkgChatViewHookBridge::ToolPkgChatViewHookBridge::syncAndReplayToolPkgRegistrations(runtime, activeContainers.clone());
     crate::plugins::toolpkg::ToolPkgChatMessageHookBridge::ToolPkgChatMessageHookBridge::syncToolPkgRegistrations(activeContainers.clone());
+    crate::plugins::toolpkg::ToolPkgChatRuntimeHookBridge::ToolPkgChatRuntimeHookBridge::syncToolPkgRegistrations(activeContainers.clone());
     crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge::syncToolPkgRegistrations(activeContainers.clone());
     crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry::syncToolPkgRegistrations(activeContainers.clone());
     crate::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge::syncToolPkgRegistrations(runtime, activeContainers);

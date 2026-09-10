@@ -16,6 +16,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/CharacterAvatar.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
+import '../../../theme/OperitFormStyles.dart';
 import '../../packages/utils/PackageDisplayUtils.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';

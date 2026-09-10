@@ -75,6 +75,39 @@ pub struct ToolPkgChatMessageHookRegistration {
     pub functionSource: Option<String>,
 }
 
+/// Registration for one chat message context-menu item.
+#[derive(Clone, Debug)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatMessageMenuDialogRegistration {
+    pub screen: String,
+    pub title: crate::package::LocalizedText,
+}
+
+/// Registration for one chat message context-menu item.
+#[derive(Clone, Debug)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatMessageMenuItemRegistration {
+    pub containerPackageName: String,
+    pub itemId: String,
+    pub title: crate::package::LocalizedText,
+    pub icon: Option<String>,
+    pub order: i32,
+    pub senders: Vec<String>,
+    pub functionName: String,
+    pub functionSource: Option<String>,
+    pub dialog: Option<ToolPkgChatMessageMenuDialogRegistration>,
+}
+
+/// Registration for one chat runtime-state hook.
+#[derive(Clone, Debug)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatRuntimeHookRegistration {
+    pub containerPackageName: String,
+    pub hookId: String,
+    pub functionName: String,
+    pub functionSource: Option<String>,
+}
+
 /// Registration for one tool lifecycle hook.
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]

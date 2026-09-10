@@ -119,11 +119,12 @@ impl ToolPkgLoader {
                     None
                 }
             },
-            |mainScriptText, toolPkgId, mainScriptPath| {
+            |mainScriptText, toolPkgId, mainScriptPath, apiVersion| {
                 parseMainRegistration(
                     mainScriptText,
                     toolPkgId,
                     mainScriptPath,
+                    apiVersion,
                     jsEngine,
                     textResources.clone(),
                 )
@@ -139,6 +140,7 @@ fn parseMainRegistration(
     mainScriptText: &str,
     toolPkgId: &str,
     mainScriptPath: &str,
+    apiVersion: &str,
     jsEngine: &dyn JsExecutionEngine,
     textResources: Arc<std::collections::BTreeMap<String, String>>,
 ) -> ToolPkgMainRegistrationParseResult {
@@ -146,6 +148,7 @@ fn parseMainRegistration(
         mainScriptText,
         toolPkgId,
         mainScriptPath,
+        apiVersion,
         jsEngine,
         Some(textResources),
     )

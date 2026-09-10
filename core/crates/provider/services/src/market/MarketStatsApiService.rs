@@ -133,6 +133,8 @@ pub struct MarketEntryVersion {
     pub project_id: Option<String>,
     #[serde(rename = "runtimePackageId", default)]
     pub runtime_package_id: Option<String>,
+    #[serde(rename = "apiVersion", default)]
+    pub api_version: Option<String>,
     #[serde(rename = "installConfig", default)]
     pub install_config: Option<String>,
     #[serde(default)]
@@ -800,6 +802,7 @@ impl MarketStatsApiService {
         gh_release_tag: &str,
         asset_name: &str,
         sha256: &str,
+        api_version: Option<String>,
     ) -> Result<MarketPublishResponse, String> {
         let version_json = market_artifact_version_json(
             version,
@@ -809,6 +812,7 @@ impl MarketStatsApiService {
             changelog,
             project_id,
             runtime_package_id,
+            api_version,
         );
         self.decode_v2(
             "POST",
@@ -931,6 +935,7 @@ impl MarketStatsApiService {
         entry_detail: Option<String>,
         entry_category_id: Option<String>,
         entry_allow_public_updates: Option<bool>,
+        api_version: Option<String>,
     ) -> Result<MarketPublishResponse, String> {
         let body = market_new_version_body(
             Some(market_entry_patch_json(
@@ -948,6 +953,7 @@ impl MarketStatsApiService {
                 changelog,
                 project_id,
                 runtime_package_id,
+                api_version,
             ),
             None,
             Some(serde_json::json!({
@@ -1284,6 +1290,7 @@ fn market_base_version_json(
     json
 }
 
+/// Builds the JSON version record for an artifact-backed marketplace entry.
 fn market_artifact_version_json(
     version: &str,
     format_ver: &str,
@@ -1292,11 +1299,15 @@ fn market_artifact_version_json(
     changelog: Option<String>,
     project_id: &str,
     runtime_package_id: &str,
+    api_version: Option<String>,
 ) -> serde_json::Value {
     let mut json =
         market_base_version_json(version, format_ver, min_app_ver, max_app_ver, changelog);
     json["projectId"] = serde_json::Value::String(project_id.to_string());
     json["runtimePackageId"] = serde_json::Value::String(runtime_package_id.to_string());
+    if let Some(value) = api_version.filter(|value| !value.trim().is_empty()) {
+        json["apiVersion"] = serde_json::Value::String(value);
+    }
     json
 }
 

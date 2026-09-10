@@ -10,12 +10,13 @@ use operit_providers::chat::config::SystemToolPrompts as ProviderToolPrompts;
 use operit_providers::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
+use operit_providers::chat::llmprovider::AIService::SendMessageRequest;
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
     CachedMcpToolInfo, CoreNodeToolRuntime, CoreRouteChangeHandler, CoreRouteResumeContext,
     ResolvedCharacterCardToolAccess, RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo,
-    RuntimeCharacterMemoryBinding, RuntimeChatSendRequest, RuntimeChatSlot,
+    RuntimeCharacterMemoryBinding, RuntimeChatCallRequest, RuntimeChatSendRequest, RuntimeChatSlot,
     RuntimeCoreNodeRouteState, RuntimePluginAsset, RuntimeSkillCatalogEntry,
     RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
     ToolRuntimeSupportFuture,
@@ -467,6 +468,86 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 .await;
             holder.observeStats();
             Ok(())
+        })
+    }
+
+    /// Calls the configured functional model directly and keeps the request outside chat history.
+    #[allow(non_snake_case)]
+    fn callChatModel<'a>(
+        &'a self,
+        request: RuntimeChatCallRequest,
+    ) -> ToolRuntimeSupportFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let bindings = self.runtimeBindings()?.clone();
+            let mut service =
+                EnhancedAIService::new(bindings.toolHandler, bindings.providerRuntimeContext);
+            let (modelConfig, modelParameters, aiService) = service
+                .multi_service_manager
+                .getServiceBundleForFunction(request.functionType.clone())
+                .map_err(|error| error.to_string())?;
+            let thinkingQualityLevel = service
+                .provider_runtime_context
+                .support()
+                .thinkingQualityLevel()
+                .map_err(|error| error.to_string())?;
+            let providerModel = {
+                let provider = aiService.lock().await;
+                provider.provider_model()
+            };
+            let mut response = {
+                let mut provider = aiService.lock().await;
+                provider
+                    .send_message(SendMessageRequest {
+                        chat_history: request.turns,
+                        model_parameters: modelParameters,
+                        enable_thinking: request.enableThinking,
+                        thinking_quality_level: thinkingQualityLevel,
+                        thinking_configurations: modelConfig.thinkingConfigurations,
+                        thinking_option_id: modelConfig.thinkingOptionId,
+                        stream: false,
+                        available_tools: Vec::new(),
+                        preserve_think_in_history: true,
+                        enable_retry: false,
+                        on_non_fatal_error: None,
+                        on_tool_invocation: None,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?
+            };
+            let mut output = String::new();
+            response.collect(&mut |chunk| output.push_str(&chunk)).await;
+            if request.recordTokenUsage {
+                let (inputTokens, cachedInputTokens, outputTokens) = {
+                    let provider = aiService.lock().await;
+                    (
+                        provider.input_token_count(),
+                        provider.cached_input_token_count(),
+                        provider.output_token_count(),
+                    )
+                };
+                service
+                    .provider_runtime_context
+                    .support()
+                    .updateTokensForProviderModel(
+                        &providerModel,
+                        inputTokens,
+                        outputTokens,
+                        cachedInputTokens,
+                    )
+                    .map_err(|error| error.to_string())?;
+                operit_store::repository::UsageStatisticsStore::UsageStatisticsStore::new()
+                    .recordProviderModelRequest(
+                        providerModel,
+                        request.functionType,
+                        operit_store::repository::UsageStatisticsStore::UsageRequestSource::CHAT_RESPONSE,
+                        None,
+                        inputTokens,
+                        outputTokens,
+                        cachedInputTokens,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(output)
         })
     }
 

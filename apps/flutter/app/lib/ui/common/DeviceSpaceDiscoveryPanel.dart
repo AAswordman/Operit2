@@ -10,6 +10,7 @@ import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../core/runtime/RemotePairingBridge.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../theme/OperitFormStyles.dart';
 import 'components/M3LoadingIndicator.dart';
 
 class DeviceSpaceDiscoveryPanel extends StatefulWidget {
@@ -373,29 +374,13 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     }
   }
 
-  /// Confirms the merge and synchronizes the newly paired device space.
+  /// Joins the paired device's Space as the completion of pairing.
   Future<void> _offerJoiningPairedDeviceSpace(_RemotePairResult result) async {
-    final deviceInfo = result.session.remoteDeviceInfo;
-    final joined = await confirmAndJoinPairedDeviceSpace(
-      context: context,
-      clients: widget.clients,
-      sessionName: result.name,
-      deviceName: _deviceJoiningName(
-        context,
-        result.userName,
-        '${deviceInfo.platform}-${deviceInfo.model}',
-      ),
+    final joined = await widget.clients.server.runtimeRemoteLinkService
+        .joinPairedDeviceSpace(
+      name: result.name,
     );
     if (!mounted) {
-      return;
-    }
-    if (joined == null) {
-      setState(() {
-        _connectionMessage = AppLocalizations.of(
-          context,
-        )!.settingsRuntimePairingComplete;
-        _connectionFailed = false;
-      });
       return;
     }
     setState(() {
@@ -827,7 +812,10 @@ class _LinkTransportSelector extends StatelessWidget {
   /// Builds the explicit Link carrier selector shared by pairing dialogs.
   @override
   Widget build(BuildContext context) {
-    return DropdownButtonFormField<generated.LinkTransportPreference>(
+    return OperitFormStyles.dropdownButtonFormField<
+      generated.LinkTransportPreference
+    >(
+      context,
       initialValue: value,
       decoration: const InputDecoration(
         labelText: 'Link transport',
@@ -859,13 +847,4 @@ String _configuredUserName(BuildContext context, String userName) {
   return normalized.isEmpty
       ? AppLocalizations.of(context)!.settingsUserProfileUnnamed
       : normalized;
-}
-
-/// Combines the user identity and hardware name used by join confirmation.
-String _deviceJoiningName(
-  BuildContext context,
-  String userName,
-  String deviceName,
-) {
-  return '${_configuredUserName(context, userName)} · $deviceName';
 }

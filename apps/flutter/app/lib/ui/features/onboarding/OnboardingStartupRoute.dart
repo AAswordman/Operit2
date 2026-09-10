@@ -19,6 +19,7 @@ import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
 import '../../common/components/CommonNetworkErrorView.dart';
 import '../../main/navigation/StartupRouteStrategy.dart';
+import '../../theme/OperitFormStyles.dart';
 
 enum _AiSetupPage {
   intro,
@@ -872,6 +873,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
           customHeaders: provider.customHeaders,
           requestLimitPerMinute: provider.requestLimitPerMinute,
           maxConcurrentRequests: provider.maxConcurrentRequests,
+          thinkingConfigurations: provider.thinkingConfigurations,
+          thinkingOptionId: provider.thinkingOptionId,
           models: provider.models,
         ),
       );
@@ -2778,7 +2781,8 @@ class _AiSetupModelPage extends StatelessWidget {
                   description: '选择模型供应商，填写 API Key，拉取并设置默认模型。',
                 ),
                 const SizedBox(height: 22),
-                DropdownButtonFormField<String>(
+                OperitFormStyles.dropdownButtonFormField<String>(
+                  context,
                   initialValue: selectedProviderTypeId,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: '模型供应商'),
@@ -2872,7 +2876,8 @@ class _AiSetupModelPage extends StatelessWidget {
                 ),
                 if (availableModels.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
+                  OperitFormStyles.dropdownButtonFormField<String>(
+                    context,
                     initialValue: selectedModelId,
                     isExpanded: true,
                     decoration: const InputDecoration(labelText: '默认模型'),

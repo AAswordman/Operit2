@@ -13,6 +13,7 @@ import '../../../common/DeviceSpaceDiscoveryPanel.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+import 'NetworkControlPanel.dart';
 
 class RuntimeSettingsPanel extends StatefulWidget {
   const RuntimeSettingsPanel({super.key, this.embedded = false});
@@ -460,6 +461,15 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
               failed: _connectionFailed,
             ),
           ],
+        ],
+      ),
+      _SectionCard(
+        title: l10n.settingsRuntimeNetworkControl,
+        children: <Widget>[
+          NetworkControlPanel(
+            clients: _clients,
+            onChanged: _refreshCurrentDeviceSpace,
+          ),
         ],
       ),
       _SectionCard(

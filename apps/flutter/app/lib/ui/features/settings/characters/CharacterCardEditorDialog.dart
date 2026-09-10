@@ -778,7 +778,8 @@ class _CharacterCardEditorDialogState
                                 child: Text('还没有共享记忆库'),
                               )
                             else
-                              DropdownButtonFormField<String>(
+                              OperitFormStyles.dropdownButtonFormField<String>(
+                                context,
                                 initialValue:
                                     widget.sharedMemoryStores.any(
                                       (store) => store.id == _sharedMemoryId,

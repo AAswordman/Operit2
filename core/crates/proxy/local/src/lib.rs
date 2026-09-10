@@ -240,10 +240,7 @@ impl LocalApplicationBridgeTarget for LocalCoreProxy {
     /// Dispatches one application-owned call without re-entering server service objects.
     async fn callLocalApplication(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        let result = {
-            let mut application = self.application.lock().await;
-            generated_dispatch_application_call(&mut application, request).await
-        };
+        let result = self.dispatchCall(request).await;
         match result {
             Ok(value) => CoreCallResponse::ok(requestId, value),
             Err(error) => CoreCallResponse::err(requestId, error),

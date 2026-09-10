@@ -1,11 +1,55 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { AgentStatusResultData, CharacterCardListResultData, ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, MessageSendResultData, MessageSendStreamEventData } from "./results";
+import type { AgentStatusResultData, CharacterCardListResultData, ChatCallResultData, ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, MessageSendResultData, MessageSendStreamEventData } from "./results";
 
 /**
  * Starts the chat service and manages conversations, messages, and character cards.
  */
 export namespace Chat {
+  /**
+   * Describes one prompt turn supplied to a non-persistent functional model call.
+   */
+  export interface PromptTurn {
+    /**
+     * Identifies the prompt role.
+     */
+    kind: string;
+    /**
+     * Contains the prompt content.
+     */
+    content: string;
+    /**
+     * Identifies the tool associated with the turn.
+     */
+    toolName?: string;
+    /**
+     * Carries caller-defined prompt metadata.
+     */
+    metadata?: Record<string, unknown>;
+  }
+
+  /**
+   * Configures one non-persistent functional model call.
+   */
+  export interface CallOptions {
+    /**
+     * Selects the configured functional model.
+     */
+    functionType: string;
+    /**
+     * Supplies the prompt turns sent to the functional model.
+     */
+    turns: PromptTurn[];
+    /**
+     * Controls whether provider token usage is recorded.
+     */
+    recordTokenUsage?: boolean;
+    /**
+     * Controls model thinking for this request.
+     */
+    enableThinking?: boolean;
+  }
+
   /**
    * Selects how a chat-list query is matched against conversation metadata.
    */
@@ -90,6 +134,24 @@ export namespace Chat {
   }
 
   /**
+   * Configures ordering and inclusive index bounds when reading a message range.
+   */
+  export interface HostGetMessagesRangeOptions {
+    /**
+     * Selects chronological or reverse-chronological message order.
+     */
+    order?: HostGetMessagesOptionsOrder;
+    /**
+     * Selects the zero-based first message index.
+     */
+    start?: number;
+    /**
+     * Selects the zero-based last message index.
+     */
+    end?: number;
+  }
+
+  /**
    * Selects the initial presentation mode used when the chat service opens.
    */
   export type StartServiceOptionsInitialMode = "WINDOW" | "BALL" | "VOICE_BALL" | "FULLSCREEN" | "RESULT_DISPLAY" | "SCREEN_OCR";
@@ -98,6 +160,11 @@ export namespace Chat {
    * Check chat input processing status
    */
   function agentStatus(chatId: string): Promise<AgentStatusResultData>;
+  /**
+   * Calls a configured functional model without adding a turn to chat history.
+   * @since ToolPkg API 2.0.0
+   */
+  function call(options: CallOptions): Promise<ChatCallResultData>;
   /**
    * Create a new chat conversation
    * @param group - Optional group name for the new chat
@@ -120,6 +187,12 @@ export namespace Chat {
    * @param options - Optional order/limit
    */
   function getMessages(chatId: string, options?: HostGetMessagesOptions): Promise<ChatMessagesResultData>;
+  /**
+   * Gets an inclusive index range of messages from a specific chat.
+   * @param chatId - The ID of the chat to read
+   * @param options - The order and inclusive start/end indexes
+   */
+  function getMessagesRange(chatId: string, options?: HostGetMessagesRangeOptions): Promise<ChatMessagesResultData>;
   /**
    * List all chat conversations
    * @returns Promise resolving to the list of all chats

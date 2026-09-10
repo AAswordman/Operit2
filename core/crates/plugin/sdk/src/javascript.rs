@@ -281,6 +281,10 @@ pub struct ToolPkgMainRegistrationCapture {
     pub chatViewHooks: Vec<String>,
     #[serde(rename = "chatMessageHooks", default)]
     pub chatMessageHooks: Vec<String>,
+    #[serde(rename = "chatMessageMenuItems", default)]
+    pub chatMessageMenuItems: Vec<String>,
+    #[serde(rename = "chatRuntimeHooks", default)]
+    pub chatRuntimeHooks: Vec<String>,
     #[serde(rename = "hostEventHooks", default)]
     pub hostEventHooks: Vec<String>,
     #[serde(rename = "toolLifecycleHooks", default)]
@@ -320,6 +324,7 @@ pub trait ToolPkgTextResourceHost: Send + Sync {
 pub struct ToolPkgExecutionContext {
     pub context_key: String,
     pub container_package_name: String,
+    pub api_version: String,
     pub text_resource_host: Arc<dyn ToolPkgTextResourceHost>,
 }
 

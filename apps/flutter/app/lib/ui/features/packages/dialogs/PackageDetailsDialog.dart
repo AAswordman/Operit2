@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -33,6 +34,7 @@ class PluginDetailsDialog extends StatefulWidget {
 
 class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
   core_proxy.ToolPkgContainerDetails? _details;
+  core_proxy.ToolPkgLogoBytes? _logo;
   bool _loadingDetails = true;
   String? _toggleError;
   final Set<String> _togglingSubpackages = <String>{};
@@ -45,6 +47,7 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
     }
   }
 
+  /// Loads ToolPkg metadata and the manifest-declared logo resource.
   Future<void> _loadDetails() async {
     final useEnglish = _useEnglishForToolPkgText(context);
     try {
@@ -52,11 +55,22 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
         packageName: widget.plugin.packageName,
         useEnglish: useEnglish,
       );
+      final logo = details?.logoResourceKey == null
+          ? null
+          : await widget.packageManager.readToolPkgLogoBytes(
+              packageName: widget.plugin.packageName,
+            );
+      if (details?.logoResourceKey != null && logo == null) {
+        throw StateError(
+          'ToolPkg logo resource is unavailable: ${details!.logoResourceKey}',
+        );
+      }
       if (!mounted) {
         return;
       }
       setState(() {
         _details = details;
+        _logo = logo;
         _loadingDetails = false;
       });
     } catch (error, stackTrace) {
@@ -134,14 +148,41 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
                 label: l10n.version,
                 value: details?.version ?? widget.plugin.version,
               ),
+              if (details != null)
+                _DetailLine(label: 'ToolPkg API', value: details.apiVersion),
               _DetailLine(
                 label: l10n.author,
                 value: (details?.author ?? widget.plugin.author).join(', '),
               ),
               _DetailLine(label: l10n.entry, value: widget.plugin.mainEntry),
               _DetailLine(label: l10n.source, value: widget.plugin.sourcePath),
+              if (_logo != null) ...<Widget>[
+                const SizedBox(height: 12),
+                _ToolPkgLogo(logo: _logo!),
+              ],
               const SizedBox(height: 12),
               _DescriptionText(description),
+              if (details != null && details.requires.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 16),
+                const _SectionTitle(text: 'Requirements'),
+                const SizedBox(height: 8),
+                for (final requirement in details.requires)
+                  _ModuleTile(
+                    title: requirement.id,
+                    subtitle: requirement.description,
+                    icon: Icons.link_outlined,
+                    footer: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: <Widget>[
+                        if (requirement.minVersion != null)
+                          _SmallBadge(text: '>= ${requirement.minVersion}'),
+                        if (requirement.maxVersion != null)
+                          _SmallBadge(text: '<= ${requirement.maxVersion}'),
+                      ],
+                    ),
+                  ),
+              ],
               const SizedBox(height: 16),
               _SectionTitle(text: l10n.toolPkgResources),
               const SizedBox(height: 8),
@@ -274,6 +315,26 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
         ),
       ],
     );
+  }
+}
+
+class _ToolPkgLogo extends StatelessWidget {
+  const _ToolPkgLogo({required this.logo});
+
+  final core_proxy.ToolPkgLogoBytes logo;
+
+  /// Builds the image widget for a parser-validated ToolPkg logo resource.
+  @override
+  Widget build(BuildContext context) {
+    final image = switch (logo.mimeType) {
+      'image/svg+xml' => SvgPicture.memory(logo.bytes, fit: BoxFit.contain),
+      'image/png' || 'image/jpeg' || 'image/webp' => Image.memory(
+        logo.bytes,
+        fit: BoxFit.contain,
+      ),
+      _ => throw StateError('Unsupported ToolPkg logo MIME type: ${logo.mimeType}'),
+    };
+    return SizedBox(width: 96, height: 96, child: image);
   }
 }
 

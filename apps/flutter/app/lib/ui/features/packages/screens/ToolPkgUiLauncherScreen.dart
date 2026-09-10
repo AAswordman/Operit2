@@ -1873,10 +1873,12 @@ class _ComposeDslRenderer extends StatelessWidget {
     );
   }
 
+  /// Builds a dropdown menu using the shared application menu surface defaults.
   Widget _dropdownMenu(BuildContext context) {
     final items = _slotChildren('content', useChildren: true);
     final label = _plainSlotText('label') ?? _string(node.props['label']);
     final anchor = _dropdownMenuAnchor(label);
+    final colorScheme = Theme.of(context).colorScheme;
     if (_bool(node.props['expanded'])) {
       final offset = _number(node.props['offset']) ?? 0;
       final selectActionId = _actionId(node.props['onClick']);
@@ -1889,12 +1891,12 @@ class _ComposeDslRenderer extends StatelessWidget {
           Material(
             color:
                 _color(context, node.props['containerColor']) ??
-                Theme.of(context).colorScheme.surface,
-            elevation: _number(node.props['tonalElevation']) ?? 8,
+                colorScheme.surfaceContainerHigh,
+            elevation: _number(node.props['tonalElevation']) ?? 3,
             shape: RoundedRectangleBorder(
               borderRadius:
                   _borderRadius(node.props['shape']) ??
-                  BorderRadius.circular(4),
+                  BorderRadius.circular(8),
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(
