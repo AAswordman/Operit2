@@ -448,11 +448,14 @@ const HistoryChat = (function () {
             sendMessageOptions,
         );
 
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<null>((resolve) => {
-            setTimeout(() => resolve(null), timeoutMs);
+            timeoutId = setTimeout(() => resolve(null), timeoutMs);
         });
 
-        const sendResult = await Promise.race([sendPromise, timeoutPromise]);
+        const sendResult = await Promise.race([sendPromise, timeoutPromise]).finally(() => {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+        });
         if (sendResult === null) {
             return {
                 success: true,
