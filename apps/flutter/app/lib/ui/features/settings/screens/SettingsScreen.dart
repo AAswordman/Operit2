@@ -33,7 +33,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       widget.initialCategory ?? SettingsCategory.model;
   TopBarController? _topBarController;
   bool _isCurrentMainScreen = true;
-  int _profileRevision = 0;
 
   @override
   void didChangeDependencies() {
@@ -71,13 +70,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return SettingsCategoryList(
         selectedCategory: null,
         onCategorySelected: _openPhoneCategory,
-        profileRevision: _profileRevision,
       );
     }
 
     return SettingsDetailView(
       category: selectedCategory,
-      onProfileChanged: _handleProfileChanged,
+      onOpenProfile: () => _openPhoneCategory(SettingsCategory.profile),
     );
   }
 
@@ -113,7 +111,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: SettingsCategoryList(
               selectedCategory: _wideSelectedCategory,
               onCategorySelected: _selectWideCategory,
-              profileRevision: _profileRevision,
             ),
           ),
         ),
@@ -143,7 +140,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: SettingsDetailView(
               key: ValueKey<SettingsCategory>(_wideSelectedCategory),
               category: _wideSelectedCategory,
-              onProfileChanged: _handleProfileChanged,
+              onOpenProfile: () =>
+                  _selectWideCategory(SettingsCategory.profile),
             ),
           ),
         ),
@@ -170,16 +168,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       args: entry.args,
       source: entry.source,
     );
-  }
-
-  /// Invalidates the profile summary after the detail page mutates account data.
-  void _handleProfileChanged() {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _profileRevision += 1;
-    });
   }
 
   void _syncTopBarTitle() {
