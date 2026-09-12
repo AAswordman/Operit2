@@ -28,8 +28,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore iSH Alpine rootfs cache
+        id: ish-rootfs-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
+
       - name: Build iSH Alpine rootfs
+        if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
         run: bash tools/ios-runtime/ish/build_alpine_rootfs_linux.sh
+
+      - name: Save iSH Alpine rootfs cache
+        if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
 
       - name: Upload iSH Alpine rootfs
         uses: actions/upload-artifact@v4
@@ -167,6 +182,15 @@ jobs:
         if: steps.web-build.outputs.needed == 'true'
         run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
 
+      - name: Save web access bundle
+        if: steps.web-build.outputs.needed == 'true' && steps.web-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            apps/web_access/build/bundle
+            apps/flutter/app/assets/web_access
+          key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
+
       - name: Build and package unsigned iOS app
         run: python3 tools/build_scripts/build_flutter_ios.py
 
@@ -190,15 +214,6 @@ jobs:
         with:
           path: target/operit-build-tools/wasi-sdk-${{ env.WASI_SDK_VERSION }}-macos
           key: ${{ runner.os }}-${{ runner.arch }}-wasi-sdk-${{ env.WASI_SDK_VERSION }}
-
-      - name: Save web access bundle
-        if: steps.web-build.outputs.needed == 'true' && steps.web-build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            apps/web_access/build/bundle
-            apps/flutter/app/assets/web_access
-          key: ${{ steps.web-build-cache.outputs.cache-primary-key }}
 
       - name: Upload unsigned iOS app artifact
         uses: actions/upload-artifact@v4

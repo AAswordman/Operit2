@@ -19,8 +19,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore iSH Alpine rootfs cache
+        id: ish-rootfs-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
+
       - name: Build iSH Alpine rootfs
+        if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
         run: bash tools/ios-runtime/ish/build_alpine_rootfs_linux.sh
+
+      - name: Save iSH Alpine rootfs cache
+        if: steps.ish-rootfs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: apps/flutter/app/ios/Runner/ish-root.tar.gz
+          key: ios-ish-rootfs-${{ hashFiles('tools/ios-runtime/ish/build_alpine_rootfs_linux.sh') }}
 
       - name: Upload iSH Alpine rootfs
         uses: actions/upload-artifact@v4
