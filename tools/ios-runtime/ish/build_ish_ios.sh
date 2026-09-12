@@ -23,6 +23,41 @@ architectures="${4:?missing Xcode architectures}"
 build_products_dir="$repo_dir/apps/flutter/app/apple/ish-build/${configuration}-${platform_name}"
 linux_configuration="${configuration}Linux"
 linux_meson_build_dir="$build_products_dir/meson-linux"
+cache_marker="$build_products_dir/.operit-ish-build-complete"
+
+# Reuses a verified static-library set restored by the CI cache.
+verify_cached_build_products() {
+    local library_name
+    local cached_libraries=(
+        liblinux.a
+        libiSHLinux.a
+        libiSHLinuxUser.a
+        libfakefs.a
+        libish_emu.a
+        libarchive.a
+        libiSHFakefs.a
+        libiSHFchdir.a
+    )
+
+    if [[ ! -f "$cache_marker" ]]; then
+        return 1
+    fi
+    for library_name in "${cached_libraries[@]}"; do
+        if [[ ! -f "$build_products_dir/$library_name" ]]; then
+            return 1
+        fi
+    done
+    if ! xcrun --sdk "$sdk_name" nm -gU "$build_products_dir/libiSHLinux.a" \
+        | awk '$NF == "_linux_mount_app_directory" { found = 1 } END { exit !found }'; then
+        return 1
+    fi
+    printf 'Reusing cached iSH static libraries: %s\n' "$build_products_dir"
+    return 0
+}
+
+if verify_cached_build_products; then
+    exit 0
+fi
 
 python3 "$script_dir/fetch_sources.py"
 
@@ -123,3 +158,4 @@ verify_static_library libish_emu.a
 verify_static_library libarchive.a
 verify_static_library libiSHFakefs.a
 verify_static_library libiSHFchdir.a
+touch "$cache_marker"

@@ -121,8 +121,38 @@ jobs:
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
 
+      - name: Identify iSH build toolchain
+        id: ish-build-toolchain
+        run: |
+          toolchain_hash="$({
+            xcodebuild -version
+            xcrun --sdk iphoneos --show-sdk-version
+            xcrun --sdk iphoneos clang --version
+            meson --version
+            ninja --version
+          } | shasum -a 256 | awk '{ print $1 }')"
+          echo "hash=$toolchain_hash" >> "$GITHUB_OUTPUT"
+
+      - name: Restore iSH static libraries
+        id: ish-build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/flutter/app/apple/ish-build/Release-iphoneos
+          key: ${{ runner.os }}-${{ runner.arch }}-ish-static-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('apps/flutter/app/ios/Runner.xcodeproj/project.pbxproj', 'tools/ios-runtime/ish/build_ish_ios.sh', 'tools/ios-runtime/ish/fetch_sources.py', 'tools/ios-runtime/ish/patches/**') }}
+
       - name: Check build environment
         run: python3 tools/build_scripts/check_environment.py --products app --include-ios --github-runner
+
+      - name: Build iSH static libraries
+        if: steps.ish-build-cache.outputs.cache-hit != 'true'
+        run: bash tools/ios-runtime/ish/build_ish_ios.sh Release iphoneos iphoneos arm64
+
+      - name: Save iSH static libraries
+        if: steps.ish-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: apps/flutter/app/apple/ish-build/Release-iphoneos
+          key: ${{ runner.os }}-${{ runner.arch }}-ish-static-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('apps/flutter/app/ios/Runner.xcodeproj/project.pbxproj', 'tools/ios-runtime/ish/build_ish_ios.sh', 'tools/ios-runtime/ish/fetch_sources.py', 'tools/ios-runtime/ish/patches/**') }}
 
       - name: Cache Cargo outputs
         uses: actions/cache@v4
