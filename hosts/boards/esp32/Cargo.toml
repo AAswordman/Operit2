@@ -1,0 +1,11 @@
+[package]
+name = "operit-board-esp32"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "ESP32 board capabilities for Operit Edge Core apps."
+
+[dependencies]
+esp-idf-hal = "0.46.2"
+operit-host-api = { path = "../../../core/crates/foundation/host-api" }

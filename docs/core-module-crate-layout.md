@@ -77,6 +77,8 @@ core/crates/
 ├── node/
 │   ├── route-macros/Cargo.toml
 │   ├── contracts/Cargo.toml
+│   ├── edge-contract/Cargo.toml
+│   ├── edge/Cargo.toml
 │   ├── router/Cargo.toml
 │   ├── local-runtime/Cargo.toml
 │   ├── space-runtime/Cargo.toml
@@ -91,7 +93,8 @@ core/crates/
 │   └── web/Cargo.toml
 ├── proxy/
 │   ├── codegen/Cargo.toml
-│   └── local/Cargo.toml
+│   ├── local/Cargo.toml
+│   └── edge/Cargo.toml
 ├── command/
 │   └── core/Cargo.toml
 └── application/
@@ -105,10 +108,13 @@ foundation/contracts       -> operit-core-contracts
 persistence/chat           -> operit-chat-store
 provider/contracts         -> operit-provider-contracts
 runtime/application        -> operit-runtime-application
+node/edge-contract         -> operit-edge-contract
+node/edge                  -> operit-node-edge
 node/router                -> operit-core-node
 access/peer-link           -> operit-peer-link
 proxy/codegen              -> operit-proxy-scan
 proxy/local                -> operit-proxy-local
+proxy/edge                 -> operit-proxy-edge
 application/core           -> operit-core-application
 ~~~
 
@@ -1284,7 +1290,84 @@ foundation/model
 foundation/link
 ~~~
 
-### 9.3 node/router/Cargo.toml
+### 9.3 node/edge-contract/Cargo.toml
+
+对应当前 operit-edge-contract。
+
+职责：
+
+- Edge device object 和 property 常量。
+- Edge Service 与 Edge Proxy 共享的地址契约。
+- 设备能力命名的稳定层。
+
+创建输入：
+
+~~~text
+纯常量 contract。
+不接收 Host、Link client、transport 或 app 实例。
+~~~
+
+直接依赖：
+
+~~~text
+无
+~~~
+
+禁止依赖：
+
+~~~text
+operit-link
+operit-host-api
+operit-node-edge
+operit-proxy-edge
+operit-core-application
+~~~
+
+### 9.4 node/edge/Cargo.toml
+
+对应当前 operit-node-edge。
+
+职责：
+
+- 轻量 Edge Service 容器。
+- Device IO typed service。
+- Edge Service 到 foundation/link shared client 的内部适配。
+- Device state watch 生命周期管理。
+
+创建输入：
+
+~~~text
+HostManager
+Edge service config
+Transport adapter 提供的 Link client handle
+~~~
+
+直接依赖：
+
+~~~text
+foundation/host-api
+foundation/link
+node/edge-contract
+tokio
+serde_json
+~~~
+
+禁止依赖：
+
+~~~text
+operit-core-application
+operit-runtime
+operit-store
+operit-providers
+operit-tools
+operit-access-runtime
+proxy/local
+proxy/edge
+~~~
+
+node/edge 不是 Space 架构里的完整 CoreNode。它只持有设备侧服务，不能创建 Runtime、Provider、Tool、Store、Access session 或 Space sync。
+
+### 9.5 node/router/Cargo.toml
 
 对应当前 CoreNodeRouter 的主体。
 
@@ -1323,7 +1406,7 @@ CLI TUI
 proxy/local
 ~~~
 
-### 9.4 node/local-runtime/Cargo.toml
+### 9.6 node/local-runtime/Cargo.toml
 
 对应当前 CoreNodeLocalRuntime 的能力容器。
 
@@ -1360,7 +1443,7 @@ CLI
 GeneratedCoreProxy
 ~~~
 
-### 9.5 node/space-runtime/Cargo.toml
+### 9.7 node/space-runtime/Cargo.toml
 
 对应当前 SpaceRuntime。
 
@@ -1387,7 +1470,7 @@ foundation/link
 foundation/model
 ~~~
 
-### 9.6 node/space-sync/Cargo.toml
+### 9.8 node/space-sync/Cargo.toml
 
 对应当前 SpacePersistenceSyncService 的节点侧调度部分。
 
@@ -1689,6 +1772,47 @@ access/server
 access/peer-link
 ~~~
 
+### 11.3 proxy/edge/Cargo.toml
+
+对应当前 operit-proxy-edge。
+
+职责：
+
+- Edge Service typed proxy。
+- Link request 构造和 response/event 解码。
+- Device IO client facade。
+- Edge watch stream 的 typed projection。
+
+创建输入：
+
+~~~text
+CoreLinkSharedClient
+Edge contract metadata
+~~~
+
+直接依赖：
+
+~~~text
+foundation/host-api
+foundation/link
+node/edge-contract
+futures-core
+serde_json
+~~~
+
+禁止依赖：
+
+~~~text
+operit-node-edge
+operit-core-application
+operit-runtime
+operit-store
+operit-access-runtime
+proxy/local
+~~~
+
+proxy/edge 是消费 Edge Service 的 typed facade。app 和 host crate 调用 typed method，不直接构造 CoreCallRequest、CoreWatchRequest、CoreValue 或 CoreEvent。
+
 ## 12. Command
 
 ### 12.1 command/core/Cargo.toml
@@ -1869,9 +1993,12 @@ tool/builtin       -> node/route-macros 仅用于宏展开
 | operit-js-bridge | plugin/javascript-bridge | 保留脚本执行桥接 |
 | operit-runtime | runtime/contracts、application、chat、preferences、workspace、host、transfer、plugin-host、events | 先抽 contract，再按生命周期拆分 |
 | operit-route-macros | node/route-macros | 保留过程宏，改 workspace 路径 |
+| operit-edge-contract | node/edge-contract | 保留 Edge Service 共享地址契约 |
+| operit-node-edge | node/edge | 保留轻量设备服务节点，不扩展为完整 CoreNode |
 | operit-node-runtime | node/contracts、router、local-runtime、space-runtime、space-sync | 删除混合 server crate |
 | operit-access-runtime | access/identity、auth、pairing、discovery、peer-link、server、web | 按控制面和载体拆分 |
 | operit-proxy-local | proxy/codegen、proxy/local | 编译期 codegen 与运行时 Proxy 分离 |
+| operit-proxy-edge | proxy/edge | 保留 Edge typed facade，不依赖 node/edge 实现 |
 | operit-command-core | command/core | 变成 application/core 的消费方 |
 | 无对应 crate | application/core | 新建唯一 composition root |
 
@@ -1923,6 +2050,8 @@ members = [
     "crates/runtime/events",
     "crates/node/route-macros",
     "crates/node/contracts",
+    "crates/node/edge-contract",
+    "crates/node/edge",
     "crates/node/router",
     "crates/node/local-runtime",
     "crates/node/space-runtime",
@@ -1936,6 +2065,7 @@ members = [
     "crates/access/web",
     "crates/proxy/codegen",
     "crates/proxy/local",
+    "crates/proxy/edge",
     "crates/command/core",
     "crates/application/core",
 ]

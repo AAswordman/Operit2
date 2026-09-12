@@ -4,13 +4,19 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
-use super::OpenAIProvider::OpenAIProvider;
+use super::OpenAIProvider::{OpenAIProvider, ResponsesStreamProtocol};
+use super::OpenAIResponsesProvider::{
+    append_web_search_tool, build_responses_web_search_chunks, responses_metadata_tag,
+    strip_responses_reasoning_metadata, OpenAIResponsesPayloadAdapter, ParsedResponseOutput,
+    RESPONSES_OUTPUT_ITEM_META_PROVIDER, RESPONSES_REASONING_META_PROVIDER,
+};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use crate::runtime_support::ProviderRuntimeContext;
+use operit_model::ModelConfigData::{BuiltinToolRequestFormat, ModelBuiltinTool};
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
@@ -25,6 +31,256 @@ use operit_util::TokenCacheManager::TokenCacheManager;
 
 const PROVIDER_TRANSPORT_LOG_TAG: &str = "ProviderTransport";
 
+pub(crate) struct DeepseekResponsesPayloadAdapter;
+
+impl DeepseekResponsesPayloadAdapter {
+    /// Converts chat messages with DeepSeek plaintext reasoning replay semantics.
+    pub fn to_responses_request(chatStyleRequest: Value) -> Value {
+        OpenAIResponsesPayloadAdapter::to_deepseek_responses_request(chatStyleRequest)
+    }
+
+    /// Parses DeepSeek Responses output while preserving stateless continuation metadata.
+    pub fn parse_non_streaming_response(jsonResponse: &Value) -> ParsedResponseOutput {
+        let mut textChunks = Vec::new();
+        let mut reasoningChunks = Vec::new();
+        let mut reasoningMetadataTags = Vec::new();
+        let mut outputItemMetadataTags = Vec::new();
+        let mut searchItems = Vec::new();
+        let mut toolCalls = Vec::new();
+        let mut reasoningObserved = false;
+
+        if let Some(output) = jsonResponse.get("output").and_then(Value::as_array) {
+            for item in output {
+                match item.get("type").and_then(Value::as_str).unwrap_or_default() {
+                    "message" if Self::is_commentary_message(item) => {
+                        if let Some(metadataTag) = Self::create_commentary_metadata_tag(item) {
+                            outputItemMetadataTags.push(metadataTag);
+                            reasoningObserved = true;
+                        }
+                    }
+                    "message" => {
+                        for part in item
+                            .get("content")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                        {
+                            let text = part.get("text").and_then(Value::as_str).unwrap_or("");
+                            if text.is_empty() {
+                                continue;
+                            }
+                            match part.get("type").and_then(Value::as_str).unwrap_or("") {
+                                "output_text" | "text" => textChunks.push(text.to_string()),
+                                "reasoning_text" => {
+                                    reasoningObserved = true;
+                                    reasoningChunks.push(text.to_string());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    "reasoning" => {
+                        reasoningObserved = true;
+                        if let Some(metadataTag) = Self::create_reasoning_metadata_tag(item) {
+                            reasoningMetadataTags.push(metadataTag);
+                        }
+                        reasoningChunks.extend(Self::reasoning_texts(item));
+                    }
+                    "function_call" => {
+                        if let Some(toolCall) = Self::convert_function_call_item(item) {
+                            toolCalls.push(toolCall);
+                        }
+                    }
+                    "web_search_call" => {
+                        if let Some(metadataTag) =
+                            OpenAIResponsesPayloadAdapter::create_output_item_metadata_tag(item)
+                        {
+                            outputItemMetadataTags.push(metadataTag);
+                        }
+                        searchItems.push(item.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        ParsedResponseOutput {
+            textChunks,
+            reasoningChunks,
+            reasoningMetadataTags,
+            outputItemMetadataTags,
+            reasoningObserved,
+            searchChunks: build_responses_web_search_chunks(&searchItems, jsonResponse),
+            toolCalls: Value::Array(toolCalls),
+            usage: OpenAIResponsesPayloadAdapter::parse_usage_counts(jsonResponse.get("usage")),
+        }
+    }
+
+    /// Encodes one DeepSeek plaintext reasoning item for the next request.
+    pub fn create_reasoning_metadata_tag(item: &Value) -> Option<String> {
+        if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+            return None;
+        }
+        let reasoningId = item.get("id").and_then(Value::as_str)?.trim();
+        let content = item.get("content")?.as_array()?;
+        if reasoningId.is_empty() || !Self::contains_reasoning_text(content) {
+            return None;
+        }
+        Some(responses_metadata_tag(
+            RESPONSES_REASONING_META_PROVIDER,
+            &json!({"reasoning_id": reasoningId, "content": content}),
+        ))
+    }
+
+    /// Encodes one completed DeepSeek commentary message for reasoning replay.
+    pub fn create_commentary_metadata_tag(item: &Value) -> Option<String> {
+        if !Self::is_commentary_message(item) {
+            return None;
+        }
+        let content = item.get("content")?.as_array()?;
+        if Self::commentary_to_reasoning_content(content).is_empty() {
+            return None;
+        }
+        let mut metadata = Map::new();
+        metadata.insert("type".to_string(), json!("message"));
+        metadata.insert("role".to_string(), json!("assistant"));
+        if let Some(id) = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+        {
+            metadata.insert("id".to_string(), json!(id));
+        }
+        metadata.insert("content".to_string(), Value::Array(content.clone()));
+        Some(responses_metadata_tag(
+            RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+            &Value::Object(metadata),
+        ))
+    }
+
+    /// Encodes streamed commentary whose completed item omits its content snapshot.
+    pub fn create_streaming_commentary_metadata_tag(
+        item: &Value,
+        commentaryText: &str,
+    ) -> Option<String> {
+        if !Self::is_commentary_message(item) || commentaryText.is_empty() {
+            return None;
+        }
+        let mut metadata = Map::new();
+        metadata.insert("type".to_string(), json!("message"));
+        metadata.insert("role".to_string(), json!("assistant"));
+        if let Some(id) = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+        {
+            metadata.insert("id".to_string(), json!(id));
+        }
+        metadata.insert(
+            "content".to_string(),
+            json!([{"type": "output_text", "text": commentaryText}]),
+        );
+        Some(responses_metadata_tag(
+            RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+            &Value::Object(metadata),
+        ))
+    }
+
+    /// Returns whether one Responses message is DeepSeek commentary.
+    pub fn is_commentary_message(item: &Value) -> bool {
+        item.get("type").and_then(Value::as_str) == Some("message")
+            && item
+                .get("phase")
+                .and_then(Value::as_str)
+                .is_some_and(|phase| phase.trim().eq_ignore_ascii_case("commentary"))
+    }
+
+    /// Extracts plaintext reasoning parts from one completed reasoning item.
+    pub fn reasoning_texts(item: &Value) -> Vec<String> {
+        item.get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("reasoning_text"))
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .filter(|text| !text.is_empty())
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    /// Returns reasoning text parts with source indexes for stream deduplication.
+    pub fn reasoning_parts(item: &Value) -> Vec<(usize, String)> {
+        item.get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter(|(_, part)| part.get("type").and_then(Value::as_str) == Some("reasoning_text"))
+            .filter_map(|(index, part)| {
+                let text = part.get("text").and_then(Value::as_str)?;
+                (!text.is_empty()).then(|| (index, text.to_string()))
+            })
+            .collect()
+    }
+
+    /// Returns whether one content array carries DeepSeek reasoning text.
+    fn contains_reasoning_text(content: &[Value]) -> bool {
+        content.iter().any(|part| {
+            part.get("type").and_then(Value::as_str) == Some("reasoning_text")
+                && part
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| !text.is_empty())
+        })
+    }
+
+    /// Converts commentary parts into the required DeepSeek reasoning content shape.
+    fn commentary_to_reasoning_content(content: &[Value]) -> Vec<Value> {
+        content
+            .iter()
+            .filter_map(|part| {
+                let partType = part.get("type").and_then(Value::as_str)?;
+                if !matches!(partType, "output_text" | "text" | "reasoning_text") {
+                    return None;
+                }
+                let text = part.get("text").and_then(Value::as_str)?;
+                if text.is_empty() {
+                    return None;
+                }
+                Some(json!({"type": "reasoning_text", "text": text}))
+            })
+            .collect()
+    }
+
+    /// Converts one Responses function call into the chat-compatible tool-call shape.
+    fn convert_function_call_item(item: &Value) -> Option<Value> {
+        let name = item.get("name").and_then(Value::as_str)?.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let arguments = item
+            .get("arguments")
+            .and_then(Value::as_str)
+            .filter(|arguments| !arguments.trim().is_empty())
+            .unwrap_or("{}");
+        let mut toolCall = Map::new();
+        if let Some(callId) = item
+            .get("call_id")
+            .or_else(|| item.get("id"))
+            .and_then(Value::as_str)
+            .filter(|callId| !callId.is_empty())
+        {
+            toolCall.insert("id".to_string(), json!(callId));
+        }
+        toolCall.insert("type".to_string(), json!("function"));
+        toolCall.insert(
+            "function".to_string(),
+            json!({"name": name, "arguments": arguments}),
+        );
+        Some(Value::Object(toolCall))
+    }
+}
+
 #[derive(Clone)]
 pub struct DeepseekProvider {
     pub api_endpoint: String,
@@ -35,6 +291,7 @@ pub struct DeepseekProvider {
     pub supports_audio: bool,
     pub supports_video: bool,
     pub enable_tool_call: bool,
+    pub builtin_tools: Vec<ModelBuiltinTool>,
     pub custom_headers: Vec<(String, String)>,
     runtime_context: ProviderRuntimeContext,
     state: Arc<Mutex<DeepseekProviderState>>,
@@ -59,6 +316,10 @@ impl DeepseekProvider {
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
         runtime_context: ProviderRuntimeContext,
     ) -> Self {
@@ -67,9 +328,10 @@ impl DeepseekProvider {
             api_key,
             model_name,
             provider_type,
-            supports_vision: false,
-            supports_audio: false,
-            supports_video: false,
+            supports_vision,
+            supports_audio,
+            supports_video,
+            builtin_tools,
             enable_tool_call,
             custom_headers,
             runtime_context,
@@ -127,6 +389,49 @@ impl DeepseekProvider {
         &self,
         request: &SendMessageRequest,
     ) -> Result<Value, AiServiceError> {
+        if self.uses_responses_protocol()? {
+            let protocol_history = if request.enable_thinking {
+                request.chat_history.clone()
+            } else {
+                request
+                    .chat_history
+                    .iter()
+                    .map(|turn| {
+                        turn.with_content(strip_responses_reasoning_metadata(&turn.content))
+                    })
+                    .collect()
+            };
+            let parent = OpenAIProvider::new_with_capabilities(
+                self.api_endpoint.clone(),
+                self.api_key.clone(),
+                self.model_name.clone(),
+                self.provider_type.clone(),
+                self.custom_headers.clone(),
+                self.supports_vision,
+                self.supports_audio,
+                self.supports_video,
+                self.enable_tool_call,
+            );
+            let request_object = parent
+                .create_request_body_without_thinking_for_history(request, &protocol_history)?;
+            let mut responses_request =
+                DeepseekResponsesPayloadAdapter::to_responses_request(request_object);
+            ThinkingConfigurationApplier::apply(
+                &mut responses_request,
+                &self.provider_type,
+                &self.model_name,
+                &self.api_endpoint,
+                request.enable_thinking,
+                request.thinking_quality_level,
+                &request.thinking_configurations,
+                &request.thinking_option_id,
+            )?;
+            if self.web_search_enabled() {
+                append_web_search_tool(&mut responses_request);
+            }
+            return Ok(responses_request);
+        }
+
         let mut json_object = Map::new();
         let effectiveEnableToolCall = self.enable_tool_call && !request.available_tools.is_empty();
         json_object.insert("model".to_string(), json!(self.model_name));
@@ -155,34 +460,25 @@ impl DeepseekProvider {
         let json_object = request_object
             .as_object_mut()
             .expect("thinking request remains an object");
-
         self.apply_model_parameters(json_object, &request.model_parameters);
-
         if effectiveEnableToolCall {
             let tools = StructuredToolCallBridge::buildToolsArray(Some(&request.available_tools));
-            let toolsJson = tools.to_string();
-            self.calculate_and_store_input_tokens(
-                &StructuredToolCallBridge::compileHistoryForProvider(
-                    &request.chat_history,
-                    effectiveEnableToolCall,
-                ),
-                Some(&toolsJson),
-                true,
-            );
             json_object.insert("tools".to_string(), tools);
             json_object.insert("tool_choice".to_string(), json!("auto"));
-        } else {
-            self.calculate_and_store_input_tokens(
-                &StructuredToolCallBridge::compileHistoryForProvider(
-                    &request.chat_history,
-                    effectiveEnableToolCall,
-                ),
-                None,
-                true,
-            );
         }
-
         Ok(request_object)
+    }
+
+    /// Resolves the DeepSeek wire protocol from the configured endpoint path.
+    fn uses_responses_protocol(&self) -> Result<bool, AiServiceError> {
+        deepseek_uses_responses_protocol(&self.api_endpoint)
+    }
+
+    /// Returns whether DeepSeek Responses web search is enabled for this model.
+    fn web_search_enabled(&self) -> bool {
+        self.builtin_tools.iter().any(|tool| {
+            tool.enabled && tool.requestFormat == BuiltinToolRequestFormat::OpenAiWebSearch
+        })
     }
 
     pub fn build_messages_with_reasoning(
@@ -390,6 +686,389 @@ impl DeepseekProvider {
     }
 }
 
+/// Resolves whether one DeepSeek endpoint selects the Responses protocol.
+fn deepseek_uses_responses_protocol(endpoint: &str) -> Result<bool, AiServiceError> {
+    let endpoint = url::Url::parse(endpoint)
+        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+    let segment = endpoint
+        .path_segments()
+        .and_then(|segments| segments.last());
+    Ok(segment.is_some_and(|value| value.eq_ignore_ascii_case("responses")))
+}
+
+#[cfg(test)]
+mod responses_tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use serde_json::{json, Value};
+
+    use super::DeepseekProvider;
+    use super::DeepseekResponsesPayloadAdapter;
+    use crate::chat::llmprovider::AIService::SendMessageRequest;
+    use crate::chat::llmprovider::OpenAIResponsesProvider::OpenAIResponsesPayloadAdapter;
+    use crate::runtime_support::{
+        ProviderCharacterPromptContext, ProviderFunctionModelBinding, ProviderMessageTiming,
+        ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
+        ProviderToolPkgAiProviderRegistration,
+    };
+    use operit_model::FunctionType::FunctionType;
+    use operit_model::MemorySearchConfig::MemorySearchConfig;
+    use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
+    use operit_model::PromptFunctionType::PromptFunctionType;
+    use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+    use operit_model::ToolPrompt::ToolPrompt;
+
+    /// Supplies deterministic runtime capabilities for request-shape tests.
+    struct TestRuntimeSupport;
+
+    impl ProviderRuntimeSupport for TestRuntimeSupport {
+        /// Returns no filesystem root in the isolated test runtime.
+        fn dataDir(&self) -> Result<PathBuf, String> {
+            Err("test runtime does not expose a data directory".to_string())
+        }
+
+        /// Returns a stable thinking quality level for the test runtime.
+        fn thinkingQualityLevel(&self) -> Result<i32, String> {
+            Ok(2)
+        }
+
+        /// Accepts token updates without persisting them.
+        fn updateTokensForProviderModel(
+            &self,
+            _providerModel: &str,
+            _inputTokens: i64,
+            _outputTokens: i64,
+            _cachedInputTokens: i64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        /// Returns no memory configuration in the isolated test runtime.
+        fn memorySearchConfig(&self, _ownerKey: &str) -> Result<MemorySearchConfig, String> {
+            Err("test runtime does not expose memory configuration".to_string())
+        }
+
+        /// Returns no character prompt in the isolated test runtime.
+        fn characterPromptContext(
+            &self,
+            _roleCardId: &str,
+            _promptFunctionType: PromptFunctionType,
+        ) -> Result<ProviderCharacterPromptContext, String> {
+            Err("test runtime does not expose character prompts".to_string())
+        }
+
+        /// Returns no visible skill packages in the isolated test runtime.
+        fn aiVisibleSkillPackages(&self) -> Result<Vec<ProviderPackageInfo>, String> {
+            Ok(Vec::new())
+        }
+
+        /// Returns no function binding in the isolated test runtime.
+        fn modelBindingForFunction(
+            &self,
+            _rootDir: PathBuf,
+            _functionType: FunctionType,
+        ) -> Result<ProviderFunctionModelBinding, String> {
+            Err("test runtime does not expose model bindings".to_string())
+        }
+
+        /// Returns no model configuration in the isolated test runtime.
+        fn resolvedModelConfig(
+            &self,
+            _rootDir: PathBuf,
+            _providerId: &str,
+            _modelId: &str,
+        ) -> Result<ResolvedModelConfig, String> {
+            Err("test runtime does not expose model configuration".to_string())
+        }
+
+        /// Returns no provider profile in the isolated test runtime.
+        fn providerProfile(
+            &self,
+            _rootDir: PathBuf,
+            _providerId: &str,
+        ) -> Result<ProviderProfile, String> {
+            Err("test runtime does not expose provider profiles".to_string())
+        }
+
+        /// Reports that no package AI provider is registered in the test runtime.
+        fn hasToolPkgAiProvider(&self, _providerId: &str) -> bool {
+            false
+        }
+
+        /// Returns no package AI provider registration in the test runtime.
+        fn toolPkgAiProvider(
+            &self,
+            _providerId: &str,
+        ) -> Option<ProviderToolPkgAiProviderRegistration> {
+            None
+        }
+
+        /// Rejects package hook execution in the isolated test runtime.
+        fn runToolPkgAiProviderHook(
+            &self,
+            _containerPackageName: &str,
+            _functionName: &str,
+            _functionSource: Option<&str>,
+            _event: &str,
+            _tag: Option<String>,
+            _sourceKey: Option<String>,
+            _eventPayload: Value,
+            _runtimeContextKey: Option<String>,
+            _executionKind: Option<String>,
+            _onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        ) -> Result<Option<String>, String> {
+            Err("test runtime does not execute package hooks".to_string())
+        }
+
+        /// Does not decode package hook output in the test runtime.
+        fn decodeToolPkgHookResult(&self, _raw: Option<String>) -> Option<Value> {
+            None
+        }
+
+        /// Returns a zero timestamp for deterministic timing assertions.
+        fn messageTimingNow(&self) -> ProviderMessageTiming {
+            ProviderMessageTiming { startedAtMs: 0 }
+        }
+
+        /// Ignores timing records in the isolated test runtime.
+        fn logMessageTiming(
+            &self,
+            _stage: &str,
+            _startTimeMs: ProviderMessageTiming,
+            _details: Option<String>,
+        ) {
+        }
+    }
+
+    /// Builds the isolated runtime context used by provider request tests.
+    fn test_runtime_context() -> ProviderRuntimeContext {
+        ProviderRuntimeContext::new(Arc::new(TestRuntimeSupport))
+    }
+
+    /// Builds a request carrying one assistant tool call and its result.
+    fn tool_continuation_request(reasoning_metadata: &str) -> SendMessageRequest {
+        let assistant_content = format!(
+            "<think>Inspect the workspace first.</think>visible\n{reasoning_metadata}\n<tool name=\"list_files\" call_id=\"call_1\"><param name=\"path\">/workspace</param></tool>"
+        );
+        SendMessageRequest {
+            chat_history: vec![
+                PromptTurn::new(PromptTurnKind::USER, "List the workspace files."),
+                PromptTurn::new(PromptTurnKind::ASSISTANT, assistant_content),
+                PromptTurn::new(
+                    PromptTurnKind::TOOL_RESULT,
+                    "<tool_result name=\"list_files\"><content>workspace result</content></tool_result>",
+                ),
+                PromptTurn::new(PromptTurnKind::USER, "Continue."),
+            ],
+            model_parameters: Vec::new(),
+            enable_thinking: true,
+            thinking_quality_level: 2,
+            thinking_configurations: "[]".to_string(),
+            thinking_option_id: String::new(),
+            stream: false,
+            available_tools: vec![ToolPrompt::new(
+                "list_files".to_string(),
+                "Lists workspace files".to_string(),
+            )],
+            preserve_think_in_history: true,
+            enable_retry: false,
+            on_non_fatal_error: None,
+            on_tool_invocation: None,
+        }
+    }
+
+    /// Builds the assistant/tool continuation used by Responses replay tests.
+    fn continuation_request(assistant_content: String, call_id: &str) -> Value {
+        json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": assistant_content,
+                    "tool_calls": [{
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "list_files",
+                            "arguments": "{\"path\":\"/workspace\"}"
+                        }
+                    }]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": "workspace result"
+                }
+            ]
+        })
+    }
+
+    /// Verifies plaintext reasoning is replayed before the function call and result.
+    #[test]
+    fn plaintext_reasoning_replays_before_function_call() {
+        let reasoning_item = json!({
+            "type": "reasoning",
+            "id": "rs_plain_1",
+            "content": [{
+                "type": "reasoning_text",
+                "text": "Inspect the workspace first."
+            }]
+        });
+        let metadata =
+            DeepseekResponsesPayloadAdapter::create_reasoning_metadata_tag(&reasoning_item)
+                .expect("reasoning metadata");
+        let request = continuation_request(
+            format!("<think>Inspect the workspace first.</think>visible{metadata}"),
+            "call_plain_1",
+        );
+
+        let input = DeepseekResponsesPayloadAdapter::to_responses_request(request)["input"]
+            .as_array()
+            .expect("Responses input array")
+            .clone();
+        assert_eq!(input[0]["type"], "reasoning");
+        assert_eq!(input[0]["id"], "rs_plain_1");
+        assert_eq!(input[0]["content"][0]["type"], "reasoning_text");
+        assert_eq!(input[1]["type"], "message");
+        assert_eq!(input[1]["content"], "visible");
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["call_id"], "call_plain_1");
+        assert_eq!(input[3]["type"], "function_call_output");
+        assert_eq!(input[3]["call_id"], "call_plain_1");
+    }
+
+    /// Verifies encrypted reasoning is not sent through DeepSeek plaintext replay.
+    #[test]
+    fn encrypted_reasoning_is_not_replayed_as_plaintext() {
+        let parsed = DeepseekResponsesPayloadAdapter::parse_non_streaming_response(&json!({
+            "output": [{
+                "type": "reasoning",
+                "id": "rs_encrypted_1",
+                "encrypted_content": "encrypted"
+            }]
+        }));
+        assert!(parsed.reasoningMetadataTags.is_empty());
+    }
+
+    /// Verifies commentary continuation is encoded as DeepSeek reasoning text.
+    #[test]
+    fn commentary_replays_as_reasoning_text() {
+        let commentary_item = json!({
+            "type": "message",
+            "id": "msg_commentary_1",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{
+                "type": "output_text",
+                "text": "Activate the package before calling its tool."
+            }]
+        });
+        let parsed = DeepseekResponsesPayloadAdapter::parse_non_streaming_response(&json!({
+            "output": [commentary_item]
+        }));
+        assert!(parsed.reasoningChunks.is_empty());
+        let metadata = parsed
+            .outputItemMetadataTags
+            .first()
+            .expect("commentary metadata")
+            .clone();
+        let input = DeepseekResponsesPayloadAdapter::to_responses_request(continuation_request(
+            metadata,
+            "call_commentary_1",
+        ))["input"]
+            .as_array()
+            .expect("Responses input array")
+            .clone();
+        assert_eq!(input[0]["type"], "reasoning");
+        assert_eq!(input[0]["content"][0]["type"], "reasoning_text");
+        assert_eq!(
+            input[0]["content"][0]["text"],
+            "Activate the package before calling its tool."
+        );
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[2]["type"], "function_call_output");
+    }
+
+    /// Verifies web-search metadata does not remove an unrelated thinking block.
+    #[test]
+    fn web_search_metadata_does_not_remove_thinking_content() {
+        let search_metadata = OpenAIResponsesPayloadAdapter::create_output_item_metadata_tag(
+            &json!({"type": "web_search_call", "id": "search_1"}),
+        )
+        .expect("search metadata");
+        let request = continuation_request(
+            format!("<think>raw thinking</think>visible{search_metadata}"),
+            "call_search_1",
+        );
+        let input = DeepseekResponsesPayloadAdapter::to_responses_request(request)["input"]
+            .as_array()
+            .expect("Responses input array")
+            .clone();
+        let message = input
+            .iter()
+            .find(|item| item["type"] == "message")
+            .expect("assistant message");
+        assert_eq!(message["content"], "<think>raw thinking</think>visible");
+        assert!(input.iter().any(|item| item["type"] == "function_call"));
+        assert!(input
+            .iter()
+            .any(|item| item["type"] == "function_call_output"));
+    }
+
+    /// Verifies the full DeepSeek request builder preserves replay order after tool bridging.
+    #[test]
+    fn request_builder_preserves_reasoning_tool_and_result_order() {
+        let reasoning_item = json!({
+            "type": "reasoning",
+            "id": "rs_request_1",
+            "content": [{
+                "type": "reasoning_text",
+                "text": "Inspect the workspace first."
+            }]
+        });
+        let reasoning_metadata =
+            DeepseekResponsesPayloadAdapter::create_reasoning_metadata_tag(&reasoning_item)
+                .expect("reasoning metadata");
+        let provider = DeepseekProvider::new(
+            "https://api.deepseek.com/v1/responses".to_string(),
+            String::new(),
+            "deepseek-reasoner".to_string(),
+            "DEEPSEEK".to_string(),
+            Vec::new(),
+            false,
+            false,
+            false,
+            Vec::new(),
+            true,
+            test_runtime_context(),
+        );
+
+        let request = tool_continuation_request(&reasoning_metadata);
+        let body = provider
+            .create_request_body(&request)
+            .expect("DeepSeek Responses request must be buildable");
+        let input = body["input"].as_array().expect("Responses input array");
+
+        let reasoning_index = input
+            .iter()
+            .position(|item| item["type"] == "reasoning")
+            .expect("reasoning item must be replayed");
+        let function_call_index = input
+            .iter()
+            .position(|item| item["type"] == "function_call")
+            .expect("function call must be bridged");
+        let function_output_index = input
+            .iter()
+            .position(|item| item["type"] == "function_call_output")
+            .expect("function result must be bridged");
+        assert!(reasoning_index < function_call_index);
+        assert!(function_call_index < function_output_index);
+        assert_eq!(input[reasoning_index]["id"], "rs_request_1");
+        assert_eq!(input[function_call_index]["name"], "list_files");
+        assert_eq!(input[function_output_index]["output"], "workspace result");
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AIService for DeepseekProvider {
@@ -457,6 +1136,11 @@ impl AIService for DeepseekProvider {
                     self.provider_model(),
                 ),
             );
+            let protocol = if self.uses_responses_protocol()? {
+                ResponsesStreamProtocol::Deepseek
+            } else {
+                ResponsesStreamProtocol::OpenAi
+            };
             let mut parent = OpenAIProvider::new_with_capabilities(
                 self.api_endpoint.clone(),
                 self.api_key.clone(),
@@ -467,7 +1151,8 @@ impl AIService for DeepseekProvider {
                 self.supports_audio,
                 self.supports_video,
                 self.enable_tool_call,
-            );
+            )
+            .with_responses_stream_protocol(protocol);
             let mut result = parent.send_prepared_request(request, request_body).await?;
             AppLogger::i(
                 PROVIDER_TRANSPORT_LOG_TAG,
@@ -542,6 +1227,34 @@ impl AIService for DeepseekProvider {
             .json()
             .await
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        if self.uses_responses_protocol()? {
+            let parsed =
+                DeepseekResponsesPayloadAdapter::parse_non_streaming_response(&json_response);
+            if let Some(usage) = parsed.usage {
+                self.apply_token_counts(TokenCounts {
+                    input: usage.actualInputTokens,
+                    cached_input: usage.cachedInputTokens,
+                    output: usage.outputTokens,
+                });
+            }
+            let mut chunks = Vec::new();
+            for reasoning in parsed.reasoningChunks {
+                chunks.push(format!("<think>{reasoning}</think>"));
+            }
+            chunks.extend(parsed.reasoningMetadataTags);
+            chunks.extend(parsed.outputItemMetadataTags);
+            chunks.extend(parsed.searchChunks);
+            chunks.extend(parsed.textChunks);
+            if let Value::Array(tool_calls) = parsed.toolCalls {
+                for tool_call in tool_calls {
+                    chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                        &tool_call.to_string(),
+                    ));
+                }
+            }
+            return Ok(response_stream_from_chunks(chunks));
+        }
+
         let token_counts = json_response
             .get("usage")
             .map(parse_usage_counts)
@@ -572,16 +1285,27 @@ impl AIService for DeepseekProvider {
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
         let client = reqwest::Client::new();
-        let response = client
-            .post(&self.api_endpoint)
-            .headers(self.headers()?)
-            .json(&json!({
+        let request_body = if self.uses_responses_protocol()? {
+            json!({
+                "model": self.model_name,
+                "input": "hi",
+                "stream": false,
+                "max_output_tokens": 1,
+                "reasoning": {"effort": "none"}
+            })
+        } else {
+            json!({
                 "model": self.model_name,
                 "messages": [{"role": "user", "content": "hi"}],
                 "stream": false,
                 "max_tokens": 1,
                 "thinking": {"type": "disabled"}
-            }))
+            })
+        };
+        let response = client
+            .post(&self.api_endpoint)
+            .headers(self.headers()?)
+            .json(&request_body)
             .send()
             .await
             .map_err(|error| AiServiceError::ConnectionFailed(error.to_string()))?;
@@ -733,4 +1457,22 @@ fn extract_tool_calls_xml_chunks(value: &Value) -> Vec<String> {
         })
         .filter(|content| operit_util::ChatMarkupRegex::ChatMarkupRegex::contains_tool_tag(content))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deepseek_uses_responses_protocol;
+
+    /// Selects Responses only from the final endpoint path segment.
+    #[test]
+    fn resolves_deepseek_endpoint_protocol() {
+        assert!(
+            deepseek_uses_responses_protocol("https://api.deepseek.com/v1/responses?trace=1")
+                .unwrap()
+        );
+        assert!(
+            !deepseek_uses_responses_protocol("https://api.deepseek.com/v1/chat/completions")
+                .unwrap()
+        );
+    }
 }

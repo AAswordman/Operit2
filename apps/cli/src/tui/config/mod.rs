@@ -1012,15 +1012,24 @@ impl ConfigUi {
                         .await;
                     match core
                         .preferences_model_config_manager()
-                        .updateThinkingSettingsForProvider(
-                            &pid,
-                            &mid,
-                            changes.thinking_configurations,
-                            changes.thinking_option_id,
-                        )
+                        .getProviderProfile(&pid)
                         .await
                     {
-                        Ok(_) => {}
+                        Ok(mut provider) => {
+                            provider.thinkingConfigurations = changes.thinking_configurations;
+                            provider.thinkingOptionId = changes.thinking_option_id;
+                            match core
+                                .preferences_model_config_manager()
+                                .updateProviderProfile(provider)
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(error) => {
+                                    self.error_message = Some(error.to_string());
+                                    return Ok(false);
+                                }
+                            }
+                        }
                         Err(error) => {
                             self.error_message = Some(error.to_string());
                             return Ok(false);

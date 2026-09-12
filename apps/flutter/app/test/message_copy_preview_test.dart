@@ -23,6 +23,7 @@ void main() {
       parentBlockId: null,
       nodeType: nodeType,
       headerLevel: null,
+      xml: null,
     );
   }
 

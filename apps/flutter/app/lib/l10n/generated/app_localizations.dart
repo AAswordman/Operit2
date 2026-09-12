@@ -422,6 +422,18 @@ abstract class AppLocalizations {
   /// **'Close'**
   String get close;
 
+  /// No description provided for @commonExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand'**
+  String get commonExpand;
+
+  /// No description provided for @commonCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse'**
+  String get commonCollapse;
+
   /// No description provided for @create.
   ///
   /// In en, this message translates to:
@@ -679,6 +691,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Search'**
   String get searchGroupTitle;
+
+  /// No description provided for @searchSources.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Sources'**
+  String get searchSources;
 
   /// No description provided for @thinkingSearchGroupTitle.
   ///

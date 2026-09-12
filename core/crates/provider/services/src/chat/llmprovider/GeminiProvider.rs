@@ -6,7 +6,8 @@ use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
-use super::StructuredToolCallBridge::StructuredToolCallBridge;
+use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
+use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge};
 use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
@@ -292,14 +293,16 @@ impl GeminiProvider {
         let mut queued_assistant_tool_text: Option<String> = None;
         let mut queued_assistant_thought_signature: Option<String> = None;
         let mut queued_function_calls: Vec<Value> = Vec::new();
-        let mut open_function_call_names: Vec<String> = Vec::new();
+        let mut open_function_calls: Vec<OpenToolCall> = Vec::new();
 
         for turn in history_without_system {
-            let content = if !preserve_think_in_history && turn.kind == PromptTurnKind::ASSISTANT {
-                remove_thinking_content(&turn.content)
-            } else {
-                turn.content.clone()
-            };
+            let raw_content =
+                if !preserve_think_in_history && turn.kind == PromptTurnKind::ASSISTANT {
+                    remove_thinking_content(&turn.content)
+                } else {
+                    turn.content.clone()
+                };
+            let content = strip_responses_protocol_markup(&raw_content);
             let content_without_gemini_meta =
                 ChatMarkupRegex::remove_gemini_thought_signature_meta(&content);
 
@@ -308,13 +311,14 @@ impl GeminiProvider {
                     PromptTurnKind::ASSISTANT => {
                         let payload = self.parse_xml_tool_calls(&content);
                         if !payload.function_calls.is_empty() {
-                            if !open_function_call_names.is_empty() {
-                                flush_open_function_calls_as_cancelled(
+                            if !open_function_calls.is_empty() {
+                                flush_open_function_calls_as_unmatched(
                                     &mut contents_array,
                                     &mut queued_assistant_tool_text,
                                     &mut queued_assistant_thought_signature,
                                     &mut queued_function_calls,
-                                    &mut open_function_call_names,
+                                    &mut open_function_calls,
+                                    "assistant_function_call_before_result",
                                 );
                             }
                             queue_function_calls(
@@ -326,12 +330,13 @@ impl GeminiProvider {
                                 payload.thought_signature,
                             );
                         } else {
-                            flush_open_function_calls_as_cancelled(
+                            flush_open_function_calls_as_unmatched(
                                 &mut contents_array,
                                 &mut queued_assistant_tool_text,
                                 &mut queued_assistant_thought_signature,
                                 &mut queued_function_calls,
-                                &mut open_function_call_names,
+                                &mut open_function_calls,
+                                "assistant_boundary",
                             );
                             contents_array.push(json!({"role": "model", "parts": self.build_parts_array(&content_without_gemini_meta)}));
                         }
@@ -339,13 +344,14 @@ impl GeminiProvider {
                     PromptTurnKind::TOOL_CALL => {
                         let payload = self.parse_xml_tool_calls(&content);
                         if !payload.function_calls.is_empty() {
-                            if !open_function_call_names.is_empty() {
-                                flush_open_function_calls_as_cancelled(
+                            if !open_function_calls.is_empty() {
+                                flush_open_function_calls_as_unmatched(
                                     &mut contents_array,
                                     &mut queued_assistant_tool_text,
                                     &mut queued_assistant_thought_signature,
                                     &mut queued_function_calls,
-                                    &mut open_function_call_names,
+                                    &mut open_function_calls,
+                                    "typed_function_call_before_result",
                                 );
                             }
                             queue_function_calls(
@@ -357,25 +363,27 @@ impl GeminiProvider {
                                 payload.thought_signature,
                             );
                         } else {
-                            flush_open_function_calls_as_cancelled(
+                            flush_open_function_calls_as_unmatched(
                                 &mut contents_array,
                                 &mut queued_assistant_tool_text,
                                 &mut queued_assistant_thought_signature,
                                 &mut queued_function_calls,
-                                &mut open_function_call_names,
+                                &mut open_function_calls,
+                                "typed_tool_call_without_payload",
                             );
                             contents_array.push(json!({"role": "model", "parts": self.build_parts_array(&content_without_gemini_meta)}));
                         }
                     }
                     PromptTurnKind::USER | PromptTurnKind::SUMMARY => {
                         let mut parts = Vec::new();
-                        append_cancelled_open_function_responses(
+                        append_unmatched_open_function_responses(
                             &mut contents_array,
                             &mut parts,
                             &mut queued_assistant_tool_text,
                             &mut queued_assistant_thought_signature,
                             &mut queued_function_calls,
-                            &mut open_function_call_names,
+                            &mut open_function_calls,
+                            "user_boundary",
                         );
                         parts.extend(self.build_parts_array(&content_without_gemini_meta));
                         contents_array.push(json!({"role": "user", "parts": parts}));
@@ -386,48 +394,66 @@ impl GeminiProvider {
                             &mut queued_assistant_tool_text,
                             &mut queued_assistant_thought_signature,
                             &mut queued_function_calls,
-                            &mut open_function_call_names,
+                            &mut open_function_calls,
                         );
                         let (text_content, responses_list) =
                             self.parse_xml_tool_results(&content_without_gemini_meta);
-                        if !responses_list.is_empty() && !open_function_call_names.is_empty() {
-                            let valid_count =
-                                responses_list.len().min(open_function_call_names.len());
+                        if !responses_list.is_empty() && !open_function_calls.is_empty() {
+                            let result_names = responses_list
+                                .iter()
+                                .map(|response| {
+                                    response
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .map(|name| name.to_string())
+                                })
+                                .collect::<Vec<_>>();
+                            let matched_calls = StructuredToolCallBridge::consumeMatchingToolCalls(
+                                &mut open_function_calls,
+                                &result_names,
+                            );
                             let mut parts = Vec::new();
-                            for index in 0..valid_count {
-                                let mut response = responses_list[index].clone();
+                            for matched_call in matched_calls {
+                                let mut response =
+                                    responses_list[matched_call.result_index].clone();
                                 if let Some(object) = response.as_object_mut() {
-                                    let pending_name = &open_function_call_names[index];
+                                    let pending_name = &matched_call.call.id;
                                     if !pending_name.trim().is_empty() {
                                         object.insert("name".to_string(), json!(pending_name));
                                     }
                                 }
                                 parts.push(json!({"functionResponse": response}));
                             }
-                            open_function_call_names.drain(0..valid_count);
+                            append_unmatched_open_function_responses(
+                                &mut contents_array,
+                                &mut parts,
+                                &mut queued_assistant_tool_text,
+                                &mut queued_assistant_thought_signature,
+                                &mut queued_function_calls,
+                                &mut open_function_calls,
+                                "tool_result_partial_batch",
+                            );
                             if !text_content.is_empty() {
                                 parts.extend(self.build_parts_array(&text_content));
                             }
                             contents_array.push(json!({"role": "user", "parts": parts}));
                         } else {
                             let mut parts = Vec::new();
-                            append_cancelled_open_function_responses(
+                            append_unmatched_open_function_responses(
                                 &mut contents_array,
                                 &mut parts,
                                 &mut queued_assistant_tool_text,
                                 &mut queued_assistant_thought_signature,
                                 &mut queued_function_calls,
-                                &mut open_function_call_names,
+                                &mut open_function_calls,
+                                "tool_result_without_structured_match",
                             );
-                            let content = if !text_content.is_empty() {
-                                text_content
-                            } else if !content_without_gemini_meta.trim().is_empty() {
-                                content_without_gemini_meta
-                            } else {
-                                "[Empty]".to_string()
-                            };
-                            parts.extend(self.build_parts_array(&content));
-                            contents_array.push(json!({"role": "user", "parts": parts}));
+                            if !text_content.is_empty() {
+                                parts.extend(self.build_parts_array(&text_content));
+                            }
+                            if !parts.is_empty() {
+                                contents_array.push(json!({"role": "user", "parts": parts}));
+                            }
                         }
                     }
                     PromptTurnKind::SYSTEM => {}
@@ -441,12 +467,13 @@ impl GeminiProvider {
             }
         }
 
-        flush_open_function_calls_as_cancelled(
+        flush_open_function_calls_as_unmatched(
             &mut contents_array,
             &mut queued_assistant_tool_text,
             &mut queued_assistant_thought_signature,
             &mut queued_function_calls,
-            &mut open_function_call_names,
+            &mut open_function_calls,
+            "history_end",
         );
 
         Ok((contents_array, system_instruction, token_count))
@@ -1135,12 +1162,13 @@ impl AIService for GeminiProvider {
     }
 }
 
+/// Emits queued Gemini function calls as one model content entry.
 fn emit_queued_function_calls_if_needed(
     contents_array: &mut Vec<Value>,
     queued_assistant_tool_text: &mut Option<String>,
     queued_assistant_thought_signature: &mut Option<String>,
     queued_function_calls: &mut Vec<Value>,
-    open_function_call_names: &mut Vec<String>,
+    open_function_calls: &mut Vec<OpenToolCall>,
 ) {
     if queued_function_calls.is_empty() {
         return;
@@ -1160,76 +1188,94 @@ fn emit_queued_function_calls_if_needed(
             }
         }
         parts.push(Value::Object(part));
-        open_function_call_names.push(
-            function_call
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-        );
+        let function_name = function_call
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        open_function_calls.push(OpenToolCall {
+            id: function_name,
+            matching_name: StructuredToolCallBridge::toolCallName(function_call),
+        });
     }
     contents_array.push(json!({"role": "model", "parts": parts}));
     queued_function_calls.clear();
 }
 
-fn append_cancelled_open_function_responses(
+/// Appends Gemini function responses for open calls that did not receive results.
+fn append_unmatched_open_function_responses(
     contents_array: &mut Vec<Value>,
     target: &mut Vec<Value>,
     queued_assistant_tool_text: &mut Option<String>,
     queued_assistant_thought_signature: &mut Option<String>,
     queued_function_calls: &mut Vec<Value>,
-    open_function_call_names: &mut Vec<String>,
+    open_function_calls: &mut Vec<OpenToolCall>,
+    reason: &str,
 ) -> bool {
     emit_queued_function_calls_if_needed(
         contents_array,
         queued_assistant_tool_text,
         queued_assistant_thought_signature,
         queued_function_calls,
-        open_function_call_names,
+        open_function_calls,
     );
-    if open_function_call_names.is_empty() {
+    if open_function_calls.is_empty() {
         return false;
     }
-    for name in open_function_call_names.iter() {
+    for open_function_call in open_function_calls.iter() {
+        let response_name = if open_function_call.id.trim().is_empty() {
+            "unmatched_function"
+        } else {
+            open_function_call.id.as_str()
+        };
         target.push(json!({
             "functionResponse": {
-                "name": if name.trim().is_empty() { "cancelled_function" } else { name },
-                "response": {"result": "User cancelled"},
+                "name": response_name,
+                "response": {
+                    "result": StructuredToolCallBridge::unmatchedToolResultContent(
+                        reason,
+                        &open_function_call.matching_name,
+                    ),
+                },
             }
         }));
     }
-    open_function_call_names.clear();
+    open_function_calls.clear();
     true
 }
 
-fn flush_open_function_calls_as_cancelled(
+/// Emits open Gemini function calls as one user content entry when results are absent.
+fn flush_open_function_calls_as_unmatched(
     contents_array: &mut Vec<Value>,
     queued_assistant_tool_text: &mut Option<String>,
     queued_assistant_thought_signature: &mut Option<String>,
     queued_function_calls: &mut Vec<Value>,
-    open_function_call_names: &mut Vec<String>,
+    open_function_calls: &mut Vec<OpenToolCall>,
+    reason: &str,
 ) {
     emit_queued_function_calls_if_needed(
         contents_array,
         queued_assistant_tool_text,
         queued_assistant_thought_signature,
         queued_function_calls,
-        open_function_call_names,
+        open_function_calls,
     );
     let mut parts = Vec::new();
-    if append_cancelled_open_function_responses(
+    if append_unmatched_open_function_responses(
         contents_array,
         &mut parts,
         queued_assistant_tool_text,
         queued_assistant_thought_signature,
         queued_function_calls,
-        open_function_call_names,
+        open_function_calls,
+        reason,
     ) {
         contents_array.push(json!({"role": "user", "parts": parts}));
     }
 }
 
+/// Queues Gemini function calls until the next model or user boundary.
 fn queue_function_calls(
     queued_assistant_tool_text: &mut Option<String>,
     queued_assistant_thought_signature: &mut Option<String>,
@@ -1328,6 +1374,7 @@ mod tests {
     use super::GeminiProvider;
     use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
     use operit_model::ModelConfigData::ModelBuiltinTool;
+    use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
     use operit_util::ImagePoolManager::ImagePoolManager;
 
     /// Creates a Gemini provider for content-part conversion tests.
@@ -1364,5 +1411,49 @@ mod tests {
             .unwrap_or_default()
             .is_empty());
         assert_eq!(parts[1]["text"], "look");
+    }
+
+    /// Verifies Gemini pairs package-proxy calls with the proxied tool result name.
+    #[test]
+    fn packageProxyResultMatchesGeminiFunctionCall() {
+        let provider = test_provider();
+        let history = vec![
+            PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                [
+                    r#"<tool name="package_proxy">"#,
+                    r#"<param name="tool_name">daily_life:get_current_date</param>"#,
+                    r#"<param name="params">{}</param>"#,
+                    r#"</tool>"#,
+                ]
+                .join("\n"),
+            ),
+            PromptTurn::new(
+                PromptTurnKind::TOOL_RESULT,
+                [
+                    r#"<tool_result name="daily_life:get_current_date">"#,
+                    r#"<content>2026-09-12</content>"#,
+                    r#"</tool_result>"#,
+                ]
+                .join("\n"),
+            ),
+        ];
+
+        let (contents, _, _) = provider
+            .build_contents_and_count_tokens(&history, None, true)
+            .expect("Gemini contents must be buildable");
+        assert_eq!(contents.len(), 2);
+        assert_eq!(
+            contents[0].pointer("/parts/0/functionCall/name"),
+            Some(&serde_json::json!("package_proxy"))
+        );
+        assert_eq!(
+            contents[1].pointer("/parts/0/functionResponse/name"),
+            Some(&serde_json::json!("package_proxy"))
+        );
+        assert_eq!(
+            contents[1].pointer("/parts/0/functionResponse/response/result"),
+            Some(&serde_json::json!("2026-09-12"))
+        );
     }
 }

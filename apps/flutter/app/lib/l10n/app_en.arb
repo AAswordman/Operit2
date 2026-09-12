@@ -99,6 +99,8 @@
     }
   },
   "close": "Close",
+  "commonExpand": "Expand",
+  "commonCollapse": "Collapse",
   "create": "Create",
   "save": "Save",
   "delete": "Delete",
@@ -180,6 +182,7 @@
     }
   },
   "searchGroupTitle": "Search",
+  "searchSources": "Search Sources",
   "thinkingSearchGroupTitle": "Thinking and searching",
   "thinkingSearchToolsGroupTitleWithCount": "Thinking, searching, and calling tools ({count})",
   "@thinkingSearchToolsGroupTitleWithCount": {

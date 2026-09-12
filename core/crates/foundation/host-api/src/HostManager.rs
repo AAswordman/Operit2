@@ -2,12 +2,12 @@ use std::sync::{Arc, OnceLock};
 
 use crate::{
     ArchiveStagingHost, AudioPlaybackHost, BluetoothHost, BrowserAutomationHost,
-    BrowserSessionHost, ComposeDslWebViewHost, FileSystemHost, HostEnvironmentDescriptor,
-    HostJavaScriptRuntimeHost, HostRuntimeEventHost, HostRuntimeEventSchedulerHost,
-    HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost, LocalInferenceHost,
-    ManagedRuntimeHost, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
-    SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebSocketHost,
-    WebVisitHost,
+    BrowserSessionHost, ComposeDslWebViewHost, DeviceIoHost, FileSystemHost,
+    HostEnvironmentDescriptor, HostJavaScriptRuntimeHost, HostRuntimeEventHost,
+    HostRuntimeEventSchedulerHost, HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost,
+    LocalInferenceHost, ManagedRuntimeHost, RobotFaceHost, RuntimeSqliteHost, RuntimeStorageHost,
+    RuntimeStorageWriteHost, SystemOperationHost, TerminalHost, TtsPlaybackHost, TtsSynthesisHost,
+    WebSocketHost, WebVisitHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
@@ -93,6 +93,8 @@ pub struct HostManager {
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     pub bluetoothHost: Option<Arc<dyn BluetoothHost>>,
+    pub deviceIoHost: Option<Arc<dyn DeviceIoHost>>,
+    pub robotFaceHost: Option<Arc<dyn RobotFaceHost>>,
     pub ttsSynthesisHost: Option<Arc<dyn TtsSynthesisHost>>,
     pub ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
     pub localInferenceHost: Option<Arc<dyn LocalInferenceHost>>,
@@ -125,6 +127,8 @@ impl HostManager {
             systemOperationHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
+            deviceIoHost: None,
+            robotFaceHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             localInferenceHost: None,
@@ -159,6 +163,8 @@ impl HostManager {
             systemOperationHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
+            deviceIoHost: None,
+            robotFaceHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             localInferenceHost: None,
@@ -196,6 +202,8 @@ impl HostManager {
             systemOperationHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
+            deviceIoHost: None,
+            robotFaceHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             localInferenceHost: None,
@@ -234,6 +242,8 @@ impl HostManager {
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
             bluetoothHost: None,
+            deviceIoHost: None,
+            robotFaceHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             localInferenceHost: None,
@@ -276,6 +286,8 @@ impl HostManager {
             systemOperationHost: Some(systemOperationHost),
             audioPlaybackHost: None,
             bluetoothHost: None,
+            deviceIoHost: None,
+            robotFaceHost: None,
             ttsSynthesisHost: None,
             ttsPlaybackHost: None,
             localInferenceHost: None,
@@ -299,6 +311,13 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withCoreCommandExecutor(mut self, executor: CoreCommandExecutor) -> Self {
         self.coreCommandExecutor = Some(executor);
+        self
+    }
+
+    /// Replaces the host environment descriptor used by runtime capability queries.
+    #[allow(non_snake_case)]
+    pub fn withHostEnvironment(mut self, hostEnvironment: HostEnvironmentDescriptor) -> Self {
+        self.hostEnvironment = hostEnvironment;
         self
     }
 
@@ -354,6 +373,20 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withBluetoothHost(mut self, bluetoothHost: Arc<dyn BluetoothHost>) -> Self {
         self.bluetoothHost = Some(bluetoothHost);
+        self
+    }
+
+    /// Adds a board-level digital I/O host for Edge device apps.
+    #[allow(non_snake_case)]
+    pub fn withDeviceIoHost(mut self, deviceIoHost: Arc<dyn DeviceIoHost>) -> Self {
+        self.deviceIoHost = Some(deviceIoHost);
+        self
+    }
+
+    /// Adds a board-owned robot face host for expression rendering.
+    #[allow(non_snake_case)]
+    pub fn withRobotFaceHost(mut self, robotFaceHost: Arc<dyn RobotFaceHost>) -> Self {
+        self.robotFaceHost = Some(robotFaceHost);
         self
     }
 

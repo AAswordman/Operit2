@@ -24,6 +24,30 @@ part 'CanvasMarkdownNodeRenderer.dart';
 typedef MarkdownContentSplitter =
     Future<List<core_proxy.MarkdownStreamEvent>> Function(String content);
 
+/// Replaces unpaired UTF-16 surrogates before text reaches Flutter paragraph layout.
+String sanitizeUtf16(String value) {
+  final units = value.codeUnits;
+  final buffer = StringBuffer();
+  for (var index = 0; index < units.length; index++) {
+    final unit = units[index];
+    if (unit >= 0xD800 && unit <= 0xDBFF) {
+      if (index + 1 < units.length &&
+          units[index + 1] >= 0xDC00 &&
+          units[index + 1] <= 0xDFFF) {
+        buffer.writeCharCode(unit);
+        buffer.writeCharCode(units[++index]);
+      } else {
+        buffer.write('\uFFFD');
+      }
+    } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+      buffer.write('\uFFFD');
+    } else {
+      buffer.writeCharCode(unit);
+    }
+  }
+  return buffer.toString();
+}
+
 class StreamMarkdownRenderer extends StatefulWidget {
   const StreamMarkdownRenderer({
     super.key,
@@ -32,6 +56,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
     required this.textColor,
     required this.backgroundColor,
     this.nodeGrouper = const NoopMarkdownNodeGrouper(),
+    this.mergeRender = const NoopMarkdownNodeMergeRender(),
     this.contentStream,
     this.rendererId,
     this.state,
@@ -50,6 +75,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
   final Color textColor;
   final Color backgroundColor;
   final MarkdownNodeGrouper nodeGrouper;
+  final MarkdownNodeMergeRender mergeRender;
   final Stream<Object>? contentStream;
   final String? rendererId;
   final StreamMarkdownRendererState? state;
@@ -78,7 +104,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   bool _streamDone = false;
   bool _streamDoneNotified = false;
   int _startGeneration = 0;
-  int _streamEventCount = 0;
 
   @override
   void initState() {
@@ -104,21 +129,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         stateChanged ||
         streamChanged ||
         staticContentChanged) {
-      final reasons = <String>[
-        if (nextRendererId != _rendererId) 'rendererId',
-        if (stateChanged) 'state',
-        if (streamChanged) 'stream',
-        if (staticContentChanged) 'staticContent',
-      ].join(',');
-      _logRendererTrace(
-        'restart_request reason=$reasons '
-        'oldRendererId=$_rendererId newRendererId=$nextRendererId '
-        'oldStream=${_streamTraceId(oldWidget.contentStream)} '
-        'newStream=${_streamTraceId(widget.contentStream)} '
-        'chars=${_rendererState.collectedContent.length} '
-        'nodes=${_rendererState.renderNodes.length} '
-        'done=$_streamDone',
-      );
       _rendererId = nextRendererId;
       _startCurrentContent();
     } else if (oldWidget.onContentReady != widget.onContentReady &&
@@ -128,6 +138,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     }
   }
 
+  /// Computes the stable identity used to preserve one renderer state.
   String _computeRendererId() {
     final explicitRendererId = widget.rendererId;
     if (explicitRendererId != null) {
@@ -147,21 +158,9 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     _renderTimer?.cancel();
     _renderTimer = null;
     _scheduledVisibleNodeKeys.clear();
-    _streamEventCount = 0;
     _streamDoneNotified = false;
 
     final stream = widget.contentStream;
-    if (stream == null &&
-        _rendererState.streamParsingCompletedSuccessfully &&
-        _rendererState.collectedContent.toString() == widget.content &&
-        _rendererState.renderNodes.isNotEmpty) {
-      _rendererState.xmlNodeStreams.clear();
-      _rendererState.xmlMarkdownEventStreams.clear();
-      _streamDone = true;
-      _notifyContentReady(generation);
-      return;
-    }
-
     _streamDone = stream == null;
     _rendererState.reset();
     if (stream == null) {
@@ -181,7 +180,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         _notifyContentReady(generation);
         return;
       }
-      _loadStaticContent(widget.content, generation);
+      _loadStaticContent(sanitizeUtf16(widget.content), generation);
       return;
     }
 
@@ -228,12 +227,8 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 
   /// Subscribes to Markdown events and schedules incremental node syncs.
   void _subscribe(Stream<Object> stream) {
-    _logRendererTrace(
-      'subscribe rendererId=$_rendererId stream=${_streamTraceId(stream)}',
-    );
     _subscription = stream.listen(
       (event) {
-        _streamEventCount += 1;
         _applyMarkdownEvent(event);
         if (!_streamDone) {
           _renderTimer ??= Timer(_streamRenderInterval, _flushRenderNodes);
@@ -245,20 +240,10 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         } else {
           _completeLiveStreamRender();
         }
-        _logRendererTrace(
-          'done rendererId=$_rendererId stream=${_streamTraceId(stream)} '
-          'events=$_streamEventCount '
-          'chars=${_rendererState.collectedContent.length} '
-          'nodes=${_rendererState.renderNodes.length}',
-        );
         _notifyStreamDone();
       },
-      onError: (Object error, StackTrace stackTrace) {
+      onError: (Object _, StackTrace _) {
         _rendererState.streamParsingCompletedSuccessfully = false;
-        _logRendererTrace(
-          'error rendererId=$_rendererId stream=${_streamTraceId(stream)} '
-          'events=$_streamEventCount error=$error',
-        );
       },
     );
   }
@@ -282,16 +267,6 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     }
     _streamDoneNotified = true;
     widget.onStreamDone?.call();
-  }
-
-  /// Returns a stable short label for one Dart stream object in logs.
-  String _streamTraceId(Stream<Object>? stream) {
-    return stream == null ? 'none' : identityHashCode(stream).toString();
-  }
-
-  /// Emits one Markdown renderer lifecycle log entry.
-  void _logRendererTrace(String message) {
-    debugPrint('ChatRenderTrace markdown.$message');
   }
 
   /// Synchronizes mutable Markdown nodes into visible render nodes.
@@ -373,6 +348,17 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
         _rendererState.eventBuilder.appendBlock(
           blockId: blockId,
           content: value,
+          xml: normalized.xml,
+        );
+        break;
+      case 'markdownBlockEnd':
+        final blockId = normalized.blockId;
+        if (blockId == null) {
+          throw StateError('markdownBlockEnd missing blockId');
+        }
+        _rendererState.eventBuilder.completeBlock(
+          blockId: blockId,
+          xml: normalized.xml,
         );
         break;
       case 'markdownInlineStart':
@@ -468,6 +454,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       textColor: widget.textColor,
       backgroundColor: widget.backgroundColor,
       nodeGrouper: widget.nodeGrouper,
+      mergeRender: widget.mergeRender,
       xmlNodeStreams: _rendererState.xmlNodeStreams,
       xmlMarkdownEventStreams: _rendererState.xmlMarkdownEventStreams,
       nodeAnimationStates: _rendererState.nodeAnimationStates,
@@ -525,6 +512,7 @@ class _NormalizedMarkdownEvent {
     required this.parentBlockId,
     required this.nodeType,
     required this.headerLevel,
+    required this.xml,
   });
 
   factory _NormalizedMarkdownEvent.from(Object event) {
@@ -532,24 +520,26 @@ class _NormalizedMarkdownEvent {
       return _NormalizedMarkdownEvent(
         type: event.eventType,
         id: event.id,
-        value: event.value,
+        value: event.value == null ? null : sanitizeUtf16(event.value!),
         blockId: event.blockId,
         inlineId: event.inlineId,
         parentBlockId: event.parentBlockId,
         nodeType: event.nodeType,
         headerLevel: event.headerLevel,
+        xml: event.xml,
       );
     }
     if (event is _LocalMarkdownStreamEvent) {
       return _NormalizedMarkdownEvent(
         type: event.type,
         id: event.id,
-        value: event.value,
+        value: event.value == null ? null : sanitizeUtf16(event.value!),
         blockId: event.blockId,
         inlineId: event.inlineId,
         parentBlockId: event.parentBlockId,
         nodeType: event.nodeType,
         headerLevel: event.headerLevel,
+        xml: null,
       );
     }
     throw StateError('Unsupported markdown event ${event.runtimeType}');
@@ -564,6 +554,7 @@ class _NormalizedMarkdownEvent {
       inlineId: inlineId,
       nodeType: nodeType,
       headerLevel: headerLevel,
+      xml: xml,
     );
   }
 
@@ -575,6 +566,7 @@ class _NormalizedMarkdownEvent {
   final int? parentBlockId;
   final String? nodeType;
   final int? headerLevel;
+  final core_proxy.MarkdownXmlStreamEvent? xml;
 }
 
 class _LocalMarkdownStreamEvent {
@@ -586,6 +578,7 @@ class _LocalMarkdownStreamEvent {
     required this.inlineId,
     required this.nodeType,
     required this.headerLevel,
+    required this.xml,
   });
 
   final String type;
@@ -595,6 +588,7 @@ class _LocalMarkdownStreamEvent {
   final int? inlineId;
   final String? nodeType;
   final int? headerLevel;
+  final core_proxy.MarkdownXmlStreamEvent? xml;
   int? get parentBlockId => null;
 }
 
@@ -630,6 +624,7 @@ class _MarkdownNodeColumn extends StatefulWidget {
     required this.textColor,
     required this.backgroundColor,
     required this.nodeGrouper,
+    required this.mergeRender,
     required this.xmlNodeStreams,
     required this.xmlMarkdownEventStreams,
     required this.showThinkingProcess,
@@ -645,6 +640,7 @@ class _MarkdownNodeColumn extends StatefulWidget {
   final Color textColor;
   final Color backgroundColor;
   final MarkdownNodeGrouper nodeGrouper;
+  final MarkdownNodeMergeRender mergeRender;
   final Map<int, Stream<String>> xmlNodeStreams;
   final Map<int, Stream<Object>> xmlMarkdownEventStreams;
   final bool showThinkingProcess;
@@ -671,6 +667,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         oldWidget.textColor != widget.textColor ||
         oldWidget.backgroundColor != widget.backgroundColor ||
         oldWidget.nodeGrouper != widget.nodeGrouper ||
+        oldWidget.mergeRender != widget.mergeRender ||
         oldWidget.onLinkClick != widget.onLinkClick ||
         oldWidget.showThinkingProcess != widget.showThinkingProcess ||
         oldWidget.initialThinkingExpanded != widget.initialThinkingExpanded ||
@@ -784,6 +781,61 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
       return rendered;
     }
 
+    /// Renders one merge match after its complete source range becomes visible.
+    Widget renderMergeMatch(
+      MarkdownMergeMatch match,
+      String renderInstanceKeyPrefix,
+    ) {
+      final mergeKey =
+          'merge-${widget.rendererId}-$renderInstanceKeyPrefix-${match.stableKey}';
+      return KeyedSubtree(
+        key: ValueKey<String>(mergeKey),
+        child: _AnimatedMarkdownNode(
+          isVisible: isVisibleAt(match.endIndexInclusive),
+          child: widget.mergeRender.renderMerge(
+            match: match,
+            nodes: widget.nodes,
+            rendererId: widget.rendererId,
+            textColor: widget.textColor,
+            xmlRenderer: renderXmlContent,
+            xmlStreamResolver: (index) => widget.xmlNodeStreams[index],
+            xmlMarkdownEventStreamResolver: (index) =>
+                widget.xmlMarkdownEventStreams[index],
+            renderInstanceKey: mergeKey,
+          ),
+        ),
+      );
+    }
+
+    /// Renders a source range after applying the configured merge strategy.
+    List<Widget> renderMergedRange({
+      required int startIndex,
+      required int endIndexInclusive,
+      required String renderInstanceKeyPrefix,
+      required MarkdownNodePredicate shouldRenderNode,
+    }) {
+      final rendered = <Widget>[];
+      var index = startIndex;
+      while (index <= endIndexInclusive) {
+        final match = widget.mergeRender.match(
+          nodes: widget.nodes,
+          startIndex: index,
+          endIndexInclusive: endIndexInclusive,
+        );
+        if (match != null) {
+          _validateMarkdownMergeMatch(match, index, endIndexInclusive);
+          rendered.add(renderMergeMatch(match, renderInstanceKeyPrefix));
+          index = match.endIndexInclusive + 1;
+          continue;
+        }
+        if (shouldRenderNode(widget.nodes[index])) {
+          rendered.add(renderAnimatedNodeAt(index));
+        }
+        index += 1;
+      }
+      return rendered;
+    }
+
     Widget renderGroupItem(MarkdownGroupItem group) {
       final cacheKey = 'group-${widget.rendererId}-${group.stableKey}';
       liveGroupKeys.add(cacheKey);
@@ -813,6 +865,14 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         )
           widget.xmlMarkdownEventStreams[index],
       ];
+      final nodeVisibilities = <bool>[
+        for (
+          var index = group.startIndex;
+          index <= group.endIndexInclusive;
+          index++
+        )
+          isVisibleAt(index),
+      ];
       final cached = _groupCache[cacheKey];
       if (cached != null &&
           cached.group.startIndex == group.startIndex &&
@@ -821,6 +881,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
           cached.isVisible == isVisible &&
           cached.isLastNode == isLastNode &&
           _markdownNodeListEquals(cached.nodes, slice) &&
+          _boolListEquals(cached.nodeVisibilities, nodeVisibilities) &&
           _streamListIdentical(cached.xmlStreams, xmlStreams) &&
           _streamListIdentical(
             cached.xmlMarkdownEventStreams,
@@ -836,6 +897,7 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         isLastNode: isLastNode,
         textColor: widget.textColor,
         xmlRenderer: renderXmlContent,
+        mergeRender: renderMergedRange,
         xmlStreamResolver: (index) => widget.xmlNodeStreams[index],
         xmlMarkdownEventStreamResolver: (index) =>
             widget.xmlMarkdownEventStreams[index],
@@ -852,18 +914,42 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         ),
         isVisible: isVisible,
         isLastNode: isLastNode,
+        nodeVisibilities: List<bool>.unmodifiable(nodeVisibilities),
         widget: rendered,
       );
       return rendered;
     }
 
-    final children = <Widget>[
-      for (final item in groupedItems)
-        if (item is MarkdownSingleItem)
-          renderAnimatedNodeAt(item.index)
-        else if (item is MarkdownGroupItem)
-          renderGroupItem(item),
-    ];
+    final children = <Widget>[];
+    var itemOffset = 0;
+    while (itemOffset < groupedItems.length) {
+      final item = groupedItems[itemOffset];
+      if (item is MarkdownGroupItem) {
+        children.add(renderGroupItem(item));
+        itemOffset += 1;
+        continue;
+      }
+      final single = item as MarkdownSingleItem;
+      final rangeStart = single.index;
+      var rangeEnd = rangeStart;
+      itemOffset += 1;
+      while (itemOffset < groupedItems.length) {
+        final next = groupedItems[itemOffset];
+        if (next is! MarkdownSingleItem || next.index != rangeEnd + 1) {
+          break;
+        }
+        rangeEnd = next.index;
+        itemOffset += 1;
+      }
+      children.addAll(
+        renderMergedRange(
+          startIndex: rangeStart,
+          endIndexInclusive: rangeEnd,
+          renderInstanceKeyPrefix: 'root-$rangeStart',
+          shouldRenderNode: _renderEveryMarkdownNode,
+        ),
+      );
+    }
 
     _singleNodeCache.removeWhere((key, value) => !liveSingleKeys.contains(key));
     _groupCache.removeWhere((key, value) => !liveGroupKeys.contains(key));
@@ -901,6 +987,7 @@ class _CachedMarkdownGroup {
     required this.xmlMarkdownEventStreams,
     required this.isVisible,
     required this.isLastNode,
+    required this.nodeVisibilities,
     required this.widget,
   });
 
@@ -910,7 +997,43 @@ class _CachedMarkdownGroup {
   final List<Stream<Object>?> xmlMarkdownEventStreams;
   final bool isVisible;
   final bool isLastNode;
+  final List<bool> nodeVisibilities;
   final Widget widget;
+}
+
+/// Compares cached per-node visibility snapshots for a rendered group.
+bool _boolListEquals(List<bool> left, List<bool> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Includes every node when rendering a non-grouped Markdown range.
+bool _renderEveryMarkdownNode(MarkdownNodeStable node) {
+  return true;
+}
+
+/// Validates that a merge strategy owns a forward range inside its request.
+void _validateMarkdownMergeMatch(
+  MarkdownMergeMatch match,
+  int requestedStartIndex,
+  int requestedEndIndexInclusive,
+) {
+  if (match.startIndex != requestedStartIndex ||
+      match.endIndexInclusive < requestedStartIndex ||
+      match.endIndexInclusive > requestedEndIndexInclusive) {
+    throw StateError(
+      'Invalid Markdown merge range ${match.startIndex}..'
+      '${match.endIndexInclusive} for $requestedStartIndex..'
+      '$requestedEndIndexInclusive.',
+    );
+  }
 }
 
 bool _streamListIdentical<T>(List<Stream<T>?> left, List<Stream<T>?> right) {

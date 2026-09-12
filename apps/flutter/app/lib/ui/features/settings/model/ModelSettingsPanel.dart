@@ -1,6 +1,9 @@
 // ignore_for_file: file_names
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
@@ -166,8 +169,9 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         customHeaders: result.customHeaders,
         requestLimitPerMinute: result.requestLimitPerMinute,
         maxConcurrentRequests: result.maxConcurrentRequests,
-        thinkingConfigurations: result.thinkingConfigurations,
-        thinkingOptionId: result.thinkingOptionId,
+        thinkingConfigurations:
+            result.thinkingConfigurations ?? provider.thinkingConfigurations,
+        thinkingOptionId: provider.thinkingOptionId,
         models: provider.models,
       ),
     );
@@ -209,8 +213,10 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         customHeaders: saveResult.customHeaders,
         requestLimitPerMinute: saveResult.requestLimitPerMinute,
         maxConcurrentRequests: saveResult.maxConcurrentRequests,
-        thinkingConfigurations: saveResult.thinkingConfigurations,
-        thinkingOptionId: saveResult.thinkingOptionId,
+        thinkingConfigurations:
+            saveResult.thinkingConfigurations ??
+            provider.thinkingConfigurations,
+        thinkingOptionId: provider.thinkingOptionId,
         models: provider.models,
       ),
     );
@@ -670,7 +676,6 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
     required this.requestLimitPerMinute,
     required this.maxConcurrentRequests,
     required this.thinkingConfigurations,
-    required this.thinkingOptionId,
   });
 
   final String name;
@@ -680,8 +685,7 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
   final String customHeaders;
   final int requestLimitPerMinute;
   final int maxConcurrentRequests;
-  final String thinkingConfigurations;
-  final String thinkingOptionId;
+  final String? thinkingConfigurations;
 }
 
 class _ProviderEditDeleteResult extends _ProviderEditResult {
@@ -720,8 +724,9 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   late final TextEditingController _customHeadersController;
   late final TextEditingController _requestLimitController;
   late final TextEditingController _maxConcurrentController;
-  late final TextEditingController _thinkingConfigurationsController;
-  late final TextEditingController _thinkingOptionIdController;
+  late List<_ThinkingRuleEditor> _thinkingRules;
+  String? _thinkingConfigError;
+  bool _thinkingRulesChanged = false;
   String? _selectedProviderTypeId;
 
   @override
@@ -740,17 +745,23 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
     _maxConcurrentController = TextEditingController(
       text: (provider?.maxConcurrentRequests ?? 1).toString(),
     );
-    _thinkingConfigurationsController = TextEditingController(
-      text: provider?.thinkingConfigurations ?? '[]',
-    );
-    _thinkingOptionIdController = TextEditingController(
-      text: provider?.thinkingOptionId ?? '',
-    );
     if (provider != null) {
       _selectedProviderTypeId = provider.providerTypeId;
+      try {
+        _thinkingRules = _parseThinkingRuleEditors(
+          provider.thinkingConfigurations,
+        );
+      } on FormatException catch (error) {
+        _thinkingRules = <_ThinkingRuleEditor>[];
+        _thinkingConfigError = error.message;
+      }
     } else {
-      // Default to DEEPSEEK if present
+      _thinkingRules = <_ThinkingRuleEditor>[];
       _selectedProviderTypeId = _catalogDeepseek()?.providerTypeId;
+      final catalog = _selectedCatalog();
+      if (catalog != null) {
+        _endpointController.text = catalog.defaultEndpoint;
+      }
     }
   }
 
@@ -762,8 +773,6 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
     _customHeadersController.dispose();
     _requestLimitController.dispose();
     _maxConcurrentController.dispose();
-    _thinkingConfigurationsController.dispose();
-    _thinkingOptionIdController.dispose();
     super.dispose();
   }
 
@@ -773,42 +782,139 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         return entry;
       }
     }
-    return widget.catalogEntries.isNotEmpty
-        ? widget.catalogEntries.first
-        : null;
+    return null;
   }
 
-  core_proxy.ProviderCatalogEntry? _selectedCatalog() {
-    if (_selectedProviderTypeId == null) {
+  /// Finds the provider catalog entry for a provider type identifier.
+  core_proxy.ProviderCatalogEntry? _catalogByProviderTypeId(
+    String? providerTypeId,
+  ) {
+    if (providerTypeId == null) {
       return null;
     }
     for (final entry in widget.catalogEntries) {
-      if (entry.providerTypeId == _selectedProviderTypeId) {
+      if (entry.providerTypeId == providerTypeId) {
         return entry;
       }
     }
     return null;
   }
 
-  bool get _needsCustomEndpoint {
-    final catalog = _selectedCatalog();
-    return catalog == null || catalog.defaultEndpoint.trim().isEmpty;
+  /// Returns the catalog entry for the selected provider type.
+  core_proxy.ProviderCatalogEntry? _selectedCatalog() {
+    return _catalogByProviderTypeId(_selectedProviderTypeId);
   }
 
+  /// Returns selectable endpoints declared for the selected provider type.
+  List<core_proxy.ProviderEndpointOption> get _selectedEndpointOptions {
+    final catalog = _selectedCatalog();
+    if (catalog == null) {
+      return const <core_proxy.ProviderEndpointOption>[];
+    }
+    return catalog.endpointOptions;
+  }
+
+  /// Applies a provider type selection and its catalog endpoint.
   void _onProviderTypeChanged(String? providerTypeId) {
+    final catalog = _catalogByProviderTypeId(providerTypeId);
     setState(() {
       _selectedProviderTypeId = providerTypeId;
-    });
-    if (!_needsCustomEndpoint && _endpointController.text.isEmpty) {
-      final catalog = _selectedCatalog();
       if (catalog != null) {
         _endpointController.text = catalog.defaultEndpoint;
       }
+    });
+  }
+
+  /// Opens the endpoint selector for providers with declared options.
+  Future<void> _showEndpointOptionsDialog() async {
+    final options = _selectedEndpointOptions;
+    if (options.isEmpty) {
+      return;
+    }
+    final selectedEndpoint = _endpointController.text.trim();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final l10n = AppLocalizations.of(dialogContext)!;
+        return AlertDialog(
+          title: Text(l10n.settingsModelApiEndpoint),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: SizedBox(
+              width: 520,
+              height: (options.length * 64.0).clamp(64.0, 360.0),
+              child: ListView.separated(
+                itemCount: options.length,
+                separatorBuilder: (context, index) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final option = options[index];
+                  final selected = option.endpoint == selectedEndpoint;
+                  return ListTile(
+                    selected: selected,
+                    leading: selected
+                        ? const Icon(Icons.check_rounded)
+                        : const SizedBox(width: 24),
+                    title: Text(option.endpoint),
+                    subtitle: option.label == option.endpoint
+                        ? null
+                        : Text(option.label),
+                    onTap: () {
+                      setState(() {
+                        _endpointController.text = option.endpoint;
+                      });
+                      Navigator.of(dialogContext).pop();
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(l10n.cancel),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Replaces the editable thinking rule list after a UI change.
+  void _setThinkingRules(List<_ThinkingRuleEditor> rules) {
+    setState(() {
+      _thinkingRules = rules;
+      _thinkingRulesChanged = true;
+      _thinkingConfigError = null;
+    });
+  }
+
+  /// Serializes provider thinking rules and reports validation problems.
+  String? _thinkingConfigurationsForSave() {
+    final provider = widget.provider;
+    if (provider == null) {
+      return null;
+    }
+    if (_thinkingConfigError != null && !_thinkingRulesChanged) {
+      return null;
+    }
+    try {
+      return _serializeThinkingRuleEditors(_thinkingRules);
+    } on FormatException catch (error) {
+      setState(() {
+        _thinkingConfigError = error.message;
+      });
+      return null;
     }
   }
 
+  /// Saves provider settings from the dialog form.
   void _save() {
     if (!_formKey.currentState!.validate() || _selectedProviderTypeId == null) {
+      return;
+    }
+    final thinkingConfigurations = _thinkingConfigurationsForSave();
+    if (widget.provider != null && thinkingConfigurations == null) {
       return;
     }
     Navigator.of(context).pop(
@@ -820,8 +926,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         customHeaders: _customHeadersController.text,
         requestLimitPerMinute: int.parse(_requestLimitController.text),
         maxConcurrentRequests: int.parse(_maxConcurrentController.text),
-        thinkingConfigurations: _thinkingConfigurationsController.text,
-        thinkingOptionId: _thinkingOptionIdController.text.trim(),
+        thinkingConfigurations: thinkingConfigurations,
       ),
     );
   }
@@ -830,6 +935,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final editing = widget.provider != null;
+    final endpointOptions = _selectedEndpointOptions;
     return AlertDialog(
       title: Text(
         editing
@@ -837,7 +943,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
             : l10n.settingsModelCreateProvider,
       ),
       content: SizedBox(
-        width: 560,
+        width: 680,
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -877,12 +983,22 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                     },
                   ),
                 ),
-                if (_needsCustomEndpoint)
-                  _DialogTextField(
-                    controller: _endpointController,
-                    label: l10n.settingsModelApiEndpoint,
-                    requiredField: true,
-                  ),
+                _DialogTextField(
+                  controller: _endpointController,
+                  label: l10n.settingsModelApiEndpoint,
+                  requiredField: true,
+                  keyboardType: TextInputType.url,
+                  inputFormatters: <TextInputFormatter>[
+                    FilteringTextInputFormatter.deny(RegExp(r'\s')),
+                  ],
+                  suffixIcon: endpointOptions.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: l10n.settingsModelApiEndpoint,
+                          icon: const Icon(Icons.arrow_drop_down_rounded),
+                          onPressed: _showEndpointOptionsDialog,
+                        ),
+                ),
                 _DialogTextField(
                   controller: _apiKeyController,
                   label: l10n.settingsModelApiKey,
@@ -932,21 +1048,14 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _thinkingConfigurationsController,
-                        minLines: 4,
-                        maxLines: 10,
-                        decoration: InputDecoration(
-                          labelText: l10n.settingsModelThinkingRules,
+                      if (editing) ...<Widget>[
+                        const SizedBox(height: 8),
+                        _ThinkingRulesEditor(
+                          rules: _thinkingRules,
+                          error: _thinkingConfigError,
+                          onChanged: _setThinkingRules,
                         ),
-                      ),
-                      TextField(
-                        controller: _thinkingOptionIdController,
-                        decoration: InputDecoration(
-                          labelText: l10n.settingsModelThinkingOption,
-                        ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -971,6 +1080,1521 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
       ],
     );
   }
+}
+
+class _ThinkingRulesEditor extends StatelessWidget {
+  /// Creates the provider-scoped thinking rules editor.
+  const _ThinkingRulesEditor({
+    required this.rules,
+    required this.error,
+    required this.onChanged,
+  });
+
+  final List<_ThinkingRuleEditor> rules;
+  final String? error;
+  final ValueChanged<List<_ThinkingRuleEditor>> onChanged;
+
+  /// Opens a focused editor for one thinking rule.
+  Future<void> _showRuleEditor(BuildContext context, int? index) async {
+    var draft = index == null ? _newThinkingRule() : rules[index];
+    final saved = await showDialog<_ThinkingRuleEditor>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final title = index == null
+                ? '新建思考配置'
+                : _thinkingRulePreviewTitle(draft);
+            return AlertDialog(
+              title: Text(title),
+              content: SizedBox(
+                width: 620,
+                child: SingleChildScrollView(
+                  child: _ThinkingRuleForm(
+                    rule: draft,
+                    onChanged: (rule) => setDialogState(() {
+                      draft = rule;
+                    }),
+                  ),
+                ),
+              ),
+              actions: <Widget>[
+                if (index != null)
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.error,
+                    ),
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                      onChanged(_removeAt<_ThinkingRuleEditor>(rules, index));
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('删除'),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(draft),
+                  child: const Text('保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (saved == null) {
+      return;
+    }
+    if (index == null) {
+      onChanged(<_ThinkingRuleEditor>[...rules, saved]);
+      return;
+    }
+    onChanged(_replaceAt<_ThinkingRuleEditor>(rules, index, saved));
+  }
+
+  /// Builds the thinking rules list and rule management controls.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final controlSummary = _thinkingControlSummary(rules);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Icon(Icons.psychology_outlined, color: colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    '思考配置',
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    '${rules.length} 条规则 · $controlSummary',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => _showRuleEditor(context, null),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('添加规则'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '点击规则编辑；顺序靠前的规则先匹配。这里的配置只属于当前供应商。',
+          style: textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+        if (error != null) ...<Widget>[
+          const SizedBox(height: 8),
+          Text(
+            error!,
+            style: textTheme.bodySmall?.copyWith(color: colorScheme.error),
+          ),
+        ],
+        const SizedBox(height: 8),
+        if (rules.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '当前供应商没有思考规则，点击右上角添加规则。',
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        else
+          for (var index = 0; index < rules.length; index++) ...<Widget>[
+            _ThinkingRuleCard(
+              index: index,
+              totalCount: rules.length,
+              rule: rules[index],
+              onTap: () => _showRuleEditor(context, index),
+              onMoveUp: index == 0
+                  ? null
+                  : () => onChanged(
+                      _moveAt<_ThinkingRuleEditor>(rules, index, index - 1),
+                    ),
+              onMoveDown: index == rules.length - 1
+                  ? null
+                  : () => onChanged(
+                      _moveAt<_ThinkingRuleEditor>(rules, index, index + 1),
+                    ),
+            ),
+            const SizedBox(height: 8),
+          ],
+      ],
+    );
+  }
+}
+
+class _ThinkingRuleCard extends StatelessWidget {
+  /// Creates one compact thinking rule preview card.
+  const _ThinkingRuleCard({
+    required this.index,
+    required this.totalCount,
+    required this.rule,
+    required this.onTap,
+    required this.onMoveUp,
+    required this.onMoveDown,
+  });
+
+  final int index;
+  final int totalCount;
+  final _ThinkingRuleEditor rule;
+  final VoidCallback onTap;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+
+  /// Builds the card preview and rule ordering controls.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final optionCount = rule.control == 'levels' ? rule.options.length : 0;
+    final optionText = rule.control == 'levels' ? ' · $optionCount 档' : '';
+    return Material(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: <Widget>[
+              CircleAvatar(
+                radius: 15,
+                backgroundColor: colorScheme.primaryContainer,
+                child: Text(
+                  '${index + 1}',
+                  style: textTheme.labelMedium?.copyWith(
+                    color: colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      _thinkingRulePreviewTitle(rule),
+                      style: textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${_thinkingControlLabel(rule.control)}$optionText · ${_thinkingRulePathSummary(rule)}',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: index == 0 ? '已经是第一条' : '上移',
+                onPressed: onMoveUp,
+                icon: const Icon(Icons.keyboard_arrow_up),
+              ),
+              IconButton(
+                tooltip: index >= totalCount - 1 ? '已经是最后一条' : '下移',
+                onPressed: onMoveDown,
+                icon: const Icon(Icons.keyboard_arrow_down),
+              ),
+              Icon(Icons.chevron_right, color: colorScheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ThinkingRuleForm extends StatelessWidget {
+  /// Creates the form fields for one thinking rule.
+  const _ThinkingRuleForm({required this.rule, required this.onChanged});
+
+  final _ThinkingRuleEditor rule;
+  final ValueChanged<_ThinkingRuleEditor> onChanged;
+
+  /// Builds the editable fields for one thinking rule.
+  @override
+  Widget build(BuildContext context) {
+    final actionSummary =
+        '开启 ${rule.enableActions.length} 条 · 关闭 ${rule.disableActions.length} 条';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: _ThinkingChoiceField(
+                label: '控件类型',
+                value: rule.control,
+                choices: const <MapEntry<String, String>>[
+                  MapEntry<String, String>('levels', '多档位滑块'),
+                  MapEntry<String, String>('toggle_only', '仅开关'),
+                  MapEntry<String, String>('unsupported', '不支持思考'),
+                ],
+                onChanged: (value) => onChanged(
+                  rule.copyWith(
+                    control: value,
+                    options: value == 'levels'
+                        ? rule.options
+                        : const <_ThinkingOptionEditor>[],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _ThinkingSwitchRow(
+                title: '始终开启思考',
+                subtitle: '命中后写入开启动作',
+                value: rule.requiredValue,
+                onChanged: (value) =>
+                    onChanged(rule.copyWith(requiredValue: value)),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _ThinkingMatchEditor(rule: rule, onChanged: onChanged),
+        const SizedBox(height: 10),
+        _ThinkingInlineTextField(
+          label: '默认请求路径',
+          value: rule.defaultPath,
+          hint: 'reasoning_effort 或 thinking.type',
+          onChanged: (value) => onChanged(rule.copyWith(defaultPath: value)),
+        ),
+        const SizedBox(height: 2),
+        _ThinkingCollapsibleEditor(
+          title: '开启 / 关闭时写入',
+          subtitle: actionSummary,
+          initiallyExpanded: false,
+          child: Column(
+            children: <Widget>[
+              _ThinkingActionListEditor(
+                title: '开启时写入',
+                actions: rule.enableActions,
+                onChanged: (actions) =>
+                    onChanged(rule.copyWith(enableActions: actions)),
+              ),
+              const SizedBox(height: 8),
+              _ThinkingActionListEditor(
+                title: '关闭时写入',
+                actions: rule.disableActions,
+                onChanged: (actions) =>
+                    onChanged(rule.copyWith(disableActions: actions)),
+              ),
+            ],
+          ),
+        ),
+        if (rule.control == 'levels') ...<Widget>[
+          const SizedBox(height: 8),
+          _ThinkingCollapsibleEditor(
+            title: '滑块档位',
+            subtitle: '${rule.options.length} 个档位，决定滑块长度',
+            initiallyExpanded: false,
+            child: _ThinkingOptionListEditor(
+              options: rule.options,
+              defaultPath: rule.defaultPath,
+              onChanged: (options) =>
+                  onChanged(rule.copyWith(options: options)),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ThinkingChoiceField extends StatelessWidget {
+  /// Creates a compact dropdown-like choice field.
+  const _ThinkingChoiceField({
+    required this.label,
+    required this.value,
+    required this.choices,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final List<MapEntry<String, String>> choices;
+  final ValueChanged<String> onChanged;
+
+  /// Builds a popup menu backed by readable choice labels.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final display = choices
+        .where((choice) => choice.key == value)
+        .map((choice) => choice.value)
+        .first;
+    return PopupMenuButton<String>(
+      initialValue: value,
+      onSelected: onChanged,
+      itemBuilder: (context) => <PopupMenuEntry<String>>[
+        for (final choice in choices)
+          PopupMenuItem<String>(value: choice.key, child: Text(choice.value)),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    label,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    display,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThinkingSwitchRow extends StatelessWidget {
+  /// Creates a compact switch row for thinking rule flags.
+  const _ThinkingSwitchRow({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  /// Builds the switch row surface.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingCollapsibleEditor extends StatelessWidget {
+  /// Creates a collapsible group for less frequently edited fields.
+  const _ThinkingCollapsibleEditor({
+    required this.title,
+    required this.subtitle,
+    required this.initiallyExpanded,
+    required this.child,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool initiallyExpanded;
+  final Widget child;
+
+  /// Builds the collapsible editor section.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Material(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
+      borderRadius: BorderRadius.circular(10),
+      child: ExpansionTile(
+        initiallyExpanded: initiallyExpanded,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        collapsedShape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        title: Text(
+          title,
+          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+        children: <Widget>[child],
+      ),
+    );
+  }
+}
+
+class _ThinkingMatchEditor extends StatelessWidget {
+  /// Creates the human-readable matcher editor for one thinking rule.
+  const _ThinkingMatchEditor({required this.rule, required this.onChanged});
+
+  final _ThinkingRuleEditor rule;
+  final ValueChanged<_ThinkingRuleEditor> onChanged;
+
+  /// Builds grouped model and endpoint matching controls.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            '匹配条件',
+            style: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '这些条件只属于当前供应商；多个值用逗号分隔。三项全空代表全部模型。',
+            style: textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: _ThinkingInlineTextField(
+                  label: '模型前缀',
+                  value: _joinThinkingValues(rule.modelPrefixes),
+                  hint: 'gemini-2.5, claude-3',
+                  onChanged: (value) => onChanged(
+                    rule.copyWith(modelPrefixes: _splitThinkingValues(value)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ThinkingInlineTextField(
+                  label: '端点后缀',
+                  value: _joinThinkingValues(rule.endpointSuffixes),
+                  hint: '/responses',
+                  onChanged: (value) => onChanged(
+                    rule.copyWith(
+                      endpointSuffixes: _splitThinkingValues(value),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          _ThinkingInlineTextField(
+            label: '模型正则',
+            value: _joinThinkingValues(rule.modelRegexes),
+            hint: r'(?i)(?:^|/)gpt-[5-9]',
+            onChanged: (value) => onChanged(
+              rule.copyWith(modelRegexes: _splitThinkingValues(value)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingActionListEditor extends StatelessWidget {
+  /// Creates an editor for request write actions.
+  const _ThinkingActionListEditor({
+    required this.title,
+    required this.actions,
+    required this.onChanged,
+  });
+
+  final String title;
+  final List<_ThinkingActionEditor> actions;
+  final ValueChanged<List<_ThinkingActionEditor>> onChanged;
+
+  /// Builds editable action rows.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  title,
+                  style: textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => onChanged(<_ThinkingActionEditor>[
+                  ...actions,
+                  const _ThinkingActionEditor(path: '', value: 'true'),
+                ]),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('添加'),
+              ),
+            ],
+          ),
+          if (actions.isEmpty)
+            Text(
+              '未配置',
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            for (var index = 0; index < actions.length; index++) ...<Widget>[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: _ThinkingInlineTextField(
+                      label: '请求路径',
+                      value: actions[index].path,
+                      hint: 'reasoning.effort',
+                      onChanged: (value) => onChanged(
+                        _replaceAt<_ThinkingActionEditor>(
+                          actions,
+                          index,
+                          actions[index].copyWith(path: value),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _ThinkingInlineTextField(
+                      label: '写入值（JSON）',
+                      value: actions[index].value,
+                      hint: '"high", true, 1024',
+                      onChanged: (value) => onChanged(
+                        _replaceAt<_ThinkingActionEditor>(
+                          actions,
+                          index,
+                          actions[index].copyWith(value: value),
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '删除',
+                    onPressed: () => onChanged(
+                      _removeAt<_ThinkingActionEditor>(actions, index),
+                    ),
+                    icon: Icon(Icons.delete_outline, color: colorScheme.error),
+                  ),
+                ],
+              ),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingOptionListEditor extends StatelessWidget {
+  /// Creates an editor for level-based thinking options.
+  const _ThinkingOptionListEditor({
+    required this.options,
+    required this.defaultPath,
+    required this.onChanged,
+  });
+
+  final List<_ThinkingOptionEditor> options;
+  final String defaultPath;
+  final ValueChanged<List<_ThinkingOptionEditor>> onChanged;
+
+  /// Builds editable option rows.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  '档位列表',
+                  style: textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => onChanged(<_ThinkingOptionEditor>[
+                  ...options,
+                  _newThinkingOption(options.length, defaultPath),
+                ]),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('添加档位'),
+              ),
+            ],
+          ),
+          if (options.isEmpty)
+            Text(
+              '未配置',
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            for (var index = 0; index < options.length; index++) ...<Widget>[
+              _ThinkingOptionCard(
+                index: index,
+                option: options[index],
+                defaultPath: defaultPath,
+                onChanged: (option) => onChanged(
+                  _replaceAt<_ThinkingOptionEditor>(options, index, option),
+                ),
+                onDelete: () =>
+                    onChanged(_removeAt<_ThinkingOptionEditor>(options, index)),
+                onMoveUp: index == 0
+                    ? null
+                    : () => onChanged(
+                        _moveAt<_ThinkingOptionEditor>(
+                          options,
+                          index,
+                          index - 1,
+                        ),
+                      ),
+                onMoveDown: index == options.length - 1
+                    ? null
+                    : () => onChanged(
+                        _moveAt<_ThinkingOptionEditor>(
+                          options,
+                          index,
+                          index + 1,
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 6),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingOptionCard extends StatelessWidget {
+  /// Creates one collapsible thinking option card.
+  const _ThinkingOptionCard({
+    required this.index,
+    required this.option,
+    required this.defaultPath,
+    required this.onChanged,
+    required this.onDelete,
+    required this.onMoveUp,
+    required this.onMoveDown,
+  });
+
+  final int index;
+  final _ThinkingOptionEditor option;
+  final String defaultPath;
+  final ValueChanged<_ThinkingOptionEditor> onChanged;
+  final VoidCallback onDelete;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+
+  /// Builds one editable option card.
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+      borderRadius: BorderRadius.circular(8),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.only(left: 10, right: 4),
+        childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        title: Text('档位 ${index + 1}: ${option.label}'),
+        subtitle: Text(_thinkingOptionPathSummary(option, defaultPath)),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            IconButton(
+              tooltip: '上移',
+              onPressed: onMoveUp,
+              icon: const Icon(Icons.keyboard_arrow_up),
+            ),
+            IconButton(
+              tooltip: '下移',
+              onPressed: onMoveDown,
+              icon: const Icon(Icons.keyboard_arrow_down),
+            ),
+            IconButton(
+              tooltip: '删除',
+              onPressed: onDelete,
+              icon: Icon(Icons.delete_outline, color: colorScheme.error),
+            ),
+          ],
+        ),
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: _ThinkingInlineTextField(
+                  label: 'id',
+                  value: option.id,
+                  hint: 'high',
+                  onChanged: (value) => onChanged(option.copyWith(id: value)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ThinkingInlineTextField(
+                  label: '显示名称',
+                  value: option.label,
+                  hint: '高',
+                  onChanged: (value) =>
+                      onChanged(option.copyWith(label: value)),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: _ThinkingInlineTextField(
+                  label: '写入路径',
+                  value: option.path,
+                  hint: defaultPath,
+                  onChanged: (value) => onChanged(option.copyWith(path: value)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ThinkingInlineTextField(
+                  label: '写入值（JSON）',
+                  value: option.value,
+                  hint: '"high", true, 1024',
+                  onChanged: (value) =>
+                      onChanged(option.copyWith(value: value)),
+                ),
+              ),
+            ],
+          ),
+          _ThinkingActionListEditor(
+            title: '档位附加动作',
+            actions: option.actions,
+            onChanged: (actions) =>
+                onChanged(option.copyWith(actions: actions)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingInlineTextField extends StatelessWidget {
+  /// Creates a compact text field for thinking configuration forms.
+  const _ThinkingInlineTextField({
+    required this.label,
+    required this.value,
+    required this.hint,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final String hint;
+  final ValueChanged<String> onChanged;
+
+  /// Builds a text form field using the current editor value.
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            label,
+            style: textTheme.labelSmall?.copyWith(
+              color: colorScheme.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          TextFormField(
+            initialValue: value,
+            maxLines: 1,
+            decoration: InputDecoration(
+              hintText: hint,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
+            ),
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThinkingRuleEditor {
+  /// Creates one editable provider-scoped thinking rule.
+  const _ThinkingRuleEditor({
+    required this.modelPrefixes,
+    required this.modelRegexes,
+    required this.endpointSuffixes,
+    required this.control,
+    required this.requiredValue,
+    required this.defaultPath,
+    required this.enableActions,
+    required this.disableActions,
+    required this.options,
+  });
+
+  final List<String> modelPrefixes;
+  final List<String> modelRegexes;
+  final List<String> endpointSuffixes;
+  final String control;
+  final bool requiredValue;
+  final String defaultPath;
+  final List<_ThinkingActionEditor> enableActions;
+  final List<_ThinkingActionEditor> disableActions;
+  final List<_ThinkingOptionEditor> options;
+
+  /// Returns a modified copy of this editor rule.
+  _ThinkingRuleEditor copyWith({
+    List<String>? modelPrefixes,
+    List<String>? modelRegexes,
+    List<String>? endpointSuffixes,
+    String? control,
+    bool? requiredValue,
+    String? defaultPath,
+    List<_ThinkingActionEditor>? enableActions,
+    List<_ThinkingActionEditor>? disableActions,
+    List<_ThinkingOptionEditor>? options,
+  }) {
+    return _ThinkingRuleEditor(
+      modelPrefixes: modelPrefixes ?? this.modelPrefixes,
+      modelRegexes: modelRegexes ?? this.modelRegexes,
+      endpointSuffixes: endpointSuffixes ?? this.endpointSuffixes,
+      control: control ?? this.control,
+      requiredValue: requiredValue ?? this.requiredValue,
+      defaultPath: defaultPath ?? this.defaultPath,
+      enableActions: enableActions ?? this.enableActions,
+      disableActions: disableActions ?? this.disableActions,
+      options: options ?? this.options,
+    );
+  }
+}
+
+class _ThinkingActionEditor {
+  /// Creates one editable request write action.
+  const _ThinkingActionEditor({required this.path, required this.value});
+
+  final String path;
+  final String value;
+
+  /// Returns a modified copy of this action.
+  _ThinkingActionEditor copyWith({String? path, String? value}) {
+    return _ThinkingActionEditor(
+      path: path ?? this.path,
+      value: value ?? this.value,
+    );
+  }
+}
+
+class _ThinkingOptionEditor {
+  /// Creates one editable thinking level option.
+  const _ThinkingOptionEditor({
+    required this.id,
+    required this.label,
+    required this.path,
+    required this.value,
+    required this.actions,
+  });
+
+  final String id;
+  final String label;
+  final String path;
+  final String value;
+  final List<_ThinkingActionEditor> actions;
+
+  /// Returns a modified copy of this option.
+  _ThinkingOptionEditor copyWith({
+    String? id,
+    String? label,
+    String? path,
+    String? value,
+    List<_ThinkingActionEditor>? actions,
+  }) {
+    return _ThinkingOptionEditor(
+      id: id ?? this.id,
+      label: label ?? this.label,
+      path: path ?? this.path,
+      value: value ?? this.value,
+      actions: actions ?? this.actions,
+    );
+  }
+}
+
+/// Creates a new provider-owned thinking rule.
+_ThinkingRuleEditor _newThinkingRule() {
+  return _ThinkingRuleEditor(
+    modelPrefixes: const <String>[],
+    modelRegexes: const <String>[],
+    endpointSuffixes: const <String>[],
+    control: 'levels',
+    requiredValue: false,
+    defaultPath: 'reasoning_effort',
+    enableActions: const <_ThinkingActionEditor>[],
+    disableActions: const <_ThinkingActionEditor>[],
+    options: <_ThinkingOptionEditor>[
+      const _ThinkingOptionEditor(
+        id: 'low',
+        label: 'low',
+        path: 'reasoning_effort',
+        value: '"low"',
+        actions: <_ThinkingActionEditor>[],
+      ),
+      const _ThinkingOptionEditor(
+        id: 'high',
+        label: 'high',
+        path: 'reasoning_effort',
+        value: '"high"',
+        actions: <_ThinkingActionEditor>[],
+      ),
+      const _ThinkingOptionEditor(
+        id: 'max',
+        label: 'max',
+        path: 'reasoning_effort',
+        value: '"max"',
+        actions: <_ThinkingActionEditor>[],
+      ),
+    ],
+  );
+}
+
+/// Creates a new editable thinking level option.
+_ThinkingOptionEditor _newThinkingOption(int index, String defaultPath) {
+  final label = 'option-${index + 1}';
+  return _ThinkingOptionEditor(
+    id: label,
+    label: label,
+    path: defaultPath,
+    value: 'null',
+    actions: const <_ThinkingActionEditor>[],
+  );
+}
+
+/// Parses current Rust thinking rules into UI editor models.
+List<_ThinkingRuleEditor> _parseThinkingRuleEditors(String raw) {
+  final decoded = jsonDecode(raw);
+  if (decoded is! List<Object?>) {
+    throw const FormatException('thinkingConfigurations 必须是 JSON 数组');
+  }
+  return <_ThinkingRuleEditor>[
+    for (var index = 0; index < decoded.length; index++)
+      _thinkingRuleFromJson(_jsonObject(decoded[index], '规则 ${index + 1}')),
+  ];
+}
+
+/// Serializes UI editor models into current Rust thinking rule JSON.
+String _serializeThinkingRuleEditors(List<_ThinkingRuleEditor> rules) {
+  final encoded = <Map<String, Object?>>[
+    for (var index = 0; index < rules.length; index++)
+      _thinkingRuleToJson(rules[index], index),
+  ];
+  return const JsonEncoder.withIndent('  ').convert(encoded);
+}
+
+/// Converts one JSON object into an editable thinking rule.
+_ThinkingRuleEditor _thinkingRuleFromJson(Map<String, Object?> json) {
+  final options = _thinkingOptionsFromJson(json['options']);
+  return _ThinkingRuleEditor(
+    modelPrefixes: _stringListFromJson(json['model_prefix'], 'model_prefix'),
+    modelRegexes: _stringListFromJson(json['model_regex'], 'model_regex'),
+    endpointSuffixes: _stringListFromJson(
+      json['endpoint_suffix'],
+      'endpoint_suffix',
+    ),
+    control: _thinkingControlFromJson(json['control']),
+    requiredValue: _boolFromJson(json['required'], 'required'),
+    defaultPath: _defaultThinkingPath(options),
+    enableActions: _thinkingActionsFromJson(json['enable'], 'enable'),
+    disableActions: _thinkingActionsFromJson(json['disable'], 'disable'),
+    options: options,
+  );
+}
+
+/// Converts one editable thinking rule into a Rust JSON object.
+Map<String, Object?> _thinkingRuleToJson(_ThinkingRuleEditor rule, int index) {
+  final label = '规则 ${index + 1}';
+  _validateThinkingRule(rule, label);
+  return <String, Object?>{
+    'model_prefix': rule.modelPrefixes,
+    'model_regex': rule.modelRegexes,
+    'endpoint_suffix': rule.endpointSuffixes,
+    'control': rule.control,
+    'required': rule.requiredValue,
+    'enable': _thinkingActionsToJson(rule.enableActions, '$label.enable'),
+    'disable': _thinkingActionsToJson(rule.disableActions, '$label.disable'),
+    'options': rule.control == 'levels'
+        ? _thinkingOptionsToJson(rule.options, rule.defaultPath, label)
+        : <Map<String, Object?>>[],
+  };
+}
+
+/// Validates one rule before serialization.
+void _validateThinkingRule(_ThinkingRuleEditor rule, String label) {
+  _thinkingControlLabel(rule.control);
+  if (rule.control == 'levels' && rule.options.isEmpty) {
+    throw FormatException('$label 缺少档位列表');
+  }
+}
+
+/// Converts action JSON into editor rows.
+List<_ThinkingActionEditor> _thinkingActionsFromJson(
+  Object? value,
+  String field,
+) {
+  if (value is! List<Object?>) {
+    throw FormatException('$field 必须是 JSON 数组');
+  }
+  return <_ThinkingActionEditor>[
+    for (var index = 0; index < value.length; index++)
+      _thinkingActionFromJson(_jsonObject(value[index], '$field[$index]')),
+  ];
+}
+
+/// Converts one action JSON object into an editor row.
+_ThinkingActionEditor _thinkingActionFromJson(Map<String, Object?> json) {
+  if (!json.containsKey('value')) {
+    throw const FormatException('动作缺少 value');
+  }
+  return _ThinkingActionEditor(
+    path: _stringFromJson(json['path'], 'path'),
+    value: jsonEncode(json['value']),
+  );
+}
+
+/// Converts editor action rows into JSON objects.
+List<Map<String, Object?>> _thinkingActionsToJson(
+  List<_ThinkingActionEditor> actions,
+  String label,
+) {
+  return <Map<String, Object?>>[
+    for (var index = 0; index < actions.length; index++)
+      _thinkingActionToJson(actions[index], '$label[$index]'),
+  ];
+}
+
+/// Converts one editor action into a JSON object.
+Map<String, Object?> _thinkingActionToJson(
+  _ThinkingActionEditor action,
+  String label,
+) {
+  final path = action.path.trim();
+  if (path.isEmpty) {
+    throw FormatException('$label 缺少 path');
+  }
+  return <String, Object?>{
+    'path': path,
+    'value': _decodeThinkingValue(action.value, '$label.value'),
+  };
+}
+
+/// Converts option JSON into editor rows.
+List<_ThinkingOptionEditor> _thinkingOptionsFromJson(Object? value) {
+  if (value is! List<Object?>) {
+    throw const FormatException('options 必须是 JSON 数组');
+  }
+  return <_ThinkingOptionEditor>[
+    for (var index = 0; index < value.length; index++)
+      _thinkingOptionFromJson(_jsonObject(value[index], 'options[$index]')),
+  ];
+}
+
+/// Converts one option JSON object into an editor row.
+_ThinkingOptionEditor _thinkingOptionFromJson(Map<String, Object?> json) {
+  if (!json.containsKey('value')) {
+    throw const FormatException('档位缺少 value');
+  }
+  final value = json['value'];
+  final id = _optionalStringFromJson(json['id']).trim();
+  final visibleId = id.isEmpty ? _thinkingValueId(value) : id;
+  final label = _optionalStringFromJson(json['label']).trim();
+  return _ThinkingOptionEditor(
+    id: visibleId,
+    label: label.isEmpty ? visibleId : label,
+    path: _optionalStringFromJson(json['path']),
+    value: jsonEncode(value),
+    actions: _optionalThinkingActionsFromJson(json['actions'], 'actions'),
+  );
+}
+
+/// Converts editor options into JSON objects.
+List<Map<String, Object?>> _thinkingOptionsToJson(
+  List<_ThinkingOptionEditor> options,
+  String defaultPath,
+  String label,
+) {
+  final ids = <String>{};
+  return <Map<String, Object?>>[
+    for (var index = 0; index < options.length; index++)
+      _thinkingOptionToJson(
+        options[index],
+        defaultPath,
+        '$label.options[$index]',
+        ids,
+      ),
+  ];
+}
+
+/// Converts one editor option into a JSON object.
+Map<String, Object?> _thinkingOptionToJson(
+  _ThinkingOptionEditor option,
+  String defaultPath,
+  String label,
+  Set<String> usedIds,
+) {
+  final id = option.id.trim();
+  final optionLabel = option.label.trim();
+  final path = option.path.trim().isEmpty
+      ? defaultPath.trim()
+      : option.path.trim();
+  if (id.isEmpty) {
+    throw FormatException('$label 缺少 id');
+  }
+  if (optionLabel.isEmpty) {
+    throw FormatException('$label 缺少 label');
+  }
+  if (path.isEmpty) {
+    throw FormatException('$label 缺少 path');
+  }
+  if (!usedIds.add(id)) {
+    throw FormatException('$label id 重复：$id');
+  }
+  return <String, Object?>{
+    'id': id,
+    'label': optionLabel,
+    'path': path,
+    'value': _decodeThinkingValue(option.value, '$label.value'),
+    'actions': _thinkingActionsToJson(option.actions, '$label.actions'),
+  };
+}
+
+/// Converts an optional action list into editor rows.
+List<_ThinkingActionEditor> _optionalThinkingActionsFromJson(
+  Object? value,
+  String field,
+) {
+  if (value == null) {
+    return const <_ThinkingActionEditor>[];
+  }
+  return _thinkingActionsFromJson(value, field);
+}
+
+/// Decodes one text field as a JSON value.
+Object? _decodeThinkingValue(String value, String label) {
+  final text = value.trim();
+  if (text.isEmpty) {
+    throw FormatException('$label 不能为空');
+  }
+  try {
+    return jsonDecode(text);
+  } on FormatException catch (error) {
+    throw FormatException('$label JSON 无效：${error.message}');
+  }
+}
+
+/// Reads a JSON object at the specified location.
+Map<String, Object?> _jsonObject(Object? value, String label) {
+  if (value is! Map) {
+    throw FormatException('$label 必须是 JSON 对象');
+  }
+  return value.cast<String, Object?>();
+}
+
+/// Reads a required string list from JSON.
+List<String> _stringListFromJson(Object? value, String field) {
+  if (value is! List<Object?>) {
+    throw FormatException('$field 必须是 JSON 数组');
+  }
+  return <String>[
+    for (var index = 0; index < value.length; index++)
+      _stringFromJson(value[index], '$field[$index]'),
+  ];
+}
+
+/// Reads a required string from JSON.
+String _stringFromJson(Object? value, String field) {
+  if (value is! String) {
+    throw FormatException('$field 必须是字符串');
+  }
+  return value;
+}
+
+/// Reads an optional string from JSON.
+String _optionalStringFromJson(Object? value) {
+  if (value == null) {
+    return '';
+  }
+  if (value is! String) {
+    throw const FormatException('字段必须是字符串');
+  }
+  return value;
+}
+
+/// Reads a required boolean from JSON.
+bool _boolFromJson(Object? value, String field) {
+  if (value is! bool) {
+    throw FormatException('$field 必须是布尔值');
+  }
+  return value;
+}
+
+/// Reads and validates a thinking control value.
+String _thinkingControlFromJson(Object? value) {
+  final control = _stringFromJson(value, 'control');
+  _thinkingControlLabel(control);
+  return control;
+}
+
+/// Returns the display label for one thinking control value.
+String _thinkingControlLabel(String value) {
+  return switch (value) {
+    'levels' => '多档位滑块',
+    'toggle_only' => '仅开关',
+    'unsupported' => '不支持思考',
+    _ => throw FormatException('control 不支持：$value'),
+  };
+}
+
+/// Joins a list of rule values for text editing.
+String _joinThinkingValues(List<String> values) {
+  return values.join(', ');
+}
+
+/// Splits a comma-separated editor value list.
+List<String> _splitThinkingValues(String value) {
+  return value
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
+}
+
+/// Returns a stable option id from a JSON value.
+String _thinkingValueId(Object? value) {
+  if (value is String) {
+    return value;
+  }
+  return jsonEncode(value);
+}
+
+/// Returns a common option path for the rule-level path editor.
+String _defaultThinkingPath(List<_ThinkingOptionEditor> options) {
+  final paths = <String>{
+    for (final option in options)
+      if (option.path.trim().isNotEmpty) option.path.trim(),
+  };
+  if (paths.length == 1) {
+    return paths.single;
+  }
+  return '';
+}
+
+/// Builds a compact title for a thinking rule.
+String _thinkingRulePreviewTitle(_ThinkingRuleEditor rule) {
+  final parts = <String>[
+    for (final value in rule.modelPrefixes) '前缀 $value',
+    for (final value in rule.modelRegexes) '正则 $value',
+    for (final value in rule.endpointSuffixes) '端点 $value',
+  ];
+  if (parts.isEmpty) {
+    return '所有模型';
+  }
+  final visible = parts.take(3).join('、');
+  return parts.length > 3 ? '$visible、…' : visible;
+}
+
+/// Builds a compact path summary for a thinking rule.
+String _thinkingRulePathSummary(_ThinkingRuleEditor rule) {
+  if (rule.defaultPath.trim().isNotEmpty) {
+    return rule.defaultPath.trim();
+  }
+  final paths = <String>[
+    for (final action in rule.enableActions)
+      if (action.path.trim().isNotEmpty) action.path.trim(),
+    for (final action in rule.disableActions)
+      if (action.path.trim().isNotEmpty) action.path.trim(),
+    for (final option in rule.options)
+      if (option.path.trim().isNotEmpty) option.path.trim(),
+  ];
+  if (paths.isEmpty) {
+    return '未设置请求路径';
+  }
+  return paths.first;
+}
+
+/// Builds a compact path summary for a thinking level option.
+String _thinkingOptionPathSummary(
+  _ThinkingOptionEditor option,
+  String defaultPath,
+) {
+  final path = option.path.trim().isEmpty
+      ? defaultPath.trim()
+      : option.path.trim();
+  if (path.isEmpty) {
+    return '未设置写入路径';
+  }
+  return path;
+}
+
+/// Builds the summary text for all configured control types.
+String _thinkingControlSummary(List<_ThinkingRuleEditor> rules) {
+  final labels = <String>[];
+  for (final rule in rules) {
+    final label = _thinkingControlLabel(rule.control);
+    if (!labels.any((item) => item == label)) {
+      labels.add(label);
+    }
+  }
+  if (labels.isEmpty) {
+    return '未配置';
+  }
+  return labels.join(' / ');
+}
+
+/// Replaces one item in a list.
+List<T> _replaceAt<T>(List<T> items, int index, T value) {
+  return <T>[
+    for (var i = 0; i < items.length; i++) i == index ? value : items[i],
+  ];
+}
+
+/// Removes one item from a list.
+List<T> _removeAt<T>(List<T> items, int index) {
+  return <T>[
+    for (var i = 0; i < items.length; i++)
+      if (i != index) items[i],
+  ];
+}
+
+/// Moves one item inside a list.
+List<T> _moveAt<T>(List<T> items, int from, int to) {
+  final copy = <T>[...items];
+  final item = copy.removeAt(from);
+  copy.insert(to, item);
+  return copy;
 }
 
 sealed class _AvailableModelSelection {
@@ -1547,6 +3171,15 @@ class _ProviderModelTile extends StatelessWidget {
                   label: l10n.settingsModelSetCurrentActive,
                   onPressed: () => onSelect(provider.id, model.id),
                 ),
+              const SizedBox(width: 6),
+              Tooltip(
+                message: '模型设置',
+                child: Icon(
+                  Icons.tune_outlined,
+                  size: 18,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
               if (testing) ...<Widget>[
                 const SizedBox(width: 8),
                 const SizedBox.square(
@@ -2712,6 +4345,9 @@ class _DialogTextField extends StatelessWidget {
     this.obscureText = false,
     this.numberOnly = false,
     this.maxLines = 1,
+    this.keyboardType,
+    this.inputFormatters,
+    this.suffixIcon,
     this.validator,
   });
 
@@ -2721,6 +4357,9 @@ class _DialogTextField extends StatelessWidget {
   final bool obscureText;
   final bool numberOnly;
   final int maxLines;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final Widget? suffixIcon;
   final String? Function(String? value)? validator;
 
   /// Builds a text field with the dialog's standard validation rules.
@@ -2734,8 +4373,11 @@ class _DialogTextField extends StatelessWidget {
         style: textStyle,
         obscureText: obscureText,
         maxLines: obscureText ? 1 : maxLines,
-        keyboardType: numberOnly ? TextInputType.number : TextInputType.text,
-        decoration: InputDecoration(labelText: label),
+        keyboardType:
+            keyboardType ??
+            (numberOnly ? TextInputType.number : TextInputType.text),
+        inputFormatters: inputFormatters,
+        decoration: InputDecoration(labelText: label, suffixIcon: suffixIcon),
         validator: (value) {
           final text = value?.trim() ?? '';
           if (requiredField && text.isEmpty) {

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::ApiKeyInfo::ApiKeyInfo;
 use super::BillingMode::BillingMode;
@@ -12,8 +13,47 @@ pub const DEFAULT_THINKING_CONFIGURATIONS: &str =
     ThinkingConfigurationRows::THINKING_CONFIGURATIONS;
 
 /// Builds the initial persisted thinking rule set for new model profiles.
-fn defaultThinkingConfigurations() -> String {
-    DEFAULT_THINKING_CONFIGURATIONS.to_string()
+fn defaultThinkingConfigurations(providerTypeId: &str) -> String {
+    thinkingConfigurationsForProvider(providerTypeId)
+}
+
+/// Builds the persisted thinking rule set owned by one provider type.
+#[allow(non_snake_case)]
+pub fn thinkingConfigurationsForProvider(providerTypeId: &str) -> String {
+    let provider = providerTypeId.trim().to_ascii_uppercase();
+    let rules = serde_json::from_str::<Vec<Value>>(DEFAULT_THINKING_CONFIGURATIONS)
+        .expect("built-in thinking configurations must be valid JSON")
+        .into_iter()
+        .filter(|rule| thinkingRuleTargetsProvider(rule, &provider))
+        .map(removeThinkingRuleProviderTargets)
+        .collect::<Vec<_>>();
+    serde_json::to_string(&rules).expect("provider thinking configurations must encode")
+}
+
+/// Returns whether one declarative thinking rule belongs to a provider type.
+#[allow(non_snake_case)]
+fn thinkingRuleTargetsProvider(rule: &Value, providerTypeId: &str) -> bool {
+    ["providers", "providerTypeIds"].iter().any(|key| {
+        rule.get(key)
+            .and_then(Value::as_array)
+            .is_some_and(|providers| {
+                providers.iter().any(|candidate| {
+                    candidate
+                        .as_str()
+                        .is_some_and(|value| value.eq_ignore_ascii_case(providerTypeId))
+                })
+            })
+    })
+}
+
+/// Removes catalog-only provider selectors from one provider-owned thinking rule.
+#[allow(non_snake_case)]
+fn removeThinkingRuleProviderTargets(mut rule: Value) -> Value {
+    if let Value::Object(object) = &mut rule {
+        object.remove("providers");
+        object.remove("providerTypeIds");
+    }
+    rule
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,10 +457,18 @@ pub struct ModelCatalogEntry {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
+pub struct ProviderEndpointOption {
+    pub endpoint: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
 pub struct ProviderCatalogEntry {
     pub providerTypeId: String,
     pub displayName: String,
     pub defaultEndpoint: String,
+    pub endpointOptions: Vec<ProviderEndpointOption>,
     pub operations: Vec<ProviderOperationSpec>,
     pub models: Vec<ModelCatalogEntry>,
 }
@@ -496,11 +544,13 @@ pub struct ProviderProfile {
 }
 
 impl ProviderProfile {
+    /// Creates a provider profile with provider-scoped thinking configuration.
     pub fn new(id: String, name: String, providerType: ApiProviderType, endpoint: String) -> Self {
+        let providerTypeName = providerType.name().to_string();
         Self {
             id,
             name,
-            providerTypeId: providerType.name().to_string(),
+            providerTypeId: providerTypeName.clone(),
             providerType,
             endpoint,
             apiKey: String::new(),
@@ -511,7 +561,7 @@ impl ProviderProfile {
             customHeaders: "{}".to_string(),
             requestLimitPerMinute: 0,
             maxConcurrentRequests: 0,
-            thinkingConfigurations: defaultThinkingConfigurations(),
+            thinkingConfigurations: defaultThinkingConfigurations(&providerTypeName),
             thinkingOptionId: String::new(),
             models: Vec::new(),
         }
@@ -594,6 +644,7 @@ pub fn local_model_provider() -> ProviderProfile {
     )
 }
 
+/// Builds the default DeepSeek model profile with optional Responses search.
 pub fn default_deepseek_model() -> ModelProfile {
     let mut model = ModelProfile::new(ModelConfigDefaults::DEFAULT_MODEL_ID.to_string());
     model.contextOverride = Some(ModelContextSpec::default());
@@ -604,5 +655,11 @@ pub fn default_deepseek_model() -> ModelProfile {
     model.requestOverride = Some(ModelRequestSpec {
         supportsStructuredTools: true,
     });
+    model.builtinToolsOverride = Some(vec![ModelBuiltinTool::disabled(
+        BuiltinToolType::WebSearch,
+        "内置联网搜索".to_string(),
+        BuiltinToolRequestFormat::OpenAiWebSearch,
+        BuiltinToolExclusivity::CanMixWithExternalTools,
+    )]);
     model
 }

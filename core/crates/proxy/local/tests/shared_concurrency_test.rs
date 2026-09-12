@@ -235,6 +235,7 @@ fn proxy_test_markdown_stream_source(chat_id: String, text: String) -> Arc<CoreS
             parentBlockId: None,
             nodeType: None,
             headerLevel: None,
+            xml: None,
         };
         let value = toCoreValue(event).expect("Markdown stream event must encode");
         let _ = sender.send(CoreEvent {

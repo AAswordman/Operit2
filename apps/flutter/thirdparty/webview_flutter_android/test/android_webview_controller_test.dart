@@ -1618,7 +1618,7 @@ void main() {
       ]);
     });
 
-    test('runJavaScriptReturningResult returning null', () async {
+    test('runJavaScriptReturningResult rejects a native null result', () async {
       final mockWebView = MockWebView();
       final AndroidWebViewController controller = createControllerWithMocks(
         mockWebView: mockWebView,
@@ -1628,13 +1628,26 @@ void main() {
         mockWebView.evaluateJavascript('alert("This is a test.");'),
       ).thenAnswer((_) => Future<String?>.value());
 
-      final message =
-          await controller.runJavaScriptReturningResult(
-                'alert("This is a test.");',
-              )
-              as String;
+      await expectLater(
+        controller.runJavaScriptReturningResult('alert("This is a test.");'),
+        throwsArgumentError,
+      );
+    });
 
-      expect(message, '');
+    test('runJavaScriptReturningResult rejects a JSON null result', () async {
+      final mockWebView = MockWebView();
+      final AndroidWebViewController controller = createControllerWithMocks(
+        mockWebView: mockWebView,
+      );
+
+      when(
+        mockWebView.evaluateJavascript('null'),
+      ).thenAnswer((_) => Future<String>.value('null'));
+
+      await expectLater(
+        controller.runJavaScriptReturningResult('null'),
+        throwsArgumentError,
+      );
     });
 
     test('runJavaScriptReturningResult parses num', () async {

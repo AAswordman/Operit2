@@ -5,7 +5,8 @@ use operit_model::ApiKeyInfo::ApiKeyInfo;
 use operit_model::FunctionType::FunctionType;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
-    ModelContextSpec, ModelPricing, ModelSummarySettings, ProviderProfile, ResolvedModelConfig,
+    ModelBuiltinTool, ModelContextSpec, ModelPricing, ModelSummarySettings, ProviderProfile,
+    ResolvedModelConfig,
 };
 use operit_model::ModelParameter::ModelParameter;
 use operit_runtime::data::preferences::FunctionalConfigManager::{
@@ -362,6 +363,36 @@ pub fn run_model_command(
                 "updated": true
             }));
         }
+        "builtin-tools" => {
+            let providerId = requiredArg(
+                args,
+                1,
+                "usage: operit2 model builtin-tools <provider-id> <model-id> <builtin-tools-json>",
+            )?;
+            let modelId = requiredArg(
+                args,
+                2,
+                "usage: operit2 model builtin-tools <provider-id> <model-id> <builtin-tools-json>",
+            )?;
+            let builtinToolsJson = requiredArg(
+                args,
+                3,
+                "usage: operit2 model builtin-tools <provider-id> <model-id> <builtin-tools-json>",
+            )?;
+            let builtinTools = serde_json::from_str::<Vec<ModelBuiltinTool>>(builtinToolsJson)
+                .map_err(|error| error.to_string())?;
+            command
+                .modelManager()
+                .updateBuiltinToolsForModel(providerId, modelId, builtinTools.clone())
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("Updated builtin tools for {providerId}:{modelId}"));
+            output.setJsonStdout(json!({
+                "providerId": providerId,
+                "modelId": modelId,
+                "builtinTools": builtinTools,
+                "updated": true
+            }));
+        }
         "context-show" => {
             let providerId = args
                 .get(1)
@@ -488,44 +519,6 @@ pub fn run_model_command(
                 "settings": descriptor,
             }));
         }
-        "thinking-set-rules" => {
-            let providerId = requiredArg(
-                args,
-                1,
-                "usage: operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
-            )?;
-            let modelId = requiredArg(
-                args,
-                2,
-                "usage: operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
-            )?;
-            let thinkingConfigurations = requiredArg(
-                args,
-                3,
-                "usage: operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
-            )?
-            .to_string();
-            let manager = command.modelManager();
-            let current = manager
-                .getProviderProfile(providerId)
-                .map_err(|error| error.to_string())?;
-            let provider = manager
-                .updateThinkingSettingsForProvider(
-                    providerId,
-                    modelId,
-                    thinkingConfigurations,
-                    current.thinkingOptionId,
-                )
-                .map_err(|error| error.to_string())?;
-            output.push_stdout_line(format!("Updated thinking rules for {providerId}:{modelId}"));
-            output.setJsonStdout(json!({
-                "providerId": providerId,
-                "modelId": modelId,
-                "thinkingConfigurations": provider.thinkingConfigurations,
-                "thinkingOptionId": provider.thinkingOptionId,
-                "updated": true,
-            }));
-        }
         "thinking-set-option" => {
             let providerId = requiredArg(
                 args,
@@ -544,16 +537,8 @@ pub fn run_model_command(
             )?
             .to_string();
             let manager = command.modelManager();
-            let current = manager
-                .getProviderProfile(providerId)
-                .map_err(|error| error.to_string())?;
             let provider = manager
-                .updateThinkingSettingsForProvider(
-                    providerId,
-                    modelId,
-                    current.thinkingConfigurations,
-                    thinkingOptionId,
-                )
+                .updateThinkingOptionForProvider(providerId, modelId, thinkingOptionId)
                 .map_err(|error| error.to_string())?;
             output.push_stdout_line(format!(
                 "Updated thinking option for {providerId}:{modelId}"
@@ -968,12 +953,12 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model use <provider-id> <model-id>",
         "operit2 model params [provider-id] [model-id]",
         "operit2 model parameters <provider-id> <model-id> <parameters-json>",
+        "operit2 model builtin-tools <provider-id> <model-id> <builtin-tools-json>",
         "operit2 model context-show [provider-id] [model-id]",
         "operit2 model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>",
         "operit2 model summary-show [provider-id] [model-id]",
         "operit2 model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>",
         "operit2 model thinking-show <provider-id> <model-id>",
-        "operit2 model thinking-set-rules <provider-id> <model-id> <rules-json>",
         "operit2 model thinking-set-option <provider-id> <model-id> <option-id>",
         "operit2 model function-list",
         "operit2 model function-show <function-type>",

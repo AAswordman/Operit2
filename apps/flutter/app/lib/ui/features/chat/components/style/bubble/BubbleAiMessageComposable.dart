@@ -12,6 +12,7 @@ import '../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../theme/OperitTheme.dart';
 import '../../part/StructuredMessagePartRenderer.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
+import '../../part/ToolCallResultMergeRender.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 import 'BubbleSurface.dart';
 
@@ -150,6 +151,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
             textColor: textColor,
             backgroundColor: backgroundColor,
             nodeGrouper: nodeGrouper,
+            mergeRender: const ToolCallResultMergeRender(),
             streamState: _rendererState,
             onLinkClick: widget.enableDialogs ? widget.onLinkClick : null,
             rendererId: 'bubble-ai-$renderIdentity',

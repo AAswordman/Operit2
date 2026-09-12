@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -11,10 +12,16 @@ use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use crate::runtime_support::ProviderRuntimeContext;
+use operit_model::ModelConfigData::{BuiltinToolRequestFormat, ModelBuiltinTool};
 use operit_util::stream::RevisableTextStream::{
     with_event_channel, RevisableTextStreamLike, TextStreamEventCarrier,
 };
 use operit_util::stream::Stream::{FnStream, Stream};
+use operit_util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges};
+use operit_util::ChatUtils::ChatUtils;
+
+pub(crate) const RESPONSES_REASONING_META_PROVIDER: &str = "openai:responses_reasoning";
+pub(crate) const RESPONSES_OUTPUT_ITEM_META_PROVIDER: &str = "openai:responses_output_item";
 
 #[derive(Clone)]
 pub struct OpenAIResponsesProvider {
@@ -26,6 +33,7 @@ pub struct OpenAIResponsesProvider {
     pub supportsAudio: bool,
     pub supportsVideo: bool,
     pub enableToolCall: bool,
+    pub builtinTools: Vec<ModelBuiltinTool>,
     pub customHeaders: Vec<(String, String)>,
     runtimeContext: ProviderRuntimeContext,
     state: Arc<Mutex<OpenAIResponsesProviderState>>,
@@ -53,11 +61,21 @@ pub struct UsageCounts {
 pub struct ParsedResponseOutput {
     pub textChunks: Vec<String>,
     pub reasoningChunks: Vec<String>,
+    pub reasoningMetadataTags: Vec<String>,
+    pub outputItemMetadataTags: Vec<String>,
+    pub reasoningObserved: bool,
+    pub searchChunks: Vec<String>,
     pub toolCalls: Value,
     pub usage: Option<UsageCounts>,
 }
 
 pub struct OpenAIResponsesPayloadAdapter;
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ResponsesHistoryProtocol {
+    OpenAi,
+    Deepseek,
+}
 
 impl OpenAIResponsesProvider {
     /// Creates a Responses API provider bound to one provider runtime context.
@@ -71,6 +89,7 @@ impl OpenAIResponsesProvider {
         supportsVision: bool,
         supportsAudio: bool,
         supportsVideo: bool,
+        builtinTools: Vec<ModelBuiltinTool>,
         enableToolCall: bool,
         runtimeContext: ProviderRuntimeContext,
     ) -> Self {
@@ -82,6 +101,7 @@ impl OpenAIResponsesProvider {
             supportsVision,
             supportsAudio,
             supportsVideo,
+            builtinTools,
             enableToolCall,
             customHeaders,
             runtimeContext,
@@ -139,8 +159,17 @@ impl OpenAIResponsesProvider {
             self.supportsVideo,
             self.enableToolCall,
         );
+        let request_history = if request.enable_thinking {
+            request.chat_history.clone()
+        } else {
+            request
+                .chat_history
+                .iter()
+                .map(|turn| turn.with_content(strip_responses_reasoning_metadata(&turn.content)))
+                .collect()
+        };
         let mut requestObject = OpenAIResponsesPayloadAdapter::to_responses_request(
-            parent.create_request_body(request)?,
+            parent.create_request_body_without_thinking_for_history(request, &request_history)?,
         );
         ThinkingConfigurationApplier::apply(
             &mut requestObject,
@@ -158,6 +187,9 @@ impl OpenAIResponsesProvider {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        if self.open_ai_web_search_enabled() {
+            append_web_search_tool(&mut requestObject);
+        }
         let toolsJson = requestObject.get("tools").map(Value::to_string);
         self.customize_final_request_object(
             &mut requestObject,
@@ -165,6 +197,13 @@ impl OpenAIResponsesProvider {
             toolsJson.as_deref(),
         );
         Ok(requestObject)
+    }
+
+    /// Returns whether the model configuration enables Responses web search.
+    fn open_ai_web_search_enabled(&self) -> bool {
+        self.builtinTools.iter().any(|tool| {
+            tool.enabled && tool.requestFormat == BuiltinToolRequestFormat::OpenAiWebSearch
+        })
     }
 
     pub fn customize_final_request_object(
@@ -371,31 +410,59 @@ impl OpenAIResponsesPayloadAdapter {
 
     pub fn parse_usage_counts(usage: Option<&Value>) -> Option<UsageCounts> {
         let usage = usage?;
-        let totalInputTokens = opt_i64(usage, "prompt_tokens")
-            .unwrap_or_else(|| opt_i64(usage, "input_tokens").unwrap_or(0));
-        let outputTokens = opt_i64(usage, "completion_tokens")
-            .unwrap_or_else(|| opt_i64(usage, "output_tokens").unwrap_or(0));
+        let hasInput = usage.get("prompt_tokens").is_some() || usage.get("input_tokens").is_some();
+        let hasOutput =
+            usage.get("completion_tokens").is_some() || usage.get("output_tokens").is_some();
         let cachedDetails = usage
             .get("prompt_tokens_details")
             .or_else(|| usage.get("input_tokens_details"));
+        let hasCached = usage.get("cached_tokens").is_some()
+            || cachedDetails
+                .and_then(|details| details.get("cached_tokens"))
+                .is_some();
+        if !hasInput && !hasOutput && !hasCached {
+            return None;
+        }
+        let totalInputTokens = opt_i64(usage, "prompt_tokens")
+            .or_else(|| opt_i64(usage, "input_tokens"))
+            .unwrap_or(0)
+            .max(0);
+        let outputTokens = opt_i64(usage, "completion_tokens")
+            .or_else(|| opt_i64(usage, "output_tokens"))
+            .unwrap_or(0)
+            .max(0);
         let cachedInputTokens = cachedDetails
             .and_then(|details| opt_i64(details, "cached_tokens"))
-            .unwrap_or_else(|| opt_i64(usage, "cached_tokens").unwrap_or(0));
+            .or_else(|| opt_i64(usage, "cached_tokens"))
+            .unwrap_or(0)
+            .max(0);
         let actualInputTokens = (totalInputTokens - cachedInputTokens).max(0);
 
-        if totalInputTokens > 0 || outputTokens > 0 || cachedInputTokens > 0 {
-            Some(UsageCounts {
-                totalInputTokens,
-                actualInputTokens,
-                cachedInputTokens,
-                outputTokens,
-            })
-        } else {
-            None
-        }
+        Some(UsageCounts {
+            totalInputTokens,
+            actualInputTokens,
+            cachedInputTokens,
+            outputTokens,
+        })
     }
 
     pub fn to_responses_request(chatStyleRequest: Value) -> Value {
+        Self::to_responses_request_for_protocol(chatStyleRequest, ResponsesHistoryProtocol::OpenAi)
+    }
+
+    /// Converts chat messages using DeepSeek's plaintext reasoning replay contract.
+    pub(crate) fn to_deepseek_responses_request(chatStyleRequest: Value) -> Value {
+        Self::to_responses_request_for_protocol(
+            chatStyleRequest,
+            ResponsesHistoryProtocol::Deepseek,
+        )
+    }
+
+    /// Converts one chat-style request into the selected Responses history protocol.
+    fn to_responses_request_for_protocol(
+        chatStyleRequest: Value,
+        protocol: ResponsesHistoryProtocol,
+    ) -> Value {
         let mut converted = chatStyleRequest;
         if let Value::Object(object) = &mut converted {
             if object.contains_key("max_tokens") && !object.contains_key("max_output_tokens") {
@@ -413,6 +480,17 @@ impl OpenAIResponsesPayloadAdapter {
                 }
             }
 
+            if let Some(reasoningEffort) = object.remove("reasoning_effort") {
+                let reasoning = object
+                    .entry("reasoning".to_string())
+                    .or_insert_with(|| Value::Object(Map::new()));
+                if let Value::Object(reasoningObject) = reasoning {
+                    if !reasoningObject.contains_key("effort") {
+                        reasoningObject.insert("effort".to_string(), reasoningEffort);
+                    }
+                }
+            }
+
             if let Some(Value::Array(tools)) = object.get("tools") {
                 object.insert(
                     "tools".to_string(),
@@ -423,7 +501,9 @@ impl OpenAIResponsesPayloadAdapter {
             if let Some(Value::Array(messages)) = object.remove("messages") {
                 object.insert(
                     "input".to_string(),
-                    Value::Array(Self::convert_messages_to_responses_input(&messages)),
+                    Value::Array(Self::convert_messages_to_responses_input(
+                        &messages, protocol,
+                    )),
                 );
             }
         }
@@ -433,13 +513,21 @@ impl OpenAIResponsesPayloadAdapter {
     pub fn parse_non_streaming_response(jsonResponse: &Value) -> ParsedResponseOutput {
         let mut textChunks = Vec::new();
         let mut reasoningChunks = Vec::new();
+        let mut reasoningMetadataTags = Vec::new();
+        let mut outputItemMetadataTags = Vec::new();
+        let mut searchItems = Vec::new();
         let mut toolCalls = Vec::new();
+        let mut reasoningObserved = false;
 
         if let Some(output) = jsonResponse.get("output").and_then(Value::as_array) {
             for item in output {
                 let itemType = item.get("type").and_then(Value::as_str).unwrap_or_default();
                 match itemType {
                     "message" => {
+                        let isCommentaryMessage = item
+                            .get("phase")
+                            .and_then(Value::as_str)
+                            .is_some_and(|phase| phase.trim().eq_ignore_ascii_case("commentary"));
                         if let Some(contentArray) = item.get("content").and_then(Value::as_array) {
                             for part in contentArray {
                                 match part.get("type").and_then(Value::as_str).unwrap_or_default() {
@@ -447,7 +535,12 @@ impl OpenAIResponsesPayloadAdapter {
                                         if let Some(text) = part.get("text").and_then(Value::as_str)
                                         {
                                             if !text.is_empty() {
-                                                textChunks.push(text.to_string());
+                                                if isCommentaryMessage {
+                                                    reasoningObserved = true;
+                                                    reasoningChunks.push(text.to_string());
+                                                } else {
+                                                    textChunks.push(text.to_string());
+                                                }
                                             }
                                         }
                                     }
@@ -455,6 +548,7 @@ impl OpenAIResponsesPayloadAdapter {
                                         if let Some(text) = part.get("text").and_then(Value::as_str)
                                         {
                                             if !text.is_empty() {
+                                                reasoningObserved = true;
                                                 reasoningChunks.push(text.to_string());
                                             }
                                         }
@@ -464,7 +558,17 @@ impl OpenAIResponsesPayloadAdapter {
                             }
                         }
                     }
+                    "web_search_call" => {
+                        if let Some(metadataTag) = Self::create_output_item_metadata_tag(item) {
+                            outputItemMetadataTags.push(metadataTag);
+                        }
+                        searchItems.push(item.clone());
+                    }
                     "reasoning" => {
+                        reasoningObserved = true;
+                        if let Some(metadataTag) = Self::create_reasoning_metadata_tag(item) {
+                            reasoningMetadataTags.push(metadataTag);
+                        }
                         if let Some(summaryArray) = item.get("summary").and_then(Value::as_array) {
                             for summaryPart in summaryArray {
                                 if let Some(text) = summaryPart.get("text").and_then(Value::as_str)
@@ -491,6 +595,10 @@ impl OpenAIResponsesPayloadAdapter {
         ParsedResponseOutput {
             textChunks,
             reasoningChunks,
+            reasoningMetadataTags,
+            outputItemMetadataTags,
+            reasoningObserved,
+            searchChunks: build_responses_web_search_chunks(&searchItems, jsonResponse),
             toolCalls: Value::Array(toolCalls),
             usage: Self::parse_usage_counts(jsonResponse.get("usage")),
         }
@@ -526,7 +634,10 @@ impl OpenAIResponsesPayloadAdapter {
         converted
     }
 
-    fn convert_messages_to_responses_input(messages: &[Value]) -> Vec<Value> {
+    fn convert_messages_to_responses_input(
+        messages: &[Value],
+        protocol: ResponsesHistoryProtocol,
+    ) -> Vec<Value> {
         let mut input = Vec::new();
         for message in messages {
             let Some(messageObject) = message.as_object() else {
@@ -549,13 +660,49 @@ impl OpenAIResponsesPayloadAdapter {
                     input.push(json!({
                         "type": "function_call_output",
                         "call_id": callId,
-                        "output": Self::extract_tool_output_text(messageObject.get("content")),
+                        "output": Self::extract_tool_output_content(messageObject.get("content")),
                     }));
                     continue;
                 }
             }
 
             if role == "assistant" {
+                let reasoningItems = match protocol {
+                    ResponsesHistoryProtocol::OpenAi => {
+                        Self::extract_reasoning_items_from_message(messageObject)
+                    }
+                    ResponsesHistoryProtocol::Deepseek => {
+                        Self::extract_deepseek_reasoning_items_from_message(messageObject)
+                    }
+                };
+                let outputItems = match protocol {
+                    ResponsesHistoryProtocol::OpenAi => {
+                        Self::extract_output_items_from_message(messageObject)
+                    }
+                    ResponsesHistoryProtocol::Deepseek => {
+                        Self::extract_deepseek_output_items_from_message(messageObject)
+                    }
+                };
+                let removeThinkingContent = protocol == ResponsesHistoryProtocol::Deepseek
+                    && (!reasoningItems.is_empty()
+                        || Self::contains_deepseek_commentary_metadata(messageObject));
+                input.extend(reasoningItems);
+                input.extend(outputItems);
+
+                if protocol == ResponsesHistoryProtocol::Deepseek {
+                    let convertedContent = Self::convert_message_content_for_responses(
+                        messageObject.get("content"),
+                        removeThinkingContent,
+                    );
+                    if responses_content_is_not_empty(&convertedContent) {
+                        input.push(json!({
+                            "type": "message",
+                            "role": "assistant",
+                            "content": convertedContent,
+                        }));
+                    }
+                }
+
                 if let Some(toolCalls) = messageObject.get("tool_calls").and_then(Value::as_array) {
                     for call in toolCalls {
                         let Some(function) = call.get("function").and_then(Value::as_object) else {
@@ -586,16 +733,14 @@ impl OpenAIResponsesPayloadAdapter {
                         input.push(Value::Object(callItem));
                     }
                 }
+                if protocol == ResponsesHistoryProtocol::Deepseek {
+                    continue;
+                }
             }
 
             let convertedContent =
-                Self::convert_message_content_for_responses(messageObject.get("content"));
-            let hasContent = match &convertedContent {
-                Value::String(value) => !value.trim().is_empty(),
-                Value::Array(value) => !value.is_empty(),
-                _ => false,
-            };
-            if hasContent {
+                Self::convert_message_content_for_responses(messageObject.get("content"), false);
+            if responses_content_is_not_empty(&convertedContent) {
                 input.push(json!({
                     "type": "message",
                     "role": if role == "system" { "developer" } else { role },
@@ -606,10 +751,18 @@ impl OpenAIResponsesPayloadAdapter {
         input
     }
 
-    fn convert_message_content_for_responses(content: Option<&Value>) -> Value {
+    fn convert_message_content_for_responses(
+        content: Option<&Value>,
+        removeThinkingContent: bool,
+    ) -> Value {
         match content {
             None | Some(Value::Null) => json!(""),
-            Some(Value::String(value)) => json!(value),
+            Some(Value::String(value)) => {
+                json!(sanitize_responses_message_text(
+                    value,
+                    removeThinkingContent
+                ))
+            }
             Some(Value::Array(parts)) => {
                 let mut convertedParts = Vec::new();
                 for part in parts {
@@ -618,8 +771,14 @@ impl OpenAIResponsesPayloadAdapter {
                         "text" | "output_text" | "input_text" => {
                             if let Some(text) = part.get("text").and_then(Value::as_str) {
                                 if !text.is_empty() {
-                                    convertedParts
-                                        .push(json!({"type": "input_text", "text": text}));
+                                    let text = sanitize_responses_message_text(
+                                        text,
+                                        removeThinkingContent,
+                                    );
+                                    if !text.is_empty() {
+                                        convertedParts
+                                            .push(json!({"type": "input_text", "text": text}));
+                                    }
                                 }
                             }
                         }
@@ -649,8 +808,14 @@ impl OpenAIResponsesPayloadAdapter {
                         _ => {
                             if let Some(text) = part.get("text").and_then(Value::as_str) {
                                 if !text.is_empty() {
-                                    convertedParts
-                                        .push(json!({"type": "input_text", "text": text}));
+                                    let text = sanitize_responses_message_text(
+                                        text,
+                                        removeThinkingContent,
+                                    );
+                                    if !text.is_empty() {
+                                        convertedParts
+                                            .push(json!({"type": "input_text", "text": text}));
+                                    }
                                 }
                             }
                         }
@@ -660,6 +825,175 @@ impl OpenAIResponsesPayloadAdapter {
             }
             Some(value) => json!(value.to_string()),
         }
+    }
+
+    /// Encodes one OpenAI encrypted reasoning item for stateless replay.
+    pub fn create_reasoning_metadata_tag(item: &Value) -> Option<String> {
+        if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+            return None;
+        }
+        let reasoningId = item.get("id").and_then(Value::as_str)?.trim();
+        let encryptedContent = item
+            .get("encrypted_content")
+            .and_then(Value::as_str)?
+            .trim();
+        if reasoningId.is_empty() || encryptedContent.is_empty() {
+            return None;
+        }
+        let summary = item
+            .get("summary")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Some(responses_metadata_tag(
+            RESPONSES_REASONING_META_PROVIDER,
+            &json!({
+                "reasoning_id": reasoningId,
+                "encrypted_content": encryptedContent,
+                "summary": summary,
+            }),
+        ))
+    }
+
+    /// Encodes one Responses web-search output item for stateless replay.
+    pub fn create_output_item_metadata_tag(item: &Value) -> Option<String> {
+        if item.get("type").and_then(Value::as_str) != Some("web_search_call") {
+            return None;
+        }
+        let id = item.get("id").and_then(Value::as_str)?.trim();
+        if id.is_empty() {
+            return None;
+        }
+        Some(responses_metadata_tag(
+            RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+            item,
+        ))
+    }
+
+    /// Restores OpenAI encrypted reasoning items from assistant message metadata.
+    fn extract_reasoning_items_from_message(message: &Map<String, Value>) -> Vec<Value> {
+        extract_responses_metadata_from_content(
+            message.get("content"),
+            RESPONSES_REASONING_META_PROVIDER,
+        )
+        .into_iter()
+        .filter_map(|metadata| {
+            let reasoningId = metadata.get("reasoning_id")?.as_str()?.trim();
+            let encryptedContent = metadata.get("encrypted_content")?.as_str()?.trim();
+            if reasoningId.is_empty() || encryptedContent.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "type": "reasoning",
+                "id": reasoningId,
+                "encrypted_content": encryptedContent,
+                "summary": metadata
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            }))
+        })
+        .collect()
+    }
+
+    /// Restores Responses web-search output items from assistant message metadata.
+    fn extract_output_items_from_message(message: &Map<String, Value>) -> Vec<Value> {
+        extract_responses_metadata_from_content(
+            message.get("content"),
+            RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+        )
+        .into_iter()
+        .filter(|metadata| {
+            metadata.get("type").and_then(Value::as_str) == Some("web_search_call")
+                && metadata
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.trim().is_empty())
+        })
+        .collect()
+    }
+
+    /// Restores DeepSeek plaintext reasoning items from assistant metadata.
+    fn extract_deepseek_reasoning_items_from_message(message: &Map<String, Value>) -> Vec<Value> {
+        extract_responses_metadata_from_content(
+            message.get("content"),
+            RESPONSES_REASONING_META_PROVIDER,
+        )
+        .into_iter()
+        .filter_map(|metadata| {
+            let reasoningId = metadata.get("reasoning_id")?.as_str()?.trim();
+            let content = metadata.get("content")?.as_array()?;
+            if reasoningId.is_empty() || !contains_reasoning_text(content) {
+                return None;
+            }
+            Some(json!({
+                "type": "reasoning",
+                "id": reasoningId,
+                "content": content,
+            }))
+        })
+        .collect()
+    }
+
+    /// Restores DeepSeek commentary and web-search output metadata.
+    fn extract_deepseek_output_items_from_message(message: &Map<String, Value>) -> Vec<Value> {
+        extract_responses_metadata_from_content(
+            message.get("content"),
+            RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+        )
+        .into_iter()
+        .filter_map(
+            |metadata| match metadata.get("type").and_then(Value::as_str) {
+                Some("web_search_call") => {
+                    let valid = metadata
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| !id.trim().is_empty());
+                    valid.then_some(metadata)
+                }
+                Some("message") => {
+                    if metadata.get("role").and_then(Value::as_str) != Some("assistant") {
+                        return None;
+                    }
+                    let reasoningContent =
+                        commentary_to_reasoning_content(metadata.get("content")?.as_array()?);
+                    if reasoningContent.is_empty() {
+                        return None;
+                    }
+                    let mut item = Map::new();
+                    item.insert("type".to_string(), json!("reasoning"));
+                    if let Some(id) = metadata
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .filter(|id| !id.trim().is_empty())
+                    {
+                        item.insert("id".to_string(), json!(id));
+                    }
+                    item.insert("content".to_string(), Value::Array(reasoningContent));
+                    Some(Value::Object(item))
+                }
+                _ => None,
+            },
+        )
+        .collect()
+    }
+
+    /// Returns whether DeepSeek continuation metadata contains a commentary message.
+    fn contains_deepseek_commentary_metadata(message: &Map<String, Value>) -> bool {
+        extract_responses_metadata_from_content(
+            message.get("content"),
+            RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+        )
+        .into_iter()
+        .any(|metadata| {
+            metadata.get("type").and_then(Value::as_str) == Some("message")
+                && metadata.get("role").and_then(Value::as_str) == Some("assistant")
+                && metadata
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|content| !commentary_to_reasoning_content(content).is_empty())
+        })
     }
 
     fn extract_tool_output_text(content: Option<&Value>) -> String {
@@ -685,6 +1019,24 @@ impl OpenAIResponsesPayloadAdapter {
                 }
             }
             Some(value) => value.to_string(),
+        }
+    }
+
+    /// Converts a tool result into a Responses-compatible string or rich content value.
+    fn extract_tool_output_content(content: Option<&Value>) -> Value {
+        match content {
+            Some(Value::Array(_)) => {
+                let converted = Self::convert_message_content_for_responses(content, false);
+                if responses_content_is_not_empty(&converted) {
+                    converted
+                } else {
+                    json!(Self::extract_tool_output_text(content))
+                }
+            }
+            Some(Value::String(value)) => {
+                json!(sanitize_responses_message_text(value, false))
+            }
+            _ => json!(Self::extract_tool_output_text(content)),
         }
     }
 
@@ -717,6 +1069,54 @@ impl OpenAIResponsesPayloadAdapter {
         );
         Some(Value::Object(root))
     }
+}
+
+/// Checks whether a Responses content value contains visible input content.
+fn responses_content_is_not_empty(content: &Value) -> bool {
+    match content {
+        Value::String(value) => !value.trim().is_empty(),
+        Value::Array(value) => !value.is_empty(),
+        _ => false,
+    }
+}
+
+/// Removes thinking markup before stripping Responses-only protocol metadata.
+fn sanitize_responses_message_text(content: &str, removeThinkingContent: bool) -> String {
+    let visibleContent = if removeThinkingContent {
+        ChatUtils::remove_thinking_content(content)
+    } else {
+        content.to_string()
+    };
+    strip_responses_protocol_markup(&visibleContent)
+}
+
+/// Returns whether one Responses content array contains reasoning text.
+fn contains_reasoning_text(content: &[Value]) -> bool {
+    content.iter().any(|part| {
+        part.get("type").and_then(Value::as_str) == Some("reasoning_text")
+            && part
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.is_empty())
+    })
+}
+
+/// Converts DeepSeek commentary output text into Responses reasoning text parts.
+fn commentary_to_reasoning_content(content: &[Value]) -> Vec<Value> {
+    content
+        .iter()
+        .filter_map(|part| {
+            let partType = part.get("type").and_then(Value::as_str)?;
+            if !matches!(partType, "output_text" | "text" | "reasoning_text") {
+                return None;
+            }
+            let text = part.get("text").and_then(Value::as_str)?;
+            if text.is_empty() {
+                return None;
+            }
+            Some(json!({"type": "reasoning_text", "text": text}))
+        })
+        .collect()
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -855,6 +1255,9 @@ impl AIService for OpenAIResponsesProvider {
         for reasoning in parsed.reasoningChunks {
             chunks.push(format!("<think>{reasoning}</think>"));
         }
+        chunks.extend(parsed.reasoningMetadataTags);
+        chunks.extend(parsed.outputItemMetadataTags);
+        chunks.extend(parsed.searchChunks);
         chunks.extend(parsed.textChunks);
         if let Value::Array(toolCalls) = parsed.toolCalls {
             for toolCall in toolCalls {
@@ -870,4 +1273,316 @@ impl AIService for OpenAIResponsesProvider {
 
 fn opt_i64(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(Value::as_i64)
+}
+
+/// Adds the official Responses web-search tool declaration once.
+pub fn append_web_search_tool(request: &mut Value) {
+    let object = request
+        .as_object_mut()
+        .expect("Responses request must remain a JSON object");
+    let tools = object
+        .entry("tools".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .expect("Responses tools must be a JSON array");
+    if !tools
+        .iter()
+        .any(|tool| tool.get("type").and_then(Value::as_str) == Some("web_search"))
+    {
+        tools.push(json!({"type": "web_search"}));
+    }
+    object.insert("tool_choice".to_string(), json!("auto"));
+}
+
+/// Builds one structured search block from Responses output items and citations.
+pub fn build_responses_web_search_chunks(items: &[Value], response: &Value) -> Vec<String> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let mut queries = Vec::new();
+    let mut sources = Vec::new();
+    let mut status = String::new();
+    let mut action_type = String::new();
+    for item in items {
+        if let Some(value) = item.get("status").and_then(Value::as_str) {
+            status = value.to_string();
+        }
+        if let Some(action) = item.get("action") {
+            if let Some(value) = action.get("type").and_then(Value::as_str) {
+                action_type = value.to_string();
+            }
+            collect_search_queries(action, &mut queries);
+            collect_search_sources(action, &mut sources);
+        }
+    }
+    collect_response_citations(response, &mut sources);
+    let mut xml = format!(
+        "<search provider=\"responses\" action=\"{}\" status=\"{}\">",
+        escape_xml_attribute(&action_type),
+        escape_xml_attribute(&status)
+    );
+    for query in queries {
+        xml.push_str("<query>");
+        xml.push_str(&escape_xml_text(&query));
+        xml.push_str("</query>");
+    }
+    for source in sources {
+        let title = source.get("title").and_then(Value::as_str).unwrap_or("");
+        let url = source.get("url").and_then(Value::as_str).unwrap_or("");
+        if url.is_empty() {
+            continue;
+        }
+        xml.push_str(&format!(
+            "<source title=\"{}\" url=\"{}\" />",
+            escape_xml_attribute(title),
+            escape_xml_attribute(url)
+        ));
+    }
+    xml.push_str("</search>");
+    vec![xml]
+}
+
+/// Encodes one Responses protocol value into hidden chat metadata.
+pub(crate) fn responses_metadata_tag(provider: &str, item: &Value) -> String {
+    let payload = BASE64_STANDARD.encode(item.to_string().as_bytes());
+    format!("<meta provider=\"{provider}\">{payload}</meta>")
+}
+
+/// Decodes one Responses metadata provider from string or rich message content.
+pub(crate) fn extract_responses_metadata_from_content(
+    content: Option<&Value>,
+    provider: &str,
+) -> Vec<Value> {
+    match content {
+        Some(Value::String(content)) => extract_responses_metadata(content, provider),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .flat_map(|text| extract_responses_metadata(text, provider))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Decodes one Responses metadata provider from assistant protocol text.
+fn extract_responses_metadata(content: &str, provider: &str) -> Vec<Value> {
+    let mut items = Vec::new();
+    for (start, end) in tag_ranges(content, "meta") {
+        let tag = &content[start..end];
+        if !attr_value(tag, "provider").is_some_and(|value| value.eq_ignore_ascii_case(provider)) {
+            continue;
+        }
+        let Some(payload) = tag_body(tag, "meta") else {
+            continue;
+        };
+        let Ok(decoded) = BASE64_STANDARD.decode(payload.trim()) else {
+            continue;
+        };
+        let Ok(item) = serde_json::from_slice::<Value>(&decoded) else {
+            continue;
+        };
+        items.push(item);
+    }
+    items
+}
+
+/// Removes Responses metadata and search presentation blocks from model input text.
+pub(crate) fn strip_responses_protocol_markup(content: &str) -> String {
+    let mut ranges = tag_ranges(content, "search");
+    for (start, end) in tag_ranges(content, "meta") {
+        let tag = &content[start..end];
+        if attr_value(tag, "provider").is_some_and(|provider| {
+            provider.eq_ignore_ascii_case(RESPONSES_REASONING_META_PROVIDER)
+                || provider.eq_ignore_ascii_case(RESPONSES_OUTPUT_ITEM_META_PROVIDER)
+        }) {
+            ranges.push((start, end));
+        }
+    }
+    ranges.sort_by_key(|range| range.0);
+    let mut output = String::new();
+    let mut cursor = 0;
+    for (start, end) in ranges {
+        if start >= cursor {
+            output.push_str(&content[cursor..start]);
+            cursor = end;
+        }
+    }
+    output.push_str(&content[cursor..]);
+    output.trim().to_string()
+}
+
+/// Removes only Responses reasoning metadata while retaining other protocol records.
+pub(crate) fn strip_responses_reasoning_metadata(content: &str) -> String {
+    let mut output = String::new();
+    let mut cursor = 0;
+    let mut removed = false;
+    for (start, end) in tag_ranges(content, "meta") {
+        let tag = &content[start..end];
+        let is_reasoning = attr_value(tag, "provider").is_some_and(|provider| {
+            provider.eq_ignore_ascii_case(RESPONSES_REASONING_META_PROVIDER)
+        });
+        if is_reasoning {
+            output.push_str(&content[cursor..start]);
+            cursor = end;
+            removed = true;
+        }
+    }
+    output.push_str(&content[cursor..]);
+    if removed {
+        output.trim_end().to_string()
+    } else {
+        content.to_string()
+    }
+}
+
+/// Collects search query strings from a Responses action object.
+fn collect_search_queries(action: &Value, queries: &mut Vec<String>) {
+    if let Some(values) = action.get("queries").and_then(Value::as_array) {
+        for value in values {
+            if let Some(query) = value.as_str() {
+                push_unique_string(queries, query);
+            }
+        }
+    }
+    if let Some(query) = action.get("query").and_then(Value::as_str) {
+        push_unique_string(queries, query);
+    }
+}
+
+/// Collects structured sources from a Responses search action.
+fn collect_search_sources(action: &Value, sources: &mut Vec<Value>) {
+    if let Some(values) = action.get("sources").and_then(Value::as_array) {
+        for value in values {
+            push_unique_source(sources, value);
+        }
+    }
+    if let Some(url) = action.get("url").and_then(Value::as_str) {
+        push_unique_source(
+            sources,
+            &json!({"url": url, "title": action.get("title").and_then(Value::as_str).unwrap_or("")}),
+        );
+    }
+}
+
+/// Collects URL citations from final Responses message content.
+fn collect_response_citations(response: &Value, sources: &mut Vec<Value>) {
+    let Some(output) = response.get("output").and_then(Value::as_array) else {
+        return;
+    };
+    for item in output {
+        let Some(content) = item.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for part in content {
+            let Some(annotations) = part.get("annotations").and_then(Value::as_array) else {
+                continue;
+            };
+            for annotation in annotations {
+                if annotation.get("type").and_then(Value::as_str) == Some("url_citation") {
+                    push_unique_source(sources, annotation);
+                }
+            }
+        }
+    }
+}
+
+/// Appends one non-empty string while retaining response order.
+fn push_unique_string(values: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() && !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
+    }
+}
+
+/// Appends one URL source while retaining response order.
+fn push_unique_source(values: &mut Vec<Value>, value: &Value) {
+    let Some(url) = value.get("url").and_then(Value::as_str) else {
+        return;
+    };
+    if url.is_empty()
+        || values
+            .iter()
+            .any(|existing| existing.get("url").and_then(Value::as_str) == Some(url))
+    {
+        return;
+    }
+    values.push(value.clone());
+}
+
+/// Escapes text for XML element content.
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Escapes text for a quoted XML attribute.
+fn escape_xml_attribute(value: &str) -> String {
+    escape_xml_text(value)
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_responses_web_search_chunks, extract_responses_metadata,
+        strip_responses_protocol_markup, OpenAIResponsesPayloadAdapter, UsageCounts,
+        RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+    };
+    use serde_json::json;
+
+    /// Renders search queries, citations, and replay metadata together.
+    #[test]
+    fn renders_responses_web_search_output() {
+        let item = json!({
+            "type": "web_search_call",
+            "id": "search_1",
+            "status": "completed",
+            "action": {
+                "type": "search",
+                "queries": ["DeepSeek V4"],
+                "sources": [{"title": "DeepSeek", "url": "https://deepseek.com"}]
+            }
+        });
+        let chunks = build_responses_web_search_chunks(&[item.clone()], &json!({}));
+        assert!(chunks[0].contains("<query>DeepSeek V4</query>"));
+        assert!(chunks[0].contains("url=\"https://deepseek.com\""));
+        assert_eq!(chunks.len(), 1);
+        let metadata = OpenAIResponsesPayloadAdapter::create_output_item_metadata_tag(&item)
+            .expect("web search item metadata");
+        assert_eq!(
+            extract_responses_metadata(&metadata, RESPONSES_OUTPUT_ITEM_META_PROVIDER),
+            vec![item]
+        );
+    }
+
+    /// Removes search presentation and hidden replay metadata from model text.
+    #[test]
+    fn strips_responses_search_protocol_markup() {
+        let chunks = build_responses_web_search_chunks(
+            &[json!({"type": "web_search_call", "id": "search_1"})],
+            &json!({}),
+        );
+        let content = format!("before{}after", chunks.join(""));
+        assert_eq!(strip_responses_protocol_markup(&content), "beforeafter");
+    }
+
+    /// Preserves an explicitly reported all-zero usage payload.
+    #[test]
+    fn parses_zero_usage_payload() {
+        assert_eq!(
+            OpenAIResponsesPayloadAdapter::parse_usage_counts(Some(&json!({
+                "input_tokens": 0,
+                "output_tokens": 0
+            }))),
+            Some(UsageCounts {
+                totalInputTokens: 0,
+                actualInputTokens: 0,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+            })
+        );
+    }
 }

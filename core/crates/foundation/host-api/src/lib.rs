@@ -128,7 +128,30 @@ impl HostEnvironmentDescriptor {
                 "runtime.storage".to_string(),
                 "runtime.sqlite".to_string(),
             ],
-            structuredCapabilities: defaultHostCapabilities(),
+            structuredCapabilities: hostCapabilities(&[
+                "fs.read",
+                "fs.write",
+                "fs.search",
+                "fs.archive",
+                "os.open",
+                "os.share",
+                "audio.playback",
+                "music.playback",
+                "bluetooth.classic",
+                "bluetooth.ble",
+                "tts.synthesis",
+                "tts.playback",
+                "system.location",
+                "system.notifications.read",
+                "system.notifications.send",
+                "system.app_usage",
+                "system.app.install",
+                "system.app.uninstall",
+                "system.settings",
+                "runtime.process",
+                "runtime.storage",
+                "runtime.sqlite",
+            ]),
             onboardingRequirements: androidOnboardingRequirements(),
             workspaceRoots: Vec::new(),
         }
@@ -250,7 +273,27 @@ impl HostEnvironmentDescriptor {
                 "system.app.uninstall".to_string(),
                 "system.settings".to_string(),
             ],
-            structuredCapabilities: defaultHostCapabilities(),
+            structuredCapabilities: hostCapabilities(&[
+                "fs.read",
+                "fs.write",
+                "fs.search",
+                "fs.archive",
+                "os.open",
+                "os.share",
+                "audio.playback",
+                "music.playback",
+                "bluetooth.classic",
+                "bluetooth.ble",
+                "tts.synthesis",
+                "tts.playback",
+                "system.location",
+                "system.notifications.read",
+                "system.notifications.send",
+                "system.app_usage",
+                "system.app.install",
+                "system.app.uninstall",
+                "system.settings",
+            ]),
             onboardingRequirements: windowsOnboardingRequirements(),
             workspaceRoots: Vec::new(),
         }
@@ -258,6 +301,7 @@ impl HostEnvironmentDescriptor {
 
     /// Builds the Linux host descriptor used by desktop runtime prompts.
     pub fn linux() -> Self {
+        let capabilityIds = linuxHostCapabilityIds();
         Self {
             id: "linux".to_string(),
             displayName: "Linux".to_string(),
@@ -272,28 +316,8 @@ impl HostEnvironmentDescriptor {
             usesEnvironmentParameter: false,
             environmentParameterDescriptionEn: String::new(),
             environmentParameterDescriptionCn: String::new(),
-            capabilities: vec![
-                "fs.read".to_string(),
-                "fs.write".to_string(),
-                "fs.search".to_string(),
-                "fs.archive".to_string(),
-                "os.open".to_string(),
-                "os.share".to_string(),
-                "audio.playback".to_string(),
-                "music.playback".to_string(),
-                "bluetooth.classic".to_string(),
-                "bluetooth.ble".to_string(),
-                "tts.synthesis".to_string(),
-                "tts.playback".to_string(),
-                "system.location".to_string(),
-                "system.notifications.read".to_string(),
-                "system.notifications.send".to_string(),
-                "system.app_usage".to_string(),
-                "system.app.install".to_string(),
-                "system.app.uninstall".to_string(),
-                "system.settings".to_string(),
-            ],
-            structuredCapabilities: defaultHostCapabilities(),
+            capabilities: capabilityIdStrings(&capabilityIds),
+            structuredCapabilities: hostCapabilities(&capabilityIds),
             onboardingRequirements: vec![HostOnboardingRequirement {
                 id: "linux.root".to_string(),
                 title: "root / service account".to_string(),
@@ -350,7 +374,53 @@ impl HostEnvironmentDescriptor {
                 "system.app.uninstall".to_string(),
                 "system.settings".to_string(),
             ],
-            structuredCapabilities: defaultHostCapabilities(),
+            structuredCapabilities: hostCapabilities(&[
+                "fs.read",
+                "fs.write",
+                "fs.search",
+                "fs.archive",
+                "web.visit",
+                "runtime.process",
+                "runtime.storage",
+                "runtime.sqlite",
+                "audio.playback",
+                "music.playback",
+                "bluetooth.classic",
+                "bluetooth.ble",
+                "tts.playback",
+                "os.open",
+                "os.share",
+                "system.location",
+                "system.notifications.read",
+                "system.notifications.send",
+                "system.app_usage",
+                "system.app.install",
+                "system.app.uninstall",
+                "system.settings",
+            ]),
+            onboardingRequirements: Vec::new(),
+            workspaceRoots: Vec::new(),
+        }
+    }
+
+    /// Builds the ESP32 device host descriptor used by Edge Core apps.
+    pub fn esp32() -> Self {
+        Self {
+            id: "esp32".to_string(),
+            displayName: "ESP32".to_string(),
+            platform: HostPlatform::Esp32,
+            privilege: HostPrivilege::Normal,
+            isolation: HostIsolation::None,
+            pathStyleDescriptionEn:
+                "Use paths mounted by the ESP-IDF VFS, such as /data/config.json.".to_string(),
+            pathStyleDescriptionCn: "使用 ESP-IDF VFS 挂载的路径，例如 /data/config.json。"
+                .to_string(),
+            examplePaths: vec!["/data".to_string(), "/data/config.json".to_string()],
+            usesEnvironmentParameter: false,
+            environmentParameterDescriptionEn: String::new(),
+            environmentParameterDescriptionCn: String::new(),
+            capabilities: vec!["device.gpio".to_string()],
+            structuredCapabilities: hostCapabilities(&["device.gpio"]),
             onboardingRequirements: Vec::new(),
             workspaceRoots: Vec::new(),
         }
@@ -372,6 +442,7 @@ pub enum HostPlatform {
     Macos,
     Ios,
     Web,
+    Esp32,
     Other,
 }
 
@@ -609,7 +680,45 @@ fn defaultHostCapabilities() -> Vec<HostCapability> {
             scope: CapabilityScope::Device,
             operations: vec![CapabilityOperation::Read, CapabilityOperation::Connect],
         },
+        HostCapability {
+            id: "device.gpio".to_string(),
+            displayName: "GPIO 控制".to_string(),
+            scope: CapabilityScope::Device,
+            operations: vec![CapabilityOperation::Read, CapabilityOperation::Write],
+        },
     ]
+}
+
+/// Builds the base Linux host capability id list.
+#[allow(non_snake_case)]
+fn linuxHostCapabilityIds() -> Vec<&'static str> {
+    vec![
+        "fs.read",
+        "fs.write",
+        "fs.search",
+        "fs.archive",
+        "os.open",
+        "os.share",
+        "audio.playback",
+        "music.playback",
+        "bluetooth.classic",
+        "bluetooth.ble",
+        "tts.synthesis",
+        "tts.playback",
+        "system.location",
+        "system.notifications.read",
+        "system.notifications.send",
+        "system.app_usage",
+        "system.app.install",
+        "system.app.uninstall",
+        "system.settings",
+    ]
+}
+
+/// Converts capability ids into owned descriptor strings.
+#[allow(non_snake_case)]
+fn capabilityIdStrings(ids: &[&str]) -> Vec<String> {
+    ids.iter().map(|id| id.to_string()).collect()
 }
 
 /// Builds structured capabilities for the provided capability id order.
@@ -2293,6 +2402,53 @@ pub trait BluetoothHost: Send + Sync {
         sessionId: &str,
         limit: i64,
     ) -> HostResult<BluetoothBleNotificationData>;
+}
+
+/// Describes one digital output write requested by an Edge Core Service.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceDigitalOutputRequest {
+    pub pin: u8,
+    pub level: bool,
+}
+
+/// Describes the current state of one digital output.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceDigitalOutputState {
+    pub pin: u8,
+    pub level: bool,
+}
+
+/// Provides board-level digital I/O through the host capability boundary.
+pub trait DeviceIoHost: Send + Sync {
+    /// Writes one digital output and returns its committed state.
+    fn setDigitalOutput(
+        &self,
+        request: DeviceDigitalOutputRequest,
+    ) -> HostResult<DeviceDigitalOutputState>;
+
+    /// Reads the last committed state of one digital output.
+    fn getDigitalOutput(&self, pin: u8) -> HostResult<DeviceDigitalOutputState>;
+}
+
+/// Describes one robot face expression update requested by an Edge Service.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RobotFaceExpressionRequest {
+    pub expression: String,
+}
+
+/// Describes the current expression shown by a robot face display.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RobotFaceState {
+    pub expression: String,
+}
+
+/// Provides robot face expression rendering through the host capability boundary.
+pub trait RobotFaceHost: Send + Sync {
+    /// Writes one robot expression and returns the committed display state.
+    fn setExpression(&self, request: RobotFaceExpressionRequest) -> HostResult<RobotFaceState>;
+
+    /// Reads the current robot expression display state.
+    fn getExpression(&self) -> HostResult<RobotFaceState>;
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

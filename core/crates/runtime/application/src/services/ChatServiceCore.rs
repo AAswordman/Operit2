@@ -39,9 +39,7 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
 use operit_store::repository::UsageStatisticsStore::UsageStatisticsStore;
-use operit_store::PreferencesDataStore::{
-    combine2, combine3, mutableStateFlow, MutableStateFlow, StateFlow,
-};
+use operit_store::PreferencesDataStore::{combine4, mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
@@ -109,6 +107,8 @@ pub struct ChatState {
     pub hasOlderDisplayHistory: bool,
     pub hasNewerDisplayHistory: bool,
     pub isLoadingDisplayWindow: bool,
+    pub pendingQueueMessages: Vec<PendingQueueMessageItem>,
+    pub isPendingQueueExpanded: bool,
 }
 
 /// Stores the runtime-owned pending message queue for one chat.
@@ -2141,15 +2141,24 @@ impl ChatServiceCore {
                 }
             });
         let chatHistoriesFlow = self.chatHistoryDelegate.chatHistoriesFlow();
+        let pendingQueueStateFlow = self.pendingQueueStateFlow().asStateFlow();
         let characterCardManager = self.chatHistoryDelegate.characterCardManager.clone();
-        combine3(
+        combine4(
             &executionStateFlow,
             &displayWindowStateFlow,
             &chatHistoriesFlow,
-            move |executionState, displayWindowState, chatHistories| {
+            &pendingQueueStateFlow,
+            move |executionState, displayWindowState, chatHistories, pendingQueuesByChatId| {
                 let currentChat = chatHistories.iter().find(|chat| chat.id == selectedChatId);
                 let currentCharacterCardName =
                     currentChat.and_then(|chat| chat.characterCardName.clone());
+                let pendingQueueState = pendingQueuesByChatId.get(&selectedChatId);
+                let pendingQueueMessages = pendingQueueState
+                    .map(|state| state.messages.clone())
+                    .unwrap_or_default();
+                let isPendingQueueExpanded = pendingQueueState
+                    .map(|state| state.isExpanded)
+                    .unwrap_or(true);
                 ChatState {
                     currentChatId: selectedChatId.clone(),
                     currentChatTitle: currentChat
@@ -2165,6 +2174,8 @@ impl ChatServiceCore {
                     hasOlderDisplayHistory: displayWindowState.hasOlderDisplayHistory,
                     hasNewerDisplayHistory: displayWindowState.hasNewerDisplayHistory,
                     isLoadingDisplayWindow: displayWindowState.isLoadingDisplayWindow,
+                    pendingQueueMessages,
+                    isPendingQueueExpanded,
                 }
             },
         )

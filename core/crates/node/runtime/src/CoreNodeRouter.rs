@@ -3731,6 +3731,7 @@ mod tests {
                                 parentBlockId: None,
                                 nodeType: None,
                                 headerLevel: None,
+                                xml: None,
                             };
                             let value = operit_link::toCoreValue(event)
                                 .expect("Markdown stream event must encode");
@@ -4446,6 +4447,7 @@ mod tests {
                 parentBlockId: None,
                 nodeType: None,
                 headerLevel: None,
+                xml: None,
             },
             MarkdownStreamEvent {
                 chatId: chatId.clone(),
@@ -4457,6 +4459,7 @@ mod tests {
                 parentBlockId: None,
                 nodeType: Some("Heading".to_string()),
                 headerLevel: Some(2),
+                xml: None,
             },
             MarkdownStreamEvent {
                 chatId: chatId.clone(),
@@ -4468,6 +4471,7 @@ mod tests {
                 parentBlockId: Some(7),
                 nodeType: Some("Strong".to_string()),
                 headerLevel: None,
+                xml: None,
             },
             MarkdownStreamEvent {
                 chatId: chatId.clone(),
@@ -4479,6 +4483,7 @@ mod tests {
                 parentBlockId: Some(7),
                 nodeType: Some("Strong".to_string()),
                 headerLevel: None,
+                xml: None,
             },
             MarkdownStreamEvent {
                 chatId: chatId.clone(),
@@ -4490,6 +4495,7 @@ mod tests {
                 parentBlockId: None,
                 nodeType: None,
                 headerLevel: None,
+                xml: None,
             },
             MarkdownStreamEvent {
                 chatId,
@@ -4501,6 +4507,7 @@ mod tests {
                 parentBlockId: None,
                 nodeType: None,
                 headerLevel: None,
+                xml: None,
             },
         ];
         let routedFlow = {

@@ -1,0 +1,8 @@
+[build]
+target = "xtensa-esp32-espidf"
+
+[target.xtensa-esp32-espidf]
+runner = "espflash flash --monitor"
+
+[unstable]
+build-std = ["std", "panic_abort"]

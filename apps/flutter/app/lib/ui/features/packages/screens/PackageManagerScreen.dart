@@ -84,7 +84,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     super.dispose();
   }
 
+  /// Loads the current package manager state into the screen.
   Future<void> _loadSnapshot() async {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _loading = true;
       _errorMessage = null;
@@ -145,10 +149,14 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
   }
 
+  /// Applies an enabled-state change to a plugin container.
   Future<void> _setPluginEnabled(
     core_proxy.ToolPkgContainerRuntime plugin,
     bool enabled,
   ) async {
+    if (!mounted) {
+      return;
+    }
     final previous = _snapshot.enabledPluginContainerNames.contains(
       plugin.packageName,
     );
@@ -173,10 +181,14 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
   }
 
+  /// Applies an enabled-state change to a package.
   Future<void> _setPackageEnabled(
     core_proxy.ToolPackage package,
     bool enabled,
   ) async {
+    if (!mounted) {
+      return;
+    }
     final previous = _snapshot.enabledPackageNames.contains(package.name);
     _setOptimisticPackageEnabled(package.name, enabled);
     try {
@@ -195,7 +207,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
   }
 
+  /// Confirms and deletes a package from package storage.
   Future<void> _deletePackage(core_proxy.ToolPackage package) async {
+    if (!mounted) {
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -219,13 +235,16 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         );
       },
     );
-    if (confirmed != true) {
+    if (confirmed != true || !mounted) {
       return;
     }
     try {
       final deleted = await _packageManager.deletePackage(
         packageName: package.name,
       );
+      if (!mounted) {
+        return;
+      }
       await _loadSnapshot();
       if (!mounted) {
         return;
@@ -235,6 +254,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       }
     } catch (error, stackTrace) {
       debugPrint('Failed to delete package: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
       await _loadSnapshot();
       if (!mounted) {
         return;
@@ -243,7 +265,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
   }
 
+  /// Confirms and deletes a plugin container from package storage.
   Future<void> _deletePlugin(core_proxy.ToolPkgContainerRuntime plugin) async {
+    if (!mounted) {
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -267,13 +293,16 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         );
       },
     );
-    if (confirmed != true) {
+    if (confirmed != true || !mounted) {
       return;
     }
     try {
       final deleted = await _packageManager.deletePackage(
         packageName: plugin.packageName,
       );
+      if (!mounted) {
+        return;
+      }
       await _loadSnapshot();
       if (!mounted) {
         return;
@@ -283,6 +312,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       }
     } catch (error, stackTrace) {
       debugPrint('Failed to delete plugin: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
       await _loadSnapshot();
       if (!mounted) {
         return;
@@ -291,7 +323,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
   }
 
+  /// Updates the visible enabled state for a plugin container.
   void _setOptimisticPluginEnabled(String packageName, bool enabled) {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       final next = Set<String>.from(_snapshot.enabledPluginContainerNames);
       if (enabled) {
@@ -303,7 +339,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     });
   }
 
+  /// Updates the visible enabled state for a package.
   void _setOptimisticPackageEnabled(String packageName, bool enabled) {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       final next = Set<String>.from(_snapshot.enabledPackageNames);
       if (enabled) {
@@ -315,7 +355,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     });
   }
 
+  /// Shows a package manager message while this screen is active.
   void _showSnackBar(String message) {
+    if (!mounted) {
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
     );
@@ -624,7 +668,11 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         .toList(growable: false);
   }
 
+  /// Shows details and actions for a plugin container.
   void _showPluginDetails(core_proxy.ToolPkgContainerRuntime plugin) {
+    if (!mounted) {
+      return;
+    }
     showDialog<void>(
       context: context,
       builder: (context) {
@@ -634,18 +682,18 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
             plugin.packageName,
           ),
           packageManager: _packageManager,
-          onEnabledChanged: (enabled) {
-            Navigator.of(context).pop();
-            _setPluginEnabled(plugin, enabled);
-          },
           onOpenUi: (initialRouteId) {
             Navigator.of(context).pop();
-            _openPluginUi(plugin, initialRouteId: initialRouteId);
+            if (mounted) {
+              _openPluginUi(plugin, initialRouteId: initialRouteId);
+            }
           },
-          onDeletePackage: _isExternalPlugin(plugin)
+          onDeletePackage: _canDeletePlugin(plugin)
               ? () {
                   Navigator.of(context).pop();
-                  _deletePlugin(plugin);
+                  if (mounted) {
+                    unawaited(_deletePlugin(plugin));
+                  }
                 }
               : null,
         );
@@ -653,8 +701,13 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     );
   }
 
-  bool _isExternalPlugin(core_proxy.ToolPkgContainerRuntime plugin) {
-    return plugin.sourceType.toString() == 'EXTERNAL';
+  /// Returns whether the plugin source can be removed from package storage.
+  bool _canDeletePlugin(core_proxy.ToolPkgContainerRuntime plugin) {
+    return switch (plugin.sourceType) {
+      core_proxy.ToolPkgSourceType.asset => false,
+      core_proxy.ToolPkgSourceType.market ||
+      core_proxy.ToolPkgSourceType.externalValue => true,
+    };
   }
 
   Future<void> _loadBundledExternalPlugin(
@@ -667,10 +720,14 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     );
   }
 
+  /// Opens the plugin-provided interface at an optional initial route.
   void _openPluginUi(
     core_proxy.ToolPkgContainerRuntime plugin, {
     String? initialRouteId,
   }) {
+    if (!mounted) {
+      return;
+    }
     if (!_snapshot.enabledPluginContainerNames.contains(plugin.packageName)) {
       return;
     }
@@ -685,20 +742,21 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     );
   }
 
+  /// Shows details and actions for a package.
   void _showPackageDetails(core_proxy.ToolPackage package) {
+    if (!mounted) {
+      return;
+    }
     showDialog<void>(
       context: context,
       builder: (context) {
         return PackageDetailsDialog(
           package: package,
-          enabled: _snapshot.enabledPackageNames.contains(package.name),
-          onEnabledChanged: (enabled) {
-            Navigator.of(context).pop();
-            _setPackageEnabled(package, enabled);
-          },
           onDeletePackage: () {
             Navigator.of(context).pop();
-            _deletePackage(package);
+            if (mounted) {
+              unawaited(_deletePackage(package));
+            }
           },
           onRunTool: (tool) {
             showDialog<void>(

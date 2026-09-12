@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import 'MarkdownNodeGrouper.dart';
 
 class StreamMarkdownRendererState {
@@ -43,11 +44,21 @@ class MutableMarkdownNode {
     required this.type,
     required this.stableKey,
     this.headerLevel,
+    this.xmlTagName,
+    this.xmlAttributes,
+    this.xmlBody,
+    this.xmlChildren = const <MarkdownXmlChildStable>[],
+    this.xmlIsClosed,
   });
 
   MarkdownNodeType type;
   final String stableKey;
   final int? headerLevel;
+  String? xmlTagName;
+  Map<String, String>? xmlAttributes;
+  String? xmlBody;
+  List<MarkdownXmlChildStable> xmlChildren;
+  bool? xmlIsClosed;
   final StringBuffer content = StringBuffer();
   final List<MutableMarkdownNode> children = <MutableMarkdownNode>[];
   bool isStreaming = false;
@@ -57,6 +68,13 @@ class MutableMarkdownNode {
       type: type,
       stableKey: stableKey,
       headerLevel: headerLevel,
+      xmlTagName: xmlTagName,
+      xmlAttributes: xmlAttributes == null
+          ? null
+          : Map<String, String>.from(xmlAttributes!),
+      xmlBody: xmlBody,
+      xmlChildren: List<MarkdownXmlChildStable>.from(xmlChildren),
+      xmlIsClosed: xmlIsClosed,
     );
     node.content.write(content.toString());
     node.children.addAll(<MutableMarkdownNode>[
@@ -73,6 +91,11 @@ class MutableMarkdownNode {
       isStreaming: isStreaming,
       stableKey: stableKey,
       headerLevel: headerLevel,
+      xmlTagName: xmlTagName,
+      xmlAttributes: xmlAttributes,
+      xmlBody: xmlBody,
+      xmlChildren: xmlChildren,
+      xmlIsClosed: xmlIsClosed,
       children: <MarkdownNodeStable>[
         for (final child in children) child.toStable(),
       ],
@@ -220,7 +243,12 @@ class MarkdownEventNodeBuilder {
     _pendingHtmlBreakCount = 0;
   }
 
-  void appendBlock({required int blockId, required String content}) {
+  /// Appends one block chunk and applies metadata emitted by the Rust stream.
+  void appendBlock({
+    required int blockId,
+    required String content,
+    core_proxy.MarkdownXmlStreamEvent? xml,
+  }) {
     if (_htmlBreakBlocks.contains(blockId)) {
       return;
     }
@@ -230,6 +258,47 @@ class MarkdownEventNodeBuilder {
     }
     node.content.write(content);
     _xmlControllers[blockId]?.add(content);
+    _applyXmlMetadata(node, xml);
+  }
+
+  /// Marks one block boundary and stores its final structured XML metadata.
+  void completeBlock({
+    required int blockId,
+    core_proxy.MarkdownXmlStreamEvent? xml,
+  }) {
+    final node = _blocks[blockId];
+    if (node == null) {
+      throw StateError('Missing markdown block $blockId');
+    }
+    _applyXmlMetadata(node, xml);
+  }
+
+  /// Copies one generated XML event into the mutable Markdown node.
+  void _applyXmlMetadata(
+    MutableMarkdownNode node,
+    core_proxy.MarkdownXmlStreamEvent? xml,
+  ) {
+    if (xml == null) {
+      return;
+    }
+    node.xmlTagName = xml.tagName;
+    node.xmlAttributes = xml.attributes == null
+        ? null
+        : Map<String, String>.from(xml.attributes!);
+    node.xmlBody = xml.bodyChunk;
+    node.xmlChildren = <MarkdownXmlChildStable>[
+      for (final child in xml.children)
+        MarkdownXmlChildStable(
+          index: child.index,
+          tagName: child.tagName,
+          attributes: child.attributes == null
+              ? null
+              : Map<String, String>.from(child.attributes!),
+          body: child.bodyChunk ?? '',
+          isClosed: child.isClosed ?? false,
+        ),
+    ];
+    node.xmlIsClosed = xml.isClosed;
   }
 
   void appendXmlMarkdownEvent({

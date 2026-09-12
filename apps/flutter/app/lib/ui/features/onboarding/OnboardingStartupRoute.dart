@@ -2761,8 +2761,70 @@ class _AiSetupModelPage extends StatelessWidget {
   final ValueChanged<String?> onModelChanged;
   final String? errorText;
 
+  /// Returns endpoint options for the selected provider type.
+  List<core_proxy.ProviderEndpointOption> _endpointOptionsForSelection() {
+    for (final entry in catalogEntries) {
+      if (entry.providerTypeId == selectedProviderTypeId) {
+        return entry.endpointOptions;
+      }
+    }
+    return const <core_proxy.ProviderEndpointOption>[];
+  }
+
+  /// Opens endpoint options and applies the chosen endpoint text.
+  Future<void> _showEndpointOptionsDialog(
+    BuildContext context,
+    List<core_proxy.ProviderEndpointOption> options,
+  ) async {
+    if (options.isEmpty) {
+      return;
+    }
+    final selectedEndpoint = endpointController.text.trim();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('服务地址'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: options.length,
+              separatorBuilder: (context, index) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final option = options[index];
+                final selected = option.endpoint == selectedEndpoint;
+                return ListTile(
+                  selected: selected,
+                  leading: selected
+                      ? const Icon(Icons.check_rounded)
+                      : const SizedBox(width: 24),
+                  title: Text(option.endpoint),
+                  subtitle: option.label == option.endpoint
+                      ? null
+                      : Text(option.label),
+                  onTap: () {
+                    endpointController.text = option.endpoint;
+                    Navigator.of(dialogContext).pop();
+                  },
+                );
+              },
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final endpointOptions = _endpointOptionsForSelection();
     return Align(
       alignment: Alignment.topCenter,
       child: SingleChildScrollView(
@@ -2836,10 +2898,26 @@ class _AiSetupModelPage extends StatelessWidget {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: endpointController,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: '服务地址',
+                                suffixIcon: endpointOptions.isEmpty
+                                    ? null
+                                    : IconButton(
+                                        tooltip: '服务地址',
+                                        icon: const Icon(
+                                          Icons.arrow_drop_down_rounded,
+                                        ),
+                                        onPressed: () =>
+                                            _showEndpointOptionsDialog(
+                                              context,
+                                              endpointOptions,
+                                            ),
+                                      ),
                               ),
                               keyboardType: TextInputType.url,
+                              inputFormatters: <TextInputFormatter>[
+                                FilteringTextInputFormatter.deny(RegExp(r'\s')),
+                              ],
                               validator: _requiredField,
                             ),
                             const SizedBox(height: 12),

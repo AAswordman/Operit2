@@ -99,6 +99,8 @@
     }
   },
   "close": "关闭",
+  "commonExpand": "展开",
+  "commonCollapse": "收起",
   "create": "创建",
   "save": "保存",
   "delete": "删除",
@@ -180,6 +182,7 @@
     }
   },
   "searchGroupTitle": "搜索",
+  "searchSources": "搜索来源",
   "thinkingSearchGroupTitle": "思考并搜索",
   "thinkingSearchToolsGroupTitleWithCount": "思考、搜索并调用工具（{count}）",
   "@thinkingSearchToolsGroupTitleWithCount": {

@@ -1,6 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::chat::llmprovider::AIService::AiServiceError;
 
@@ -9,7 +9,6 @@ pub struct ThinkingConfigurationApplier;
 
 #[derive(Debug, Deserialize)]
 struct ThinkingRule {
-    providers: Vec<String>,
     model_prefix: Vec<String>,
     model_regex: Vec<String>,
     endpoint_suffix: Vec<String>,
@@ -72,7 +71,7 @@ impl ThinkingOption {
         }
     }
 
-    /// Returns the human-readable label persisted by the legacy configuration.
+    /// Returns the human-readable label persisted by the thinking configuration.
     fn option_label(&self) -> String {
         if self.label.is_empty() {
             self.option_id()
@@ -89,7 +88,7 @@ struct ThinkingAction {
 }
 
 impl ThinkingConfigurationApplier {
-    /// Validates persisted thinking rules before they are saved to a model profile.
+    /// Validates persisted thinking rules before they are saved to a provider profile.
     pub fn validate(thinking_configurations: &str) -> Result<(), String> {
         let rules = serde_json::from_str::<Vec<ThinkingRule>>(thinking_configurations)
             .map_err(|error| error.to_string())?;
@@ -101,9 +100,9 @@ impl ThinkingConfigurationApplier {
         Ok(())
     }
 
-    /// Resolves thinking controls for a provider/model/endpoint configuration.
+    /// Resolves thinking controls for one provider-owned model/endpoint configuration.
     pub fn describe(
-        provider_type_id: &str,
+        _provider_type_id: &str,
         model_name: &str,
         api_endpoint: &str,
         thinking_configurations: &str,
@@ -111,7 +110,7 @@ impl ThinkingConfigurationApplier {
         let rules = serde_json::from_str::<Vec<ThinkingRule>>(thinking_configurations)
             .map_err(|error| error.to_string())?;
         for rule in rules {
-            if rule.matches(provider_type_id, model_name, api_endpoint)? {
+            if rule.matches(model_name, api_endpoint)? {
                 return Ok(ThinkingSettingsDescriptor {
                     control: rule.control,
                     required: rule.required,
@@ -153,7 +152,7 @@ impl ThinkingConfigurationApplier {
             .into_iter()
             .map(|candidate| {
                 let matches = candidate
-                    .matches(provider_type_id, model_name, api_endpoint)
+                    .matches(model_name, api_endpoint)
                     .map_err(AiServiceError::RequestFailed)?;
                 Ok((candidate, matches))
             })
@@ -200,21 +199,8 @@ impl ThinkingConfigurationApplier {
 }
 
 impl ThinkingRule {
-    /// Determines whether this rule owns one provider/model/endpoint combination.
-    fn matches(
-        &self,
-        provider_type_id: &str,
-        model_name: &str,
-        api_endpoint: &str,
-    ) -> Result<bool, String> {
-        let provider = provider_type_id.trim().to_ascii_uppercase();
-        if !self
-            .providers
-            .iter()
-            .any(|candidate| candidate.eq_ignore_ascii_case(&provider))
-        {
-            return Ok(false);
-        }
+    /// Determines whether this provider-owned rule matches one model/endpoint combination.
+    fn matches(&self, model_name: &str, api_endpoint: &str) -> Result<bool, String> {
         let model = model_name.trim();
         if !self.model_prefix.is_empty()
             && !self.model_prefix.iter().any(|prefix| {
@@ -328,13 +314,14 @@ fn put_json_path(root: &mut Value, path: &str, value: Value) -> Result<(), AiSer
 #[cfg(test)]
 mod tests {
     use super::ThinkingConfigurationApplier;
-    use operit_model::ModelConfigData::DEFAULT_THINKING_CONFIGURATIONS;
+    use operit_model::ModelConfigData::thinkingConfigurationsForProvider;
     use serde_json::json;
 
     /// Applies a nested Responses API reasoning option.
     #[test]
     fn applies_responses_reasoning_option() {
         let mut request = json!({});
+        let thinking_configurations = thinkingConfigurationsForProvider("OPENAI_RESPONSES");
         ThinkingConfigurationApplier::apply(
             &mut request,
             "OPENAI_RESPONSES",
@@ -342,7 +329,7 @@ mod tests {
             "https://api.openai.com/v1/responses",
             true,
             3,
-            DEFAULT_THINKING_CONFIGURATIONS,
+            &thinking_configurations,
             "",
         )
         .unwrap();
@@ -354,6 +341,7 @@ mod tests {
     #[test]
     fn applies_gemini_thinking_budget() {
         let mut request = json!({"generationConfig": {}});
+        let thinking_configurations = thinkingConfigurationsForProvider("GOOGLE");
         ThinkingConfigurationApplier::apply(
             &mut request,
             "GOOGLE",
@@ -361,7 +349,7 @@ mod tests {
             "https://generativelanguage.googleapis.com",
             true,
             2,
-            DEFAULT_THINKING_CONFIGURATIONS,
+            &thinking_configurations,
             "",
         )
         .unwrap();

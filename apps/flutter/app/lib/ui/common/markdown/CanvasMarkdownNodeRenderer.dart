@@ -721,6 +721,11 @@ List<MarkdownNodeStable> _childrenWithFirstContent(
     stableKey: first.stableKey,
     children: first.children,
     headerLevel: first.headerLevel,
+    xmlTagName: first.xmlTagName,
+    xmlAttributes: first.xmlAttributes,
+    xmlBody: first.xmlBody,
+    xmlChildren: first.xmlChildren,
+    xmlIsClosed: first.xmlIsClosed,
   );
   return updated;
 }

@@ -692,7 +692,7 @@ fn render_dart_message_pack_struct_decoder(
         output.push_str(&format!("    late {field_type} {field_name};\n"));
         output.push_str(&format!("    var has_{field_name} = false;\n"));
     }
-    output.push_str("    for (var index = 0; index < fieldCount; index += 1) {\n");
+    output.push_str("    for (var fieldIndex = 0; fieldIndex < fieldCount; fieldIndex += 1) {\n");
     output.push_str("      switch (reader.readString()) {\n");
     for field in fields {
         let field_type = dart_type(&field.ty, serializable_types);

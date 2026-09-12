@@ -10,6 +10,7 @@ import '../../../../../theme/OperitTheme.dart';
 import '../bubble/BubbleSurface.dart';
 import '../../part/StructuredMessagePartRenderer.dart';
 import '../../part/ThinkToolsXmlNodeGrouper.dart';
+import '../../part/ToolCallResultMergeRender.dart';
 import '../../../viewmodel/ChatViewModel.dart';
 
 class AiMessageComposable extends StatefulWidget {
@@ -135,6 +136,7 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
             textColor: aiTextColor,
             backgroundColor: useCardStyle ? aiBubbleColor : colorScheme.surface,
             nodeGrouper: nodeGrouper,
+            mergeRender: const ToolCallResultMergeRender(),
             streamState: _rendererState,
             rendererId: 'cursor-ai-$renderIdentity',
             showThinkingProcess: themePreferenceSnapshot.showThinkingProcess,

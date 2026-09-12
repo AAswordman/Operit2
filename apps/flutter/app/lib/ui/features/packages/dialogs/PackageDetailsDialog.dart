@@ -16,7 +16,6 @@ class PluginDetailsDialog extends StatefulWidget {
     required this.plugin,
     required this.enabled,
     required this.packageManager,
-    required this.onEnabledChanged,
     required this.onOpenUi,
     required this.onDeletePackage,
   });
@@ -24,7 +23,6 @@ class PluginDetailsDialog extends StatefulWidget {
   final core_proxy.ToolPkgContainerRuntime plugin;
   final bool enabled;
   final GeneratedApplicationPackageManagerCoreProxy packageManager;
-  final ValueChanged<bool> onEnabledChanged;
   final ValueChanged<String?> onOpenUi;
   final VoidCallback? onDeletePackage;
 
@@ -134,8 +132,11 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
         ? details!.description
         : localizedText(widget.plugin.description);
     return AlertDialog(
-      icon: const Icon(Icons.extension_outlined),
-      title: Text(displayName),
+      titlePadding: const EdgeInsets.fromLTRB(24, 16, 8, 0),
+      title: _PackageDialogTitle(
+        icon: Icons.extension_outlined,
+        title: displayName,
+      ),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620, maxHeight: 620),
         child: SingleChildScrollView(
@@ -219,17 +220,19 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
                     title: module.title,
                     subtitle: '${module.uiModuleId} · ${module.runtime}',
                     icon: Icons.tune_outlined,
-                    trailing: FilledButton.tonalIcon(
-                      onPressed: widget.enabled
-                          ? () => widget.onOpenUi(module.routeId)
-                          : null,
-                      icon: const Icon(Icons.open_in_new, size: 18),
-                      label: Text(widget.enabled ? '打开' : '启用后打开'),
-                      style: FilledButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                      ),
-                    ),
+                    trailing: widget.enabled
+                        ? FilledButton.tonalIcon(
+                            onPressed: () => widget.onOpenUi(module.routeId),
+                            icon: const Icon(Icons.open_in_new, size: 18),
+                            label: const Text('打开'),
+                            style: FilledButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                            ),
+                          )
+                        : null,
                   ),
               ],
               const SizedBox(height: 14),
@@ -287,10 +290,6 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
         ),
       ),
       actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.close),
-        ),
         if (widget.onDeletePackage != null)
           OutlinedButton.icon(
             onPressed: widget.onDeletePackage,
@@ -300,18 +299,49 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
               foregroundColor: Theme.of(context).colorScheme.error,
             ),
           ),
-        if (toolPkgHasUi(widget.plugin))
+        if (toolPkgHasUi(widget.plugin) && widget.enabled)
           OutlinedButton.icon(
-            onPressed: widget.enabled ? () => widget.onOpenUi(null) : null,
+            onPressed: () => widget.onOpenUi(null),
             icon: const Icon(Icons.open_in_new_outlined),
-            label: Text(widget.enabled ? '打开' : '启用后打开'),
+            label: const Text('打开'),
           ),
-        FilledButton.icon(
-          onPressed: () => widget.onEnabledChanged(!widget.enabled),
-          icon: Icon(
-            widget.enabled ? Icons.toggle_off_outlined : Icons.toggle_on,
+      ],
+    );
+  }
+}
+
+class _PackageDialogTitle extends StatelessWidget {
+  /// Creates a centered package title with a close action in the top-right.
+  const _PackageDialogTitle({required this.icon, required this.title});
+
+  final IconData icon;
+  final String title;
+
+  /// Builds the package identity block and close button.
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.topCenter,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(48, 8, 48, 0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(icon, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(height: 16),
+              Text(title, textAlign: TextAlign.center),
+            ],
           ),
-          label: Text(widget.enabled ? l10n.disable : l10n.enable),
+        ),
+        PositionedDirectional(
+          top: 0,
+          end: 0,
+          child: IconButton(
+            tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close),
+          ),
         ),
       ],
     );
@@ -328,11 +358,12 @@ class _ToolPkgLogo extends StatelessWidget {
   Widget build(BuildContext context) {
     final image = switch (logo.mimeType) {
       'image/svg+xml' => SvgPicture.memory(logo.bytes, fit: BoxFit.contain),
-      'image/png' || 'image/jpeg' || 'image/webp' => Image.memory(
-        logo.bytes,
-        fit: BoxFit.contain,
+      'image/png' ||
+      'image/jpeg' ||
+      'image/webp' => Image.memory(logo.bytes, fit: BoxFit.contain),
+      _ => throw StateError(
+        'Unsupported ToolPkg logo MIME type: ${logo.mimeType}',
       ),
-      _ => throw StateError('Unsupported ToolPkg logo MIME type: ${logo.mimeType}'),
     };
     return SizedBox(width: 96, height: 96, child: image);
   }
@@ -346,15 +377,11 @@ class PackageDetailsDialog extends StatelessWidget {
   const PackageDetailsDialog({
     super.key,
     required this.package,
-    required this.enabled,
-    required this.onEnabledChanged,
     required this.onDeletePackage,
     required this.onRunTool,
   });
 
   final core_proxy.ToolPackage package;
-  final bool enabled;
-  final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onDeletePackage;
   final ValueChanged<core_proxy.PackageTool> onRunTool;
 
@@ -362,8 +389,11 @@ class PackageDetailsDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      icon: Icon(packageCategoryIcon(package.category)),
-      title: Text(toolPackageDisplayName(package)),
+      titlePadding: const EdgeInsets.fromLTRB(24, 16, 8, 0),
+      title: _PackageDialogTitle(
+        icon: packageCategoryIcon(package.category),
+        title: toolPackageDisplayName(package),
+      ),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620, maxHeight: 620),
         child: SingleChildScrollView(
@@ -431,10 +461,6 @@ class PackageDetailsDialog extends StatelessWidget {
         ),
       ),
       actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.close),
-        ),
         if (!package.isBuiltIn)
           OutlinedButton.icon(
             onPressed: onDeletePackage,
@@ -444,11 +470,6 @@ class PackageDetailsDialog extends StatelessWidget {
               foregroundColor: Theme.of(context).colorScheme.error,
             ),
           ),
-        FilledButton.icon(
-          onPressed: () => onEnabledChanged(!enabled),
-          icon: Icon(enabled ? Icons.toggle_off_outlined : Icons.toggle_on),
-          label: Text(enabled ? l10n.disable : l10n.enable),
-        ),
       ],
     );
   }

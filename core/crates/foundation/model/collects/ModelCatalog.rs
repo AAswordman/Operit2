@@ -1,7 +1,7 @@
 pub const MODEL_CATALOG_MODEL_ROWS: &str = r#"
-DEEPSEEK|deepseek-v4-flash|TOKEN|0.44|0.014|1.32|0|USD|1048.576|false|false|false|false|false|false|false
+DEEPSEEK|deepseek-v4-flash|TOKEN|0.44|0.014|1.32|0|USD|1048.576|false|false|false|false|true|false|false
 DEEPSEEK|deepseek-v4-flash-vision-exp|TOKEN|0.14|0.0028|0.28|0|USD|1000|false|true|false|false|false|true|true
-DEEPSEEK|deepseek-v4-pro|TOKEN|1.32|0.044|3.96|0|USD|1048.576|false|false|false|false|false|false|false
+DEEPSEEK|deepseek-v4-pro|TOKEN|1.32|0.044|3.96|0|USD|1048.576|false|false|false|false|true|false|false
 OPENAI|gpt-3.5-turbo|TOKEN|0.5|0|1.5|0|USD|16.385|false|false|false|false|false|false|false
 OPENAI|gpt-4|TOKEN|30||60|0|USD|8.192|false|false|false|false|false|true|true
 OPENAI|gpt-4-turbo|TOKEN|10||30|0|USD|128|false|true|false|false|false|true|true
@@ -545,12 +545,12 @@ MIMO|mimo-v2.5|TOKEN|0.14|0.0028|0.29|0|USD|1048.576|false|true|false|false|fals
 MIMO|mimo-v2.5-pro|TOKEN|0.435|0.0036|0.87|0|USD|1048.576|false|false|false|false|false|false|false
 NOVITA|zai-org/glm-5.1|TOKEN|1.4|0.26|4.4|0|USD|202.8|false|false|false|false|false|false|false
 NVIDIA|moonshotai/kimi-k2.5|TOKEN|0.6|0.1|3|0|USD|262.144|false|true|false|false|false|false|false
-DEEPSEEK|deepseek-chat|TOKEN|0.28|0.028|0.42|0|USD|131.072|false|false|false|false|false|true|true
-DEEPSEEK|deepseek-reasoner|TOKEN|0.28|0.028|0.42|0|USD|131.072|false|false|false|false|false|false|false
-DEEPSEEK|deepseek-coder|TOKEN|0.14|0.014|0.28|0|USD|128|false|false|false|false|false|true|true
-DEEPSEEK|deepseek-r1|TOKEN|0.55|0.14|2.19|0|USD|65.536|false|false|false|false|false|true|true
-DEEPSEEK|deepseek-v3|TOKEN|0.27|0.07|1.1|0|USD|65.536|false|false|false|false|false|true|true
-DEEPSEEK|deepseek-v3.2|TOKEN|0.28|0.028|0.4|0|USD|163.84|false|false|false|false|false|true|true
+DEEPSEEK|deepseek-chat|TOKEN|0.28|0.028|0.42|0|USD|131.072|false|false|false|false|true|true|true
+DEEPSEEK|deepseek-reasoner|TOKEN|0.28|0.028|0.42|0|USD|131.072|false|false|false|false|true|false|false
+DEEPSEEK|deepseek-coder|TOKEN|0.14|0.014|0.28|0|USD|128|false|false|false|false|true|true|true
+DEEPSEEK|deepseek-r1|TOKEN|0.55|0.14|2.19|0|USD|65.536|false|false|false|false|true|true|true
+DEEPSEEK|deepseek-v3|TOKEN|0.27|0.07|1.1|0|USD|65.536|false|false|false|false|true|true|true
+DEEPSEEK|deepseek-v3.2|TOKEN|0.28|0.028|0.4|0|USD|163.84|false|false|false|false|true|true|true
 OPENAI|chat-latest|TOKEN|5|0.5|30|0|USD|400|false|true|false|false|false|true|true
 OPENAI|chatgpt-4o-latest|TOKEN|5||15|0|USD|128|false|true|false|false|false|true|true
 OPENAI|daybreak-blue-latest|TOKEN|4|0.4|20|0|USD|1050|false|true|false|false|false|true|true

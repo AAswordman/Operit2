@@ -67,6 +67,63 @@ void main() {
       expect(group.stableKey, 'think-tools-0');
     });
 
+    test('collapses four calls followed by four results into one group', () {
+      final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
+          .group(<MarkdownNodeStable>[
+            _xml('<tool name="daily_life:get_current_time" />'),
+            _xml('<tool name="daily_life:device_status" />'),
+            _xml('<tool name="visit_web" />'),
+            _xml('<tool name="list_core_nodes" />'),
+            _xml(
+              '<tool_result name="daily_life:get_current_time">12:00</tool_result>',
+            ),
+            _xml(
+              '<tool_result name="daily_life:device_status">ready</tool_result>',
+            ),
+            _xml('<tool_result name="visit_web">blocked</tool_result>'),
+            _xml('<tool_result name="list_core_nodes">core-1</tool_result>'),
+          ], 'renderer');
+
+      expect(items, hasLength(1));
+      final group = items.single as MarkdownGroupItem;
+      expect(group.startIndex, 0);
+      expect(group.endIndexInclusive, 7);
+      expect(group.stableKey, 'tools-only-0');
+    });
+
+    test('keeps line-break separators inside one four-call group', () {
+      final nodes = <MarkdownNodeStable>[
+        _xml('<tool name="daily_life:get_current_time" />'),
+        _break(),
+        _xml('<tool name="daily_life:device_status" />'),
+        _break(),
+        _xml('<tool name="visit_web" />'),
+        _break(),
+        _xml('<tool name="list_core_nodes" />'),
+        _break(),
+        _xml(
+          '<tool_result name="daily_life:get_current_time">12:00</tool_result>',
+        ),
+        _break(),
+        _xml(
+          '<tool_result name="daily_life:device_status">ready</tool_result>',
+        ),
+        _break(),
+        _xml('<tool_result name="visit_web">blocked</tool_result>'),
+        _break(),
+        _xml('<tool_result name="list_core_nodes">core-1</tool_result>'),
+      ];
+
+      final items = const ThinkToolsXmlNodeGrouper(
+        showThinkingProcess: true,
+      ).group(nodes, 'renderer');
+
+      expect(items, hasLength(1));
+      final group = items.single as MarkdownGroupItem;
+      expect(group.startIndex, 0);
+      expect(group.endIndexInclusive, nodes.length - 1);
+    });
+
     test('collapses a thinking block with one tool call', () {
       final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
           .group(<MarkdownNodeStable>[
@@ -82,7 +139,7 @@ void main() {
       expect(group.stableKey, 'think-tools-0');
     });
 
-    test('keeps a single tool-only call expanded', () {
+    test('keeps a single complete tool-only call expanded', () {
       final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
           .group(<MarkdownNodeStable>[
             _xml('<tool name="read_file"></tool>'),
@@ -93,7 +150,7 @@ void main() {
       expect(items, everyElement(isA<MarkdownSingleItem>()));
     });
 
-    test('collapses a thinking block with a write tool call', () {
+    test('collapses a thinking block with one write tool call', () {
       final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
           .group(<MarkdownNodeStable>[
             _xml('<think>plan</think>'),
@@ -289,10 +346,39 @@ void main() {
 }
 
 MarkdownNodeStable _xml(String content, {bool isStreaming = false}) {
+  final trimmed = content.trim();
+  final opening = RegExp(
+    r'^<([A-Za-z][A-Za-z0-9_]*)([^>]*)>',
+  ).firstMatch(trimmed);
+  final tagName = opening?.group(1);
+  final attributes = <String, String>{
+    for (final match in RegExp(
+      r'([A-Za-z][A-Za-z0-9_-]*)\s*=\s*"([^"]*)"',
+    ).allMatches(opening?.group(2) ?? ''))
+      match.group(1)!: match.group(2)!,
+  };
+  final closingStart = tagName == null
+      ? -1
+      : trimmed.toLowerCase().lastIndexOf('</${tagName.toLowerCase()}>');
+  final bodyStart = opening?.end ?? 0;
+  final bodyEnd = closingStart >= bodyStart ? closingStart : trimmed.length;
   return MarkdownNodeStable(
     type: MarkdownNodeType.xmlBlock,
     content: content,
     isStreaming: isStreaming,
+    xmlTagName: tagName,
+    xmlAttributes: attributes,
+    xmlBody: bodyStart <= bodyEnd ? trimmed.substring(bodyStart, bodyEnd) : '',
+    xmlIsClosed: trimmed.endsWith('/>') || closingStart >= bodyStart,
+  );
+}
+
+/// Creates one rendered Markdown line-break separator.
+MarkdownNodeStable _break() {
+  return const MarkdownNodeStable(
+    type: MarkdownNodeType.htmlBreak,
+    content: '\n',
+    isStreaming: false,
   );
 }
 
@@ -311,6 +397,7 @@ MarkdownStreamEvent _markdownBlockStart(
     parentBlockId: parentBlockId,
     nodeType: nodeType,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -329,6 +416,7 @@ MarkdownStreamEvent _markdownBlockChunk(
     parentBlockId: parentBlockId,
     nodeType: 'XmlBlock',
     headerLevel: null,
+    xml: _xmlEvent(value),
   );
 }
 
@@ -343,6 +431,7 @@ MarkdownStreamEvent _markdownChunk(String value, {int? parentBlockId}) {
     parentBlockId: parentBlockId,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -361,6 +450,7 @@ MarkdownStreamEvent _markdownInlineStart(
     parentBlockId: parentBlockId,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -380,6 +470,7 @@ MarkdownStreamEvent _markdownInlineChunk(
     parentBlockId: parentBlockId,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -394,6 +485,7 @@ MarkdownStreamEvent _markdownCompleted({int? parentBlockId}) {
     parentBlockId: parentBlockId,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -418,7 +510,49 @@ void _emitRsThinkClose(StreamController<Object> controller) {
   controller
     ..add(_markdownChunk('</think>'))
     ..add(_markdownBlockChunk(1, '</think>'))
+    ..add(
+      MarkdownStreamEvent(
+        chatId: 'chat',
+        eventType: 'markdownBlockEnd',
+        value: null,
+        id: null,
+        blockId: 1,
+        inlineId: null,
+        parentBlockId: null,
+        nodeType: 'XmlBlock',
+        headerLevel: null,
+        xml: const MarkdownXmlStreamEvent(
+          tagName: 'think',
+          attributes: <String, String>{},
+          bodyChunk: '',
+          children: <MarkdownXmlChildStreamEvent>[],
+          isClosed: true,
+        ),
+      ),
+    )
     ..add(_markdownCompleted(parentBlockId: 1));
+}
+
+/// Builds the structured XML metadata used by the RS event test helpers.
+MarkdownXmlStreamEvent? _xmlEvent(String value) {
+  final opening = RegExp(r'<([A-Za-z][A-Za-z0-9_]*)([^>]*)>').firstMatch(value);
+  if (opening == null) {
+    return null;
+  }
+  final tagName = opening.group(1)!;
+  final attributes = <String, String>{
+    for (final match in RegExp(
+      r'([A-Za-z][A-Za-z0-9_-]*)\s*=\s*"([^"]*)"',
+    ).allMatches(opening.group(2)!))
+      match.group(1)!: match.group(2)!,
+  };
+  return MarkdownXmlStreamEvent(
+    tagName: tagName,
+    attributes: attributes,
+    bodyChunk: '',
+    children: const <MarkdownXmlChildStreamEvent>[],
+    isClosed: value.trim().endsWith('/>') || value.contains('</'),
+  );
 }
 
 void _emitRsXmlBlock(

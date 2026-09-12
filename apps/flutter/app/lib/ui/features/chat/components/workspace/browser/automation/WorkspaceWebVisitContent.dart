@@ -44,6 +44,7 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
   bool _autoCountdownActive = false;
   bool _isCaptchaVerification = false;
   bool _hasSslError = false;
+  int _navigationGeneration = 0;
   final ValueNotifier<int> _autoCountdownSeconds = ValueNotifier<int>(0);
   String _currentUrl = '';
   String _pageTitle = '';
@@ -104,6 +105,7 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
     };
   }
 
+  /// Resets page state when a new WebView navigation begins.
   void _handlePageStarted(String url) {
     if (_completed || !mounted) {
       return;
@@ -111,6 +113,7 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
     _loadTimeoutTimer?.cancel();
     _extractDelayTimer?.cancel();
     _countdownTimer?.cancel();
+    _navigationGeneration += 1;
     setState(() {
       _currentUrl = url;
       _hasSslError = false;
@@ -126,43 +129,58 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
     _armLoadTimeout();
   }
 
+  /// Processes the completed page and starts the visit workflow.
   Future<void> _handlePageFinished(String url) async {
     if (_completed || !mounted) {
       return;
     }
-    _loadTimeoutTimer?.cancel();
-    final title = await _controller.getTitle();
-    if (_completed || !mounted) {
-      return;
-    }
-    setState(() {
-      _currentUrl = url;
-      _pageTitle = title ?? '';
-      _pageLoaded = true;
-    });
-
-    if (url.contains('google.com/sorry/index')) {
-      _finishError('Google CAPTCHA detected. Please try again later.');
-      return;
-    }
-
-    final captcha = await _detectCaptcha();
-    if (_completed || !mounted) {
-      return;
-    }
-    if (captcha) {
+    final generation = _navigationGeneration;
+    try {
+      _loadTimeoutTimer?.cancel();
+      final title = await _controller.getTitle();
+      if (!_isCurrentNavigation(generation)) {
+        return;
+      }
       setState(() {
-        _isCaptchaVerification = true;
-        _autoModeEnabled = false;
+        _currentUrl = url;
+        _pageTitle = title ?? '';
+        _pageLoaded = true;
       });
-      _startCountdown(_captchaWaitSeconds);
-      return;
-    }
-    if (_autoModeEnabled) {
-      _scheduleExtraction();
+
+      if (url.contains('google.com/sorry/index')) {
+        _finishError('Google CAPTCHA detected. Please try again later.');
+        return;
+      }
+
+      final captcha = await _detectCaptcha();
+      if (!_isCurrentNavigation(generation)) {
+        return;
+      }
+      if (captcha) {
+        setState(() {
+          _isCaptchaVerification = true;
+          _autoModeEnabled = false;
+        });
+        _startCountdown(_captchaWaitSeconds);
+        return;
+      }
+      if (_autoModeEnabled) {
+        _scheduleExtraction();
+      }
+    } catch (error) {
+      if (!_isCurrentNavigation(generation)) {
+        return;
+      }
+      _finishError(error.toString());
     }
   }
 
+  /// Checks whether an asynchronous callback still belongs to the active page.
+  bool _isCurrentNavigation(int generation) {
+    return mounted && !_completed && generation == _navigationGeneration;
+  }
+
+  /// Applies the navigation policy for links opened by the WebView.
   NavigationDecision _handleNavigationRequest(NavigationRequest request) {
     final uri = Uri.tryParse(request.url);
     final scheme = uri?.scheme.toLowerCase();
@@ -170,6 +188,7 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
       return NavigationDecision.prevent;
     }
     if (!_completed && mounted) {
+      _navigationGeneration += 1;
       setState(() {
         _currentUrl = request.url;
         _isLoading = true;

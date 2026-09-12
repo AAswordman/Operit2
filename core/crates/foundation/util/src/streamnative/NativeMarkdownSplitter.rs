@@ -453,12 +453,22 @@ impl MarkdownSession {
 pub struct NativeMarkdownSplitter;
 
 impl NativeMarkdownSplitter {
+    /// Creates the block-level Markdown parser session.
     pub fn create_block_session() -> MarkdownSession {
         MarkdownSession::new(Self::get_block_plugins())
     }
 
+    /// Creates the inline Markdown parser session.
     pub fn create_inline_session() -> MarkdownSession {
         MarkdownSession::new(Self::get_inline_plugins())
+    }
+
+    /// Creates a stream session that emits only an XML block's inner content.
+    pub fn create_xml_content_session() -> MarkdownSession {
+        MarkdownSession::new(vec![PluginEntry {
+            plugin: Box::new(StreamXmlPlugin::new(false)),
+            tag: MarkdownProcessorType::XmlBlock,
+        }])
     }
 
     fn get_block_plugins() -> Vec<PluginEntry> {

@@ -1801,6 +1801,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-edge-contract"
+version = "0.1.0"
+
+[[package]]
 name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
@@ -1929,6 +1933,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-node-edge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-edge-contract",
+ "operit-host-api",
+ "operit-link",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "operit-node-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2022,6 +2038,19 @@ name = "operit-proxy-dart-codegen"
 version = "0.1.0"
 dependencies = [
  "operit-rslink-codegen",
+]
+
+[[package]]
+name = "operit-proxy-edge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-edge-contract",
+ "operit-host-api",
+ "operit-link",
+ "operit-node-edge",
+ "serde",
+ "tokio",
 ]
 
 [[package]]

@@ -183,6 +183,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get close => '关闭';
 
   @override
+  String get commonExpand => '展开';
+
+  @override
+  String get commonCollapse => '收起';
+
+  @override
   String get create => '创建';
 
   @override
@@ -320,6 +326,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get searchGroupTitle => '搜索';
+
+  @override
+  String get searchSources => '搜索来源';
 
   @override
   String get thinkingSearchGroupTitle => '思考并搜索';

@@ -1,0 +1,28 @@
+[package]
+name = "operit-pb-sbc01-h3"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Operit full Core hardware runtime for PB_SBC01_H3."
+
+[[bin]]
+name = "operit-pb-sbc01-h3"
+path = "src/main.rs"
+
+[[bin]]
+name = "operit-pb-sbc01-h3-face"
+path = "src/face_console.rs"
+
+[dependencies]
+operit-access-runtime = { path = "../../core/crates/access/runtime" }
+operit-board-pb-sbc01-h3 = { path = "../../hosts/boards/pb_sbc01_h3" }
+operit-core-application = { path = "../../core/crates/application/core" }
+operit-host-api = { path = "../../core/crates/foundation/host-api" }
+operit-node-edge = { path = "../../core/crates/node/edge" }
+operit-proxy-edge = { path = "../../core/crates/proxy/edge" }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+operit-host-linux-native = { path = "../../hosts/linux" }

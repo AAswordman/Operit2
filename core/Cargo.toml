@@ -23,6 +23,9 @@ members = [
     "crates/proxy/bridge",
     "crates/proxy/local",
     "crates/application/core",
+    "crates/node/edge-contract",
+    "crates/node/edge",
+    "crates/proxy/edge",
     "crates/command/core"
 ]
 resolver = "2"

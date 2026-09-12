@@ -68,6 +68,7 @@ pub enum ProviderCreateParams {
         supports_vision: bool,
         supports_audio: bool,
         supports_video: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     },
     ClaudeProvider {
@@ -140,6 +141,7 @@ pub enum ProviderCreateParams {
         supports_vision: bool,
         supports_audio: bool,
         supports_video: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     },
     MistralProvider {
@@ -301,6 +303,7 @@ impl AIServiceFactory {
                     supports_vision,
                     supports_audio,
                     supports_video,
+                    builtin_tools,
                     enable_tool_call,
                 )
             }
@@ -418,6 +421,7 @@ impl AIServiceFactory {
                 supports_vision,
                 supports_audio,
                 supports_video,
+                builtin_tools,
                 enable_tool_call,
             ),
             ApiProviderType::MISTRAL => Self::mistral_provider(
@@ -598,6 +602,7 @@ impl AIServiceFactory {
         supports_vision: bool,
         supports_audio: bool,
         supports_video: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     ) -> Result<ProviderServiceSpec, AiServiceError> {
         Ok(ProviderServiceSpec {
@@ -611,6 +616,7 @@ impl AIServiceFactory {
                 supports_vision,
                 supports_audio,
                 supports_video,
+                builtin_tools,
                 enable_tool_call,
             },
         })
@@ -626,6 +632,7 @@ impl AIServiceFactory {
         supports_vision: bool,
         supports_audio: bool,
         supports_video: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     ) -> Result<ProviderServiceSpec, AiServiceError> {
         Ok(ProviderServiceSpec {
@@ -639,6 +646,7 @@ impl AIServiceFactory {
                 supports_vision,
                 supports_audio,
                 supports_video,
+                builtin_tools,
                 enable_tool_call,
             },
         })

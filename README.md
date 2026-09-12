@@ -92,9 +92,11 @@ operit2 cli backup restore <snapshot.zip>
 | --- | --- | --- |
 | Flutter App | 移动端和桌面端的主要图形访问面，也可以承载一个 CoreNode | Android、Windows、Linux、macOS、iOS、OpenHarmony 和 Web 的 Host/构建条件不同 |
 | Rust CLI/TUI | 本地 CoreNode 和运维/开发入口 | 当前 CLI Host 主要覆盖 Windows、Linux 和 macOS |
+| PB_SBC01_H3 | 运行完整 Core 的 Linux 硬件主控入口 | 使用 Linux Host 加板卡 Host 能力，应用入口位于 `apps/pb_sbc01_h3` |
 | Web Access | 访问某个已运行 CoreNode 的浏览器入口 | 不是自动加入 Space 的浏览器节点，也不是中心化 Agent Server |
 | WebAssembly/browser Host | 浏览器运行时的本地能力边界 | 与 Web Access 访问面分开，具体能力取决于浏览器和当前 Web 构建模式 |
 | Linux 云端设备 | Space 中的普通 CoreNode | 长期在线可以承担更多任务，但不因此拥有中心身份 |
+| ESP32 Edge Node | 设备侧 Edge Service 能力节点 | 不是完整 CoreNode，不持有 OperitApplication、Chat、Store、Identity 或 Space 同步 |
 | Server | 未来的部署形态和 Host 方向 | 当前仓库还没有可以直接发布的完整 Server 产品 |
 
 仓库包含多平台 Host 适配路径，但“能够构建”不等于“已经完成跨设备互操作验证”。平台构建、签名和发布条件请以 [`BUILDING.md`](BUILDING.md) 与对应 workflow 为准。
@@ -207,6 +209,7 @@ node tools/dev_web_access_proxy.mjs --upstream-port 4835 --listen-port 4836
 ```text
 apps/
 ├── cli/                 Rust CLI/TUI 入口
+├── pb_sbc01_h3/         PB_SBC01_H3 硬件主控入口
 ├── flutter/app/         Flutter App 入口
 ├── web_access/          Web Access 前端边界和共享 bundle
 └── server/              Server 形态预留目录
@@ -216,7 +219,7 @@ core/
 ├── CRATE_BOUNDARIES.md  crate 依赖方向和职责边界
 └── examples/            Provider 和插件 SDK 示例
 
-hosts/                   Android、Windows、Linux、Apple、Web 等 Host 实现
+hosts/                   Android、Windows、Linux、Apple、Web 与 boards Host 实现
 plugins/                 ToolPkg、Skill、SDK 类型和插件开发工具
 tools/                   构建、发布、Web 和开发辅助脚本
 docs/                    架构、权限、Link、迁移和版本文档

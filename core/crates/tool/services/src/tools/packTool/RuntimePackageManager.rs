@@ -4139,6 +4139,7 @@ fn buildConditionCapabilitiesSnapshot(
         HostPlatform::Macos => "macos",
         HostPlatform::Ios => "ios",
         HostPlatform::Web => "web",
+        HostPlatform::Esp32 => "esp32",
         HostPlatform::Other => "other",
     };
     BTreeMap::from([

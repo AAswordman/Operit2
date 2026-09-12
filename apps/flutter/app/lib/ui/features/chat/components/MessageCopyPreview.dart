@@ -245,7 +245,18 @@ bool _applyCopyMarkdownEvent(
       if (blockId == null || value == null) {
         throw StateError('markdownBlockChunk missing blockId or value');
       }
-      state.eventBuilder.appendBlock(blockId: blockId, content: value);
+      state.eventBuilder.appendBlock(
+        blockId: blockId,
+        content: value,
+        xml: event.xml,
+      );
+      return false;
+    case 'markdownBlockEnd':
+      final blockId = event.blockId;
+      if (blockId == null) {
+        throw StateError('markdownBlockEnd missing blockId');
+      }
+      state.eventBuilder.completeBlock(blockId: blockId, xml: event.xml);
       return false;
     case 'markdownInlineStart':
       final blockId = event.blockId;

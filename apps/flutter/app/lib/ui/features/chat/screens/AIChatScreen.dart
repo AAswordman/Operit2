@@ -1321,7 +1321,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _isPreparingChatSwitch = false;
       ChatSelectionTransition.complete(state.currentChatId);
     }
-    _publishChatContentData();
+    _chatContentDataNotifier.value = _currentChatContentData(
+      pendingQueueMessages: state.pendingQueueMessages,
+      isPendingQueueExpanded: state.isPendingQueueExpanded,
+    );
     _updateTopBarTitle();
     if (workspaceChanged && mounted) {
       setState(() {});

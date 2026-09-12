@@ -2,11 +2,15 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 use uuid::Uuid;
 
+use super::DeepseekProvider::DeepseekResponsesPayloadAdapter;
+use super::OpenAIResponsesProvider::{
+    build_responses_web_search_chunks, OpenAIResponsesPayloadAdapter,
+};
 use super::StructuredToolCallBridge::StructuredToolCallBridge;
 use super::ThinkingConfiguration::ThinkingConfigurationApplier;
 use crate::chat::llmprovider::AIService::{
@@ -43,7 +47,15 @@ pub struct OpenAIProvider {
     pub supports_video: bool,
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
+    responsesProtocol: ResponsesStreamProtocol,
     state: Arc<Mutex<OpenAIProviderState>>,
+}
+
+/// Selects provider-specific handling for official Responses stream items.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResponsesStreamProtocol {
+    OpenAi,
+    Deepseek,
 }
 
 struct OpenAIProviderState {
@@ -79,13 +91,23 @@ pub struct StreamingState {
     pub isInReasoningMode: bool,
     pub hasEmittedThinkStart: bool,
     pub hasEmittedRegularContent: bool,
+    pub reasoningObserved: bool,
     pub isFirstResponse: bool,
+    pub streamCompletionConfirmed: bool,
+    pub streamEndReceived: bool,
     pub regularContentDeltaCount: usize,
     pub regularContentBytes: usize,
     pub nativeToolCallDeltaCount: usize,
     pub accumulatedToolCalls: HashMap<i32, Value>,
     pub toolCallState: ToolCallState,
     pub lastProcessedToolIndex: Option<i32>,
+    pub responsesWebSearchItems: BTreeMap<i32, Value>,
+    pub responsesOutputTextBuffers: HashMap<i32, String>,
+    pub responsesMessageItems: HashMap<i32, Value>,
+    pub responsesLiveEmittedOutputIndexes: std::collections::HashSet<i32>,
+    pub emittedResponsesReasoningTextKeys: std::collections::HashSet<String>,
+    pub emittedResponsesWebSearchKeys: std::collections::HashSet<String>,
+    pub emittedResponsesOutputItemMetadataKeys: std::collections::HashSet<String>,
 }
 
 pub struct StreamEmitter {
@@ -108,6 +130,13 @@ impl StreamEmitter {
             return;
         }
         self.received_content.push_str(chunk);
+    }
+
+    /// Emits provider metadata on its own lines so it remains hidden protocol markup.
+    pub fn emit_metadata_tag(&mut self, tag: &str) {
+        self.emit_chunk("\n");
+        self.emit_chunk(tag);
+        self.emit_chunk("\n");
     }
 
     pub fn emit_savepoint(&mut self, id: &str) {
@@ -441,6 +470,7 @@ impl OpenAIProvider {
             supports_video: false,
             enable_tool_call,
             custom_headers,
+            responsesProtocol: ResponsesStreamProtocol::OpenAi,
             state: Arc::new(Mutex::new(OpenAIProviderState::default())),
         }
     }
@@ -467,8 +497,51 @@ impl OpenAIProvider {
             supports_video,
             enable_tool_call,
             custom_headers,
+            responsesProtocol: ResponsesStreamProtocol::OpenAi,
             state: Arc::new(Mutex::new(OpenAIProviderState::default())),
         }
+    }
+
+    /// Selects the exact Responses stream contract used by this prepared provider.
+    pub(crate) fn with_responses_stream_protocol(
+        mut self,
+        protocol: ResponsesStreamProtocol,
+    ) -> Self {
+        self.responsesProtocol = protocol;
+        self
+    }
+
+    /// Returns whether a Responses message item is provider commentary.
+    fn is_responses_commentary_message(&self, item: &Value) -> bool {
+        self.responsesProtocol == ResponsesStreamProtocol::Deepseek
+            && DeepseekResponsesPayloadAdapter::is_commentary_message(item)
+    }
+
+    /// Creates provider-specific reasoning continuation metadata for one output item.
+    fn create_responses_reasoning_metadata_tag(&self, item: &Value) -> Option<String> {
+        match self.responsesProtocol {
+            ResponsesStreamProtocol::OpenAi => {
+                OpenAIResponsesPayloadAdapter::create_reasoning_metadata_tag(item)
+            }
+            ResponsesStreamProtocol::Deepseek => {
+                DeepseekResponsesPayloadAdapter::create_reasoning_metadata_tag(item)
+            }
+        }
+    }
+
+    /// Creates provider-specific message continuation metadata for one output item.
+    fn create_responses_message_metadata_tag(
+        &self,
+        item: &Value,
+        buffered_text: &str,
+    ) -> Option<String> {
+        if self.responsesProtocol != ResponsesStreamProtocol::Deepseek {
+            return None;
+        }
+        DeepseekResponsesPayloadAdapter::create_streaming_commentary_metadata_tag(
+            item,
+            buffered_text,
+        )
     }
 
     fn apply_token_counts(&self, token_counts: TokenCounts) {
@@ -638,28 +711,28 @@ impl OpenAIProvider {
         self.create_request_body_internal(request)
     }
 
-    pub fn create_request_body_internal(
+    /// Builds the provider request shape before applying provider-specific thinking settings.
+    pub(crate) fn create_request_body_without_thinking(
         &self,
         request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
+        self.create_request_body_without_thinking_for_history(request, &request.chat_history)
+    }
+
+    /// Builds an unconfigured provider request using an explicitly prepared chat history.
+    pub(crate) fn create_request_body_without_thinking_for_history(
+        &self,
+        request: &SendMessageRequest,
+        chat_history: &[PromptTurn],
     ) -> Result<Value, AiServiceError> {
         let mut json_object = Map::new();
         json_object.insert("model".to_string(), json!(self.model_name));
         json_object.insert("stream".to_string(), json!(request.stream));
 
         let mut request_object = Value::Object(json_object);
-        ThinkingConfigurationApplier::apply(
-            &mut request_object,
-            &self.provider_type,
-            &self.model_name,
-            &self.api_endpoint,
-            request.enable_thinking,
-            request.thinking_quality_level,
-            &request.thinking_configurations,
-            &request.thinking_option_id,
-        )?;
         let json_object = request_object
             .as_object_mut()
-            .expect("thinking request remains an object");
+            .expect("provider request remains an object");
 
         self.apply_model_parameters(json_object, &request.model_parameters);
 
@@ -673,7 +746,7 @@ impl OpenAIProvider {
         }
 
         let (messagesArray, _) = self.build_messages_and_count_tokens(
-            &request.chat_history,
+            chat_history,
             effectiveEnableToolCall,
             toolsJson.as_deref(),
             request.preserve_think_in_history,
@@ -682,6 +755,24 @@ impl OpenAIProvider {
 
         self.customize_final_request_object(json_object);
 
+        Ok(request_object)
+    }
+
+    pub fn create_request_body_internal(
+        &self,
+        request: &SendMessageRequest,
+    ) -> Result<Value, AiServiceError> {
+        let mut request_object = self.create_request_body_without_thinking(request)?;
+        ThinkingConfigurationApplier::apply(
+            &mut request_object,
+            &self.provider_type,
+            &self.model_name,
+            &self.api_endpoint,
+            request.enable_thinking,
+            request.thinking_quality_level,
+            &request.thinking_configurations,
+            &request.thinking_option_id,
+        )?;
         Ok(request_object)
     }
 
@@ -910,13 +1001,23 @@ impl OpenAIProvider {
             isInReasoningMode: false,
             hasEmittedThinkStart: false,
             hasEmittedRegularContent: false,
+            reasoningObserved: false,
             isFirstResponse: true,
+            streamCompletionConfirmed: false,
+            streamEndReceived: false,
             regularContentDeltaCount: 0,
             regularContentBytes: 0,
             nativeToolCallDeltaCount: 0,
             accumulatedToolCalls: HashMap::new(),
             toolCallState: ToolCallState::default(),
             lastProcessedToolIndex: None,
+            responsesWebSearchItems: BTreeMap::new(),
+            responsesOutputTextBuffers: HashMap::new(),
+            responsesMessageItems: HashMap::new(),
+            responsesLiveEmittedOutputIndexes: std::collections::HashSet::new(),
+            emittedResponsesReasoningTextKeys: std::collections::HashSet::new(),
+            emittedResponsesWebSearchKeys: std::collections::HashSet::new(),
+            emittedResponsesOutputItemMetadataKeys: std::collections::HashSet::new(),
         };
         let provider_model = self.provider_model();
         let stream_started_at = currentTimeMillis();
@@ -952,6 +1053,12 @@ impl OpenAIProvider {
                         output.emit_chunk(chunk.clone());
                         emitter.emit_chunk(&chunk);
                     }
+                    if state.streamEndReceived {
+                        break;
+                    }
+                }
+                if state.streamEndReceived {
+                    break;
                 }
             }
 
@@ -966,6 +1073,15 @@ impl OpenAIProvider {
                     output.emit_chunk(chunk.clone());
                     emitter.emit_chunk(&chunk);
                 }
+            }
+
+            if self.is_cancelled() {
+                return Err(AiServiceError::RequestCancelled);
+            }
+            if !state.streamCompletionConfirmed {
+                return Err(AiServiceError::ConnectionFailed(
+                    "response stream ended before completion".to_string(),
+                ));
             }
 
             self.apply_token_counts(state.usage.clone());
@@ -1001,12 +1117,22 @@ impl OpenAIProvider {
 
         let data = line.trim_start_matches("data:").trim();
         if data == "[DONE]" {
+            self.closeAllOpenToolCalls(state);
+            self.closeAssistantReasoning(state);
+            state.streamCompletionConfirmed = true;
+            state.streamEndReceived = true;
             return Ok(());
         }
 
         let json_response: Value = serde_json::from_str(data)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
         state.chunkCount += 1;
+
+        if let Some(error) = json_response.get("error").and_then(Value::as_object) {
+            return Err(AiServiceError::RequestFailed(
+                Value::Object(error.clone()).to_string(),
+            ));
+        }
 
         if json_response.get("type").and_then(Value::as_str).is_some() {
             return self.processResponsesStreamingEvent(&json_response, state, on_tool_invocation);
@@ -1297,6 +1423,7 @@ impl OpenAIProvider {
         {
             return;
         }
+        state.streamCompletionConfirmed = true;
 
         if self.hasOpenToolCalls(state) {
             self.closeAllOpenToolCalls(state);
@@ -1455,22 +1582,51 @@ impl OpenAIProvider {
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 if !delta.is_empty() {
-                    self.processContentDelta("", delta, state);
+                    let outputIndex = normalized
+                        .get("output_index")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(-1) as i32;
+                    if self.responsesProtocol == ResponsesStreamProtocol::Deepseek
+                        && outputIndex >= 0
+                    {
+                        state
+                            .responsesOutputTextBuffers
+                            .entry(outputIndex)
+                            .or_default()
+                            .push_str(delta);
+                        self.emitLiveResponsesOutputText(outputIndex, delta, state);
+                    } else {
+                        self.processContentDelta("", delta, state);
+                    }
                 }
             }
             "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+                state.reasoningObserved = true;
                 let delta = normalized
                     .get("delta")
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 if !delta.is_empty() {
+                    if let Some(key) = responsesReasoningTextKey(normalized) {
+                        state.emittedResponsesReasoningTextKeys.insert(key);
+                    }
                     self.processContentDelta(delta, "", state);
                 }
             }
-            "response.output_item.added" | "response.output_item.done" => {
-                if !self.enable_tool_call {
-                    return Ok(());
+            "response.reasoning_text.done" | "response.reasoning_summary_text.done" => {
+                state.reasoningObserved = true;
+                let text = normalized.get("text").and_then(Value::as_str).unwrap_or("");
+                let key = responsesReasoningTextKey(normalized);
+                if !text.is_empty()
+                    && key.is_none_or(|key| state.emittedResponsesReasoningTextKeys.insert(key))
+                {
+                    self.processContentDelta(text, "", state);
                 }
+            }
+            "response.reasoning_summary_part.done" => {
+                state.reasoningObserved = true;
+            }
+            "response.output_item.added" | "response.output_item.done" => {
                 let outputIndex = normalized
                     .get("output_index")
                     .and_then(Value::as_i64)
@@ -1478,9 +1634,88 @@ impl OpenAIProvider {
                 let Some(item) = normalized.get("item").and_then(Value::as_object) else {
                     return Ok(());
                 };
-                if outputIndex < 0
-                    || item.get("type").and_then(Value::as_str).unwrap_or("") != "function_call"
-                {
+                let itemType = item.get("type").and_then(Value::as_str).unwrap_or("");
+                if itemType == "web_search_call" {
+                    if outputIndex >= 0 {
+                        state
+                            .responsesWebSearchItems
+                            .insert(outputIndex, Value::Object(item.clone()));
+                    }
+                    if eventType == "response.output_item.done" {
+                        self.emitResponsesOutputItemMetadata(
+                            &Value::Object(item.clone()),
+                            outputIndex,
+                            state,
+                        );
+                    }
+                    return Ok(());
+                }
+                if itemType == "message" {
+                    if eventType == "response.output_item.added" {
+                        self.emitResponsesWebSearch(normalized, state);
+                        if self.responsesProtocol == ResponsesStreamProtocol::Deepseek
+                            && outputIndex >= 0
+                        {
+                            let item = Value::Object(item.clone());
+                            state.responsesMessageItems.insert(outputIndex, item);
+                            let pendingText = state
+                                .responsesOutputTextBuffers
+                                .get(&outputIndex)
+                                .cloned()
+                                .unwrap_or_default();
+                            if !pendingText.is_empty()
+                                && !state
+                                    .responsesLiveEmittedOutputIndexes
+                                    .contains(&outputIndex)
+                            {
+                                self.emitLiveResponsesOutputText(outputIndex, &pendingText, state);
+                            }
+                        }
+                    } else if self.responsesProtocol == ResponsesStreamProtocol::Deepseek {
+                        let bufferedText = state
+                            .responsesOutputTextBuffers
+                            .get(&outputIndex)
+                            .cloned()
+                            .unwrap_or_default();
+                        if state
+                            .responsesLiveEmittedOutputIndexes
+                            .contains(&outputIndex)
+                        {
+                            state.responsesOutputTextBuffers.remove(&outputIndex);
+                        } else {
+                            self.emitBufferedResponsesMessageItemContent(
+                                &Value::Object(item.clone()),
+                                outputIndex,
+                                state,
+                            );
+                        }
+                        if let Some(metadataTag) = self.create_responses_message_metadata_tag(
+                            &Value::Object(item.clone()),
+                            &bufferedText,
+                        ) {
+                            emitResponsesMetadataTag(state, &metadataTag);
+                        }
+                    }
+                    return Ok(());
+                }
+                if itemType == "reasoning" {
+                    state.reasoningObserved = true;
+                    if eventType == "response.output_item.done" {
+                        self.emitResponsesReasoningItemContent(
+                            &Value::Object(item.clone()),
+                            outputIndex,
+                            state,
+                        );
+                        self.closeAssistantReasoning(state);
+                        if let Some(metadataTag) = self
+                            .create_responses_reasoning_metadata_tag(&Value::Object(item.clone()))
+                        {
+                            emitResponsesMetadataTag(state, &metadataTag);
+                        }
+                    }
+                    return Ok(());
+                }
+                if !self.enable_tool_call || outputIndex < 0 || itemType != "function_call" {
                     return Ok(());
                 }
                 let mut functionObj = Map::new();
@@ -1554,12 +1789,23 @@ impl OpenAIProvider {
                     state.lastProcessedToolIndex = Some(outputIndex);
                 }
             }
-            "response.completed" => {
-                self.closeAllOpenToolCalls(state);
+            "response.completed" | "response.incomplete" => {
+                let response = normalized.get("response").unwrap_or(normalized);
+                if response
+                    .pointer("/usage/output_tokens_details/reasoning_tokens")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|tokens| tokens > 0)
+                {
+                    state.reasoningObserved = true;
+                }
                 self.closeAssistantReasoning(state);
-                if let Some(usage) = normalized.pointer("/response/usage") {
+                self.emitResponsesOutputItemMetadataFromResponse(response, state);
+                self.emitResponsesWebSearch(response, state);
+                self.closeAllOpenToolCalls(state);
+                if let Some(usage) = response.get("usage") {
                     state.usage = parse_usage_counts(usage);
                 }
+                state.streamCompletionConfirmed = true;
             }
             "response.failed" | "response.error" => {
                 let errorMessage = normalized
@@ -1577,6 +1823,196 @@ impl OpenAIProvider {
         }
 
         Ok(())
+    }
+
+    /// Builds a stable key for one Responses web-search output item.
+    fn responsesWebSearchDisplayKey(item: &Value, outputIndex: i32) -> String {
+        if let Some(id) = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+        {
+            return id.to_string();
+        }
+        format!("output_{outputIndex}")
+    }
+
+    /// Collects web-search items from both the completed response and streamed events.
+    fn collectResponsesWebSearchItems(
+        &self,
+        response: &Value,
+        state: &StreamingState,
+    ) -> Vec<(i32, Value)> {
+        let mut items = Vec::new();
+        let mut seenKeys = std::collections::HashSet::new();
+
+        if let Some(output) = response.get("output").and_then(Value::as_array) {
+            for (outputIndex, item) in output.iter().enumerate() {
+                if item.get("type").and_then(Value::as_str) != Some("web_search_call") {
+                    continue;
+                }
+                let outputIndex = outputIndex as i32;
+                let key = Self::responsesWebSearchDisplayKey(item, outputIndex);
+                if seenKeys.insert(key) {
+                    items.push((outputIndex, item.clone()));
+                }
+            }
+        }
+
+        for (outputIndex, item) in &state.responsesWebSearchItems {
+            if item.get("type").and_then(Value::as_str) != Some("web_search_call") {
+                continue;
+            }
+            let key = Self::responsesWebSearchDisplayKey(item, *outputIndex);
+            if seenKeys.insert(key) {
+                items.push((*outputIndex, item.clone()));
+            }
+        }
+
+        items
+    }
+
+    /// Emits metadata for every web-search item present in a completed response.
+    fn emitResponsesOutputItemMetadataFromResponse(
+        &self,
+        response: &Value,
+        state: &mut StreamingState,
+    ) {
+        for (outputIndex, item) in self.collectResponsesWebSearchItems(response, state) {
+            self.emitResponsesOutputItemMetadata(&item, outputIndex, state);
+        }
+    }
+
+    /// Emits accumulated server-side web-search records as one structured XML block.
+    fn emitResponsesWebSearch(&self, response: &Value, state: &mut StreamingState) {
+        let collectedItems = self.collectResponsesWebSearchItems(response, state);
+        let unseenItems = collectedItems
+            .iter()
+            .filter(|(outputIndex, item)| {
+                let key = Self::responsesWebSearchDisplayKey(item, *outputIndex);
+                !state.emittedResponsesWebSearchKeys.contains(&key)
+            })
+            .map(|(_, item)| item.clone())
+            .collect::<Vec<_>>();
+        if unseenItems.is_empty() {
+            return;
+        }
+        let chunks = build_responses_web_search_chunks(&unseenItems, response);
+        if chunks.is_empty() {
+            return;
+        }
+        for (outputIndex, item) in &collectedItems {
+            state
+                .emittedResponsesWebSearchKeys
+                .insert(Self::responsesWebSearchDisplayKey(item, *outputIndex));
+        }
+        self.closeAssistantReasoning(state);
+        state.chunks.extend(chunks);
+        state.responsesWebSearchItems.clear();
+    }
+
+    /// Emits one completed Responses output item as hidden replay metadata.
+    fn emitResponsesOutputItemMetadata(
+        &self,
+        item: &Value,
+        outputIndex: i32,
+        state: &mut StreamingState,
+    ) {
+        let Some(metadataTag) =
+            OpenAIResponsesPayloadAdapter::create_output_item_metadata_tag(item)
+        else {
+            return;
+        };
+        let key = responsesOutputItemKey(item, outputIndex);
+        if state.emittedResponsesOutputItemMetadataKeys.insert(key) {
+            self.closeAssistantReasoning(state);
+            emitResponsesMetadataTag(state, &metadataTag);
+        }
+    }
+
+    /// Emits a Responses output-text delta only after its item identifies visible content.
+    fn emitLiveResponsesOutputText(
+        &self,
+        outputIndex: i32,
+        text: &str,
+        state: &mut StreamingState,
+    ) {
+        if text.is_empty() || outputIndex < 0 {
+            return;
+        }
+        let Some(item) = state.responsesMessageItems.get(&outputIndex) else {
+            return;
+        };
+        if self.is_responses_commentary_message(item) {
+            return;
+        }
+        self.processContentDelta("", text, state);
+        state.responsesLiveEmittedOutputIndexes.insert(outputIndex);
+    }
+
+    /// Emits buffered DeepSeek message text while suppressing commentary from visible output.
+    fn emitBufferedResponsesMessageItemContent(
+        &self,
+        item: &Value,
+        outputIndex: i32,
+        state: &mut StreamingState,
+    ) {
+        let bufferedText = state
+            .responsesOutputTextBuffers
+            .remove(&outputIndex)
+            .unwrap_or_default();
+        if bufferedText.is_empty() {
+            return;
+        }
+        if self.is_responses_commentary_message(item) {
+            state.reasoningObserved = true;
+            return;
+        }
+        self.processContentDelta("", &bufferedText, state);
+    }
+
+    /// Replays reasoning item content only once when both delta and done events are present.
+    fn emitResponsesReasoningItemContent(
+        &self,
+        item: &Value,
+        outputIndex: i32,
+        state: &mut StreamingState,
+    ) {
+        let itemId = item.get("id").and_then(Value::as_str).unwrap_or("");
+        let reasoningParts = match self.responsesProtocol {
+            ResponsesStreamProtocol::Deepseek => {
+                DeepseekResponsesPayloadAdapter::reasoning_parts(item)
+            }
+            ResponsesStreamProtocol::OpenAi => item
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(|(contentIndex, part)| {
+                    (part.get("type").and_then(Value::as_str) == Some("reasoning_text"))
+                        .then(|| {
+                            part.get("text")
+                                .and_then(Value::as_str)
+                                .filter(|text| !text.is_empty())
+                                .map(|text| (contentIndex, text.to_string()))
+                        })
+                        .flatten()
+                })
+                .collect(),
+        };
+        for (contentIndex, text) in reasoningParts {
+            let key = if !itemId.is_empty() {
+                Some(format!("{itemId}_{contentIndex}"))
+            } else if outputIndex >= 0 {
+                Some(format!("output_{outputIndex}_{contentIndex}"))
+            } else {
+                None
+            };
+            if key.is_none_or(|key| state.emittedResponsesReasoningTextKeys.insert(key)) {
+                self.processContentDelta(&text, "", state);
+            }
+        }
     }
 
     fn processImageGenerationEvent(&self, jsonResponse: &Value, state: &mut StreamingState) {
@@ -2106,6 +2542,49 @@ fn parse_usage_counts(usage: &Value) -> TokenCounts {
     }
 }
 
+/// Builds a stable deduplication key for a Responses reasoning text event.
+fn responsesReasoningTextKey(event: &Value) -> Option<String> {
+    let itemId = event
+        .get("item_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let outputIndex = event
+        .get("output_index")
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    let contentIndex = event
+        .get("content_index")
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    if !itemId.is_empty() {
+        return Some(format!("{itemId}_{contentIndex}"));
+    }
+    if outputIndex >= 0 {
+        return Some(format!("output_{outputIndex}_{contentIndex}"));
+    }
+    None
+}
+
+/// Builds a stable key for one Responses output item metadata record.
+fn responsesOutputItemKey(item: &Value, outputIndex: i32) -> String {
+    if let Some(id) = item
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+    {
+        return id.to_string();
+    }
+    format!("output_{outputIndex}")
+}
+
+/// Appends hidden Responses metadata with line boundaries preserved in the stream.
+fn emitResponsesMetadataTag(state: &mut StreamingState, tag: &str) {
+    state.chunks.push("\n".to_string());
+    state.chunks.push(tag.to_string());
+    state.chunks.push("\n".to_string());
+}
+
 fn extract_content_chunk(value: &Value) -> Option<String> {
     value
         .pointer("/choices/0/delta/content")
@@ -2155,10 +2634,13 @@ fn emit_new_chunks(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashMap};
+
     use serde_json::json;
 
     use super::{
-        takeNextStreamingLine, OpenAIProvider, StreamingState, TokenCounts, ToolCallState,
+        takeNextStreamingLine, OpenAIProvider, ResponsesStreamProtocol, StreamingState,
+        TokenCounts, ToolCallState,
     };
     use crate::chat::llmprovider::AIService::SendMessageRequest;
     use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
@@ -2180,13 +2662,23 @@ mod tests {
             isInReasoningMode: false,
             hasEmittedThinkStart: false,
             hasEmittedRegularContent: false,
+            reasoningObserved: false,
             isFirstResponse: true,
+            streamCompletionConfirmed: false,
+            streamEndReceived: false,
             regularContentDeltaCount: 0,
             regularContentBytes: 0,
             nativeToolCallDeltaCount: 0,
             accumulatedToolCalls: Default::default(),
             toolCallState: ToolCallState::default(),
             lastProcessedToolIndex: None,
+            responsesWebSearchItems: BTreeMap::new(),
+            responsesOutputTextBuffers: HashMap::new(),
+            responsesMessageItems: HashMap::new(),
+            responsesLiveEmittedOutputIndexes: std::collections::HashSet::new(),
+            emittedResponsesReasoningTextKeys: std::collections::HashSet::new(),
+            emittedResponsesWebSearchKeys: std::collections::HashSet::new(),
+            emittedResponsesOutputItemMetadataKeys: std::collections::HashSet::new(),
         }
     }
 
@@ -2356,5 +2848,153 @@ mod tests {
             Some("data: {\"text\":\"芯片\"}".to_string()),
         );
         assert!(pending_bytes.is_empty());
+    }
+
+    /// Verifies Responses stream completion closes protocol state and deduplicates search output.
+    #[test]
+    fn responsesStreamCompletesAndDeduplicatesWebSearch() {
+        let provider =
+            testProvider().with_responses_stream_protocol(ResponsesStreamProtocol::Deepseek);
+        let mut state = streamingState();
+
+        let search_item = json!({
+            "type": "web_search_call",
+            "id": "search_stream_1",
+            "status": "completed",
+            "action": {
+                "type": "search",
+                "queries": ["stream protocol"]
+            }
+        });
+        provider
+            .process_streaming_line(
+                &format!(
+                    "data: {}",
+                    json!({
+                        "type": "response.output_item.added",
+                        "output_index": 1,
+                        "item": search_item.clone()
+                    })
+                ),
+                &mut state,
+                None,
+            )
+            .expect("search item added event must be accepted");
+        assert!(state.responsesWebSearchItems.contains_key(&1));
+
+        provider
+            .process_streaming_line(
+                &format!(
+                    "data: {}",
+                    json!({
+                        "type": "response.output_item.done",
+                        "output_index": 1,
+                        "item": search_item.clone()
+                    })
+                ),
+                &mut state,
+                None,
+            )
+            .expect("search item done event must be accepted");
+
+        provider
+            .process_streaming_line(
+                &format!(
+                    "data: {}",
+                    json!({
+                        "type": "response.output_item.added",
+                        "output_index": 2,
+                        "item": {"type": "message", "role": "assistant", "phase": "final"}
+                    })
+                ),
+                &mut state,
+                None,
+            )
+            .expect("message item added event must be accepted");
+
+        provider
+            .process_streaming_line(
+                &format!(
+                    "data: {}",
+                    json!({
+                        "type": "response.completed",
+                        "response": {
+                            "output": [search_item.clone()],
+                            "usage": {"input_tokens": 2, "output_tokens": 3}
+                        }
+                    })
+                ),
+                &mut state,
+                None,
+            )
+            .expect("response completed event must be accepted");
+        assert!(state.streamCompletionConfirmed);
+        assert!(!state.streamEndReceived);
+
+        provider
+            .process_streaming_line("data: [DONE]", &mut state, None)
+            .expect("done marker must be accepted");
+        assert!(state.streamCompletionConfirmed);
+        assert!(state.streamEndReceived);
+        let rendered = state.chunks.concat();
+        assert_eq!(rendered.matches("<search ").count(), 1);
+        assert_eq!(rendered.matches("responses_output_item").count(), 1);
+    }
+
+    /// Verifies a completed event does not discard later DeepSeek reasoning replay metadata.
+    #[test]
+    fn responsesStreamAcceptsReasoningItemAfterCompletedEvent() {
+        let provider =
+            testProvider().with_responses_stream_protocol(ResponsesStreamProtocol::Deepseek);
+        let mut state = streamingState();
+
+        provider
+            .process_streaming_line(
+                &format!(
+                    "data: {}",
+                    json!({
+                        "type": "response.completed",
+                        "response": {
+                            "usage": {"input_tokens": 2, "output_tokens": 3}
+                        }
+                    })
+                ),
+                &mut state,
+                None,
+            )
+            .expect("response completed event must be accepted");
+        assert!(state.streamCompletionConfirmed);
+        assert!(!state.streamEndReceived);
+
+        provider
+            .process_streaming_line(
+                &format!(
+                    "data: {}",
+                    json!({
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": {
+                            "type": "reasoning",
+                            "id": "reasoning_after_completed",
+                            "content": [{
+                                "type": "reasoning_text",
+                                "text": "Replay this reasoning on the next request."
+                            }]
+                        }
+                    })
+                ),
+                &mut state,
+                None,
+            )
+            .expect("reasoning item after completed must be accepted");
+
+        let rendered = state.chunks.concat();
+        assert!(rendered.contains("Replay this reasoning on the next request."));
+        assert!(rendered.contains("openai:responses_reasoning"));
+
+        provider
+            .process_streaming_line("data: [DONE]", &mut state, None)
+            .expect("done marker must be accepted");
+        assert!(state.streamEndReceived);
     }
 }

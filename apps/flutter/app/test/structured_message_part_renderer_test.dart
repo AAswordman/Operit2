@@ -276,6 +276,7 @@ Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
       parentBlockId: null,
       nodeType: null,
       headerLevel: null,
+      xml: null,
     ),
     MarkdownStreamEvent(
       chatId: 'test',
@@ -287,6 +288,7 @@ Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
       parentBlockId: null,
       nodeType: null,
       headerLevel: null,
+      xml: null,
     ),
     const MarkdownStreamEvent(
       chatId: 'test',
@@ -298,6 +300,7 @@ Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
       parentBlockId: null,
       nodeType: null,
       headerLevel: null,
+      xml: null,
     ),
   ];
 }
@@ -314,5 +317,6 @@ MarkdownStreamEvent _markdownEvent(String type, {String? value, int? blockId}) {
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }

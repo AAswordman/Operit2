@@ -1,6 +1,5 @@
 // ignore_for_file: file_names
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
@@ -19,6 +18,7 @@ class StreamingStructuredMessageRenderer extends StatefulWidget {
     required this.backgroundColor,
     required this.showThinkingProcess,
     required this.nodeGrouper,
+    this.mergeRender = const NoopMarkdownNodeMergeRender(),
     required this.streamState,
     this.rendererId,
     this.onLinkClick,
@@ -33,6 +33,7 @@ class StreamingStructuredMessageRenderer extends StatefulWidget {
   final Color backgroundColor;
   final bool showThinkingProcess;
   final MarkdownNodeGrouper nodeGrouper;
+  final MarkdownNodeMergeRender mergeRender;
   final StreamMarkdownRendererState streamState;
   final String? rendererId;
   final void Function(String url)? onLinkClick;
@@ -57,13 +58,6 @@ class _StreamingStructuredMessageRendererState
     super.initState();
     _retainedContentStream = widget.contentStream;
     _retainedContentStreamDone = widget.contentStream == null;
-    if (widget.contentStream != null) {
-      _logStructuredRenderTrace(
-        'init rendererId=${widget.rendererId ?? '<auto>'} '
-        'stream=${_streamTraceId(widget.contentStream)} '
-        'parts=${widget.parts.length}',
-      );
-    }
   }
 
   /// Tracks new generation streams while keeping the active subscription stable.
@@ -71,44 +65,14 @@ class _StreamingStructuredMessageRendererState
   void didUpdateWidget(covariant StreamingStructuredMessageRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
     final nextStream = widget.contentStream;
-    final streamChanged = oldWidget.contentStream != nextStream;
-    final partsChanged = !_sameMessagePartsForTrace(
-      oldWidget.parts,
-      widget.parts,
-    );
-    final shouldTrace =
-        oldWidget.contentStream != null ||
-        nextStream != null ||
-        _retainedContentStream != null;
-    if (streamChanged || partsChanged) {
-      if (shouldTrace) {
-        _logStructuredRenderTrace(
-          'update rendererId=${widget.rendererId ?? '<auto>'} '
-          'oldStream=${_streamTraceId(oldWidget.contentStream)} '
-          'newStream=${_streamTraceId(nextStream)} '
-          'retained=${_streamTraceId(_retainedContentStream)} '
-          'oldParts=${oldWidget.parts.length} newParts=${widget.parts.length}',
-        );
-      }
-    }
     // Keep the active subscription stable while Flow replaces only the Dart wrapper.
     if (nextStream != null && _retainedContentStream == null) {
       _retainedContentStream = nextStream;
       _retainedContentStreamDone = false;
-      _logStructuredRenderTrace(
-        'retain rendererId=${widget.rendererId ?? '<auto>'} '
-        'stream=${_streamTraceId(nextStream)}',
-      );
-    } else if (nextStream != null && _retainedContentStream != nextStream) {
-      _logStructuredRenderTrace(
-        'retain_existing rendererId=${widget.rendererId ?? '<auto>'} '
-        'retained=${_streamTraceId(_retainedContentStream)} '
-        'newStream=${_streamTraceId(nextStream)}',
-      );
     }
   }
 
-  /// Builds one Markdown renderer for live events and completed message parts.
+  /// Builds one Markdown renderer while retaining the stream-owned node tree.
   @override
   Widget build(BuildContext context) {
     final activeContentStream = _activeContentStream;
@@ -121,6 +85,7 @@ class _StreamingStructuredMessageRendererState
         textColor: widget.textColor,
         backgroundColor: widget.backgroundColor,
         nodeGrouper: widget.nodeGrouper,
+        mergeRender: widget.mergeRender,
         state: widget.streamState,
         onLinkClick: widget.onLinkClick,
         onStreamDone: _markRetainedContentStreamDone,
@@ -133,15 +98,9 @@ class _StreamingStructuredMessageRendererState
     );
   }
 
-  /// Selects the live stream until canonical message parts can take over.
+  /// Retains the physical stream so completed nodes survive parts publication.
   Stream<Object>? get _activeContentStream {
-    if (_retainedContentStream == null) {
-      return null;
-    }
-    if (!_retainedContentStreamDone || widget.parts.isEmpty) {
-      return _retainedContentStream;
-    }
-    return null;
+    return _retainedContentStream;
   }
 
   /// Marks the retained live stream as complete.
@@ -149,49 +108,10 @@ class _StreamingStructuredMessageRendererState
     if (_retainedContentStreamDone) {
       return;
     }
-    _logStructuredRenderTrace(
-      'stream_done rendererId=${widget.rendererId ?? '<auto>'} '
-      'stream=${_streamTraceId(_retainedContentStream)} '
-      'parts=${widget.parts.length}',
-    );
     setState(() {
       _retainedContentStreamDone = true;
     });
   }
-}
-
-/// Returns a short identity label for one retained live stream.
-String _streamTraceId(Stream<Object>? stream) {
-  return stream == null ? 'none' : identityHashCode(stream).toString();
-}
-
-/// Emits one structured message renderer lifecycle log entry.
-void _logStructuredRenderTrace(String message) {
-  debugPrint('ChatRenderTrace structured.$message');
-}
-
-/// Compares message part fields that affect structured rendering.
-bool _sameMessagePartsForTrace(
-  List<core_proxy.MessagePart> previous,
-  List<core_proxy.MessagePart> next,
-) {
-  if (previous.length != next.length) {
-    return false;
-  }
-  for (var index = 0; index < previous.length; index += 1) {
-    final left = previous[index];
-    final right = next[index];
-    if (left.partId != right.partId ||
-        left.sequence != right.sequence ||
-        left.kind != right.kind ||
-        left.content != right.content ||
-        left.toolCallId != right.toolCallId ||
-        left.toolName != right.toolName ||
-        !mapEquals(left.attributes, right.attributes)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /// Serializes canonical assistant parts into the renderer protocol source.

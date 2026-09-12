@@ -1689,7 +1689,7 @@ fn print_cli_usage() {
     println!("operit2 cli export <memory|chat|snapshot>");
     println!("operit2 cli import <memory|chat|snapshot|operit1-model-config>");
     println!("operit2 cli backup <create|restore|inspect|inspect-operit1-model-config>");
-    println!("operit2 cli model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
+    println!("operit2 cli model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|builtin-tools|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
     println!("operit2 cli tag <list|show|create|update|delete>");
     println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");
     println!("operit2 cli group <init|list|show|create|update|delete|set-active|duplicate>");
@@ -1784,6 +1784,7 @@ fn print_model_usage() {
     println!("operit2 cli model use <provider-id> <model-id>");
     println!("operit2 cli model params [model-id]");
     println!("operit2 cli model parameters <provider-id> <model-id> <parameters-json>");
+    println!("operit2 cli model builtin-tools <provider-id> <model-id> <builtin-tools-json>");
     println!("operit2 cli model context-show [model-id]");
     println!("operit2 cli model context-set <provider-id> <model-id> <max-context-length> <enable-max-context-mode>");
     println!("operit2 cli model summary-show [model-id]");

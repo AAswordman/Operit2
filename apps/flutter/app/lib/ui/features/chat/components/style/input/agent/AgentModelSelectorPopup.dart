@@ -81,6 +81,9 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
 
   /// Toggles the thinking mode preference.
   Future<void> _toggleThinking(_AgentModelSelectorData data) async {
+    if (data.thinkingSettings.requiredValue) {
+      return;
+    }
     await _clients.preferencesApiPreferences.updateThinkingSettings(
       enableThinkingMode: !data.enableThinkingMode,
       thinkingQualityLevel: null,
@@ -88,12 +91,17 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
     _reloadSettings();
   }
 
-  /// Stores the selected thinking quality level.
-  Future<void> _updateThinkingQuality(int level) async {
-    await _clients.preferencesApiPreferences.updateThinkingSettings(
-      enableThinkingMode: null,
-      thinkingQualityLevel: level,
-    );
+  /// Stores the selected provider/model thinking option.
+  Future<void> _updateThinkingOption(
+    _AgentModelSelectorData data,
+    String optionId,
+  ) async {
+    await _clients.preferencesModelConfigManager
+        .updateThinkingOptionForProvider(
+          providerId: data.currentBinding.providerId,
+          modelId: data.currentBinding.modelId,
+          thinkingOptionId: optionId,
+        );
     _reloadSettings();
   }
 
@@ -170,7 +178,8 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                           popupContainerColor: popupContainerColor,
                           data: data,
                           onToggleThinkingMode: () => _toggleThinking(data),
-                          onThinkingQualityChanged: _updateThinkingQuality,
+                          onThinkingOptionChanged: (optionId) =>
+                              _updateThinkingOption(data, optionId),
                           onInfoClick: () => _showInfo('思考设置', '管理思考模式'),
                           onThinkingModeInfoClick: () => _showInfo(
                             '思考模式',
@@ -321,6 +330,9 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
 
   /// Toggles thinking mode from the embedded menu.
   Future<void> _toggleThinking(_AgentModelSelectorData data) async {
+    if (data.thinkingSettings.requiredValue) {
+      return;
+    }
     await _clients.preferencesApiPreferences.updateThinkingSettings(
       enableThinkingMode: !data.enableThinkingMode,
       thinkingQualityLevel: null,
@@ -328,12 +340,17 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
     _reloadSettings();
   }
 
-  /// Stores thinking quality from the embedded menu.
-  Future<void> _updateThinkingQuality(int level) async {
-    await _clients.preferencesApiPreferences.updateThinkingSettings(
-      enableThinkingMode: null,
-      thinkingQualityLevel: level,
-    );
+  /// Stores the selected provider/model thinking option from the embedded menu.
+  Future<void> _updateThinkingOption(
+    _AgentModelSelectorData data,
+    String optionId,
+  ) async {
+    await _clients.preferencesModelConfigManager
+        .updateThinkingOptionForProvider(
+          providerId: data.currentBinding.providerId,
+          modelId: data.currentBinding.modelId,
+          thinkingOptionId: optionId,
+        );
     _reloadSettings();
   }
 
@@ -449,7 +466,8 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
                           popupContainerColor: embeddedPanelColor,
                           data: data,
                           onToggleThinkingMode: () => _toggleThinking(data),
-                          onThinkingQualityChanged: _updateThinkingQuality,
+                          onThinkingOptionChanged: (optionId) =>
+                              _updateThinkingOption(data, optionId),
                           onInfoClick: () {},
                           onThinkingModeInfoClick: () {},
                           onThinkingQualityInfoClick: () {},
@@ -480,15 +498,15 @@ class _AgentModelSelectorData {
     required this.providers,
     required this.currentBinding,
     required this.currentConfig,
+    required this.thinkingSettings,
     required this.enableThinkingMode,
-    required this.thinkingQualityLevel,
   });
 
   final List<core_proxy.ProviderProfile> providers;
   final core_proxy.FunctionModelBinding currentBinding;
   final core_proxy.ResolvedModelConfig currentConfig;
+  final core_proxy.ThinkingSettingsDescriptor thinkingSettings;
   final bool enableThinkingMode;
-  final int thinkingQualityLevel;
 }
 
 class _ThinkingSettingsItem extends StatefulWidget {
@@ -496,7 +514,7 @@ class _ThinkingSettingsItem extends StatefulWidget {
     required this.popupContainerColor,
     required this.data,
     required this.onToggleThinkingMode,
-    required this.onThinkingQualityChanged,
+    required this.onThinkingOptionChanged,
     required this.onInfoClick,
     required this.onThinkingModeInfoClick,
     required this.onThinkingQualityInfoClick,
@@ -506,7 +524,7 @@ class _ThinkingSettingsItem extends StatefulWidget {
   final Color popupContainerColor;
   final _AgentModelSelectorData data;
   final VoidCallback onToggleThinkingMode;
-  final ValueChanged<int> onThinkingQualityChanged;
+  final ValueChanged<String> onThinkingOptionChanged;
   final VoidCallback onInfoClick;
   final VoidCallback onThinkingModeInfoClick;
   final VoidCallback onThinkingQualityInfoClick;
@@ -519,22 +537,39 @@ class _ThinkingSettingsItem extends StatefulWidget {
 
 class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
   bool _expanded = false;
-  late double _sliderValue = widget.data.thinkingQualityLevel.toDouble();
+  int _sliderIndex = 0;
+
+  /// Initializes the selected position from the resolved thinking descriptor.
+  @override
+  void initState() {
+    super.initState();
+    final settings = widget.data.thinkingSettings;
+    if (settings.control == core_proxy.ThinkingControl.levels &&
+        settings.options.isNotEmpty) {
+      _sliderIndex = _selectedOptionIndex(widget.data);
+    }
+  }
 
   /// Syncs the slider when loaded thinking settings change.
   @override
   void didUpdateWidget(covariant _ThinkingSettingsItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.data.thinkingQualityLevel !=
-        widget.data.thinkingQualityLevel) {
-      _sliderValue = widget.data.thinkingQualityLevel.toDouble();
+    final settings = widget.data.thinkingSettings;
+    if (settings.control == core_proxy.ThinkingControl.levels &&
+        settings.options.isNotEmpty) {
+      final nextIndex = _selectedOptionIndex(widget.data);
+      if (nextIndex != _sliderIndex) {
+        _sliderIndex = nextIndex;
+      }
     }
   }
 
   /// Builds the expandable thinking settings block.
   @override
   Widget build(BuildContext context) {
-    final thinkingTypeText = widget.data.enableThinkingMode ? 'mode' : 'off';
+    final required = widget.data.thinkingSettings.requiredValue;
+    final enabled = required || widget.data.enableThinkingMode;
+    final thinkingTypeText = enabled ? 'mode' : 'off';
     return Column(
       children: <Widget>[
         _SettingsHeaderRow(
@@ -558,22 +593,28 @@ class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
                         ? Icons.psychology
                         : Icons.psychology_outlined,
                     title: '思考模式',
-                    checked: widget.data.enableThinkingMode,
+                    checked: enabled,
                     highlightWhenChecked: true,
-                    onToggle: widget.onToggleThinkingMode,
+                    onToggle: required ? null : widget.onToggleThinkingMode,
                     onInfoClick: widget.onThinkingModeInfoClick,
                     showInfoButton: widget.showInfoButton,
                   ),
-                  if (widget.data.enableThinkingMode)
+                  if (enabled &&
+                      widget.data.thinkingSettings.control ==
+                          core_proxy.ThinkingControl.levels &&
+                      widget.data.thinkingSettings.options.length > 1)
                     _ThinkingQualitySettingRow(
-                      value: _sliderValue,
-                      onChanged: (value) {
+                      options: widget.data.thinkingSettings.options,
+                      index: _sliderIndex,
+                      onChanged: (index) {
                         setState(() {
-                          _sliderValue = value;
+                          _sliderIndex = index;
                         });
                       },
-                      onChangeEnd: (value) {
-                        widget.onThinkingQualityChanged(value.round());
+                      onChangeEnd: (index) {
+                        widget.onThinkingOptionChanged(
+                          widget.data.thinkingSettings.options[index].id,
+                        );
                       },
                       onInfoClick: widget.onThinkingQualityInfoClick,
                       showInfoButton: widget.showInfoButton,
@@ -589,16 +630,18 @@ class _ThinkingSettingsItemState extends State<_ThinkingSettingsItem> {
 
 class _ThinkingQualitySettingRow extends StatelessWidget {
   const _ThinkingQualitySettingRow({
-    required this.value,
+    required this.options,
+    required this.index,
     required this.onChanged,
     required this.onChangeEnd,
     required this.onInfoClick,
     required this.showInfoButton,
   });
 
-  final double value;
-  final ValueChanged<double> onChanged;
-  final ValueChanged<double> onChangeEnd;
+  final List<core_proxy.ThinkingOptionDescriptor> options;
+  final int index;
+  final ValueChanged<int> onChanged;
+  final ValueChanged<int> onChangeEnd;
   final VoidCallback onInfoClick;
   final bool showInfoButton;
 
@@ -607,7 +650,7 @@ class _ThinkingQualitySettingRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final selectedLevel = value.round();
+    final selectedOption = options[index];
     return Column(
       children: <Widget>[
         ConstrainedBox(
@@ -631,7 +674,7 @@ class _ThinkingQualitySettingRow extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  selectedLevel.toString(),
+                  selectedOption.label,
                   style: textTheme.bodySmall!.copyWith(
                     color: colorScheme.primary,
                     fontWeight: FontWeight.bold,
@@ -668,27 +711,31 @@ class _ThinkingQualitySettingRow extends StatelessWidget {
                 child: SizedBox(
                   height: 36,
                   child: Slider(
-                    value: value,
-                    min: 1,
-                    max: 4,
-                    divisions: 3,
-                    onChanged: onChanged,
-                    onChangeEnd: onChangeEnd,
+                    value: index.toDouble(),
+                    min: 0,
+                    max: (options.length - 1).toDouble(),
+                    divisions: options.length - 1,
+                    onChanged: (value) => onChanged(value.round()),
+                    onChangeEnd: (value) => onChangeEnd(value.round()),
                   ),
                 ),
               ),
               Row(
                 children: <Widget>[
-                  for (var level = 1; level <= 4; level++)
+                  for (
+                    var optionIndex = 0;
+                    optionIndex < options.length;
+                    optionIndex++
+                  )
                     Expanded(
                       child: Text(
-                        '$level',
+                        options[optionIndex].label,
                         textAlign: TextAlign.center,
                         style: textTheme.labelSmall?.copyWith(
-                          color: selectedLevel == level
+                          color: optionIndex == index
                               ? colorScheme.primary
                               : colorScheme.onSurfaceVariant,
-                          fontWeight: selectedLevel == level
+                          fontWeight: optionIndex == index
                               ? FontWeight.w700
                               : FontWeight.normal,
                         ),
@@ -1107,7 +1154,7 @@ class _SwitchSettingRow extends StatelessWidget {
   final IconData icon;
   final String title;
   final bool checked;
-  final VoidCallback onToggle;
+  final VoidCallback? onToggle;
   final VoidCallback onInfoClick;
   final bool highlightWhenChecked;
   final bool showInfoButton;
@@ -1151,7 +1198,10 @@ class _SwitchSettingRow extends StatelessWidget {
               ),
               Transform.scale(
                 scale: 0.65,
-                child: Switch(value: checked, onChanged: (_) => onToggle()),
+                child: Switch(
+                  value: checked,
+                  onChanged: onToggle == null ? null : (_) => onToggle!(),
+                ),
               ),
             ],
           ),
@@ -1259,18 +1309,33 @@ Future<_AgentModelSelectorData> _loadAgentModelSelectorData(
         providerId: binding.providerId,
         modelId: binding.modelId,
       );
+  final thinkingSettings = await clients.preferencesModelConfigManager
+      .getThinkingSettingsForProvider(
+        providerId: binding.providerId,
+        modelId: binding.modelId,
+      );
   return _AgentModelSelectorData(
     providers: await clients.preferencesModelConfigManager
         .getProviderProfiles(),
     currentBinding: binding,
     currentConfig: config,
+    thinkingSettings: thinkingSettings,
     enableThinkingMode: await clients.preferencesApiPreferences
         .enableThinkingModeFlow()
         .first,
-    thinkingQualityLevel: await clients.preferencesApiPreferences
-        .thinkingQualityLevelFlow()
-        .first,
   );
+}
+
+/// Returns the selected option position for the current thinking descriptor.
+int _selectedOptionIndex(_AgentModelSelectorData data) {
+  final selectedOptionId = data.currentConfig.thinkingOptionId;
+  final index = data.thinkingSettings.options.indexWhere(
+    (option) => option.id == selectedOptionId,
+  );
+  if (index < 0) {
+    throw StateError('Resolved thinking option is absent from its descriptor');
+  }
+  return index;
 }
 
 /// Returns whether the model is reserved for UI control instead of chat.

@@ -6,7 +6,7 @@ import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
 
 class PackageListItem extends StatefulWidget {
-  /// Creates an expandable package card.
+  /// Creates an expandable package card with a separate details action.
   const PackageListItem({
     super.key,
     required this.icon,
@@ -71,7 +71,7 @@ class _PackageListItemState extends State<PackageListItem> {
         material: true,
         child: InkWell(
           borderRadius: borderRadius,
-          onTap: _toggleExpanded,
+          onTap: widget.onDetails,
           child: Padding(
             padding: EdgeInsets.all(12 * scale),
             child: Column(
@@ -166,18 +166,6 @@ class _PackageListItemState extends State<PackageListItem> {
                                     spacing: 8 * scale,
                                     runSpacing: 4 * scale,
                                     children: widget.trailingActions,
-                                  ),
-                                ),
-                              if (widget.onDetails != null)
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton.icon(
-                                    onPressed: widget.onDetails,
-                                    icon: const Icon(Icons.info_outline),
-                                    label: const Text('详情'),
-                                    style: TextButton.styleFrom(
-                                      visualDensity: VisualDensity.compact,
-                                    ),
                                   ),
                                 ),
                             ],

@@ -223,6 +223,7 @@ class _GeneratedFlowBridge extends OperitRuntimeBridge {
             parentBlockId: null,
             nodeType: null,
             headerLevel: null,
+            xml: null,
           )
           as T,
     );
@@ -416,5 +417,6 @@ Map<String, Object?> _markdownStreamEventValue(String value) {
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   ).toJson()..['value'] = value;
 }

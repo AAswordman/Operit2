@@ -594,9 +594,17 @@ class AndroidWebViewController extends PlatformWebViewController {
   Future<Object> runJavaScriptReturningResult(String javaScript) async {
     final String? result = await _webView.evaluateJavascript(javaScript);
     if (result == null) {
-      return '';
+      throw ArgumentError(
+        'The JavaScript returned `null` or `undefined`, which is unsupported.',
+      );
     }
-    return jsonDecode(result);
+    final Object? decoded = jsonDecode(result);
+    if (decoded == null) {
+      throw ArgumentError(
+        'The JavaScript returned `null` or `undefined`, which is unsupported.',
+      );
+    }
+    return decoded;
   }
 
   @override

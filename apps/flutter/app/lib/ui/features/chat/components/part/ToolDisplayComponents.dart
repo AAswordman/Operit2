@@ -30,29 +30,19 @@ class CompactToolDisplay extends StatelessWidget {
     return _ToolDetailLauncher(
       displayToolName: display.toolName,
       displayParams: display.params,
-      childBuilder: (openDialog) => Row(
-        children: <Widget>[
-          Expanded(
-            child: CanvasToolSummaryRow(
-              toolName: display.toolName,
-              summary: summary,
-              semanticDescription: buildToolSemanticDescription(
-                display.toolName,
-                display.params,
-                useByteSummary: false,
-              ),
-              leadingIcon: getToolIcon(display.toolName),
-              titleColor: theme.colorScheme.primary,
-              summaryColor: textColor.withValues(alpha: 0.7),
-              onClick: display.params.trim().isEmpty ? null : openDialog,
-            ),
-          ),
-          if (isStreaming)
-            const Padding(
-              padding: EdgeInsets.only(left: 6),
-              child: StreamingCursor(),
-            ),
-        ],
+      childBuilder: (openDialog) => CanvasToolSummaryRow(
+        toolName: display.toolName,
+        summary: summary,
+        semanticDescription: buildToolSemanticDescription(
+          display.toolName,
+          display.params,
+          useByteSummary: false,
+        ),
+        leadingIcon: getToolIcon(display.toolName),
+        titleColor: theme.colorScheme.primary,
+        summaryColor: textColor.withValues(alpha: 0.7),
+        onClick: display.params.trim().isEmpty ? null : openDialog,
+        trailing: isStreaming ? const StreamingCursor() : null,
       ),
     );
   }

@@ -187,6 +187,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get close => 'Close';
 
   @override
+  String get commonExpand => 'Expand';
+
+  @override
+  String get commonCollapse => 'Collapse';
+
+  @override
   String get create => 'Create';
 
   @override
@@ -327,6 +333,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get searchGroupTitle => 'Search';
+
+  @override
+  String get searchSources => 'Search Sources';
 
   @override
   String get thinkingSearchGroupTitle => 'Thinking and searching';

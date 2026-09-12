@@ -40,6 +40,13 @@ the parent runtime wires concrete behavior together.
   selected public surfaces from runtime/model/store/tools/providers and emits
   Rust and Dart proxy code.
 - `operit-link`: transport protocol and client/server primitives.
+- `operit-edge-contract`: shared Edge Service addresses and property names;
+  it contains no Host implementation or Link dispatch.
+- `operit-node-edge`: lightweight device-side Edge Core node. It owns typed
+  Edge Services and the internal Link dispatch boundary without pulling in the
+  desktop runtime, provider, ToolPkg, chat application tree, persistence,
+  identity, or Access control plane. It is a device capability node, not the
+  full `CoreNode` composition defined by the Space architecture.
 - `operit-command-core`: CLI-facing command layer built on the runtime and the
   split core crates.
 
@@ -71,6 +78,11 @@ Current practical edges:
   and has no dependency on `operit-tools`.
 - `operit-runtime` depends on all child crates and installs their runtime
   support implementations.
+- `operit-node-edge` depends on `operit-edge-contract`, Host API, Link, and
+  small serialization/task primitives. It does not depend on Proxy or Access.
+- `operit-proxy-edge` depends on `operit-edge-contract` and Link. Its tests may
+  use an Edge Node, but its production API does not depend on a Node
+  implementation.
 
 ## Parent-Owned Behavior
 
@@ -151,7 +163,11 @@ the concrete JS engine lives in `operit-js-bridge`.
 
 ## Proxy Boundary
 
-`operit-proxy-local` is a projection layer. It scans selected public surfaces
-from the split crates and emits transport-facing Rust and Dart code. It does not
-own runtime behavior, host implementations, provider logic, tool logic, or
-storage.
+`operit-proxy-local` is the desktop projection layer. It scans selected public
+surfaces from the split crates and emits transport-facing Rust and Dart proxy
+code. `operit-proxy-edge` is the typed projection for Edge Services and keeps
+Link request and event types inside the proxy implementation. The shared
+`operit-edge-contract` crate contains only stable Edge addresses, so a remote
+carrier can use the same contract without importing the local Edge Node.
+Neither proxy crate owns runtime behavior, host implementations, provider logic,
+tool logic, or storage.

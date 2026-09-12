@@ -6,6 +6,10 @@ use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 
+const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
+const CLI_PROXY_TOOL_NAME: &str = "proxy";
+const PROXY_TARGET_TOOL_NAME_PARAM: &str = "tool_name";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ProviderHistoryBlockType {
     ASSISTANT,
@@ -19,9 +23,121 @@ struct ToolResultRecord {
     content: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OpenToolCall {
+    pub(crate) id: String,
+    pub(crate) matching_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MatchedToolCall {
+    pub(crate) result_index: usize,
+    pub(crate) call: OpenToolCall,
+}
+
 pub struct StructuredToolCallBridge;
 
 impl StructuredToolCallBridge {
+    /// Returns the executable tool name represented by a provider tool call.
+    pub(crate) fn toolCallName(toolCall: &Value) -> String {
+        let function = toolCall
+            .get("function")
+            .and_then(Value::as_object)
+            .or_else(|| toolCall.as_object());
+        let Some(function) = function else {
+            return String::new();
+        };
+        let name = function
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name != PACKAGE_PROXY_TOOL_NAME && name != CLI_PROXY_TOOL_NAME {
+            return name;
+        }
+        Self::proxyTargetToolName(function)
+            .filter(|target| !target.trim().is_empty())
+            .unwrap_or(name)
+    }
+
+    /// Reads the target tool name carried inside one proxy tool-call envelope.
+    fn proxyTargetToolName(function: &Map<String, Value>) -> Option<String> {
+        for key in ["arguments", "args", "input"] {
+            let Some(raw) = function.get(key) else {
+                continue;
+            };
+            let arguments = match raw {
+                Value::Object(object) => object.clone(),
+                Value::String(text) => serde_json::from_str::<Value>(text)
+                    .ok()
+                    .and_then(|value| value.as_object().cloned())?,
+                _ => return None,
+            };
+            return arguments
+                .get(PROXY_TARGET_TOOL_NAME_PARAM)
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_string());
+        }
+        None
+    }
+
+    /// Consumes open tool calls whose executable names match result names.
+    pub(crate) fn consumeMatchingToolCalls(
+        openToolCalls: &mut Vec<OpenToolCall>,
+        resultToolNames: &[Option<String>],
+    ) -> Vec<MatchedToolCall> {
+        let mut matched = Vec::new();
+        for (result_index, result_name) in resultToolNames.iter().enumerate() {
+            let normalized = result_name.as_deref().unwrap_or("").trim();
+            if normalized.is_empty() {
+                continue;
+            }
+            let Some(call_index) = openToolCalls
+                .iter()
+                .position(|call| call.matching_name == normalized)
+            else {
+                continue;
+            };
+            matched.push(MatchedToolCall {
+                result_index,
+                call: openToolCalls.remove(call_index),
+            });
+        }
+        matched
+    }
+
+    /// Builds a protocol-valid result body for a tool call that did not receive a result.
+    pub(crate) fn unmatchedToolResultContent(reason: &str, toolName: &str) -> String {
+        let toolLabel = {
+            let trimmed = toolName.trim();
+            if trimmed.is_empty() {
+                "未知工具"
+            } else {
+                trimmed
+            }
+        };
+        let detail = match reason {
+            "tool_result_partial_batch" | "tool_result_without_structured_match" => {
+                "没有匹配到执行结果"
+            }
+            "typed_tool_call_without_payload" => "调用没有可执行参数",
+            "tool_call_api_disabled" => "工具调用协议已关闭",
+            "user_boundary"
+            | "system_boundary"
+            | "assistant_boundary"
+            | "assistant_tool_call_before_result"
+            | "typed_tool_call_before_result"
+            | "typed_function_call_before_result"
+            | "typed_tool_use_before_result"
+            | "assistant_function_call_before_result"
+            | "assistant_tool_use_before_result"
+            | "history_end" => "后续对话历史已到达，但未返回执行结果",
+            _ => "调用在未返回执行结果时结束",
+        };
+        format!("工具结果缺失：{toolLabel} {detail}。这不是用户取消。")
+    }
+
     pub fn buildToolsJson(toolPrompts: Option<&[ToolPrompt]>) -> Option<String> {
         let toolPrompts = toolPrompts?;
         if toolPrompts.is_empty() {
@@ -272,8 +388,8 @@ impl StructuredToolCallBridge {
         let mut messagesArray = Vec::new();
         let mut queuedAssistantToolText: Option<String> = None;
         let mut queuedToolCalls = Vec::new();
-        let mut queuedToolCallIds = Vec::new();
-        let mut openToolCallIds = Vec::new();
+        let mut queuedOpenToolCalls = Vec::new();
+        let mut openToolCalls = Vec::new();
         let mut nextToolCallOrdinal = 0usize;
 
         fn appendQueuedAssistantToolText(queuedAssistantToolText: &mut Option<String>, text: &str) {
@@ -289,7 +405,7 @@ impl StructuredToolCallBridge {
         fn queueToolCalls(
             queuedAssistantToolText: &mut Option<String>,
             queuedToolCalls: &mut Vec<Value>,
-            queuedToolCallIds: &mut Vec<String>,
+            queuedOpenToolCalls: &mut Vec<OpenToolCall>,
             nextToolCallOrdinal: &mut usize,
             textContent: &str,
             toolCalls: &[Value],
@@ -302,8 +418,12 @@ impl StructuredToolCallBridge {
                 if let Some(object) = clonedToolCall.as_object_mut() {
                     object.insert("id".to_string(), json!(callId.clone()));
                 }
+                let matchingName = StructuredToolCallBridge::toolCallName(&clonedToolCall);
                 queuedToolCalls.push(clonedToolCall);
-                queuedToolCallIds.push(callId);
+                queuedOpenToolCalls.push(OpenToolCall {
+                    id: callId,
+                    matching_name: matchingName,
+                });
             }
         }
 
@@ -311,51 +431,60 @@ impl StructuredToolCallBridge {
             messagesArray: &mut Vec<Value>,
             queuedAssistantToolText: &mut Option<String>,
             queuedToolCalls: &mut Vec<Value>,
-            queuedToolCallIds: &mut Vec<String>,
-            openToolCallIds: &mut Vec<String>,
+            queuedOpenToolCalls: &mut Vec<OpenToolCall>,
+            openToolCalls: &mut Vec<OpenToolCall>,
         ) {
             if queuedToolCalls.is_empty() {
                 return;
             }
-            messagesArray.push(json!({
-                "role": "assistant",
-                "content": match queuedAssistantToolText {
-                    Some(value) if !value.trim().is_empty() => Value::String(value.clone()),
-                    _ => Value::Null,
-                },
-                "tool_calls": queuedToolCalls.clone(),
-            }));
-            openToolCallIds.extend(queuedToolCallIds.clone());
+            let mut message = Map::new();
+            message.insert("role".to_string(), json!("assistant"));
+            if let Some(value) = queuedAssistantToolText
+                .as_ref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                message.insert("content".to_string(), json!(value));
+            }
+            message.insert(
+                "tool_calls".to_string(),
+                Value::Array(queuedToolCalls.clone()),
+            );
+            messagesArray.push(Value::Object(message));
+            openToolCalls.extend(queuedOpenToolCalls.clone());
             *queuedAssistantToolText = None;
             queuedToolCalls.clear();
-            queuedToolCallIds.clear();
+            queuedOpenToolCalls.clear();
         }
 
-        fn flushOpenToolCallsAsCancelled(
+        fn flushOpenToolCallsAsUnmatched(
             messagesArray: &mut Vec<Value>,
             queuedAssistantToolText: &mut Option<String>,
             queuedToolCalls: &mut Vec<Value>,
-            queuedToolCallIds: &mut Vec<String>,
-            openToolCallIds: &mut Vec<String>,
+            queuedOpenToolCalls: &mut Vec<OpenToolCall>,
+            openToolCalls: &mut Vec<OpenToolCall>,
+            reason: &str,
         ) {
             emitQueuedToolCallsIfNeeded(
                 messagesArray,
                 queuedAssistantToolText,
                 queuedToolCalls,
-                queuedToolCallIds,
-                openToolCallIds,
+                queuedOpenToolCalls,
+                openToolCalls,
             );
-            if openToolCallIds.is_empty() {
+            if openToolCalls.is_empty() {
                 return;
             }
-            for toolCallId in openToolCallIds.iter() {
+            for openToolCall in openToolCalls.iter() {
                 messagesArray.push(json!({
                     "role": "tool",
-                    "tool_call_id": toolCallId,
-                    "content": "User cancelled",
+                    "tool_call_id": openToolCall.id,
+                    "content": StructuredToolCallBridge::unmatchedToolResultContent(
+                        reason,
+                        &openToolCall.matching_name,
+                    ),
                 }));
             }
-            openToolCallIds.clear();
+            openToolCalls.clear();
         }
 
         for turn in mergedHistory {
@@ -367,66 +496,116 @@ impl StructuredToolCallBridge {
 
             match turn.kind {
                 PromptTurnKind::SYSTEM => {
-                    flushOpenToolCallsAsCancelled(
+                    flushOpenToolCallsAsUnmatched(
                         &mut messagesArray,
                         &mut queuedAssistantToolText,
                         &mut queuedToolCalls,
-                        &mut queuedToolCallIds,
-                        &mut openToolCallIds,
+                        &mut queuedOpenToolCalls,
+                        &mut openToolCalls,
+                        "system_boundary",
                     );
                     messagesArray.push(
                         json!({"role": "system", "content": Self::nonEmptyContent(&content)}),
                     );
                 }
                 PromptTurnKind::USER | PromptTurnKind::SUMMARY => {
-                    flushOpenToolCallsAsCancelled(
+                    flushOpenToolCallsAsUnmatched(
                         &mut messagesArray,
                         &mut queuedAssistantToolText,
                         &mut queuedToolCalls,
-                        &mut queuedToolCallIds,
-                        &mut openToolCallIds,
+                        &mut queuedOpenToolCalls,
+                        &mut openToolCalls,
+                        "user_boundary",
                     );
                     messagesArray
                         .push(json!({"role": "user", "content": Self::nonEmptyContent(&content)}));
                 }
-                PromptTurnKind::ASSISTANT | PromptTurnKind::TOOL_CALL => {
+                PromptTurnKind::ASSISTANT => {
                     let (textContent, parsedToolCalls) = Self::parseXmlToolCalls(&content);
                     let toolCalls =
                         parsedToolCalls.map(|calls| Self::wrapPackageToolCallsWithProxy(&calls));
                     if let Some(toolCalls) = toolCalls {
                         if !toolCalls.is_empty() {
-                            flushOpenToolCallsAsCancelled(
+                            flushOpenToolCallsAsUnmatched(
                                 &mut messagesArray,
                                 &mut queuedAssistantToolText,
                                 &mut queuedToolCalls,
-                                &mut queuedToolCallIds,
-                                &mut openToolCallIds,
+                                &mut queuedOpenToolCalls,
+                                &mut openToolCalls,
+                                "assistant_tool_call_before_result",
                             );
                             queueToolCalls(
                                 &mut queuedAssistantToolText,
                                 &mut queuedToolCalls,
-                                &mut queuedToolCallIds,
+                                &mut queuedOpenToolCalls,
                                 &mut nextToolCallOrdinal,
                                 &textContent,
                                 &toolCalls,
                             );
                         } else {
-                            flushOpenToolCallsAsCancelled(
+                            flushOpenToolCallsAsUnmatched(
                                 &mut messagesArray,
                                 &mut queuedAssistantToolText,
                                 &mut queuedToolCalls,
-                                &mut queuedToolCallIds,
-                                &mut openToolCallIds,
+                                &mut queuedOpenToolCalls,
+                                &mut openToolCalls,
+                                "assistant_boundary",
                             );
                             messagesArray.push(json!({"role": "assistant", "content": Self::nonEmptyContent(&content)}));
                         }
                     } else {
-                        flushOpenToolCallsAsCancelled(
+                        flushOpenToolCallsAsUnmatched(
                             &mut messagesArray,
                             &mut queuedAssistantToolText,
                             &mut queuedToolCalls,
-                            &mut queuedToolCallIds,
-                            &mut openToolCallIds,
+                            &mut queuedOpenToolCalls,
+                            &mut openToolCalls,
+                            "assistant_boundary",
+                        );
+                        messagesArray.push(json!({"role": "assistant", "content": Self::nonEmptyContent(&content)}));
+                    }
+                }
+                PromptTurnKind::TOOL_CALL => {
+                    let (textContent, parsedToolCalls) = Self::parseXmlToolCalls(&content);
+                    let toolCalls =
+                        parsedToolCalls.map(|calls| Self::wrapPackageToolCallsWithProxy(&calls));
+                    if let Some(toolCalls) = toolCalls {
+                        if !toolCalls.is_empty() {
+                            flushOpenToolCallsAsUnmatched(
+                                &mut messagesArray,
+                                &mut queuedAssistantToolText,
+                                &mut queuedToolCalls,
+                                &mut queuedOpenToolCalls,
+                                &mut openToolCalls,
+                                "typed_tool_call_before_result",
+                            );
+                            queueToolCalls(
+                                &mut queuedAssistantToolText,
+                                &mut queuedToolCalls,
+                                &mut queuedOpenToolCalls,
+                                &mut nextToolCallOrdinal,
+                                &textContent,
+                                &toolCalls,
+                            );
+                        } else {
+                            flushOpenToolCallsAsUnmatched(
+                                &mut messagesArray,
+                                &mut queuedAssistantToolText,
+                                &mut queuedToolCalls,
+                                &mut queuedOpenToolCalls,
+                                &mut openToolCalls,
+                                "typed_tool_call_without_payload",
+                            );
+                            messagesArray.push(json!({"role": "assistant", "content": Self::nonEmptyContent(&content)}));
+                        }
+                    } else {
+                        flushOpenToolCallsAsUnmatched(
+                            &mut messagesArray,
+                            &mut queuedAssistantToolText,
+                            &mut queuedToolCalls,
+                            &mut queuedOpenToolCalls,
+                            &mut openToolCalls,
+                            "typed_tool_call_without_payload",
                         );
                         messagesArray.push(json!({"role": "assistant", "content": Self::nonEmptyContent(&content)}));
                     }
@@ -436,19 +615,24 @@ impl StructuredToolCallBridge {
                         &mut messagesArray,
                         &mut queuedAssistantToolText,
                         &mut queuedToolCalls,
-                        &mut queuedToolCallIds,
-                        &mut openToolCallIds,
+                        &mut queuedOpenToolCalls,
+                        &mut openToolCalls,
                     );
                     let (textContent, toolResults) = Self::parseXmlToolResults(&content);
                     let resultsList = toolResults.unwrap_or_default();
-                    if !resultsList.is_empty() && !openToolCallIds.is_empty() {
-                        let validCount = resultsList.len().min(openToolCallIds.len());
-                        for index in 0..validCount {
-                            let result = &resultsList[index];
+                    if !resultsList.is_empty() && !openToolCalls.is_empty() {
+                        let resultToolNames = resultsList
+                            .iter()
+                            .map(|result| result.name.clone())
+                            .collect::<Vec<_>>();
+                        let matchedCalls =
+                            Self::consumeMatchingToolCalls(&mut openToolCalls, &resultToolNames);
+                        for matchedCall in matchedCalls {
+                            let result = &resultsList[matchedCall.result_index];
                             let mut toolMessage = Map::new();
                             toolMessage.insert("role".to_string(), json!("tool"));
                             toolMessage
-                                .insert("tool_call_id".to_string(), json!(openToolCallIds[index]));
+                                .insert("tool_call_id".to_string(), json!(matchedCall.call.id));
                             if let Some(name) = &result.name {
                                 if !name.trim().is_empty() {
                                     toolMessage.insert("name".to_string(), json!(name));
@@ -460,37 +644,41 @@ impl StructuredToolCallBridge {
                             );
                             messagesArray.push(Value::Object(toolMessage));
                         }
-                        openToolCallIds.drain(0..validCount);
+                        flushOpenToolCallsAsUnmatched(
+                            &mut messagesArray,
+                            &mut queuedAssistantToolText,
+                            &mut queuedToolCalls,
+                            &mut queuedOpenToolCalls,
+                            &mut openToolCalls,
+                            "tool_result_partial_batch",
+                        );
                         if !textContent.trim().is_empty() {
                             messagesArray.push(json!({"role": "user", "content": textContent}));
                         }
                     } else {
-                        flushOpenToolCallsAsCancelled(
+                        flushOpenToolCallsAsUnmatched(
                             &mut messagesArray,
                             &mut queuedAssistantToolText,
                             &mut queuedToolCalls,
-                            &mut queuedToolCallIds,
-                            &mut openToolCallIds,
+                            &mut queuedOpenToolCalls,
+                            &mut openToolCalls,
+                            "tool_result_without_structured_match",
                         );
-                        messagesArray.push(json!({
-                            "role": "user",
-                            "content": if !textContent.trim().is_empty() {
-                                textContent
-                            } else {
-                                Self::nonEmptyContent(&content)
-                            },
-                        }));
+                        if !textContent.trim().is_empty() {
+                            messagesArray.push(json!({"role": "user", "content": textContent}));
+                        }
                     }
                 }
             }
         }
 
-        flushOpenToolCallsAsCancelled(
+        flushOpenToolCallsAsUnmatched(
             &mut messagesArray,
             &mut queuedAssistantToolText,
             &mut queuedToolCalls,
-            &mut queuedToolCallIds,
-            &mut openToolCallIds,
+            &mut queuedOpenToolCalls,
+            &mut openToolCalls,
+            "history_end",
         );
         Value::Array(messagesArray)
     }
@@ -1097,5 +1285,66 @@ mod tests {
                 .and_then(Value::as_str),
             Some("package_proxy")
         );
+    }
+
+    /// Verifies package proxy results match the proxied executable tool name.
+    #[test]
+    fn packageProxyResultMatchesTargetToolName() {
+        let history = vec![
+            PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                concat!(
+                    r#"<tool name="package_proxy">"#,
+                    r#"<param name="tool_name">daily_life:get_current_date</param>"#,
+                    r#"<param name="params">{}</param>"#,
+                    "</tool>"
+                ),
+            ),
+            PromptTurn::new(
+                PromptTurnKind::TOOL_RESULT,
+                concat!(
+                    r#"<tool_result name="daily_life:get_current_date" status="success">"#,
+                    r#"<content>{"local":"09/11/2026, 10:10:34 PM"}</content>"#,
+                    "</tool_result>"
+                ),
+            ),
+        ];
+
+        let messages: Value = serde_json::from_str(
+            &StructuredToolCallBridge::buildMessagesJsonForProvider(&history, true, true),
+        )
+        .expect("native provider messages must be valid JSON");
+        let messages = messages
+            .as_array()
+            .expect("provider messages must be an array");
+        assert_eq!(messages.len(), 2);
+
+        let call_id = messages[0]
+            .pointer("/tool_calls/0/id")
+            .and_then(Value::as_str)
+            .expect("package proxy call must have an id");
+        assert_eq!(
+            messages[0]
+                .pointer("/tool_calls/0/function/name")
+                .and_then(Value::as_str),
+            Some("package_proxy")
+        );
+        assert!(!messages[0]
+            .as_object()
+            .expect("assistant tool-call message must be an object")
+            .contains_key("content"));
+        assert_eq!(
+            messages[1].get("tool_call_id").and_then(Value::as_str),
+            Some(call_id)
+        );
+        assert_eq!(
+            messages[1].get("name").and_then(Value::as_str),
+            Some("daily_life:get_current_date")
+        );
+        assert!(!messages[1]
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .contains("工具结果缺失"));
     }
 }

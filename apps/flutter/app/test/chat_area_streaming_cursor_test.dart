@@ -1322,6 +1322,7 @@ MarkdownStreamEvent _markdownBlockStart({int blockId = 1}) {
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -1337,6 +1338,7 @@ MarkdownStreamEvent _markdownReset() {
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -1355,6 +1357,7 @@ MarkdownStreamEvent _markdownInlineStart({
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -1374,6 +1377,7 @@ MarkdownStreamEvent _markdownInlineChunk({
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -1389,6 +1393,7 @@ MarkdownStreamEvent _markdownBlockChunk(String value) {
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }
 
@@ -1404,5 +1409,6 @@ MarkdownStreamEvent _markdownCompleted() {
     parentBlockId: null,
     nodeType: null,
     headerLevel: null,
+    xml: null,
   );
 }

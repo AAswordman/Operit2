@@ -31,6 +31,24 @@ CoreNodeRouter
 Space 的调用、同步和跨端流全部从 CoreNodeRouter 接出。PeerLink 是节点之间的
 双向数据载体，Flutter/CLI Proxy 不参与这条链路。
 
+设备 Edge 节点属于目标 Core 对象的一种实现：
+
+```text
+CoreNodeRouter / PeerLink carrier
+  -> Edge Node transport adapter
+  -> operit-node-edge
+  -> Edge Service
+  -> Host API capability
+```
+
+`operit-proxy-edge` 只提供类型化的 Edge Service 投影。Edge 地址由
+`operit-edge-contract` 共享；Proxy 不依赖本地 Edge Node 实现，传输 carrier 也不进入
+app 层。
+
+这里的 Edge Node 不是完整架构中的 `CoreNode`。完整 `CoreNode` 仍由
+`OperitApplication + LocalCoreProxy + HostManager` 组成，并拥有身份、Space、持久化和
+Agent/Chat 运行时；Edge Node 只提供设备侧服务对象，作为完整 CoreNode 的设备能力端点。
+
 ## 2. Link Access 的职责
 
 Link Access 只提供控制面和 PeerLink carrier：
@@ -57,6 +75,9 @@ Link Access 只提供控制面和 PeerLink carrier：
 | `operit-proxy-local` | 生成本地 Proxy、对象 id 和本地 dispatch | Space 路由、设备信任、远程 session |
 | `operit-node-runtime` | `CoreNodeRouter`、Space 路由、Binding 同步和本地 Core 目标解析 | Flutter/CLI 入口协议 |
 | `operit-access-runtime` | 配对控制面、session、签名验证、PeerLink HTTP/WebSocket carrier | 本地 Proxy 调用投影 |
+| `operit-edge-contract` | Edge Service object/property address contract | Host implementation、Link dispatch、Access session |
+| `operit-node-edge` | 设备侧 Edge Node、Edge Service、Host capability dispatch | 桌面 runtime、Provider、ToolPkg、Chat、Access 控制面 |
+| `operit-proxy-edge` | Edge Service 的类型化 Proxy facade | 本地 Node 实现、Host implementation、Access session |
 | `operit-link` | Core 值、调用/观察/反向流类型和通用错误模型 | 设备配对、session 存储和业务路由 |
 | `operit-runtime` | Holder、Slot、ChatServiceCore 和运行时状态 | 节点间传输和配对 |
 | Flutter / CLI | 调用生成的本地 Proxy、展示 Access 状态 | 自行拼装远程路由或 PeerFrame |

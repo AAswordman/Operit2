@@ -3,8 +3,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:xml/xml.dart' as xml;
 
 import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../../core/logging/ClientLogger.dart';
 import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
@@ -20,6 +23,7 @@ import 'FileDiffDisplay.dart';
 import 'FontTagRenderer.dart';
 import 'ToolDisplayComponents.dart';
 import 'ToolResultDisplay.dart';
+import 'XmlCanvasBlockComponents.dart';
 
 class CustomXmlRenderer extends StatelessWidget {
   const CustomXmlRenderer({
@@ -102,11 +106,11 @@ class CustomXmlRenderer extends StatelessWidget {
           fullHeight: allowExpandedThinkingFullHeight,
         );
       case 'search':
-        return _LabeledPanel(
-          label: 'Search',
-          text: parsed.body,
-          color: Theme.of(context).colorScheme.tertiary,
+        return _SearchPanel(
+          xmlContent: xmlContent,
+          textColor: textColor,
           isStreaming: isStreaming,
+          splitMarkdownContent: splitMarkdownContent,
         );
       case 'status':
         return _StatusChip(
@@ -678,7 +682,7 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                 onTap: _handleHeaderTap,
                 borderRadius: BorderRadius.circular(6),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  padding: EdgeInsets.zero,
                   child: Row(
                     children: <Widget>[
                       AnimatedRotation(
@@ -946,59 +950,552 @@ class _ThinkingTitleState extends State<_ThinkingTitle>
   }
 }
 
-class _LabeledPanel extends StatelessWidget {
-  const _LabeledPanel({
-    required this.label,
-    required this.text,
-    required this.color,
+class _SearchPanel extends StatefulWidget {
+  const _SearchPanel({
+    required this.xmlContent,
+    required this.textColor,
     required this.isStreaming,
+    required this.splitMarkdownContent,
   });
 
-  final String label;
-  final String text;
-  final Color color;
+  final String xmlContent;
+  final Color textColor;
   final bool isStreaming;
+  final MarkdownContentSplitter splitMarkdownContent;
 
+  /// Creates state for rendering structured and text search content.
+  @override
+  State<_SearchPanel> createState() => _SearchPanelState();
+}
+
+class _SearchPanelState extends State<_SearchPanel> {
+  bool _expanded = false;
+
+  /// Toggles the visible source Markdown body.
+  void _handleHeaderTap() {
+    setState(() {
+      _expanded = !_expanded;
+    });
+  }
+
+  /// Builds the search body with the legacy structured and text modes.
   @override
   Widget build(BuildContext context) {
+    final state = _SearchRenderState.parse(widget.xmlContent);
+    if (state.isStructured) {
+      if (state.sources.isEmpty && state.queries.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return _StructuredSearchBody(
+        renderState: state,
+        textColor: widget.textColor,
+      );
+    }
     final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border(
-          left: BorderSide(color: color.withValues(alpha: 0.55), width: 3),
-        ),
-      ),
+    final l10n = AppLocalizations.of(context)!;
+    final bodyText = state.bodyText.trim();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            label,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+          CanvasExpandableHeaderRow(
+            title: l10n.searchSources,
+            semanticDescription: _expanded
+                ? l10n.commonCollapse
+                : l10n.commonExpand,
+            expanded: _expanded,
+            titleColor: widget.textColor.withValues(alpha: 0.7),
+            rotationTurns: _expanded ? 0.25 : 0,
+            onClick: _handleHeaderTap,
           ),
-          const SizedBox(height: 4),
-          SelectableText(
-            text,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.35,
-            ),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            switchInCurve: Curves.linear,
+            switchOutCurve: Curves.linear,
+            transitionBuilder: (child, animation) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            child: _expanded && bodyText.isNotEmpty
+                ? CanvasIndentedGuide(
+                    key: const ValueKey<String>('search-expanded'),
+                    child: StreamMarkdownRenderer(
+                      content: bodyText,
+                      isStreaming: widget.isStreaming,
+                      textColor: widget.textColor.withValues(alpha: 0.8),
+                      backgroundColor: theme.colorScheme.surface,
+                      selectionRoot: false,
+                      splitMarkdownContent: widget.splitMarkdownContent,
+                    ),
+                  )
+                : const SizedBox.shrink(
+                    key: ValueKey<String>('search-collapsed'),
+                  ),
           ),
-          if (isStreaming)
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: StreamingCursor(),
-            ),
         ],
       ),
     );
   }
+}
+
+class _StructuredSearchBody extends StatelessWidget {
+  const _StructuredSearchBody({
+    required this.renderState,
+    required this.textColor,
+  });
+
+  final _SearchRenderState renderState;
+  final Color textColor;
+
+  /// Builds the structured source list or query list.
+  @override
+  Widget build(BuildContext context) {
+    final searchRows = renderState.sources.isNotEmpty
+        ? renderState.sources
+        : renderState.queries.map(_SearchSource.query).toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (final source in searchRows)
+          _SearchSourceRow(
+            source: source,
+            textColor: textColor,
+            onClick: () {
+              _showSearchSourceDetailDialog(context, source);
+            },
+          ),
+      ],
+    );
+  }
+}
+
+class _SearchSourceRow extends StatelessWidget {
+  const _SearchSourceRow({
+    required this.source,
+    required this.textColor,
+    required this.onClick,
+  });
+
+  final _SearchSource source;
+  final Color textColor;
+  final VoidCallback onClick;
+
+  /// Builds one compact, clickable search source row.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final icon = source.url.isEmpty ? Icons.search : Icons.language;
+    return MessagePressShieldRegion(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onClick,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 24),
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: Center(
+                    child: source.faviconUrl.isNotEmpty
+                        ? _SearchFavicon(url: source.faviconUrl)
+                        : Icon(
+                            icon,
+                            size: 14,
+                            color: theme.colorScheme.primary.withValues(
+                              alpha: 0.55,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    source.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: textColor.withValues(alpha: 0.9),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchFavicon extends StatelessWidget {
+  const _SearchFavicon({required this.url, this.size = 18});
+
+  final String url;
+  final double size;
+
+  /// Builds the favicon image for one search source.
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.network(
+        url,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) {
+            return child;
+          }
+          return Icon(
+            Icons.language,
+            size: size * 0.78,
+            color: color.withValues(alpha: 0.45),
+          );
+        },
+        errorBuilder: (context, error, stackTrace) {
+          return Icon(
+            Icons.language,
+            size: size * 0.78,
+            color: color.withValues(alpha: 0.55),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _SearchSourceDetailDialog extends StatelessWidget {
+  const _SearchSourceDetailDialog({
+    required this.source,
+    required this.onDismiss,
+  });
+
+  final _SearchSource source;
+  final VoidCallback onDismiss;
+
+  /// Builds the detail dialog for one search source row.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final icon = source.url.isEmpty ? Icons.search : Icons.language;
+    return AlertDialog(
+      icon: source.faviconUrl.isNotEmpty
+          ? SizedBox.square(
+              dimension: 32,
+              child: _SearchFavicon(url: source.faviconUrl, size: 32),
+            )
+          : Icon(icon),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            source.displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (source.host.isNotEmpty)
+            Text(
+              source.host,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (source.title.isNotEmpty)
+            SelectableText(source.title, style: theme.textTheme.bodyMedium),
+          if (source.url.isNotEmpty) ...<Widget>[
+            if (source.title.isNotEmpty) const SizedBox(height: 8),
+            SelectableText(
+              source.url,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: <Widget>[
+        if (source.url.isNotEmpty)
+          TextButton(
+            onPressed: () {
+              unawaited(_openSearchSource(source.url));
+            },
+            child: Text(l10n.open),
+          ),
+        TextButton(onPressed: onDismiss, child: Text(l10n.close)),
+      ],
+    );
+  }
+}
+
+class _SearchRenderState {
+  const _SearchRenderState({
+    required this.provider,
+    required this.action,
+    required this.status,
+    required this.queries,
+    required this.sources,
+    required this.bodyText,
+    required this.isStructured,
+  });
+
+  final String provider;
+  final String action;
+  final String status;
+  final List<String> queries;
+  final List<_SearchSource> sources;
+  final String bodyText;
+  final bool isStructured;
+
+  /// Parses the search XML into the render state used by the UI.
+  static _SearchRenderState parse(String content) {
+    final bodyText = _extractContentFromXml(content, tagName: 'search').trim();
+    final parsed = _parseStructuredSearchXml(content, bodyText);
+    return parsed ??
+        _SearchRenderState(
+          provider: '',
+          action: '',
+          status: '',
+          queries: const <String>[],
+          sources: const <_SearchSource>[],
+          bodyText: bodyText,
+          isStructured: false,
+        );
+  }
+}
+
+class _SearchSource {
+  const _SearchSource({
+    required this.title,
+    required this.url,
+    required this.faviconUrl,
+    required this.host,
+    required this.siteName,
+    required this.displayName,
+    required this.attributes,
+  });
+
+  factory _SearchSource.query(String query) {
+    return _SearchSource(
+      title: query,
+      url: '',
+      faviconUrl: '',
+      host: '',
+      siteName: '',
+      displayName: query,
+      attributes: <String, String>{'type': 'query', 'query': query},
+    );
+  }
+
+  final String title;
+  final String url;
+  final String faviconUrl;
+  final String host;
+  final String siteName;
+  final String displayName;
+  final Map<String, String> attributes;
+}
+
+/// Parses structured search XML produced by model search providers.
+_SearchRenderState? _parseStructuredSearchXml(String content, String bodyText) {
+  try {
+    final document = xml.XmlDocument.parse(content);
+    final root = document.rootElement;
+    final hasSearchRoot = root.name.local.toLowerCase() == 'search';
+    final provider = _searchAttribute(root, 'provider');
+    final action = _searchAttribute(root, 'action');
+    final status = _searchAttribute(root, 'status');
+    final queries = root.descendants
+        .whereType<xml.XmlElement>()
+        .where((element) => element.name.local.toLowerCase() == 'query')
+        .map((element) => element.innerText.trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+    final sources = root.descendants
+        .whereType<xml.XmlElement>()
+        .where((element) => element.name.local.toLowerCase() == 'source')
+        .map(_searchSourceFromElement)
+        .whereType<_SearchSource>()
+        .toList(growable: false);
+    final structured =
+        hasSearchRoot &&
+        (provider.isNotEmpty ||
+            action.isNotEmpty ||
+            status.isNotEmpty ||
+            queries.isNotEmpty ||
+            sources.isNotEmpty);
+    if (!structured) {
+      return null;
+    }
+    return _SearchRenderState(
+      provider: provider,
+      action: action,
+      status: status,
+      queries: queries,
+      sources: sources,
+      bodyText: bodyText,
+      isStructured: true,
+    );
+  } on xml.XmlException {
+    return null;
+  }
+}
+
+/// Builds one render source from a structured source element.
+_SearchSource? _searchSourceFromElement(xml.XmlElement element) {
+  final url = _searchAttribute(element, 'url');
+  if (url.isEmpty) {
+    return null;
+  }
+  final title = _searchAttribute(element, 'title');
+  final host = _hostFromSearchUrl(url);
+  final siteName = _searchSourceSiteName(element);
+  return _SearchSource(
+    title: title,
+    url: url,
+    faviconUrl: _faviconUrlForSearchSource(url),
+    host: host,
+    siteName: siteName,
+    displayName: _searchSourceDisplayName(siteName, host, title, url),
+    attributes: _searchAttributes(element),
+  );
+}
+
+/// Reads and trims a named XML attribute.
+String _searchAttribute(xml.XmlElement element, String name) {
+  return element.getAttribute(name)?.trim() ?? '';
+}
+
+/// Reads all non-empty XML attributes from a source element.
+Map<String, String> _searchAttributes(xml.XmlElement element) {
+  final attributes = <String, String>{};
+  for (final attribute in element.attributes) {
+    final name = attribute.name.qualified.trim();
+    final value = attribute.value.trim();
+    if (name.isNotEmpty && value.isNotEmpty) {
+      attributes[name] = value;
+    }
+  }
+  return attributes;
+}
+
+/// Resolves the site name attribute used by search providers.
+String _searchSourceSiteName(xml.XmlElement element) {
+  for (final name in const <String>[
+    'site_name',
+    'siteName',
+    'source',
+    'name',
+  ]) {
+    final value = _searchAttribute(element, name);
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+  return '';
+}
+
+/// Extracts a host name from a search result URL.
+String _hostFromSearchUrl(String url) {
+  var host = url;
+  final schemeIndex = host.indexOf('://');
+  if (schemeIndex >= 0) {
+    host = host.substring(schemeIndex + 3);
+  }
+  final slashIndex = host.indexOf('/');
+  if (slashIndex >= 0) {
+    host = host.substring(0, slashIndex);
+  }
+  final questionIndex = host.indexOf('?');
+  if (questionIndex >= 0) {
+    host = host.substring(0, questionIndex);
+  }
+  final fragmentIndex = host.indexOf('#');
+  if (fragmentIndex >= 0) {
+    host = host.substring(0, fragmentIndex);
+  }
+  final atIndex = host.lastIndexOf('@');
+  if (atIndex >= 0) {
+    host = host.substring(atIndex + 1);
+  }
+  final colonIndex = host.indexOf(':');
+  if (colonIndex >= 0) {
+    host = host.substring(0, colonIndex);
+  }
+  return host.trim();
+}
+
+/// Chooses the compact row label for a search source.
+String _searchSourceDisplayName(
+  String siteName,
+  String host,
+  String title,
+  String url,
+) {
+  if (siteName.isNotEmpty) {
+    return siteName;
+  }
+  final domainName = host.startsWith('www.') ? host.substring(4).trim() : host;
+  if (domainName.isNotEmpty) {
+    return domainName;
+  }
+  if (title.isNotEmpty) {
+    return title;
+  }
+  return url;
+}
+
+/// Builds the favicon URL for a search source host.
+String _faviconUrlForSearchSource(String url) {
+  final host = _hostFromSearchUrl(url).toLowerCase();
+  if (host.isEmpty) {
+    return '';
+  }
+  return 'https://www.google.com/s2/favicons?sz=64&domain=$host';
+}
+
+/// Opens a search source URL from the detail dialog.
+Future<void> _openSearchSource(String url) async {
+  try {
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  } catch (error, stackTrace) {
+    ClientLogger.w(
+      'Cannot open search source: $url',
+      tag: 'SearchDisplay',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+}
+
+/// Shows the detail dialog for a selected search source.
+void _showSearchSourceDetailDialog(BuildContext context, _SearchSource source) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      return _SearchSourceDetailDialog(
+        source: source,
+        onDismiss: () => Navigator.of(dialogContext).pop(),
+      );
+    },
+  );
 }
 
 class _StatusChip extends StatelessWidget {
@@ -1199,6 +1696,7 @@ class _ParsedXml {
   });
 
   factory _ParsedXml.from(String xml) {
+    xml = sanitizeUtf16(xml);
     final open = RegExp(
       r'^<([a-zA-Z_][\w:-]*)\b([^>]*)>',
       dotAll: true,

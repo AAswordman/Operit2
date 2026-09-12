@@ -1,10 +1,12 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -24,9 +26,9 @@ const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
 const Duration _messageJumpRetryDelay = Duration(milliseconds: 90);
 const Duration _messageJumpSettleDelay = Duration(milliseconds: 280);
 const double _messageJumpPositionTolerance = 2;
-const Duration _bottomFollowMinimumDuration = Duration(milliseconds: 70);
-const Duration _bottomFollowMaximumDuration = Duration(milliseconds: 360);
-const double _bottomFollowPixelsPerSecond = 520;
+const Duration _bottomFollowRateWindow = Duration(milliseconds: 600);
+const double _bottomFollowOutputVelocityGain = 1.15;
+const double _bottomFollowGapVelocityGain = 4;
 const double _bottomFollowPositionTolerance = 1;
 
 class ChatArea extends StatefulWidget {
@@ -113,7 +115,8 @@ class ChatArea extends StatefulWidget {
   State<ChatArea> createState() => _ChatAreaState();
 }
 
-class _ChatAreaState extends State<ChatArea> {
+class _ChatAreaState extends State<ChatArea>
+    with SingleTickerProviderStateMixin {
   final GlobalKey _viewportKey = GlobalKey();
   final Map<int, GlobalKey> _messageKeys = <int, GlobalKey>{};
   final ValueNotifier<Map<int, ChatScrollMessageAnchor>>
@@ -132,7 +135,11 @@ class _ChatAreaState extends State<ChatArea> {
   bool _messageAnchorCollectionScheduled = false;
   double _viewportHeight = 0;
   double _scrollViewportDimension = 0;
-  bool _bottomFollowScheduled = false;
+  final Stopwatch _bottomFollowClock = Stopwatch();
+  final Queue<_BottomGrowthSample> _bottomGrowthSamples =
+      Queue<_BottomGrowthSample>();
+  late final Ticker _bottomFollowTicker;
+  int? _bottomFollowLastFrameMicroseconds;
   int? _pendingJumpToMessageTimestamp;
   Timer? _pendingMessageJumpTimer;
   double? _lastEstimatedPendingJumpOffset;
@@ -140,6 +147,14 @@ class _ChatAreaState extends State<ChatArea> {
   bool _pendingMessageJumpScheduled = false;
   bool _pendingMessageJumpInFlight = false;
   bool _bottomJumpScheduled = false;
+
+  /// Initializes the frame-driven live-output follower.
+  @override
+  void initState() {
+    super.initState();
+    _bottomFollowClock.start();
+    _bottomFollowTicker = createTicker(_tickBottomFollow);
+  }
 
   /// Builds the scrollable message area and its navigation overlay.
   @override
@@ -338,6 +353,7 @@ class _ChatAreaState extends State<ChatArea> {
         }
         if (_userScrollsTowardHistory &&
             widget.autoScrollToBottomListenable.value) {
+          _stopBottomFollow();
           widget.onAutoScrollToBottomChanged(false);
         }
       } else if (_userScrollSessionActive) {
@@ -450,9 +466,9 @@ class _ChatAreaState extends State<ChatArea> {
     });
   }
 
-  /// Schedules one smooth automatic alignment with the current bottom extent.
-  void _scheduleBottomFollow() {
-    if (_bottomFollowScheduled ||
+  /// Records measured live growth and starts the frame-driven bottom follower.
+  void _scheduleBottomFollow(double heightDelta) {
+    if (!mounted ||
         !_hasLiveBottomStream() ||
         !widget.autoScrollToBottomListenable.value ||
         widget.hasNewerDisplayHistory ||
@@ -460,31 +476,91 @@ class _ChatAreaState extends State<ChatArea> {
         !widget.scrollController.hasClients) {
       return;
     }
-    _bottomFollowScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _bottomFollowScheduled = false;
-      if (!mounted ||
-          !_hasLiveBottomStream() ||
-          !widget.autoScrollToBottomListenable.value ||
-          widget.hasNewerDisplayHistory ||
-          widget.isLoadingDisplayWindow ||
-          !widget.scrollController.hasClients) {
-        return;
-      }
-      final position = widget.scrollController.position;
-      final target = position.maxScrollExtent;
-      final distance = target - position.pixels;
-      if (distance <= _bottomFollowPositionTolerance) {
-        return;
-      }
-      unawaited(
-        widget.scrollController.animateTo(
-          target,
-          duration: _bottomFollowDuration(distance),
-          curve: Curves.linear,
+    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    if (heightDelta > _bottomFollowPositionTolerance) {
+      _bottomGrowthSamples.add(
+        _BottomGrowthSample(
+          timestampMicroseconds: nowMicroseconds,
+          heightDelta: heightDelta,
         ),
       );
-    });
+    }
+    _pruneBottomGrowthSamples(nowMicroseconds);
+    if (!_bottomFollowTicker.isActive) {
+      _bottomFollowLastFrameMicroseconds = nowMicroseconds;
+      _bottomFollowTicker.start();
+    }
+  }
+
+  /// Advances the scroll position from recent output growth and baseline error.
+  void _tickBottomFollow(Duration elapsed) {
+    if (!mounted ||
+        !_hasLiveBottomStream() ||
+        !widget.autoScrollToBottomListenable.value ||
+        widget.hasNewerDisplayHistory ||
+        widget.isLoadingDisplayWindow ||
+        !widget.scrollController.hasClients) {
+      _stopBottomFollow();
+      return;
+    }
+    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    final previousMicroseconds = _bottomFollowLastFrameMicroseconds!;
+    _bottomFollowLastFrameMicroseconds = nowMicroseconds;
+    _pruneBottomGrowthSamples(nowMicroseconds);
+
+    final position = widget.scrollController.position;
+    final gap = position.maxScrollExtent - position.pixels;
+    if (gap <= _bottomFollowPositionTolerance) {
+      if (_bottomGrowthSamples.isEmpty) {
+        _stopBottomFollow();
+      }
+      return;
+    }
+    final elapsedSeconds =
+        (nowMicroseconds - previousMicroseconds) /
+        Duration.microsecondsPerSecond;
+    final outputVelocity = _bottomOutputVelocity(nowMicroseconds);
+    final scrollVelocity =
+        outputVelocity * _bottomFollowOutputVelocityGain +
+        gap * _bottomFollowGapVelocityGain;
+    final scrollDelta = scrollVelocity * elapsedSeconds;
+    final target = (position.pixels + scrollDelta).clamp(
+      position.pixels,
+      position.maxScrollExtent,
+    );
+    widget.scrollController.jumpTo(target);
+  }
+
+  /// Computes a linearly weighted output velocity over the active time window.
+  double _bottomOutputVelocity(int nowMicroseconds) {
+    final windowMicroseconds = _bottomFollowRateWindow.inMicroseconds;
+    var weightedGrowth = 0.0;
+    for (final sample in _bottomGrowthSamples) {
+      final ageMicroseconds = nowMicroseconds - sample.timestampMicroseconds;
+      final remainingWeight = 1 - ageMicroseconds / windowMicroseconds;
+      weightedGrowth += sample.heightDelta * remainingWeight;
+    }
+    return weightedGrowth *
+        2 *
+        Duration.microsecondsPerSecond /
+        windowMicroseconds;
+  }
+
+  /// Removes growth samples that no longer contribute to the time window.
+  void _pruneBottomGrowthSamples(int nowMicroseconds) {
+    final oldestTimestamp =
+        nowMicroseconds - _bottomFollowRateWindow.inMicroseconds;
+    while (_bottomGrowthSamples.isNotEmpty &&
+        _bottomGrowthSamples.first.timestampMicroseconds <= oldestTimestamp) {
+      _bottomGrowthSamples.removeFirst();
+    }
+  }
+
+  /// Stops live following and clears its temporal growth model.
+  void _stopBottomFollow() {
+    _bottomFollowTicker.stop();
+    _bottomFollowLastFrameMicroseconds = null;
+    _bottomGrowthSamples.clear();
   }
 
   /// Reports whether the visible bottom message is receiving live AI output.
@@ -760,6 +836,7 @@ class _ChatAreaState extends State<ChatArea> {
     super.didUpdateWidget(oldWidget);
     final chatChanged = oldWidget.currentChatId != widget.currentChatId;
     if (chatChanged) {
+      _stopBottomFollow();
       _messageKeys.clear();
       _messageRowCache.clear();
       _messageAnchorsNotifier.value = const <int, ChatScrollMessageAnchor>{};
@@ -807,6 +884,9 @@ class _ChatAreaState extends State<ChatArea> {
     _navigatorHideTimer?.cancel();
     _viewportResizeTimer?.cancel();
     _pendingMessageJumpTimer?.cancel();
+    _bottomFollowTicker.dispose();
+    _bottomFollowClock.stop();
+    _bottomGrowthSamples.clear();
     _messageAnchorsNotifier.dispose();
     _showNavigatorChipNotifier.dispose();
     _messageKeys.clear();
@@ -909,6 +989,8 @@ class _ChatAreaState extends State<ChatArea> {
             onTap: () => widget.onToggleMessageSelection(message.timestamp),
             child: messageContent,
           )
+        : widget.currentChatId == null
+        ? messageContent
         : MessageContextMenu(
             key: ValueKey<String>('menu-${_messageWidgetKey(message)}'),
             message: message,
@@ -971,21 +1053,6 @@ class _ChatAreaState extends State<ChatArea> {
     final message = widget.messages[index];
     return message.sender == 'ai' && message.contentStream != null;
   }
-}
-
-/// Computes a distance-scaled duration for bottom-follow animations.
-Duration _bottomFollowDuration(double distance) {
-  final milliseconds =
-      (distance.abs() /
-              _bottomFollowPixelsPerSecond *
-              Duration.millisecondsPerSecond)
-          .round()
-          .clamp(
-            _bottomFollowMinimumDuration.inMilliseconds,
-            _bottomFollowMaximumDuration.inMilliseconds,
-          )
-          .toInt();
-  return Duration(milliseconds: milliseconds);
 }
 
 /// Displays controls for selecting the active response variant of one AI message.
@@ -1346,7 +1413,7 @@ class _LiveBottomStreamSizeObserver extends SingleChildRenderObjectWidget {
   });
 
   final bool observesGrowth;
-  final VoidCallback onSizeGrown;
+  final ValueChanged<double> onSizeGrown;
 
   /// Creates the render object that records row dimensions.
   @override
@@ -1373,12 +1440,12 @@ class _LiveBottomStreamSizeObserver extends SingleChildRenderObjectWidget {
 class _LiveBottomStreamSizeRenderObject extends RenderProxyBox {
   _LiveBottomStreamSizeRenderObject({
     required bool observesGrowth,
-    required VoidCallback onSizeGrown,
+    required ValueChanged<double> onSizeGrown,
   }) : _observesGrowth = observesGrowth,
        _onSizeGrown = onSizeGrown;
 
   bool _observesGrowth;
-  VoidCallback _onSizeGrown;
+  ValueChanged<double> _onSizeGrown;
   Size? _lastSize;
 
   set observesGrowth(bool value) {
@@ -1391,11 +1458,11 @@ class _LiveBottomStreamSizeRenderObject extends RenderProxyBox {
     }
   }
 
-  set onSizeGrown(VoidCallback value) {
+  set onSizeGrown(ValueChanged<double> value) {
     _onSizeGrown = value;
   }
 
-  /// Notifies after the first measured layout when the row height grows.
+  /// Reports the first layout and every later live-row height increase.
   @override
   void performLayout() {
     final previousSize = _lastSize;
@@ -1406,15 +1473,32 @@ class _LiveBottomStreamSizeRenderObject extends RenderProxyBox {
       return;
     }
     _lastSize = currentSize;
-    if (previousSize == null ||
-        currentSize.height - previousSize.height <=
-            _bottomFollowPositionTolerance) {
+    if (previousSize == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _onSizeGrown(0);
+      });
+      return;
+    }
+    final heightDelta = currentSize.height - previousSize.height;
+    if (heightDelta <= _bottomFollowPositionTolerance) {
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _onSizeGrown();
+      _onSizeGrown(heightDelta);
     });
   }
+}
+
+/// Stores one measured live-row height increase in monotonic time.
+class _BottomGrowthSample {
+  /// Creates one timestamped height-growth sample.
+  const _BottomGrowthSample({
+    required this.timestampMicroseconds,
+    required this.heightDelta,
+  });
+
+  final int timestampMicroseconds;
+  final double heightDelta;
 }
 
 class _EmptyChatArea extends StatelessWidget {

@@ -16,6 +16,7 @@ hosts/apple     Apple native host implementations
 hosts/linux     Linux native host implementations
 hosts/windows   Windows native host implementations
 hosts/web       WebAssembly/browser-platform host implementations
+hosts/boards    Board-specific host implementations and board app profiles
 hosts/server    Server-target host implementations
 hosts/common    Native/server host code shared by multiple platform or app hosts
 ```

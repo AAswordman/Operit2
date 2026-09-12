@@ -1,10 +1,12 @@
 #![allow(non_snake_case)]
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::streamnative::NativeMarkdownSplitter::{
     MarkdownProcessorType, MarkdownSession, NativeMarkdownSplitter, Segment,
 };
+use crate::streamnative::NativeXmlSplitter::{NativeXmlSplitter, XmlNode, XmlOpeningTag};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MarkdownStreamEvent {
@@ -18,12 +20,30 @@ pub struct MarkdownStreamEvent {
     pub parentBlockId: Option<u64>,
     pub nodeType: Option<String>,
     pub headerLevel: Option<usize>,
+    pub xml: Option<MarkdownXmlStreamEvent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MarkdownXmlChildStreamEvent {
+    pub index: usize,
+    pub tagName: Option<String>,
+    pub attributes: Option<HashMap<String, String>>,
+    pub bodyChunk: Option<String>,
+    pub isClosed: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MarkdownXmlStreamEvent {
+    pub tagName: Option<String>,
+    pub attributes: Option<HashMap<String, String>>,
+    pub bodyChunk: Option<String>,
+    pub children: Vec<MarkdownXmlChildStreamEvent>,
+    pub isClosed: Option<bool>,
 }
 
 pub struct MarkdownRenderEventStream {
     chatId: String,
     parentBlockId: Option<u64>,
-    parseXmlChildren: bool,
     block: MarkdownGroupSession,
     nextBlockId: u64,
     activeBlock: Option<ActiveBlock>,
@@ -32,9 +52,85 @@ pub struct MarkdownRenderEventStream {
 struct ActiveBlock {
     id: u64,
     inline: Option<MarkdownGroupSession>,
-    xmlChild: Option<Box<XmlChildMarkdownStream>>,
+    xml: Option<XmlBlockMetadata>,
+    xmlContent: Option<MarkdownGroupSession>,
+    xmlMarkdown: Option<Box<MarkdownRenderEventStream>>,
     nextInlineId: u64,
     activeInline: Option<ActiveInline>,
+}
+
+struct XmlBlockMetadata {
+    raw: String,
+    opening: Option<XmlOpeningTag>,
+    isClosed: bool,
+}
+
+impl XmlBlockMetadata {
+    /// Creates metadata storage for one XML markdown block.
+    fn new() -> Self {
+        Self {
+            raw: String::new(),
+            opening: None,
+            isClosed: false,
+        }
+    }
+
+    /// Appends one already-delimited XML block chunk from the Markdown stream.
+    fn append(&mut self, chunk: &str) {
+        self.raw.push_str(chunk);
+        if self.opening.is_none() {
+            self.opening = NativeXmlSplitter::parse_opening_tag(&self.raw);
+        }
+    }
+
+    /// Marks the XML block closed at the boundary emitted by StreamXmlPlugin.
+    fn close(&mut self) {
+        self.isClosed = true;
+    }
+
+    /// Converts the accumulated XML metadata into a transport event.
+    fn event(&self) -> MarkdownXmlStreamEvent {
+        if self.isClosed {
+            let node = NativeXmlSplitter::parse_complete_node(&self.raw)
+                .expect("StreamXmlPlugin closed an invalid XML block");
+            return xmlEventFromNode(node);
+        }
+        MarkdownXmlStreamEvent {
+            tagName: self
+                .opening
+                .as_ref()
+                .map(|opening| opening.tag_name.clone()),
+            attributes: self
+                .opening
+                .as_ref()
+                .map(|opening| opening.attributes.clone()),
+            bodyChunk: None,
+            children: Vec::new(),
+            isClosed: Some(false),
+        }
+    }
+}
+
+/// Converts one fully parsed XML node into its renderer event representation.
+fn xmlEventFromNode(node: XmlNode) -> MarkdownXmlStreamEvent {
+    MarkdownXmlStreamEvent {
+        tagName: Some(node.tag_name),
+        attributes: Some(node.attributes),
+        bodyChunk: Some(node.body),
+        children: node
+            .children
+            .into_iter()
+            .enumerate()
+            .map(|(index, child)| MarkdownXmlChildStreamEvent {
+                index,
+                tagName: Some(child.tag_name),
+                attributes: Some(child.attributes),
+                bodyChunk: Some(child.body),
+                isClosed: Some(true),
+            })
+            .collect(),
+        isClosed: Some(true),
+    }
 }
 
 struct ActiveInline {
@@ -61,6 +157,7 @@ impl MarkdownStreamEvent {
             parentBlockId,
             nodeType: None,
             headerLevel: None,
+            xml: None,
         }
     }
 
@@ -76,6 +173,7 @@ impl MarkdownStreamEvent {
             parentBlockId: None,
             nodeType: None,
             headerLevel: None,
+            xml: None,
         }
     }
 
@@ -91,6 +189,7 @@ impl MarkdownStreamEvent {
             parentBlockId: None,
             nodeType: None,
             headerLevel: None,
+            xml: None,
         }
     }
 }
@@ -100,18 +199,17 @@ impl MarkdownRenderEventStream {
         Self {
             chatId,
             parentBlockId: None,
-            parseXmlChildren: true,
             block: MarkdownGroupSession::block(),
             nextBlockId: 0,
             activeBlock: None,
         }
     }
 
+    /// Creates a nested Markdown stream for the body of one XML block.
     fn child(chatId: String, parentBlockId: u64) -> Self {
         Self {
             chatId,
             parentBlockId: Some(parentBlockId),
-            parseXmlChildren: false,
             block: MarkdownGroupSession::block(),
             nextBlockId: 0,
             activeBlock: None,
@@ -148,12 +246,8 @@ impl MarkdownRenderEventStream {
     fn resetParser(&mut self) {
         let chatId = self.chatId.clone();
         let parentBlockId = self.parentBlockId;
-        let parseXmlChildren = self.parseXmlChildren;
-        *self = match parentBlockId {
-            Some(parentBlockId) => Self::child(chatId, parentBlockId),
-            None => Self::new(chatId),
-        };
-        self.parseXmlChildren = parseXmlChildren;
+        *self = Self::new(chatId);
+        self.parentBlockId = parentBlockId;
     }
 
     pub fn pushChunk(&mut self, chunk: &str) -> Vec<MarkdownStreamEvent> {
@@ -167,11 +261,32 @@ impl MarkdownRenderEventStream {
             parentBlockId: self.parentBlockId,
             nodeType: None,
             headerLevel: None,
+            xml: None,
         }];
 
         let segments = self.block.push(chunk);
         for segment in segments {
             if segment.r#type < 0 {
+                if let Some(activeBlock) = self.activeBlock.as_mut() {
+                    if let Some(xml) = activeBlock.xml.as_mut() {
+                        xml.close();
+                        events.push(MarkdownStreamEvent {
+                            chatId: self.chatId.clone(),
+                            eventType: "markdownBlockEnd".to_string(),
+                            value: None,
+                            id: None,
+                            blockId: Some(activeBlock.id),
+                            inlineId: None,
+                            parentBlockId: self.parentBlockId,
+                            nodeType: Some("XmlBlock".to_string()),
+                            headerLevel: None,
+                            xml: Some(xml.event()),
+                        });
+                    }
+                    if let Some(child) = activeBlock.xmlMarkdown.as_ref() {
+                        events.push(child.completed());
+                    }
+                }
                 self.block.activeType = None;
                 self.activeBlock = None;
                 continue;
@@ -192,10 +307,24 @@ impl MarkdownRenderEventStream {
                     } else {
                         None
                     },
-                    xmlChild: None,
+                    xml: if nodeType == Some(MarkdownProcessorType::XmlBlock) {
+                        Some(XmlBlockMetadata::new())
+                    } else {
+                        None
+                    },
+                    xmlContent: if nodeType == Some(MarkdownProcessorType::XmlBlock) {
+                        Some(MarkdownGroupSession::xmlContent())
+                    } else {
+                        None
+                    },
+                    xmlMarkdown: None,
                     nextInlineId: 0,
                     activeInline: None,
                 });
+                let xml = self
+                    .activeBlock
+                    .as_ref()
+                    .and_then(|block| block.xml.as_ref().map(XmlBlockMetadata::event));
                 events.push(MarkdownStreamEvent {
                     chatId: self.chatId.clone(),
                     eventType: "markdownBlockStart".to_string(),
@@ -206,24 +335,61 @@ impl MarkdownRenderEventStream {
                     parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
                     headerLevel: headerLevel(nodeType, &nodeContent),
+                    xml,
                 });
-                let xmlChild =
-                    if self.parseXmlChildren && nodeType == Some(MarkdownProcessorType::XmlBlock) {
-                        Some(Box::new(XmlChildMarkdownStream::new(
-                            self.chatId.clone(),
-                            self.nextBlockId,
-                        )))
-                    } else {
-                        None
-                    };
-                if let Some(block) = self.activeBlock.as_mut() {
-                    block.xmlChild = xmlChild;
-                }
             }
 
             if isInlineContainer(nodeType) {
                 events.extend(self.inlineChunk(nodeContent));
             } else if let Some(blockId) = self.activeBlock.as_ref().map(|block| block.id) {
+                let xml = if nodeType == Some(MarkdownProcessorType::XmlBlock) {
+                    let block = self.activeBlock.as_mut().expect("active XML block");
+                    let xml = block.xml.as_mut().expect("XML block metadata");
+                    xml.append(&nodeContent);
+                    let metadata = xml.event();
+                    if matches!(
+                        metadata.tagName.as_deref(),
+                        Some("think") | Some("thinking")
+                    ) {
+                        if block.xmlMarkdown.is_none() {
+                            block.xmlMarkdown = Some(Box::new(MarkdownRenderEventStream::child(
+                                self.chatId.clone(),
+                                block.id,
+                            )));
+                        }
+                        let bodySegments = block
+                            .xmlContent
+                            .as_mut()
+                            .expect("XML content stream")
+                            .push(&nodeContent);
+                        if let Some(child) = block.xmlMarkdown.as_mut() {
+                            for segment in bodySegments {
+                                if segment.r#type < 0 {
+                                    continue;
+                                }
+                                let xmlContent =
+                                    block.xmlContent.as_ref().expect("XML content stream");
+                                let bodyChunk = markdownSegmentContent(
+                                    &xmlContent.content,
+                                    &segment,
+                                    markdownTypeFromSegment(&segment),
+                                );
+                                if !bodyChunk.is_empty() {
+                                    events.extend(child.pushChunk(&bodyChunk));
+                                }
+                            }
+                        }
+                    } else {
+                        let _ = block
+                            .xmlContent
+                            .as_mut()
+                            .expect("XML content stream")
+                            .push(&nodeContent);
+                    }
+                    Some(metadata)
+                } else {
+                    None
+                };
                 events.push(MarkdownStreamEvent {
                     chatId: self.chatId.clone(),
                     eventType: "markdownBlockChunk".to_string(),
@@ -234,18 +400,8 @@ impl MarkdownRenderEventStream {
                     parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
                     headerLevel: None,
+                    xml,
                 });
-                if nodeType == Some(MarkdownProcessorType::XmlBlock) {
-                    if let Some(block) = self.activeBlock.as_mut() {
-                        if let Some(child) = block.xmlChild.as_mut() {
-                            events.extend(child.pushChunk(
-                                self.chatId.clone(),
-                                blockId,
-                                &nodeContent,
-                            ));
-                        }
-                    }
-                }
             }
         }
 
@@ -263,6 +419,7 @@ impl MarkdownRenderEventStream {
             parentBlockId: self.parentBlockId,
             nodeType: None,
             headerLevel: None,
+            xml: None,
         }
     }
 
@@ -306,6 +463,7 @@ impl MarkdownRenderEventStream {
                     parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(nodeType).map(ToString::to_string),
                     headerLevel: None,
+                    xml: None,
                 });
             }
 
@@ -320,185 +478,12 @@ impl MarkdownRenderEventStream {
                     parentBlockId: self.parentBlockId,
                     nodeType: markdownTypeLabel(activeInline.nodeType).map(ToString::to_string),
                     headerLevel: None,
+                    xml: None,
                 });
             }
         }
         events
     }
-}
-
-struct XmlChildMarkdownStream {
-    raw: String,
-    emittedBodyEnd: usize,
-    tagName: Option<String>,
-    markdown: MarkdownRenderEventStream,
-    closed: bool,
-}
-
-impl XmlChildMarkdownStream {
-    fn new(chatId: String, parentBlockId: u64) -> Self {
-        Self {
-            raw: String::new(),
-            emittedBodyEnd: 0,
-            tagName: None,
-            markdown: MarkdownRenderEventStream::child(chatId, parentBlockId),
-            closed: false,
-        }
-    }
-
-    fn pushChunk(
-        &mut self,
-        chatId: String,
-        parentBlockId: u64,
-        chunk: &str,
-    ) -> Vec<MarkdownStreamEvent> {
-        if self.closed {
-            return Vec::new();
-        }
-        self.raw.push_str(chunk);
-
-        let Some((tagName, bodyStart)) = self.openingThinkTag() else {
-            return Vec::new();
-        };
-        if self.tagName.is_none() {
-            self.tagName = Some(tagName.clone());
-            self.emittedBodyEnd = bodyStart;
-        }
-
-        let closePattern = format!("</{}>", tagName);
-        let searchStart = self.emittedBodyEnd.max(bodyStart);
-        let closeStart = findAsciiCaseInsensitive(&self.raw, &closePattern, searchStart);
-        let bodyEnd = if let Some(closeStart) = closeStart {
-            self.closed = true;
-            closeStart
-        } else {
-            let pendingCloseBytes = closingPrefixSuffixLength(&self.raw, bodyStart, &closePattern);
-            self.raw.len() - pendingCloseBytes
-        };
-
-        let emitStart = self.emittedBodyEnd.max(bodyStart);
-        if bodyEnd <= emitStart {
-            if self.closed {
-                return vec![self.markdown.completed()];
-            }
-            return Vec::new();
-        }
-
-        let bodyChunk = self.raw[emitStart..bodyEnd].to_string();
-        self.emittedBodyEnd = bodyEnd;
-        let mut events = self.markdown.pushChunk(&bodyChunk);
-        if self.closed {
-            events.push(MarkdownStreamEvent {
-                chatId,
-                eventType: "completed".to_string(),
-                value: None,
-                id: None,
-                blockId: None,
-                inlineId: None,
-                parentBlockId: Some(parentBlockId),
-                nodeType: None,
-                headerLevel: None,
-            });
-        }
-        events
-    }
-
-    fn openingThinkTag(&self) -> Option<(String, usize)> {
-        let bytes = self.raw.as_bytes();
-        let mut index = 0;
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if index >= bytes.len() || bytes[index] != b'<' {
-            return None;
-        }
-        let nameStart = index + 1;
-        let mut nameEnd = nameStart;
-        while nameEnd < bytes.len()
-            && (bytes[nameEnd].is_ascii_alphanumeric()
-                || bytes[nameEnd] == b'_'
-                || bytes[nameEnd] == b':'
-                || bytes[nameEnd] == b'-')
-        {
-            nameEnd += 1;
-        }
-        if nameEnd == nameStart {
-            return None;
-        }
-        let tagName = self.raw[nameStart..nameEnd].to_ascii_lowercase();
-        if tagName != "think" && tagName != "thinking" {
-            return None;
-        }
-        let tagEnd = findOpeningTagEnd(bytes, nameEnd)?;
-        Some((tagName, tagEnd + 1))
-    }
-}
-
-fn findOpeningTagEnd(bytes: &[u8], start: usize) -> Option<usize> {
-    let mut quote: Option<u8> = None;
-    let mut index = start;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(currentQuote) = quote {
-            if byte == currentQuote {
-                quote = None;
-            }
-        } else if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-        } else if byte == b'>' {
-            return Some(index);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn findAsciiCaseInsensitive(haystack: &str, needle: &str, start: usize) -> Option<usize> {
-    let haystackBytes = haystack.as_bytes();
-    let needleBytes = needle.as_bytes();
-    if needleBytes.is_empty() || haystackBytes.len() < needleBytes.len() {
-        return None;
-    }
-    let lastStart = haystackBytes.len() - needleBytes.len();
-    if start > lastStart {
-        return None;
-    }
-    let mut index = start;
-    while index <= lastStart {
-        let mut matched = true;
-        for offset in 0..needleBytes.len() {
-            if !haystackBytes[index + offset].eq_ignore_ascii_case(&needleBytes[offset]) {
-                matched = false;
-                break;
-            }
-        }
-        if matched {
-            return Some(index);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn closingPrefixSuffixLength(raw: &str, bodyStart: usize, closingPattern: &str) -> usize {
-    let bytes = raw.as_bytes();
-    let pattern = closingPattern.as_bytes();
-    let bodyLength = raw.len().saturating_sub(bodyStart);
-    let maxLength = pattern.len().min(bodyLength);
-    for length in (1..=maxLength).rev() {
-        let suffixStart = raw.len() - length;
-        let mut matched = true;
-        for offset in 0..length {
-            if !bytes[suffixStart + offset].eq_ignore_ascii_case(&pattern[offset]) {
-                matched = false;
-                break;
-            }
-        }
-        if matched {
-            return length;
-        }
-    }
-    0
 }
 
 impl MarkdownGroupSession {
@@ -513,6 +498,15 @@ impl MarkdownGroupSession {
     fn inline() -> Self {
         Self {
             session: NativeMarkdownSplitter::create_inline_session(),
+            content: String::new(),
+            activeType: None,
+        }
+    }
+
+    /// Creates a group session backed by the XML plugin's inner-content output.
+    fn xmlContent() -> Self {
+        Self {
+            session: NativeMarkdownSplitter::create_xml_content_session(),
             content: String::new(),
             activeType: None,
         }
@@ -722,6 +716,65 @@ mod tests {
                 .iter()
                 .all(|event| event.eventType != "markdownBlockStart"),
             "continuation must reuse the block restored by the snapshot"
+        );
+    }
+
+    /// Verifies one four-call batch emits complete ordered XML metadata.
+    #[test]
+    fn emits_structured_metadata_for_four_calls_and_results() {
+        let content = concat!(
+            r#"<tool name="daily_life:get_current_date"></tool>"#,
+            r#"<tool_A1 name="daily_life:device_status"></tool_A1>"#,
+            r#"<tool name="daily_life:search_weather"><param name="location">Hong Kong</param></tool>"#,
+            r#"<tool_B23456 name="daily_life:search_weather"><param name="location">Shanghai</param></tool_B23456>"#,
+            r#"<tool_result name="daily_life:get_current_date"><content>2026-09-11</content></tool_result>"#,
+            r#"<tool_result_A1 name="daily_life:device_status"><content>ready</content></tool_result_A1>"#,
+            r#"<tool_result name="daily_life:search_weather"><content>{"url":"https://x.test/?city=hk&lang=en"}</content></tool_result>"#,
+            r#"<tool_result_B23456 name="daily_life:search_weather"><content>{"url":"https://x.test/?city=sh&lang=zh"}</content></tool_result_B23456>"#,
+        );
+
+        let events = MarkdownRenderEventStream::fromContent(content.to_string());
+        let xml = events
+            .iter()
+            .filter(|event| event.eventType == "markdownBlockEnd")
+            .map(|event| {
+                event
+                    .xml
+                    .as_ref()
+                    .expect("block end must carry XML metadata")
+            })
+            .collect::<Vec<_>>();
+        let names = xml
+            .iter()
+            .map(|event| {
+                event
+                    .attributes
+                    .as_ref()
+                    .and_then(|attributes| attributes.get("name"))
+                    .map(String::as_str)
+                    .expect("tool metadata must include name")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(xml.len(), 8);
+        assert_eq!(
+            names,
+            vec![
+                "daily_life:get_current_date",
+                "daily_life:device_status",
+                "daily_life:search_weather",
+                "daily_life:search_weather",
+                "daily_life:get_current_date",
+                "daily_life:device_status",
+                "daily_life:search_weather",
+                "daily_life:search_weather",
+            ]
+        );
+        assert_eq!(xml[2].children[0].bodyChunk.as_deref(), Some("Hong Kong"));
+        assert_eq!(xml[3].children[0].bodyChunk.as_deref(), Some("Shanghai"));
+        assert_eq!(
+            xml[6].children[0].bodyChunk.as_deref(),
+            Some(r#"{"url":"https://x.test/?city=hk&lang=en"}"#)
         );
     }
 }
