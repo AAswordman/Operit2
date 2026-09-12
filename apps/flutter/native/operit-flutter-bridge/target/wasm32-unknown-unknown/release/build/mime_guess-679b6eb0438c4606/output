@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/runner/work/Operit2/Operit2/apps/flutter/native/operit-flutter-bridge/target/wasm32-unknown-unknown/release/build/mime_guess-679b6eb0438c4606/out/mime_types_generated.rs

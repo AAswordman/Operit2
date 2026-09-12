@@ -1,0 +1,3 @@
+cargo:rerun-if-changed=src
+cargo:rerun-if-changed=src/js_sdk/runtime_bindings.rs
+cargo:rerun-if-changed=../codegen/src/runtime_bindings.rs

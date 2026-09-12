@@ -1,0 +1,4 @@
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/tool/services/../../plugin/sdk/src/js_sdk/tool_types.rs
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/tool/services/src/tools/ToolRegistration.rs
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/tool/services/../../plugin/sdk/src/js_sdk/runtime_bindings.rs
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/tool/services/../../plugin/sdk/src/js_sdk

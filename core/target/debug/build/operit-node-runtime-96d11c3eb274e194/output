@@ -1,0 +1,1 @@
+cargo:rerun-if-changed=/home/runner/work/Operit2/Operit2/core/crates/node/runtime/../../runtime/application/src

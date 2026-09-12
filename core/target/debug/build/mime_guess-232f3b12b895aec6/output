@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/runner/work/Operit2/Operit2/core/target/debug/build/mime_guess-232f3b12b895aec6/out/mime_types_generated.rs
