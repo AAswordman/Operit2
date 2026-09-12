@@ -441,7 +441,11 @@ final class AppleRuntimeChannel: NSObject {
   /// Reads PNG byte payloads from the iOS pasteboard.
   private func readClipboardImages(result: @escaping FlutterResult) {
     DispatchQueue.main.async {
-      let payloads = UIPasteboard.general.images.compactMap { image -> [String: Any]? in
+      guard let images = UIPasteboard.general.images else {
+        result([])
+        return
+      }
+      let payloads = images.compactMap { image -> [String: Any]? in
         guard let data = image.pngData() else {
           return nil
         }
