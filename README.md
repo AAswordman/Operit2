@@ -1,7 +1,7 @@
-<h1 align="center"><img src="https://raw.githubusercontent.com/luojiaping/Operit2/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/assets/operit-logo.svg" width="64" alt="Operit logo" valign="middle"> Operit2</h1>
+<h1 align="center"><img src="docs/assets/operit-logo.svg" width="64" alt="Operit logo" valign="middle"> Operit2</h1>
 <p align="center"><a href="README.md">English</a> · <a href="README-zh.md">简体中文</a></p>
 <p align="center"><sub>An Agent core that connects your device space.</sub></p>
-<p align="center"><strong>Preview Release</strong> · <a href="https://github.com/luojiaping/Operit2/blob/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/Operit2%E6%8A%80%E6%9C%AF%E7%99%BD%E7%9A%AE%E4%B9%A6.pdf">Read the technical whitepaper</a></p>
+<p align="center"><strong>Preview Release</strong> · <a href="docs/Operit2-Technical-Whitepaper.pdf">Read the technical whitepaper</a></p>
 
 <p align="center">
   <img src="docs/assets/operit-device-space-concept-v7-en.png" alt="Operit2 device space concept" width="100%">
@@ -9,7 +9,7 @@
 
 Operit2 is an open-source, cross-device Agent project for personal users. It aims to let phones, desktops, and cloud devices each play to their strengths, so conversations, tasks, and context can continue across a personal device space.
 
-The project grew out of Operit's Android Agent practice and is currently refining multi-device synchronization, cross-device execution, and recovery experiences. The project's original motivation, engineering architecture, and long-term direction are described in the [Operit2 technical whitepaper](https://github.com/luojiaping/Operit2/blob/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/Operit2%E6%8A%80%E6%9C%AF%E7%99%BD%E7%9A%AE%E4%B9%A6.pdf).
+The project grew out of Operit's Android Agent practice and is currently refining multi-device synchronization, cross-device execution, and recovery experiences. The project's original motivation, engineering architecture, and long-term direction are described in the [Operit2 technical whitepaper](docs/Operit2-Technical-Whitepaper.pdf).
 
 > During the preview stage, the underlying structure, data formats, plugin contracts, and cross-device workflows may still undergo breaking changes.
 
@@ -143,7 +143,7 @@ The following directions are still being designed, refined, or validated:
 - Improve the experience of adding new devices, recovering data, and running long-lived deployments;
 - Validate the discovery, routing, and synchronization costs as the number of nodes increases.
 
-The current focus is personal device spaces. Scheduling across thousands of nodes has not been validated, and enterprise organization governance is not a product goal. Long-running quality still requires continued testing; Rust itself does not guarantee the absence of resource leaks. See the [technical whitepaper](https://github.com/luojiaping/Operit2/blob/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/Operit2%E6%8A%80%E6%9C%AF%E7%99%BD%E7%9A%AE%E4%B9%A6.pdf) for more detailed design trade-offs.
+The current focus is personal device spaces. Scheduling across thousands of nodes has not been validated, and enterprise organization governance is not a product goal. Long-running quality still requires continued testing; Rust itself does not guarantee the absence of resource leaks. See the [technical whitepaper](docs/Operit2-Technical-Whitepaper.pdf) for more detailed design trade-offs.
 
 ## Quick Start
 

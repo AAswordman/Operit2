@@ -1,15 +1,15 @@
-<h1 align="center"><img src="https://raw.githubusercontent.com/luojiaping/Operit2/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/assets/operit-logo.svg" width="64" alt="Operit logo" valign="middle"> Operit2</h1>
+<h1 align="center"><img src="docs/assets/operit-logo.svg" width="64" alt="Operit logo" valign="middle"> Operit2</h1>
 <p align="center"><a href="README.md">English</a> · <a href="README-zh.md">简体中文</a></p>
 <p align="center"><sub>一个 Agent 核心，连接你的设备空间。</sub></p>
-<p align="center"><strong>预览版本</strong> · <a href="https://github.com/luojiaping/Operit2/blob/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/Operit2%E6%8A%80%E6%9C%AF%E7%99%BD%E7%9A%AE%E4%B9%A6.pdf">阅读技术白皮书</a></p>
+<p align="center"><strong>预览版本</strong> · <a href="docs/Operit2技术白皮书.pdf">阅读技术白皮书</a></p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/luojiaping/Operit2/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/assets/operit-device-space-concept-v7.png" alt="Operit2 设备空间概念图" width="100%">
+  <img src="docs/assets/operit-device-space-concept-v7.png" alt="Operit2 设备空间概念图" width="100%">
 </p>
 
 Operit2 是面向个人用户的开源跨设备 Agent 项目。它希望让手机、桌面和云端设备各展所长，让对话、任务与上下文在个人设备空间中延续。
 
-项目源于 Operit 的 Android Agent 实践，目前正打磨多端同步、跨设备执行和恢复体验。项目初衷、工程架构与长期方向见 [Operit2 技术白皮书](https://github.com/luojiaping/Operit2/blob/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/Operit2%E6%8A%80%E6%9C%AF%E7%99%BD%E7%9A%AE%E4%B9%A6.pdf)。
+项目源于 Operit 的 Android Agent 实践，目前正打磨多端同步、跨设备执行和恢复体验。项目初衷、工程架构与长期方向见 [Operit2 技术白皮书](docs/Operit2技术白皮书.pdf)。
 
 > 预览阶段，底层结构、数据格式、插件契约和跨设备流程仍可能发生破坏性更新。
 
@@ -143,7 +143,7 @@ Rust Core、平台 Host、节点连接、持久化同步和插件运行时已经
 - 改善新设备加入、数据恢复和长期在线部署的使用体验；
 - 验证节点数量增加后的发现、路由与同步成本。
 
-当前以个人设备空间为主要场景，尚未验证数千节点调度，也不以企业组织治理为产品目标。长期运行品质仍需持续测试，Rust 本身不构成无资源泄漏的保证。更详细的设计取舍见 [技术白皮书](https://github.com/luojiaping/Operit2/blob/bf09634a6b1bc39dc0a0655d1ef9f3c6f2fc75fb/docs/Operit2%E6%8A%80%E6%9C%AF%E7%99%BD%E7%9A%AE%E4%B9%A6.pdf)。
+当前以个人设备空间为主要场景，尚未验证数千节点调度，也不以企业组织治理为产品目标。长期运行品质仍需持续测试，Rust 本身不构成无资源泄漏的保证。更详细的设计取舍见 [技术白皮书](docs/Operit2技术白皮书.pdf)。
 
 ## 快速开始
 
