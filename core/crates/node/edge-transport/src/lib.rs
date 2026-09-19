@@ -14,7 +14,6 @@ use uuid::Uuid;
 
 pub mod auth;
 pub mod pairing;
-#[cfg(not(target_os = "espidf"))]
 pub mod serial;
 pub mod serial_codec;
 pub mod tcp;

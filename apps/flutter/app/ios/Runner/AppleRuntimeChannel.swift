@@ -451,8 +451,63 @@ final class AppleRuntimeChannel: NSObject {
       let response = self.takeString(
         operit_flutter_bridge_runtime_bootstrap_read(defaultRuntimeRoot)
       )
-      DispatchQueue.main.async { result(response) }
+      do {
+        let restored = try self.restoreSandboxPaths(response, defaultRuntimeRoot: defaultRuntimeRoot)
+        DispatchQueue.main.async { result(restored) }
+      } catch {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "STORAGE_RESTORE_FAILED", message: error.localizedDescription, details: nil))
+        }
+      }
     }
+  }
+
+  /// iOS may relocate the app container on installation. Keep this platform
+  /// concern in the host; Dart continues to receive ordinary storage paths.
+  private func restoreSandboxPaths(_ response: String, defaultRuntimeRoot: String) throws -> String {
+    guard var envelope = try JSONSerialization.jsonObject(with: Data(response.utf8)) as? [String: Any],
+          envelope["ok"] as? Bool == true,
+          let encoded = envelope["value"] as? String,
+          var config = try JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any]
+    else { return response }
+    let pattern = #"^(.*?/Containers/Data/Application/)[0-9A-Fa-f-]{36}(/.*)$"#
+    let regex = try NSRegularExpression(pattern: pattern)
+    let current = NSHomeDirectory() as NSString
+    let currentWithSuffix = current.appendingPathComponent("Library") as NSString
+    guard let currentMatch = regex.firstMatch(in: currentWithSuffix as String,
+      range: NSRange(location: 0, length: currentWithSuffix.length)) else { return response }
+    var changed = false
+    for key in ["runtimeRoot", "workspaceRoot"] {
+      guard let oldPath = config[key] as? String else { continue }
+      let old = oldPath as NSString
+      guard let match = regex.firstMatch(in: oldPath, range: NSRange(location: 0, length: old.length)),
+            old.substring(with: match.range(at: 1)) == currentWithSuffix.substring(with: currentMatch.range(at: 1))
+      else { continue }
+      let suffix = old.substring(with: match.range(at: 2))
+      guard !suffix.components(separatedBy: "/").contains("..") else { continue }
+      let newPath = (current as String) + suffix
+      guard newPath != oldPath else { continue }
+      let manager = FileManager.default
+      // Normal device reinstalls move the data with the container. A simulator
+      // can retain the old directory: copy it only if the destination is absent.
+      // Never overwrite current data or delete the original.
+      if !manager.fileExists(atPath: newPath), manager.fileExists(atPath: oldPath) {
+        try manager.createDirectory(atPath: (newPath as NSString).deletingLastPathComponent,
+                                    withIntermediateDirectories: true)
+        try manager.copyItem(atPath: oldPath, toPath: newPath)
+      }
+      config[key] = newPath
+      changed = true
+    }
+    guard changed else { return response }
+    let content = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)
+    let written = takeString(operit_flutter_bridge_runtime_bootstrap_write(defaultRuntimeRoot, content))
+    guard let status = try JSONSerialization.jsonObject(with: Data(written.utf8)) as? [String: Any],
+          status["ok"] as? Bool == true else {
+      throw RuntimeChannelError.createFailed("Could not persist restored iOS storage paths")
+    }
+    envelope["value"] = content
+    return String(decoding: try JSONSerialization.data(withJSONObject: envelope), as: UTF8.self)
   }
 
   /// Writes the client bootstrap record through the Rust startup Host.

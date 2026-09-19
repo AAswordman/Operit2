@@ -49,7 +49,6 @@ void main(List<String> arguments) async {
       NotificationActivationService.instance.initialize(arguments);
       final runtimeStopwatch = Stopwatch()..start();
       await RuntimeBootstrapManager.instance.initialize();
-      ClientLogger.attachPersistentStorage();
       ClientLogger.i(
         'runtime bootstrap initialized elapsedMs=${runtimeStopwatch.elapsedMilliseconds}',
         tag: _appStartupLogTag,

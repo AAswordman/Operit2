@@ -8,5 +8,5 @@ publish = false
 [dependencies]
 operit-host-apple-native = { path = "../apple" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
-operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["storage"] }
+operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["serial", "storage"] }
 operit-host-native-plugin-sdk-ipc = { path = "../common/operit-host-native-plugin-sdk-ipc" }

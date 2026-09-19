@@ -69,6 +69,7 @@ pub fn createRuntimeHostManager(
     )
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(LinuxHttpHost::new()))
+    .withSerialPortHost(Arc::new(operit_host_native_common::NativeSerialPortHost))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withAudioPlaybackHost(Arc::new(LinuxAudioPlaybackHost::new()))

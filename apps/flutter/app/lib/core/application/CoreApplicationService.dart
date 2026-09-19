@@ -178,6 +178,7 @@ class CoreApplicationService with WidgetsBindingObserver {
       return;
     }
     try {
+      ClientLogger.attachPersistentStorage();
       ClientLogger.i(
         'runtime services start localConfirmed=${_runtimeManager.config.confirmed}',
         tag: _logTag,

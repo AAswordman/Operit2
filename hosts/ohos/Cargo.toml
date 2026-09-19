@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
-operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["fs", "http", "scheduler", "storage", "terminal"] }
+operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["serial", "fs", "http", "scheduler", "storage", "terminal"] }
 operit-local-models = { path = "../../core/crates/provider/local-model" }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 libloading = "0.8"

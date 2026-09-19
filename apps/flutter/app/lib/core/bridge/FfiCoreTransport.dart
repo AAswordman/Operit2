@@ -32,7 +32,10 @@ class FfiCoreTransport implements CoreByteTransport {
   /// Attaches once to the runtime owned by the registered platform host.
   Future<_FfiConnection> _connection() {
     if (_closed) throw StateError('Core FFI transport is closed');
-    return _opening ??= _connect();
+    return _opening ??= _connect().catchError((Object error, StackTrace stack) {
+      _opening = null;
+      Error.throwWithStackTrace(error, stack);
+    });
   }
 
   /// Releases this isolate's connection without destroying the platform runtime.

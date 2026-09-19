@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -7,7 +6,6 @@ use operit_host_api::{
     RuntimeCommandOutput, RuntimeProcessRequest,
 };
 use operit_host_native_common::{TerminalManagedRuntimeLaunch, TerminalManagedRuntimeProcess};
-use sha2::{Digest, Sha256};
 
 use crate::terminal::IosTerminalHost;
 
@@ -15,7 +13,7 @@ const ISH_TERMINAL: &str = "ish";
 const SHELL_TERMINAL_TYPE: &str = "shell";
 const ISH_RUNTIME_WORKSPACE: &str = "/root/.operit/managed_runtime";
 
-/// Starts iOS MCP runtimes inside the embedded iSH Alpine environment.
+/// Starts managed processes inside the persistent iSH Alpine environment.
 #[derive(Clone)]
 pub struct IosManagedRuntimeHost {
     terminalHost: Arc<IosTerminalHost>,
@@ -51,14 +49,6 @@ impl IosManagedRuntimeHost {
             Some(hostWorkingDirectory) => {
                 let runtimeWorkingDirectory =
                     self.mountRuntimeWorkingDirectory(&hostWorkingDirectory)?;
-                let program =
-                    mapRuntimePath(&program, &hostWorkingDirectory, &runtimeWorkingDirectory);
-                let args = args
-                    .iter()
-                    .map(|arg| mapRuntimePath(arg, &hostWorkingDirectory, &runtimeWorkingDirectory))
-                    .collect();
-                let env =
-                    mapRuntimeEnvironment(env, &hostWorkingDirectory, &runtimeWorkingDirectory);
                 (
                     runtimeWorkingDirectory.clone(),
                     runtimeWorkingDirectory,
@@ -89,7 +79,8 @@ impl IosManagedRuntimeHost {
         })
     }
 
-    /// Mounts the App-owned MCP runtime parent and returns its iSH working-directory path.
+    /// Shares the host parent at its absolute path; arguments and environment
+    /// keep the same paths as the filesystem and workspace services.
     fn mountRuntimeWorkingDirectory(&self, hostWorkingDirectory: &str) -> HostResult<String> {
         let hostWorkingDirectory = Path::new(hostWorkingDirectory);
         if !hostWorkingDirectory.is_absolute() {
@@ -104,22 +95,12 @@ impl IosManagedRuntimeHost {
                 hostWorkingDirectory.to_string_lossy()
             ))
         })?;
-        let directoryName = hostWorkingDirectory.file_name().ok_or_else(|| {
-            HostError::new(format!(
-                "iSH managed runtime working directory has no final component: {}",
-                hostWorkingDirectory.to_string_lossy()
-            ))
-        })?;
         let hostParent = hostParent.to_str().ok_or_else(|| {
             HostError::new("iSH managed runtime parent directory is not valid UTF-8")
         })?;
-        let directoryName = directoryName.to_str().ok_or_else(|| {
-            HostError::new("iSH managed runtime directory name is not valid UTF-8")
-        })?;
-        let mountPoint = runtimeMountPoint(hostParent);
         self.terminalHost
-            .mountManagedRuntimeDirectory(hostParent, &mountPoint)?;
-        Ok(format!("{mountPoint}/{directoryName}"))
+            .mountManagedRuntimeDirectory(hostParent, hostParent)?;
+        Ok(hostWorkingDirectory.to_string_lossy().into_owned())
     }
 
     /// Starts one iSH managed runtime process for a request.
@@ -157,7 +138,7 @@ impl ManagedRuntimeHost for IosManagedRuntimeHost {
         })
     }
 
-    /// Starts a persistent iSH Alpine MCP process.
+    /// Starts a persistent iSH Alpine process.
     fn startRuntimeProcess(
         &self,
         request: RuntimeProcessRequest,
@@ -179,41 +160,4 @@ impl ManagedRuntimeHost for IosManagedRuntimeHost {
             stderr: String::new(),
         })
     }
-}
-
-/// Derives the stable iSH mount point for one App-owned runtime directory parent.
-fn runtimeMountPoint(hostParent: &str) -> String {
-    let digest = Sha256::digest(hostParent.as_bytes());
-    let suffix = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("/mnt/operit-mcp/{suffix}")
-}
-
-/// Maps one exact host-runtime path into the corresponding iSH-mounted path.
-fn mapRuntimePath(
-    value: &str,
-    hostWorkingDirectory: &str,
-    runtimeWorkingDirectory: &str,
-) -> String {
-    let normalizedHostDirectory = hostWorkingDirectory.trim_end_matches('/');
-    match value.strip_prefix(normalizedHostDirectory) {
-        Some(suffix) if suffix.is_empty() || suffix.starts_with('/') => {
-            format!("{runtimeWorkingDirectory}{suffix}")
-        }
-        _ => value.to_string(),
-    }
-}
-
-/// Maps MCP environment values rooted at the host plugin directory into the iSH mounted path.
-fn mapRuntimeEnvironment(
-    mut environment: BTreeMap<String, String>,
-    hostWorkingDirectory: &str,
-    runtimeWorkingDirectory: &str,
-) -> BTreeMap<String, String> {
-    for value in environment.values_mut() {
-        *value = mapRuntimePath(value, hostWorkingDirectory, runtimeWorkingDirectory);
-    }
-    environment
 }

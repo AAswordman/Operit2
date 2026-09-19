@@ -279,6 +279,25 @@ void main() {
     expect(platformMethods, ['connectCoreFfi']);
   });
 
+  test('retries connection after storage becomes configured', () async {
+    var attempts = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('operit/runtime'), (call) async {
+          attempts++;
+          if (attempts == 1) {
+            throw PlatformException(code: 'OPERIT_RUNTIME_ERROR',
+                message: 'Runtime and workspace roots are not configured');
+          }
+          host = _HostConnection();
+          _connections[host.token.address] = host;
+          return host.descriptor();
+        });
+    await expectLater(proxy.call(_call('before', 'echo', 'before')),
+        throwsA(isA<PlatformException>()));
+    expect(await proxy.call(_call('after', 'echo', 'ready')), 'ready');
+    expect(attempts, 2);
+  });
+
   test('concurrent replies retain their request identity', () async {
     final first = proxy.call(_call('one', 'delayed', null));
     final second = proxy.call(_call('two', 'delayed', null));

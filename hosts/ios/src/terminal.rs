@@ -55,7 +55,7 @@ impl IosTerminalHost {
         }
     }
 
-    /// Mounts an App-owned directory into the embedded iSH filesystem for MCP execution.
+    /// Shares a host directory with iSH at the same absolute path.
     pub fn mountManagedRuntimeDirectory(
         &self,
         hostDirectory: &str,

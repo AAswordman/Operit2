@@ -71,6 +71,9 @@ def file_sha256(path: Path) -> str:
 # Downloads one archive and verifies its exact SHA-256 digest.
 def download_archive(url: str, archive_path: Path, expected_sha256: str) -> None:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
+    if archive_path.is_file() and file_sha256(archive_path) == expected_sha256:
+        print(f"Using verified cached archive: {archive_path.name}", flush=True)
+        return
     temporary_path = archive_path.with_suffix(archive_path.suffix + ".part")
     temporary_path.unlink(missing_ok=True)
     with urllib.request.urlopen(url, timeout=120) as response:

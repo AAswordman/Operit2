@@ -30,7 +30,7 @@ operit-node-runtime = { path = "../../core/crates/node/runtime" }
 operit-core-application = { path = "../../core/crates/application/core" }
 operit-command-core = { path = "../../core/crates/command/core" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
-operit-host-native-common = { path = "../../hosts/common/operit-host-native-common", default-features = false, features = ["storage"] }
+operit-host-native-common = { path = "../../hosts/common/operit-host-native-common", default-features = false, features = ["serial", "storage"] }
 operit-link = { path = "../../core/crates/foundation/link" }
 operit-access-runtime = { path = "../../core/crates/access/runtime" }
 operit-model = { path = "../../core/crates/foundation/model" }

@@ -12,7 +12,7 @@ use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
 #[cfg(feature = "javascript")]
 use operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost;
 use operit_host_api::HostManager::{
-    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, setDefaultWebSocketHost,
+    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, setDefaultWebSocketHost, setDefaultSerialPortHost,
     HostManager,
 };
 use operit_host_api::TimeUtils::currentTimeMillis;
@@ -126,6 +126,9 @@ impl OperitApplication {
         }
         if let Some(webSocketHost) = hostManager.webSocketHost.clone() {
             setDefaultWebSocketHost(webSocketHost);
+        }
+        if let Some(serialPortHost) = hostManager.serialPortHost.clone() {
+            setDefaultSerialPortHost(serialPortHost);
         }
         if let Some(taskSchedulerHost) = hostManager.hostRuntimeTaskSchedulerHost.clone() {
             setDefaultHostRuntimeTaskSchedulerHost(taskSchedulerHost);

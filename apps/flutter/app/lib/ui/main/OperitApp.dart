@@ -127,7 +127,13 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   @override
   void initState() {
     super.initState();
-    if (kIsWeb) {
+    RuntimeBootstrapManager.instance.addListener(_syncPairingSubscription);
+    _syncPairingSubscription();
+  }
+
+  void _syncPairingSubscription() {
+    if (kIsWeb || !RuntimeBootstrapManager.instance.runtimeConfigured ||
+        _webAccessPairingSubscription != null) {
       return;
     }
     _webAccessPairingSubscription = _coreClients
@@ -153,6 +159,7 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   /// Cancels native Web Access pairing request event monitoring.
   @override
   void dispose() {
+    RuntimeBootstrapManager.instance.removeListener(_syncPairingSubscription);
     unawaited(_webAccessPairingSubscription?.cancel());
     super.dispose();
   }

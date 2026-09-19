@@ -11,6 +11,7 @@ async-trait.workspace = true
 base64.workspace = true
 hmac = "0.12"
 operit-link = { path = "../../foundation/link" }
+operit-host-api = { path = "../../foundation/host-api" }
 operit-node-edge = { path = "../edge" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde.workspace = true
@@ -18,9 +19,6 @@ sha2.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 uuid.workspace = true
 x25519-dalek = { version = "2", features = ["static_secrets"] }
-
-[target.'cfg(not(target_os = "espidf"))'.dependencies]
-tokio-serial = "5"
 
 [dev-dependencies]
 operit-host-api = { path = "../../foundation/host-api" }

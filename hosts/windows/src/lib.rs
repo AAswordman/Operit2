@@ -52,6 +52,7 @@ pub fn createRuntimeHostManager(
     )
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(WindowsHttpHost::new()))
+    .withSerialPortHost(Arc::new(operit_host_native_common::NativeSerialPortHost))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withAudioPlaybackHost(Arc::new(WindowsAudioPlaybackHost::new()))

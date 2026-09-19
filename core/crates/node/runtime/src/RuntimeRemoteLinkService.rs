@@ -104,7 +104,6 @@ async fn connectEdgeChannel(endpoint: &str) -> Result<Arc<dyn LinkChannel>, Stri
         let (port, query) = serialEndpoint
             .split_once('?')
             .unwrap_or((serialEndpoint, ""));
-        let port = port.trim_start_matches('/');
         if port.trim().is_empty() {
             return Err("Edge serial endpoint must contain a port name".to_string());
         }
@@ -118,7 +117,9 @@ async fn connectEdgeChannel(endpoint: &str) -> Result<Arc<dyn LinkChannel>, Stri
             })
             .transpose()?
             .unwrap_or(115_200);
-        let channel = operit_edge_transport::serial::SerialLinkChannel::open(port, baudRate)?;
+        let host = operit_host_api::HostManager::defaultSerialPortHost()
+            .map_err(|error| error.to_string())?;
+        let channel = operit_edge_transport::serial::SerialLinkChannel::open(host.as_ref(), port, baudRate).await?;
         return Ok(channel);
     }
     let channel = operit_edge_transport::tcp::TcpLinkChannel::connect(endpoint).await?;

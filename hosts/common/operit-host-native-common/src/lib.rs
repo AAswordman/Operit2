@@ -2,6 +2,11 @@
 
 pub mod DartPort;
 
+#[cfg(all(feature = "serial", not(any(target_os = "ios", target_os = "espidf", target_arch = "wasm32"))))]
+mod SerialPort;
+#[cfg(all(feature = "serial", not(any(target_os = "ios", target_os = "espidf", target_arch = "wasm32"))))]
+pub use SerialPort::NativeSerialPortHost;
+
 #[cfg(feature = "fs")]
 pub use operit_host_native_filesystem::PosixFileSystemHost;
 #[cfg(feature = "http")]

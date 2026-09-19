@@ -12,7 +12,6 @@ extern "C" {
 
 static const NSUInteger ORTIshOutputCapacity = 1024 * 1024;
 static const NSTimeInterval ORTIshStartTimeout = 30.0;
-static NSString *const ORTIshRuntimeMountRoot = @"/mnt/operit-mcp";
 
 @interface ORTIshTerminalSession : NSObject
 @property(nonatomic, copy) NSString *sessionId;
@@ -216,24 +215,11 @@ static BOOL ORTIshEnsureKernel(NSString **errorOut) {
   }
   BOOL prepared = ORTIshPrepareRoot(errorOut);
   if (prepared) {
-    actuate_kernel("");
+    actuate_kernel("earlyprintk");
     ORTIshKernelStarted = YES;
   }
   [ORTIshStateLock unlock];
   return prepared;
-}
-
-/// Validates one iSH mount point reserved for an App-owned MCP runtime directory.
-static BOOL ORTIshIsRuntimeMountPoint(NSString *mountPoint) {
-  NSString *prefix = [ORTIshRuntimeMountRoot stringByAppendingString:@"/"];
-  if (![mountPoint hasPrefix:prefix]) return NO;
-  NSString *suffix = [mountPoint substringFromIndex:prefix.length];
-  if (suffix.length != 64) return NO;
-  NSCharacterSet *hex = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"];
-  for (NSUInteger index = 0; index < suffix.length; index++) {
-    if (![hex characterIsMember:[suffix characterAtIndex:index]]) return NO;
-  }
-  return YES;
 }
 
 /// Creates one required iSH runtime mount directory and accepts an existing directory.
@@ -244,11 +230,13 @@ static BOOL ORTIshEnsureRuntimeMountDirectory(NSString *path, NSString **errorOu
   return NO;
 }
 
-/// Mounts an App-owned plugin parent directory into the iSH Linux filesystem.
+/// Exposes a host directory at the same absolute path, as on Android.
 static BOOL ORTIshMountRuntimeDirectory(NSString *hostDirectory, NSString *mountPoint,
                                         NSString **errorOut) {
   if (!ORTIshEnsureKernel(errorOut)) return NO;
-  if (![hostDirectory hasPrefix:@"/"] || !ORTIshIsRuntimeMountPoint(mountPoint)) {
+  if (![hostDirectory hasPrefix:@"/"] || [hostDirectory isEqualToString:@"/"]
+      || ![mountPoint isEqualToString:hostDirectory]
+      || ![hostDirectory isEqualToString:hostDirectory.stringByStandardizingPath]) {
     *errorOut = @"iSH runtime mount request is invalid";
     return NO;
   }
@@ -257,16 +245,41 @@ static BOOL ORTIshMountRuntimeDirectory(NSString *hostDirectory, NSString *mount
     *errorOut = [NSString stringWithFormat:@"iSH runtime directory does not exist: %@", hostDirectory];
     return NO;
   }
-  if (!ORTIshEnsureRuntimeMountDirectory(@"/mnt", errorOut)
-      || !ORTIshEnsureRuntimeMountDirectory(ORTIshRuntimeMountRoot, errorOut)
-      || !ORTIshEnsureRuntimeMountDirectory(mountPoint, errorOut)) {
-    return NO;
-  }
-  int result = linux_mount_app_directory(hostDirectory.fileSystemRepresentation,
-                                         mountPoint.fileSystemRepresentation);
-  if (result != 0) {
-    *errorOut = [NSString stringWithFormat:@"iSH runtime mount failed: %@ (%d)", mountPoint, result];
-    return NO;
+  __block NSString *mountError = nil;
+  sync_do_in_workqueue(^(void (^done)(void)) {
+    NSString *parent = @"/";
+    for (NSString *component in mountPoint.pathComponents) {
+      if ([component isEqualToString:@"/"]) continue;
+      parent = [parent stringByAppendingPathComponent:component];
+      if (!ORTIshEnsureRuntimeMountDirectory(parent, &mountError)) break;
+    }
+    if (mountError == nil) {
+      int result = linux_mount_app_directory(hostDirectory.fileSystemRepresentation,
+                                            mountPoint.fileSystemRepresentation);
+      if (result != 0) {
+        mountError = [NSString stringWithFormat:@"iSH runtime mount failed: %@ (%d)", mountPoint, result];
+      }
+    }
+    done();
+  });
+  if (mountError != nil) *errorOut = mountError;
+  return mountError == nil;
+}
+
+/// Mounts shared persistent app storage so even a shell starting at /root can
+/// access files by the exact paths returned by the host filesystem API.
+static BOOL ORTIshMountAppStorage(NSString **errorOut) {
+  NSFileManager *manager = NSFileManager.defaultManager;
+  NSString *documents = [manager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject.path;
+  NSString *support = [[manager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject.path
+      stringByAppendingPathComponent:@"Operit2"];
+  for (NSString *directory in @[documents, support]) {
+    NSError *error = nil;
+    if (![manager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:&error]) {
+      *errorOut = error.localizedDescription;
+      return NO;
+    }
+    if (!ORTIshMountRuntimeDirectory(directory, directory, errorOut)) return NO;
   }
   return YES;
 }
@@ -276,6 +289,19 @@ static ORTIshTerminalSession *ORTIshStartSession(NSString *sessionName, NSString
                                                  NSInteger rows, NSInteger cols, NSString **errorOut) {
   if (!ORTIshEnsureKernel(errorOut)) {
     return nil;
+  }
+  if (!ORTIshMountAppStorage(errorOut)) return nil;
+  // Preserve the host absolute path. Hostfs shares writes immediately with the
+  // file tools; Linux-only directories such as /root stay in persistent fakefs.
+  BOOL isDirectory = NO;
+  NSString *hostDirectory = workingDir.stringByStandardizingPath;
+  NSString *container = NSHomeDirectory().stringByResolvingSymlinksInPath;
+  if ([hostDirectory.stringByResolvingSymlinksInPath hasPrefix:[container stringByAppendingString:@"/"]]
+      && [[NSFileManager defaultManager] fileExistsAtPath:hostDirectory isDirectory:&isDirectory]
+      && ![hostDirectory isEqualToString:@"/"]
+      && isDirectory) {
+    if (!ORTIshMountRuntimeDirectory(hostDirectory, hostDirectory, errorOut)) return nil;
+    workingDir = hostDirectory;
   }
   ORTIshInitializeState();
   ORTIshTerminalSession *session = [ORTIshTerminalSession new];
@@ -289,21 +315,26 @@ static ORTIshTerminalSession *ORTIshStartSession(NSString *sessionName, NSString
 
   [ORTIshStartLock lock];
   ORTIshPendingSession = session;
-  const char *argv[] = {"/bin/sh", "-i", NULL};
   NSString *workingDirectoryVariable = [NSString stringWithFormat:@"OPERIT_WORKING_DIR=%@", workingDir];
-  const char *environment[] = {
+  // Linux allocation, PTY and process APIs require a Linux task context.
+  // Keep argument storage on the worker stack until UMH_WAIT_EXEC completes.
+  async_do_in_workqueue(^{
+    const char *argv[] = {"/bin/sh", "-c",
+      "cd -- \"$OPERIT_WORKING_DIR\" || exit; exec /bin/sh -i", NULL};
+    const char *environment[] = {
       "TERM=xterm-256color", "HOME=/root", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       workingDirectoryVariable.UTF8String, NULL};
-  linux_start_session("/bin/sh", argv, environment, ^(int result, int pid, nsobj_t terminal) {
-    @synchronized (session) {
-      session.terminal = terminal;
-      if (result != 0 || terminal == NULL) {
-        session.exitCode = result;
-        session.hasExitCode = YES;
-        session.closed = YES;
+    linux_start_session("/bin/sh", argv, environment, ^(int result, int pid, nsobj_t terminal) {
+      @synchronized (session) {
+        session.terminal = terminal;
+        if (result != 0 || terminal == NULL) {
+          session.exitCode = result;
+          session.hasExitCode = YES;
+          session.closed = YES;
+        }
       }
-    }
-    dispatch_semaphore_signal(session.startSignal);
+      dispatch_semaphore_signal(session.startSignal);
+    });
   });
   long waitResult = dispatch_semaphore_wait(session.startSignal,
                                              dispatch_time(DISPATCH_TIME_NOW,
@@ -321,10 +352,6 @@ static ORTIshTerminalSession *ORTIshStartSession(NSString *sessionName, NSString
     }
   }
   if (!ORTIshResize(session, rows, cols, errorOut)) {
-    return nil;
-  }
-  NSString *directoryCommand = [NSString stringWithFormat:@"cd -- \"$OPERIT_WORKING_DIR\"\n"];
-  if (!ORTIshWrite(session, [directoryCommand dataUsingEncoding:NSUTF8StringEncoding], errorOut)) {
     return nil;
   }
   [ORTIshStateLock lock];
@@ -352,7 +379,7 @@ static NSDictionary *ORTIshSessionEntry(ORTIshTerminalSession *session) {
 static NSDictionary *ORTIshExecute(ORTIshTerminalSession *session, NSString *command,
                                    uint64_t timeoutMs, NSString **errorOut) {
   NSString *marker = [NSString stringWithFormat:@"__OPERIT_ISH_%@__", NSUUID.UUID.UUIDString];
-  NSString *wrapped = [NSString stringWithFormat:@"%@\nprintf '\036%@:%%s\037' \"$?\"\n", command, marker];
+  NSString *wrapped = [NSString stringWithFormat:@"%@\nprintf '\\036%@:%%s\\037' \"$?\"\n", command, marker];
   @synchronized (session) {
     if (session.commandRunning) {
       *errorOut = @"iSH terminal already has a command in progress";
@@ -368,40 +395,39 @@ static NSDictionary *ORTIshExecute(ORTIshTerminalSession *session, NSString *com
     return nil;
   }
   NSMutableData *output = [NSMutableData data];
-  NSData *markerData = [marker dataUsingEncoding:NSUTF8StringEncoding];
+  // Match the emitted control delimiter, never the terminal's echoed command.
+  NSData *markerData = [[NSString stringWithFormat:@"\036%@:", marker] dataUsingEncoding:NSUTF8StringEncoding];
   NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:(NSTimeInterval)timeoutMs / 1000.0];
   for (;;) {
     [output appendData:ORTIshDrainOutput(session)];
     NSRange markerRange = [output rangeOfData:markerData options:0 range:NSMakeRange(0, output.length)];
     if (markerRange.location != NSNotFound) {
-      NSUInteger statusStart = markerRange.location + markerRange.length + 1;
+      NSUInteger statusStart = markerRange.location + markerRange.length;
       const uint8_t *bytes = static_cast<const uint8_t *>(output.bytes);
       NSUInteger statusEnd = statusStart;
       while (statusEnd < output.length && bytes[statusEnd] != '\037') {
         statusEnd++;
       }
-      if (statusEnd == output.length) {
-        [NSThread sleepForTimeInterval:0.01];
-        continue;
+      if (statusEnd < output.length) {
+        NSData *statusData = [output subdataWithRange:NSMakeRange(statusStart, statusEnd - statusStart)];
+        NSString *statusText = ORTIshText(statusData, errorOut);
+        NSInteger exitCode = statusText.integerValue;
+        NSData *visibleData = [output subdataWithRange:NSMakeRange(0, markerRange.location)];
+        NSString *visibleOutput = ORTIshText(visibleData, errorOut);
+        @synchronized (session) {
+          session.commandRunning = NO;
+        }
+        if (visibleOutput == nil || statusText == nil) {
+          return nil;
+        }
+        return @{
+          @"sessionId" : session.sessionId,
+          @"terminalType" : @"shell",
+          @"output" : visibleOutput,
+          @"exitCode" : @(exitCode),
+          @"timedOut" : @NO,
+        };
       }
-      NSData *statusData = [output subdataWithRange:NSMakeRange(statusStart, statusEnd - statusStart)];
-      NSString *statusText = ORTIshText(statusData, errorOut);
-      NSInteger exitCode = statusText.integerValue;
-      NSData *visibleData = [output subdataWithRange:NSMakeRange(0, markerRange.location)];
-      NSString *visibleOutput = ORTIshText(visibleData, errorOut);
-      @synchronized (session) {
-        session.commandRunning = NO;
-      }
-      if (visibleOutput == nil || statusText == nil) {
-        return nil;
-      }
-      return @{
-        @"sessionId" : session.sessionId,
-        @"terminalType" : @"shell",
-        @"output" : visibleOutput,
-        @"exitCode" : @(exitCode),
-        @"timedOut" : @NO,
-      };
     }
     if ([deadline timeIntervalSinceNow] <= 0) {
       NSString *interrupt = @"\003";
@@ -514,7 +540,7 @@ static NSDictionary *ORTIshHandleCommand(NSString *command, NSDictionary *reques
     ORTIshTerminalSession *existing = ORTIshSessions[existingId];
     [ORTIshStateLock unlock];
     if (existing != nil) return ORTIshResult(@{ @"sessionId" : existing.sessionId, @"sessionName" : sessionName, @"terminalType" : @"shell", @"isNewSession" : @NO });
-    ORTIshTerminalSession *session = ORTIshStartSession(sessionName, @"/", 24, 80, &error);
+    ORTIshTerminalSession *session = ORTIshStartSession(sessionName, @"/root", 24, 80, &error);
     return session == nil ? ORTIshError(error) : ORTIshResult(@{ @"sessionId" : session.sessionId, @"sessionName" : sessionName, @"terminalType" : @"shell", @"isNewSession" : @YES });
   }
   if ([command isEqualToString:@"terminalExecute"]) {
@@ -567,6 +593,9 @@ extern "C" void objc_put(nsobj_t object) {
 /// Creates the session object attached to a newly allocated iSH PTY.
 extern "C" nsobj_t Terminal_terminalWithType_number(int type, int number) {
   ORTIshInitializeState();
+  // Linux console devices (major 4) also invoke this callback during boot.
+  // Only a Unix98 PTY slave belongs to the session currently being created.
+  if (type < 136 || type > 143) return NULL;
   if (ORTIshPendingSession == nil) return NULL;
   return objc_get((__bridge nsobj_t)ORTIshPendingSession);
 }
@@ -602,7 +631,9 @@ extern "C" int Terminal_sendOutput_length(nsobj_t object, const char *data, int 
 extern "C" int Terminal_roomForOutput(nsobj_t object) {
   ORTIshTerminalSession *session = (__bridge ORTIshTerminalSession *)object;
   @synchronized (session) {
-    return (int)(ORTIshOutputCapacity - session.pendingOutput.length);
+    // LinuxPTY.c allocates one 4096-byte Linux page for each read, then uses
+    // this callback's result as the read length.
+    return (int)MIN((NSUInteger)4096, ORTIshOutputCapacity - session.pendingOutput.length);
   }
 }
 

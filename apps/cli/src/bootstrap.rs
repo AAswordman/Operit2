@@ -84,6 +84,7 @@ pub(crate) fn create_cli_host_manager() -> HostManager {
     )
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(NativeHttpHost::new()))
+    .withSerialPortHost(Arc::new(operit_host_native_common::NativeSerialPortHost))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost);
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]

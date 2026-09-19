@@ -51,17 +51,21 @@ Future<WorkspacePtyProcess> startWorkspacePty({
 }
 
 /// Attaches to an existing workspace PTY session.
-WorkspacePtyProcess attachWorkspacePty(String sessionId) {
-  final terminal = const GeneratedCoreProxyClients(
+WorkspacePtyProcess attachWorkspacePty(
+  String sessionId, {
+  GeneratedCoreProxyClients clients = const GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(),
-  ).servicesRuntimeTerminalService;
+  ),
+}) {
+  final terminal = clients.servicesRuntimeTerminalService;
   return _BridgeWorkspacePtyProcess(terminal, sessionId);
 }
 
 class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   /// Creates a process wrapper around a runtime terminal service session.
   _BridgeWorkspacePtyProcess(this._terminal, this._sessionId) {
-    _outputSubscription = _terminal.terminalPtyOutput(sessionId: _sessionId)
+    _outputSubscription = _terminal
+        .terminalPtyOutput(sessionId: _sessionId)
         .listen(
           _handleEvent,
           onError: _handleOutputError,
@@ -99,10 +103,15 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       return;
     }
     unawaited(
-      _terminal.writeTerminalPty(
-        sessionId: _sessionId,
-        dataBase64: base64Encode(data),
-      ),
+      _terminal
+          .writeTerminalPty(
+            sessionId: _sessionId,
+            dataBase64: base64Encode(data),
+          )
+          .catchError((Object error, StackTrace stackTrace) {
+            _handleOutputError(error, stackTrace);
+            return 0;
+          }),
     );
   }
 
@@ -129,11 +138,11 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       return;
     }
     unawaited(
-      _terminal.resizeTerminalPty(
-        sessionId: _sessionId,
-        rows: rows,
-        cols: columns,
-      ),
+      _terminal
+          .resizeTerminalPty(sessionId: _sessionId, rows: rows, cols: columns)
+          .catchError((Object error, StackTrace stackTrace) {
+            _handleOutputError(error, stackTrace);
+          }),
     );
   }
 
@@ -198,9 +207,10 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     }
     _finishingExit = true;
     _closed = true;
-    _outputSubscription = null;
     _resizeTimer?.cancel();
     try {
+      await _outputSubscription?.cancel();
+      _outputSubscription = null;
       final code = await _terminal.pollTerminalPtyExit(sessionId: _sessionId);
       await _terminal.closeTerminalPty(sessionId: _sessionId);
       await _output.close();
@@ -212,7 +222,7 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
         await _output.close();
       }
       if (!_exitCode.isCompleted) {
-        _exitCode.completeError(error, stackTrace);
+        _exitCode.complete(-1);
       }
     }
   }

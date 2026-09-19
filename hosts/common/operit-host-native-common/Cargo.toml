@@ -12,6 +12,7 @@ http = ["dep:operit-host-native-http"]
 scheduler = ["dep:operit-host-native-scheduler"]
 storage = ["dep:operit-host-native-storage"]
 terminal = ["dep:operit-host-native-terminal"]
+serial = ["dep:async-trait", "dep:tokio", "dep:tokio-serial"]
 
 [dependencies]
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
@@ -20,3 +21,8 @@ operit-host-native-http = { path = "../operit-host-native-http", optional = true
 operit-host-native-scheduler = { path = "../operit-host-native-scheduler", optional = true }
 operit-host-native-storage = { path = "../operit-host-native-storage", optional = true }
 operit-host-native-terminal = { path = "../operit-host-native-terminal", optional = true }
+
+[target.'cfg(not(any(target_os = "ios", target_os = "espidf", target_arch = "wasm32")))'.dependencies]
+async-trait = { version = "0.1", optional = true }
+tokio = { version = "1", features = ["io-util", "macros", "rt", "net", "sync"], optional = true }
+tokio-serial = { version = "5", optional = true }

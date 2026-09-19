@@ -12,6 +12,8 @@ use operit_host_api::RuntimeStorageHost;
 
 pub mod bridge;
 mod managed_runtime;
+mod serial;
+pub use serial::IosSerialPortHost;
 pub mod terminal;
 
 pub use managed_runtime::IosManagedRuntimeHost;
@@ -30,7 +32,9 @@ pub use operit_host_apple_native::{
 };
 pub use terminal::IosTerminalHost;
 
-pub use operit_host_apple_native::ApplePluginSdkIpcHost as IosPluginSdkIpcHost;
+// iOS plugins execute within the application sandbox and share its process.
+// A filesystem socket under the container's long temporary path exceeds SUN_LEN.
+pub use operit_host_native_plugin_sdk_ipc::MemoryPluginSdkIpcHost as IosPluginSdkIpcHost;
 
 /// Creates the iOS-owned runtime host manager for explicit storage roots.
 #[cfg(target_os = "ios")]
@@ -59,6 +63,7 @@ pub fn createRuntimeHostManager(
         Arc::new(IosSystemOperationHost::new()),
     );
     hostManager.httpHost = Some(Arc::new(IosHttpHost::new()));
+    hostManager.serialPortHost = Some(Arc::new(IosSerialPortHost));
     hostManager.webSocketHost = Some(Arc::new(IosHttpHost::new()));
     hostManager.managedRuntimeHost = Some(managedRuntimeHost);
     hostManager.runtimeStorageHost = Some(runtimeStorageHost);

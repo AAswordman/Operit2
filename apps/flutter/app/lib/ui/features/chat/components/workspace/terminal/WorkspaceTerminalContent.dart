@@ -10,6 +10,7 @@ import 'package:xterm/xterm.dart';
 import '../../../../../theme/OperitGlassSurface.dart';
 import '../../../../../theme/OperitTheme.dart';
 import 'WorkspacePtyProcess.dart';
+import 'TerminalPinchZoom.dart';
 
 class WorkspaceTerminalContent extends StatefulWidget {
   const WorkspaceTerminalContent({
@@ -32,6 +33,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
   late final Terminal _terminal;
   late final TerminalController _controller;
   late final FocusNode _focusNode;
+  final ScrollController _scrollController = ScrollController();
   StreamSubscription<String>? _outputSubscription;
   WorkspacePtyProcess? _pty;
   Object? _startupError;
@@ -85,6 +87,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
     _pty?.kill();
     _pendingTerminalOutput.clear();
     _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -169,19 +172,33 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
                 removeTop: true,
                 removeRight: true,
                 removeBottom: true,
-                child: TerminalView(
-                  _terminal,
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  autofocus: true,
-                  padding: const EdgeInsets.all(8),
-                  theme: _workspaceTerminalTheme,
-                  backgroundOpacity: 0,
-                  textStyle: _terminalStyleFromTheme(
-                    Theme.of(context).textTheme.bodySmall!,
+                child: Scrollbar(
+                  controller: _scrollController,
+                  thumbVisibility: true,
+                  child: TerminalPinchZoom(
+                    builder: (context, scale) => TerminalView(
+                      _terminal,
+                      scrollController: _scrollController,
+                      controller: _controller,
+                      focusNode: _focusNode,
+                      autofocus: true,
+                      padding: const EdgeInsets.all(8),
+                      theme: _workspaceTerminalTheme,
+                      backgroundOpacity: 0,
+                      textStyle: _terminalStyleFromTheme(
+                        Theme.of(context).textTheme.bodySmall!.copyWith(
+                          fontSize:
+                              (Theme.of(
+                                    context,
+                                  ).textTheme.bodySmall!.fontSize ??
+                                  12) *
+                              scale,
+                        ),
+                      ),
+                      onSecondaryTapDown: (details, offset) =>
+                          _copyOrPasteSelection(),
+                    ),
                   ),
-                  onSecondaryTapDown: (details, offset) =>
-                      _copyOrPasteSelection(),
                 ),
               ),
             ),
@@ -224,7 +241,14 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
       _outputSubscription = pty.output
           .cast<List<int>>()
           .transform(const convert.Utf8Decoder())
-          .listen(_queueTerminalWrite);
+          .listen(
+            _queueTerminalWrite,
+            onError: (Object error, StackTrace stackTrace) {
+              if (!mounted) return;
+              _queueTerminalWrite('\r\n[终端连接已结束：$error]\r\n');
+              _exited = true;
+            },
+          );
       unawaited(
         pty.exitCode.then(
           (code) {
@@ -339,7 +363,6 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
       _altLatched = false;
     });
   }
-
 }
 
 class _LatchedTerminalInputHandler implements TerminalInputHandler {
@@ -407,21 +430,13 @@ class _TerminalShortcutBar extends StatelessWidget {
                 ),
                 _TerminalShortcutButton(
                   label: '/',
-                  onPressed: () => onText(
-                    '/',
-                    modifiedKey: TerminalKey.slash,
-                  ),
+                  onPressed: () => onText('/', modifiedKey: TerminalKey.slash),
                 ),
                 _TerminalShortcutButton(
                   label: '―',
-                  onPressed: () => onText(
-                    '-',
-                    modifiedKey: TerminalKey.minus,
-                  ),
-                  onSwipeUp: () => onText(
-                    '|',
-                    modifiedKey: TerminalKey.backslash,
-                  ),
+                  onPressed: () => onText('-', modifiedKey: TerminalKey.minus),
+                  onSwipeUp: () =>
+                      onText('|', modifiedKey: TerminalKey.backslash),
                   popupLabel: '|',
                 ),
                 _TerminalShortcutButton(
@@ -514,7 +529,8 @@ class _TerminalShortcutButton extends StatefulWidget {
   final String? popupLabel;
 
   @override
-  State<_TerminalShortcutButton> createState() => _TerminalShortcutButtonState();
+  State<_TerminalShortcutButton> createState() =>
+      _TerminalShortcutButtonState();
 }
 
 class _TerminalShortcutButtonState extends State<_TerminalShortcutButton> {

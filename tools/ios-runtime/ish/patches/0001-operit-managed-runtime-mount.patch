@@ -75,7 +75,7 @@ diff --git a/app/LinuxInterop.c b/app/LinuxInterop.c
 +        goto out_unlock;
 +    }
 +
-+    result = do_mount(directory, mount_point, "hostfs", MS_SILENT, NULL);
++    result = do_mount(directory, mount_point, "hostfs", MS_SILENT, (void *) directory);
 +    if (result != 0) {
 +        kfree(mount->host_directory);
 +        kfree(mount->mount_point);

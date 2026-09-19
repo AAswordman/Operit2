@@ -7,23 +7,25 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		011C84738C7022D3E34452AA /* libPods-Runner.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 16312C53B2BD4BB3A1EA8E0A /* libPods-Runner.a */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		3D2A10012D000001003D2A10 /* AppleRuntimeChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10002D000001003D2A10 /* AppleRuntimeChannel.swift */; };
-		3D2A10112D000001003D2A10 /* AppleSnapshotImportInputChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */; };
 		3D2A10032D000001003D2A10 /* AppleLocalInferenceRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */; };
 		3D2A10052D000001003D2A10 /* AppleLocalInferenceBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */; };
 		3D2A10072D000001003D2A10 /* sherpa-onnx.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D2A10082D000001003D2A10 /* sherpa-onnx.xcframework */; };
 		3D2A10092D000001003D2A10 /* onnxruntime.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D2A100A2D000001003D2A10 /* onnxruntime.xcframework */; };
 		3D2A100B2D000001003D2A10 /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D2A100C2D000001003D2A10 /* Accelerate.framework */; };
 		3D2A100D2D000001003D2A10 /* CoreML.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D2A100E2D000001003D2A10 /* CoreML.framework */; };
-		3D2A10242D000001003D2A10 /* IshTerminalBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */; };
+		3D2A10112D000001003D2A10 /* AppleSnapshotImportInputChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */; };
 		3D2A10222D000001003D2A10 /* ish-root.tar.gz in Resources */ = {isa = PBXBuildFile; fileRef = 3D2A10232D000001003D2A10 /* ish-root.tar.gz */; };
+		3D2A10242D000001003D2A10 /* IshTerminalBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		B929A9638BD89384052DB091 /* libPods-RunnerTests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A07DC44627EE4D7E3B20E2D1 /* libPods-RunnerTests.a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -52,23 +54,27 @@
 /* Begin PBXFileReference section */
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
+		16312C53B2BD4BB3A1EA8E0A /* libPods-Runner.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Runner.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		3D2A10002D000001003D2A10 /* AppleRuntimeChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleRuntimeChannel.swift; sourceTree = "<group>"; };
-		3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSnapshotImportInputChannel.swift; sourceTree = "<group>"; };
 		3D2A10022D000001003D2A10 /* OperitFlutterBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OperitFlutterBridge.h; sourceTree = "<group>"; };
 		3D2A10042D000001003D2A10 /* AppleLocalInferenceRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleLocalInferenceRunner.swift; sourceTree = "<group>"; };
 		3D2A10062D000001003D2A10 /* AppleLocalInferenceBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = AppleLocalInferenceBridge.mm; sourceTree = "<group>"; };
 		3D2A10082D000001003D2A10 /* sherpa-onnx.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "sherpa-onnx.xcframework"; path = "../apple/Frameworks/sherpa-onnx.xcframework"; sourceTree = SOURCE_ROOT; };
-		3D2A100A2D000001003D2A10 /* onnxruntime.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "onnxruntime.xcframework"; path = "../apple/Frameworks/onnxruntime.xcframework"; sourceTree = SOURCE_ROOT; };
+		3D2A100A2D000001003D2A10 /* onnxruntime.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = onnxruntime.xcframework; path = ../apple/Frameworks/onnxruntime.xcframework; sourceTree = SOURCE_ROOT; };
 		3D2A100C2D000001003D2A10 /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
 		3D2A100E2D000001003D2A10 /* CoreML.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreML.framework; path = System/Library/Frameworks/CoreML.framework; sourceTree = SDKROOT; };
-		3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = IshTerminalBridge.mm; sourceTree = "<group>"; };
+		3D2A10122D000001003D2A10 /* AppleSnapshotImportInputChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSnapshotImportInputChannel.swift; sourceTree = "<group>"; };
 		3D2A10232D000001003D2A10 /* ish-root.tar.gz */ = {isa = PBXFileReference; lastKnownFileType = archive.gzip; path = "ish-root.tar.gz"; sourceTree = "<group>"; };
+		3D2A10252D000001003D2A10 /* IshTerminalBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = IshTerminalBridge.mm; sourceTree = "<group>"; };
+		486A237437459C2D103095E9 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		5F9B2BEE378B4DD969717B88 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
+		948BA28EC416D60DDDFCF454 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
 		9740EEB31CF90195004384FC /* Generated.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Generated.xcconfig; path = Flutter/Generated.xcconfig; sourceTree = "<group>"; };
 		97C146EE1CF9000F007C117D /* Runner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Runner.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -76,9 +82,21 @@
 		97C146FD1CF9000F007C117D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A07DC44627EE4D7E3B20E2D1 /* libPods-RunnerTests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-RunnerTests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A6E122676BCA4AF7F2274AEF /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
+		DBAC330E18F36551D0183C22 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
+		F77821429C5D32CE647D4612 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		55D227A2013AC6828E4FBFC8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B929A9638BD89384052DB091 /* libPods-RunnerTests.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		97C146EB1CF9000F007C117D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -87,6 +105,7 @@
 				3D2A10092D000001003D2A10 /* onnxruntime.xcframework in Frameworks */,
 				3D2A100B2D000001003D2A10 /* Accelerate.framework in Frameworks */,
 				3D2A100D2D000001003D2A10 /* CoreML.framework in Frameworks */,
+				011C84738C7022D3E34452AA /* libPods-Runner.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -99,6 +118,19 @@
 				331C807B294A618700263BE5 /* RunnerTests.swift */,
 			);
 			path = RunnerTests;
+			sourceTree = "<group>";
+		};
+		3D2A100F2D000001003D2A10 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3D2A10082D000001003D2A10 /* sherpa-onnx.xcframework */,
+				3D2A100A2D000001003D2A10 /* onnxruntime.xcframework */,
+				3D2A100C2D000001003D2A10 /* Accelerate.framework */,
+				3D2A100E2D000001003D2A10 /* CoreML.framework */,
+				16312C53B2BD4BB3A1EA8E0A /* libPods-Runner.a */,
+				A07DC44627EE4D7E3B20E2D1 /* libPods-RunnerTests.a */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		9740EEB11CF90186004384FC /* Flutter */ = {
@@ -120,18 +152,8 @@
 				3D2A100F2D000001003D2A10 /* Frameworks */,
 				97C146EF1CF9000F007C117D /* Products */,
 				331C8082294A63A400263BE5 /* RunnerTests */,
+				BC26F8CCAE3E50708559ACAE /* Pods */,
 			);
-			sourceTree = "<group>";
-		};
-		3D2A100F2D000001003D2A10 /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				3D2A10082D000001003D2A10 /* sherpa-onnx.xcframework */,
-				3D2A100A2D000001003D2A10 /* onnxruntime.xcframework */,
-				3D2A100C2D000001003D2A10 /* Accelerate.framework */,
-				3D2A100E2D000001003D2A10 /* CoreML.framework */,
-			);
-			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		97C146EF1CF9000F007C117D /* Products */ = {
@@ -165,6 +187,20 @@
 			path = Runner;
 			sourceTree = "<group>";
 		};
+		BC26F8CCAE3E50708559ACAE /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				948BA28EC416D60DDDFCF454 /* Pods-Runner.debug.xcconfig */,
+				A6E122676BCA4AF7F2274AEF /* Pods-Runner.release.xcconfig */,
+				486A237437459C2D103095E9 /* Pods-Runner.profile.xcconfig */,
+				DBAC330E18F36551D0183C22 /* Pods-RunnerTests.debug.xcconfig */,
+				F77821429C5D32CE647D4612 /* Pods-RunnerTests.release.xcconfig */,
+				5F9B2BEE378B4DD969717B88 /* Pods-RunnerTests.profile.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -172,8 +208,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 331C8087294A63A400263BE5 /* Build configuration list for PBXNativeTarget "RunnerTests" */;
 			buildPhases = (
+				1D848F6892F8883255893BBE /* [CP] Check Pods Manifest.lock */,
 				331C807D294A63A400263BE5 /* Sources */,
 				331C807F294A63A400263BE5 /* Resources */,
+				55D227A2013AC6828E4FBFC8 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -189,6 +227,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 97C147051CF9000F007C117D /* Build configuration list for PBXNativeTarget "Runner" */;
 			buildPhases = (
+				8A724711998FD84873F7F57D /* [CP] Check Pods Manifest.lock */,
 				3D2A10102D000002003D2A10 /* Build Rust Bridge */,
 				3D2A10212D000001003D2A10 /* Build iSH Runtime */,
 				9740EEB61CF901F6004384FC /* Run Script */,
@@ -197,6 +236,7 @@
 				97C146EC1CF9000F007C117D /* Resources */,
 				9705A1C41CF9048500538489 /* Embed Frameworks */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
+				878BE72E0401C0C02F1B9DE5 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -269,6 +309,64 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		1D848F6892F8883255893BBE /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-RunnerTests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		3B06AD1E1E4923F5004D2608 /* Thin Binary */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}",
+			);
+			name = "Thin Binary";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" embed_and_thin";
+		};
+		3D2A10102D000002003D2A10 /* Build Rust Bridge */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Bridge";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(PROJECT_DIR)/Flutter/ephemeral/rust/$(PLATFORM_NAME)/$(CURRENT_ARCH)/liboperit_flutter_bridge.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$PROJECT_DIR/build_rust_bridge.sh\"\n";
+		};
 		3D2A10212D000001003D2A10 /* Build iSH Runtime */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -297,41 +395,44 @@
 			shellPath = /bin/sh;
 			shellScript = "OPERIT_REPO_ROOT=\"$PROJECT_DIR/../../../..\"\n/bin/bash \"$OPERIT_REPO_ROOT/tools/ios-runtime/ish/build_ish_ios.sh\" \"$CONFIGURATION\" \"$SDK_NAME\" \"$PLATFORM_NAME\" \"$ARCHS\"\n";
 		};
-		3D2A10102D000002003D2A10 /* Build Rust Bridge */ = {
+		878BE72E0401C0C02F1B9DE5 /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		8A724711998FD84873F7F57D /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
 			);
-			name = "Build Rust Bridge";
+			name = "[CP] Check Pods Manifest.lock";
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(PROJECT_DIR)/Flutter/ephemeral/rust/$(PLATFORM_NAME)/$(CURRENT_ARCH)/liboperit_flutter_bridge.a",
+				"$(DERIVED_FILE_DIR)/Pods-Runner-checkManifestLockResult.txt",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$PROJECT_DIR/build_rust_bridge.sh\"\n";
-		};
-		3B06AD1E1E4923F5004D2608 /* Thin Binary */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-				"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}",
-			);
-			name = "Thin Binary";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" embed_and_thin";
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
 		};
 		9740EEB61CF901F6004384FC /* Run Script */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -464,12 +565,12 @@
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
-				INFOPLIST_FILE = Runner/Info.plist;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/sources/ish",
 					"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/sources/ish/app",
 				);
+				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -504,6 +605,7 @@
 		};
 		331C8088294A63A400263BE5 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = DBAC330E18F36551D0183C22 /* Pods-RunnerTests.debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -521,6 +623,7 @@
 		};
 		331C8089294A63A400263BE5 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F77821429C5D32CE647D4612 /* Pods-RunnerTests.release.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -536,6 +639,7 @@
 		};
 		331C808A294A63A400263BE5 /* Profile */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5F9B2BEE378B4DD969717B88 /* Pods-RunnerTests.profile.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -669,12 +773,12 @@
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
-				INFOPLIST_FILE = Runner/Info.plist;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/sources/ish",
 					"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/sources/ish/app",
 				);
+				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -717,12 +821,12 @@
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_BITCODE = NO;
-				INFOPLIST_FILE = Runner/Info.plist;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/sources/ish",
 					"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/sources/ish/app",
 				);
+				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

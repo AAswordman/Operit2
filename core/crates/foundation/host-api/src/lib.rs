@@ -3,6 +3,8 @@
 pub mod HostManager;
 pub mod PluginSdkIpc;
 pub mod TimeUtils;
+pub mod SerialPort;
+pub use SerialPort::{SerialPortConnection, SerialPortHost};
 
 pub use PluginSdkIpc::{
     pluginSdkIpcError, PluginSdkIpcEndpoint, PluginSdkIpcHost, PluginSdkIpcSessionCallbacks,

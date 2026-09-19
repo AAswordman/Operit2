@@ -20,6 +20,9 @@ through trait objects and data models.
   aggregate progress events, native target paths, and cancellation controls.
 - Keep platform code outside `operit-runtime` by routing host capabilities
   through explicit Rust traits.
+- Define `SerialPortHost` and `SerialPortConnection` for opening platform
+  serial devices/accessories and exchanging ordered bytes. Link framing and
+  pairing remain in Core; device access and capability errors belong to Hosts.
 
 ## Key Files
 
@@ -31,6 +34,8 @@ through trait objects and data models.
   admission.
 - `src/TimeUtils.rs`: cross-target millisecond clock helpers for native and
   WebAssembly builds.
+- `src/SerialPort.rs`: asynchronous serial byte-stream contract, including
+  cancellation and connection shutdown semantics.
 
 ## Capability Model
 
