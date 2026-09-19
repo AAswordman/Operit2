@@ -6,6 +6,11 @@ crate_dir="$repo_root/apps/flutter/native/operit-flutter-bridge"
 out_dir="$PROJECT_DIR/Flutter/ephemeral/rust/$PLATFORM_NAME"
 lib_name="liboperit_flutter_bridge.a"
 
+# Core embeds plugin assets at compile time. Prepare both built-in and optional
+# official packages before Cargo runs, including on the first clean build.
+"$repo_root/.venv/bin/python" "$repo_root/plugins/tools/sync_plugin_packages.py" \
+  --source runtime --no-hot-reload
+
 for arch in $ARCHS; do
   case "$PLATFORM_NAME:$arch" in
     iphoneos:arm64)
