@@ -161,8 +161,14 @@ class CoreLinkError implements Exception {
     if (location != null) {
       buffer.write('\nRust error location: $location');
     }
-    final backtrace = this.backtrace;
-    if (backtrace != null && backtrace.isNotEmpty) {
+    return buffer.toString();
+  }
+
+  /// Returns the complete diagnostic payload without flooding user-facing error labels.
+  String toDiagnosticString() {
+    final buffer = StringBuffer(toString());
+    if (details != null) buffer.write('\nDetails: $details');
+    if (backtrace != null && backtrace!.isNotEmpty) {
       buffer.write('\nRust backtrace:\n$backtrace');
     }
     return buffer.toString();

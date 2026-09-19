@@ -53,6 +53,8 @@ import {
   applyNodeChanges,
   type Node,
   type NodeProps,
+  type ReactFlowProps,
+  type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "./style.css";
@@ -116,7 +118,34 @@ function WorkflowCard({ data, selected }: NodeProps<GraphNode>) {
     </div>
   );
 }
-const nodeTypes = { workflow: WorkflowCard };
+const nodeTypes = {
+  workflow: React.memo(
+    WorkflowCard,
+    (previous, next) =>
+      previous.data === next.data && previous.selected === next.selected,
+  ),
+};
+const fitOptions = { maxZoom: 1, padding: 0.2 };
+const flowOptions = { hideAttribution: true };
+
+/** Keeps pointer-frequency node updates inside the canvas instead of the application shell. */
+function WorkflowCanvas({
+  nodes: incomingNodes,
+  ...props
+}: ReactFlowProps<GraphNode> & { nodes: GraphNode[] }) {
+  const [nodes, setNodes] = useState(incomingNodes);
+  const [source, setSource] = useState(incomingNodes);
+  // Synchronize committed edits during render so an effect cannot overwrite an ongoing gesture.
+  if (source !== incomingNodes) {
+    setSource(incomingNodes);
+    setNodes(incomingNodes);
+  }
+  /** Applies positions, selection and measured dimensions only within this canvas. */
+  const changeNodes = React.useCallback((changes: NodeChange<GraphNode>[]) => {
+    setNodes((current) => applyNodeChanges(changes, current));
+  }, []);
+  return <ReactFlow {...props} nodes={nodes} onNodesChange={changeNodes} />;
+}
 const nodeIcons: Record<WorkflowNode["type"], React.ReactNode> = {
   trigger: <BoltOutlinedIcon />,
   execute: <BuildOutlinedIcon />,
@@ -724,15 +753,18 @@ function App() {
     );
     setNodePicker(false);
   }
-  const edges =
-    workflow?.connections.map((edge) => ({
-      id: edge.id,
-      source: edge.sourceNodeId,
-      target: edge.targetNodeId,
-      label: edge.condition === null ? "" : edge.condition,
-      type: "smoothstep",
-      animated: busy,
-    })) ?? [];
+  const edges = React.useMemo(
+    () =>
+      workflow?.connections.map((edge) => ({
+        id: edge.id,
+        source: edge.sourceNodeId,
+        target: edge.targetNodeId,
+        label: edge.condition === null ? "" : edge.condition,
+        type: "smoothstep",
+        animated: busy,
+      })) ?? [],
+    [workflow?.connections, busy],
+  );
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -984,23 +1016,20 @@ function App() {
               </Stack>
             )}
             <Box className="canvas">
-              <ReactFlow
+              <WorkflowCanvas
                 key={workflow.id}
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
                 colorMode={dark ? "dark" : "light"}
                 fitView
-                fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
+                fitViewOptions={fitOptions}
                 minZoom={0.2}
                 maxZoom={1.6}
-                proOptions={{ hideAttribution: true }}
+                proOptions={flowOptions}
                 nodesDraggable={!busy}
                 nodesConnectable={!busy}
                 deleteKeyCode={null}
-                onNodesChange={(changes) =>
-                  setNodes((current) => applyNodeChanges(changes, current))
-                }
                 onNodeDragStop={(_, moved) =>
                   edit({
                     ...workflow,
@@ -1049,10 +1078,10 @@ function App() {
                 <Controls
                   showInteractive={false}
                   orientation={compact ? "horizontal" : "vertical"}
-                  fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
+                  fitViewOptions={fitOptions}
                 />
                 {!compact && <MiniMap pannable zoomable />}
-              </ReactFlow>
+              </WorkflowCanvas>
               {!workflow.nodes.length && (
                 <Box className="canvas-empty">
                   <Typography variant="h6">从触发节点开始</Typography>

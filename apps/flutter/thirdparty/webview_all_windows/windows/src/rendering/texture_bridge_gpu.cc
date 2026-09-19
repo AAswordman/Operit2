@@ -14,7 +14,8 @@ TextureBridgeGpu::TextureBridgeGpu(
       kFlutterDesktopPixelFormatNone; // no format required for DXGI surfaces
 }
 
-void TextureBridgeGpu::ProcessFrame(
+// Copies one new capture into the GPU surface shared with Flutter.
+bool TextureBridgeGpu::ProcessFrame(
     winrt::com_ptr<ID3D11Texture2D> src_texture) {
   D3D11_TEXTURE2D_DESC desc;
   src_texture->GetDesc(&desc);
@@ -23,11 +24,15 @@ void TextureBridgeGpu::ProcessFrame(
   const auto height = desc.Height;
 
   EnsureSurface(width, height);
+  if (!surface_) {
+    return false;
+  }
 
   auto device_context = graphics_context_->d3d_device_context();
 
   device_context->CopyResource(surface_.get(), src_texture.get());
   device_context->Flush();
+  return true;
 }
 
 void TextureBridgeGpu::EnsureSurface(uint32_t width, uint32_t height) {
@@ -71,6 +76,7 @@ void TextureBridgeGpu::EnsureSurface(uint32_t width, uint32_t height) {
   }
 }
 
+// Reuses the shared surface until capture delivers a new frame generation.
 const FlutterDesktopGpuSurfaceDescriptor *
 TextureBridgeGpu::GetSurfaceDescriptor(size_t width, size_t height) {
   const std::lock_guard<std::mutex> lock(mutex_);
@@ -79,14 +85,20 @@ TextureBridgeGpu::GetSurfaceDescriptor(size_t width, size_t height) {
     return nullptr;
   }
 
-  if (last_frame_) {
-    ProcessFrame(last_frame_);
+  if (last_frame_ &&
+      (!surface_ || copied_frame_generation_ != frame_generation_)) {
+    if (!ProcessFrame(last_frame_)) {
+      return nullptr;
+    }
+    copied_frame_generation_ = frame_generation_;
   }
 
-  if (surface_) {
-    // Gets released in the SurfaceDescriptor's release callback.
-    surface_->AddRef();
+  if (!surface_) {
+    return nullptr;
   }
+  // Every descriptor retrieval owns a reference, including cached frames.
+  // Gets released in the SurfaceDescriptor's release callback.
+  surface_->AddRef();
 
   return &surface_descriptor_;
 }

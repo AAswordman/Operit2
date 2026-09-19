@@ -76,6 +76,8 @@ test(
       assert.ok(bounds.width <= 230, "A single node must not be auto-enlarged");
       const callsBeforeDrag = (await dispatch({ action: "list" })).workflows[0]
         .revision;
+      const positionBeforeDrag = (await dispatch({ action: "list" }))
+        .workflows[0].nodes[0].position;
       await page.mouse.move(bounds.x + 90, bounds.y + 30);
       await page.mouse.down();
       await page.mouse.move(bounds.x + 180, bounds.y + 90, { steps: 8 });
@@ -89,6 +91,11 @@ test(
       await page
         .getByRole("button", { name: "保存并返回", exact: true })
         .click();
+      assert.notDeepEqual(
+        (await dispatch({ action: "list" })).workflows[0].nodes[0].position,
+        positionBeforeDrag,
+        "Canvas-local pointer state must be committed to the saved workflow",
+      );
       await page
         .getByRole("button", { name: "打开工作流", exact: true })
         .click();

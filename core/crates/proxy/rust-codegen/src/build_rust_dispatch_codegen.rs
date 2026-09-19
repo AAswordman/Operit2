@@ -319,6 +319,15 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             application.object_id, application.dispatch_name
         ));
     }
+    for object in objects
+        .iter()
+        .filter(|object| matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
+    {
+        output.push_str(&render_async_factory_watch(
+            object,
+            DispatchMode::WatchSnapshot,
+        ));
+    }
     output.push_str("    generated_dispatch_core_proxy_watch_snapshot(proxy, request)\n");
     output.push_str("}\n\n");
 
@@ -343,6 +352,12 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             "    if request.targetObjectId == {} {{\n        let mut application = proxy.application.lock().await;\n        return generated_dispatch_{}_watch_async(&mut application, request, proxy.streamAttachmentAdopter()).await;\n    }}\n",
             application.object_id, application.dispatch_name
         ));
+    }
+    for object in objects
+        .iter()
+        .filter(|object| matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
+    {
+        output.push_str(&render_async_factory_watch(object, DispatchMode::Watch));
     }
     output.push_str("    generated_dispatch_core_proxy_watch(proxy, request)\n");
     output.push_str("}\n\n");
@@ -531,6 +546,27 @@ fn render_string_constructible_dispatch(object: &SourceObject, mode: DispatchMod
     )
 }
 
+/// Resolves factory parents asynchronously before establishing a synchronous watch.
+fn render_async_factory_watch(object: &SourceObject, mode: DispatchMode) -> String {
+    let constructor = render_object_constructor(object, DispatchMode::Call);
+    let dispatch = render_constructed_dispatch(object, mode);
+    let body = match mode {
+        DispatchMode::WatchSnapshot => format!(
+            "        let propertyName = request.propertyName.clone();\n        let value = {{\n{dispatch}        }};\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n"
+        ),
+        DispatchMode::Watch => format!(
+            "        let attachmentAdopter = proxy.streamAttachmentAdopter();\n        return {{\n{dispatch}        }};\n"
+        ),
+        DispatchMode::Call => unreachable!("factory watch requires a watch dispatch mode"),
+    };
+    format!(
+        "{}    if request.targetObjectId == {} {{\n{constructor}{body}    }}\n",
+        render_object_item_cfg_attrs(object),
+        object.object_id
+    )
+}
+
+/// Renders a factory dispatch arm for the selected protocol operation.
 fn render_factory_constructible_dispatch(object: &SourceObject, mode: DispatchMode) -> String {
     if !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }) {
         return String::new();

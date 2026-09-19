@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import '../../../../core/link/CoreLinkProtocol.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -449,11 +450,14 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   }
 
   void _printComposeError(String phase, Object error, StackTrace stackTrace) {
+    final diagnostic = error is CoreLinkError
+        ? error.toDiagnosticString()
+        : error.toString();
     debugPrint(
       'ToolPkg compose_dsl $phase error: '
       'package=${widget.plugin.packageName}, '
       'route=$_selectedRouteId, '
-      'error=$error',
+      'error=$diagnostic',
     );
     debugPrintStack(stackTrace: stackTrace);
   }

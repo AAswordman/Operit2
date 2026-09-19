@@ -51,6 +51,13 @@ class AndroidRuntimeHost(context: Context) {
         }
     }
 
+    /** Returns whether Flutter has installed the roots required by the native Runtime. */
+    fun isStorageConfigured(): Boolean {
+        synchronized(runtimeLock) {
+            return configuredRuntimeRoot != null && configuredWorkspaceRoot != null
+        }
+    }
+
     /** Returns the active native runtime handle, creating it when required. */
     fun ensureRuntimeHandle(): Long {
         synchronized(runtimeLock) {

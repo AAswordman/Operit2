@@ -3,7 +3,7 @@
   "scripts": {
     "build:web": "node web/build.mjs",
     "pack:toolpkg": "tsc -p tsconfig.json && tsc -p web/tsconfig.json && npm run build:web && node web/pack.mjs",
-    "test:web": "node --test web/editor.test.mjs"
+    "test:web": "node --test web/editor.test.mjs web/performance.test.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

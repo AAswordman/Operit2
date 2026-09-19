@@ -22,8 +22,10 @@ private:
   Size surface_size_ = {0, 0};
   winrt::com_ptr<ID3D11Texture2D> surface_{nullptr};
   winrt::com_ptr<IDXGIResource> dxgi_surface_;
+  uint64_t copied_frame_generation_ = 0;
 
-  void ProcessFrame(winrt::com_ptr<ID3D11Texture2D> src_texture);
+  /// Copies a captured frame into the shared surface and reports success.
+  bool ProcessFrame(winrt::com_ptr<ID3D11Texture2D> src_texture);
   void EnsureSurface(uint32_t width, uint32_t height);
 };
 

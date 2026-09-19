@@ -228,19 +228,35 @@ impl CoreLinkSharedClient for LocalCoreProxy {
 
     #[allow(non_snake_case)]
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        let context = format!(
+            "watchSnapshot request={} object={} property={}",
+            request.requestId.0, request.targetObjectId, request.propertyName
+        );
         let (result, attachments) = operit_link::withCoreStreamCapture(
             generated_dispatch_core_proxy_watch_snapshot_async(self, request),
         )
         .await;
         self.adoptCoreStreamAttachments(attachments);
-        result
+        result.map_err(|mut error| {
+            error.message = format!("{} [{context}]", error.message);
+            error
+        })
     }
 
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {
             return self.openCoreStreamWatch(request);
         }
-        generated_dispatch_core_proxy_watch_async(self, request).await
+        let context = format!(
+            "watch request={} object={} property={}",
+            request.requestId.0, request.targetObjectId, request.propertyName
+        );
+        generated_dispatch_core_proxy_watch_async(self, request)
+            .await
+            .map_err(|mut error| {
+                error.message = format!("{} [{context}]", error.message);
+                error
+            })
     }
 }
 
@@ -381,6 +397,34 @@ mod tests {
         hostManager.hostRuntimeTaskSchedulerHost =
             Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
         let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(hostManager));
+        let package_manager_id =
+            LocalCoreProxy::generatedObjectIdForSchema("application.packageManager")
+                .expect("package manager must be generated");
+        let application_guard = proxy.application.lock().await;
+        let mut pending_watch = Box::pin(CoreLinkSharedClient::watch(
+            &proxy,
+            CoreWatchRequest::new(
+                "contended-package-watch",
+                package_manager_id,
+                "__test_missing_property",
+                CoreValue::Map(BTreeMap::new()),
+            ),
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending_watch)
+                .await
+                .is_err(),
+            "an async factory watch must wait instead of returning Application is busy"
+        );
+        drop(application_guard);
+        let watch_result = tokio::time::timeout(std::time::Duration::from_secs(2), pending_watch)
+            .await
+            .expect("watch must resume after the parent lock is released");
+        let error = match watch_result {
+            Err(error) => error,
+            Ok(_) => panic!("unknown property must fail after resolving the factory"),
+        };
+        assert_eq!(error.code, "WATCH_NOT_FOUND");
         let streamId = "generated-dispatch-core-stream".to_string();
         let source = CoreStreamSource::new(|request| {
             let (sender, receiver) = operit_rslink_runtime::core_event_stream_channel();

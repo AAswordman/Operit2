@@ -10,6 +10,26 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 
 /// Verifies Dart preserves MessagePack bin values as Uint8List.
 void main() {
+  test(
+    'error labels stay concise while diagnostics retain the full native trace',
+    () {
+      final trace = List.generate(
+        100,
+        (index) => '$index: <unknown>',
+      ).join('\n');
+      final error = CoreLinkError(
+        code: 'INTERNAL_ERROR',
+        message: 'watch request=42 object=4 property=progress',
+        backtrace: trace,
+      );
+      expect(
+        error.toString(),
+        'INTERNAL_ERROR: watch request=42 object=4 property=progress',
+      );
+      expect(error.toDiagnosticString(), contains(trace));
+      expect(error.backtrace, trace);
+    },
+  );
   test('native bytes use MessagePack bin', () {
     final encoded = encodeCoreLink(Uint8List.fromList(<int>[1, 2, 3, 4]));
 

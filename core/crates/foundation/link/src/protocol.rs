@@ -907,7 +907,8 @@ impl CoreLinkError {
                 line: caller.line(),
                 column: caller.column(),
             }),
-            backtrace: Some(backtrace.to_string()),
+            // Full formatting retains instruction addresses even without debug symbols.
+            backtrace: Some(format!("{backtrace:#}")),
         }
     }
 }

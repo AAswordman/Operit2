@@ -137,6 +137,9 @@ void TextureBridge::OnFrameArrived() {
       if (SUCCEEDED(frame->get_Surface(frame_surface.put()))) {
         last_frame_ =
             util::TryGetDXGIInterfaceFromObject<ID3D11Texture2D>(frame_surface);
+        if (last_frame_) {
+          ++frame_generation_;
+        }
         has_frame = !ShouldDropFrame();
       }
     }

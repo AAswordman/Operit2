@@ -1142,6 +1142,7 @@ class _WebviewState extends State<Webview> {
     }
 
     _cursorSubscription = _controller._cursor.listen((cursor) {
+      if (!mounted || _cursor == cursor) return;
       setState(() {
         _cursor = cursor;
       });

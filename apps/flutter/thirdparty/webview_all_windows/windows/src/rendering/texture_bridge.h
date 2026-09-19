@@ -69,6 +69,8 @@ protected:
   SurfaceSizeChangedCallback surface_size_changed_;
   std::atomic<bool> needs_update_ = false;
   winrt::com_ptr<ID3D11Texture2D> last_frame_;
+  // Guarded by mutex_; capture pools may reuse the same texture for new frames.
+  uint64_t frame_generation_ = 0;
   std::optional<std::chrono::high_resolution_clock::time_point>
       last_frame_timestamp_;
 

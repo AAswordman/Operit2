@@ -71,6 +71,10 @@ class OperitCoreService : Service() {
 
     /** Starts Runtime initialization once and installs system event receivers. */
     private fun ensureRuntimeStarted() {
+        if (!runtimeHost.isStorageConfigured()) {
+            Log.i(TAG, "Core Runtime startup waiting for Flutter storage roots")
+            return
+        }
         if (!runtimeStartRequested.compareAndSet(false, true)) {
             return
         }

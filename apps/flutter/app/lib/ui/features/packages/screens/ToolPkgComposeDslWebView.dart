@@ -743,7 +743,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         });
       },
       onProgress: (progress) {
-        _progress = progress.clamp(0, 100);
+        final nextProgress = progress.clamp(0, 100);
+        if (_progress == nextProgress) return;
+        final wasIndicatorVisible = _progress > 0 && _progress < 100;
+        _progress = nextProgress;
         _loading = _progress < 100;
         _updateStateSnapshot();
         _emit(_callbackIds.onProgressChanged, <String, Object?>{
@@ -751,7 +754,8 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
           'url': _currentUrl,
           'title': _title,
         });
-        if (mounted) {
+        final isIndicatorVisible = _progress > 0 && _progress < 100;
+        if (mounted && wasIndicatorVisible != isIndicatorVisible) {
           setState(() {});
         }
       },
