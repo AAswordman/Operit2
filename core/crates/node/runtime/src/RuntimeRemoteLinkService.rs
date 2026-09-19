@@ -33,6 +33,7 @@ use operit_store::NetworkControlStore::{
 use operit_store::PreferencesDataStore::{
     combine2, mutableStateFlow, CoroutineScope, SharingStarted, StateFlow,
 };
+use operit_store::SyncOperationStore::subscribeSyncMutations;
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -119,7 +120,9 @@ async fn connectEdgeChannel(endpoint: &str) -> Result<Arc<dyn LinkChannel>, Stri
             .unwrap_or(115_200);
         let host = operit_host_api::HostManager::defaultSerialPortHost()
             .map_err(|error| error.to_string())?;
-        let channel = operit_edge_transport::serial::SerialLinkChannel::open(host.as_ref(), port, baudRate).await?;
+        let channel =
+            operit_edge_transport::serial::SerialLinkChannel::open(host.as_ref(), port, baudRate)
+                .await?;
         return Ok(channel);
     }
     let channel = operit_edge_transport::tcp::TcpLinkChannel::connect(endpoint).await?;
@@ -200,6 +203,13 @@ pub struct RuntimeDeviceSpaceTopology {
     pub connections: Vec<RuntimeDeviceSpaceConnection>,
 }
 
+/// Keeps the overview membership and topology in one observable UI snapshot.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeDeviceSpaceSnapshot {
+    pub space: CoreSpace,
+    pub topology: RuntimeDeviceSpaceTopology,
+}
+
 /// Provides runtime-owned remote session operations to generated local Core clients.
 #[derive(Clone)]
 pub struct RuntimeRemoteLinkService {
@@ -261,6 +271,66 @@ impl RuntimeRemoteLinkService {
             .members
             .retain(|nodeId| !removedNodeIds.contains(nodeId));
         Ok(space)
+    }
+
+    /// Reads a complete overview, retrying if membership changes during the read.
+    pub fn deviceSpaceSnapshot(&self) -> Result<RuntimeDeviceSpaceSnapshot, String> {
+        for _ in 0..3 {
+            let space = self.deviceSpace()?;
+            let topology = self.deviceSpaceTopology()?;
+            if space == self.deviceSpace()?
+                && space.members.iter().collect::<BTreeSet<_>>()
+                    == topology
+                        .devices
+                        .iter()
+                        .map(|device| &device.deviceId)
+                        .collect()
+            {
+                return Ok(RuntimeDeviceSpaceSnapshot { space, topology });
+            }
+        }
+        Err("Device space changed while reading its overview".to_string())
+    }
+
+    /// Observes persistent Space changes and live Peer Links without UI polling.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn deviceSpaceSnapshotFlow(&self) -> Result<StateFlow<RuntimeDeviceSpaceSnapshot>, String> {
+        let (changes, mut changed) = tokio::sync::mpsc::channel(1);
+        let mutationSubscription = subscribeSyncMutations(move || {
+            let _ = changes.try_send(());
+        });
+        let mut peers = subscribePeerLinkChanges();
+        let state = StateFlow::new(self.deviceSpaceSnapshot()?);
+        let service = self.clone();
+        let (stop, mut stopped) = oneshot::channel::<()>();
+        let overview = spaceOverviewSubscription(&state, stop);
+        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+            "device-space-overview-watch",
+            Box::new(move || Box::pin(async move {
+                let _subscription = mutationSubscription;
+                loop {
+                    tokio::select! {
+                        _ = &mut stopped => break,
+                        event = changed.recv() => { if event.is_none() { break; } },
+                        event = peers.recv() => {
+                            if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { break; }
+                        },
+                    }
+                    // Join writes several records. Coalesce the burst and let writers
+                    // release their datastore locks before reading the projection.
+                    tokio::select! {
+                        _ = &mut stopped => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {},
+                    }
+                    match service.deviceSpaceSnapshot() {
+                        Ok(snapshot) => state.set_value(snapshot),
+                        Err(error) => { operit_util::AppLogger::AppLogger::w(
+                            "RuntimeRemoteLinkService", &format!("Space overview refresh failed: {error}")); },
+                    }
+                }
+            })),
+        ).map_err(|error| error.to_string())?;
+        Ok(overview)
     }
 
     /// Creates the initial administrator policy for this device's new single-device Space.
@@ -1623,9 +1693,44 @@ fn ensureDeviceInfoMatches(
     Ok(())
 }
 
+/// Uses map's existing weak target and automatic upstream unsubscription.
+/// The map closure owns the stop sender; removing its last subscriber drops
+/// the sender even while the worker still owns and updates the source state.
+#[cfg(not(target_arch = "wasm32"))]
+fn spaceOverviewSubscription<T>(source: &StateFlow<T>, stop: oneshot::Sender<()>) -> StateFlow<T>
+where
+    T: Clone + PartialEq + Send + 'static,
+{
+    source.map(move |snapshot| {
+        let _keepWorkerAlive = &stop;
+        snapshot
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn overview_subscription_stops_worker_after_last_watch_is_dropped() {
+        let source = StateFlow::new(1);
+        let (stop, mut stopped) = oneshot::channel::<()>();
+        let watch = spaceOverviewSubscription(&source, stop);
+        let anotherWatch = watch.clone();
+        source.set_value(2);
+        assert_eq!(watch.value(), 2);
+        drop(watch);
+        assert!(matches!(
+            stopped.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        source.set_value(3);
+        assert_eq!(anotherWatch.value(), 3);
+        drop(anotherWatch);
+        // The worker can still own the source; it must not keep the guard alive.
+        assert!(stopped.await.is_err());
+        source.set_value(4);
+    }
 
     /// Creates one paired-device projection for status mapping tests.
     fn test_paired_device(device_id: &str) -> RuntimePairedDevice {

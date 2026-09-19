@@ -15,6 +15,20 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 
 /// Verifies generated reverse-stream clients serialize structured item values.
 void main() {
+  test(
+    'device space watch decodes membership and online changes together',
+    () async {
+      final bridge = _DeviceSpaceBridge();
+      final snapshots = await GeneratedCoreProxyClients(
+        bridge,
+      ).server.runtimeRemoteLinkService.deviceSpaceSnapshotFlow().toList();
+      expect(bridge.watchRequest?.propertyName, 'deviceSpaceSnapshotFlow');
+      expect(snapshots.map((s) => s.space.members.length), [1, 2, 2]);
+      expect(snapshots.map((s) => s.topology.devices.length), [1, 2, 2]);
+      expect(snapshots[1].topology.devices.last.online, isTrue);
+      expect(snapshots[2].topology.devices.last.online, isFalse);
+    },
+  );
   test('browser interaction stream sends a Link map', () async {
     final bridge = _RecordingBridge();
     const command = RuntimeBrowserCommand(
@@ -180,6 +194,42 @@ class _RecordingPushSink implements CorePushSink {
 }
 
 /// Emits generated watch events that mimic a streamed AI message update.
+class _DeviceSpaceBridge extends _GeneratedFlowBridge {
+  @override
+  Stream<CoreEvent> watchStream(CoreWatchRequest request) async* {
+    watchRequest = request;
+    for (var step = 0; step < 3; step++) {
+      final members = ['ios', if (step > 0) 'mac'];
+      yield _rawGeneratedEvent(request, 'Snapshot', {
+        'space': {
+          'spaceId': 'space-test',
+          'spaceName': 'test',
+          'spaceRevision': step == 0 ? 1 : 2,
+          'members': members,
+        },
+        'topology': {
+          'currentDeviceId': 'ios',
+          'removedDevices': <Object?>[],
+          'connections': <Object?>[],
+          'devices': [
+            for (final id in members)
+              {
+                'deviceId': id,
+                'userName': '',
+                'deviceName': id,
+                'platform': id,
+                'model': 'test',
+                'coreVersion': null,
+                'currentIdentity': null,
+                'online': id == 'ios' || step == 1,
+              },
+          ],
+        },
+      });
+    }
+  }
+}
+
 class _GeneratedFlowBridge extends OperitRuntimeBridge {
   CoreWatchRequest? watchRequest;
   final openedStreamIds = <String>[];

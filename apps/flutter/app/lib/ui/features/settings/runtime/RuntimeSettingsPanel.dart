@@ -33,7 +33,8 @@ class RuntimeSettingsPanel extends StatefulWidget {
   State<RuntimeSettingsPanel> createState() => _RuntimeSettingsPanelState();
 }
 
-class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
+class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
+    with WidgetsBindingObserver {
   bool _busy = false;
   String? _connectionMessage;
   bool _connectionFailed = false;
@@ -47,6 +48,9 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   _pairedDevicesSubscription;
   StreamSubscription<Map<String, generated.RuntimePairedDeviceStatus>>?
   _pairedDeviceStatusesSubscription;
+  StreamSubscription<generated.RuntimeDeviceSpaceSnapshot>? _spaceSubscription;
+  bool _pageActive = false;
+  int _spaceReadGeneration = 0;
 
   static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
@@ -55,13 +59,16 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   @override
   void initState() {
     super.initState();
-    unawaited(_refreshCurrentDeviceSpace());
+    WidgetsBinding.instance.addObserver(this);
+    _watchDeviceSpace();
     _watchPairedDevices();
     _watchPairedDeviceStatuses();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_spaceSubscription?.cancel());
     final pairedDevicesSubscription = _pairedDevicesSubscription;
     if (pairedDevicesSubscription != null) {
       unawaited(pairedDevicesSubscription.cancel());
@@ -71,6 +78,52 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       unawaited(pairedDeviceStatusesSubscription.cancel());
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final active = TickerMode.valuesOf(context).enabled;
+    if (active && !_pageActive) {
+      unawaited(_refreshCurrentDeviceSpace());
+    }
+    _pageActive = active;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshCurrentDeviceSpace());
+    }
+  }
+
+  void _watchDeviceSpace() {
+    _spaceSubscription = _clients.server.runtimeRemoteLinkService
+        .deviceSpaceSnapshotFlow()
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
+            // A delayed explicit read must not overwrite a newer watch event.
+            _spaceReadGeneration++;
+            _applyDeviceSpaceSnapshot(snapshot);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (!mounted) return;
+            setState(() {
+              _connectionMessage = error.toString();
+              _connectionFailed = true;
+            });
+          },
+        );
+  }
+
+  void _applyDeviceSpaceSnapshot(
+    generated.RuntimeDeviceSpaceSnapshot snapshot,
+  ) {
+    setState(() {
+      _currentDeviceSpace = snapshot.space;
+      _topology = snapshot.topology;
+    });
   }
 
   /// Subscribes to pairing changes produced by both connection directions.
@@ -134,19 +187,15 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
 
   /// Reads the synchronized device space projection from the current device.
   Future<void> _refreshCurrentDeviceSpace() async {
+    final generation = ++_spaceReadGeneration;
     try {
-      final deviceSpace = await _clients.server.runtimeRemoteLinkService
-          .deviceSpace();
-      final topology = await _clients.server.runtimeRemoteLinkService
-          .deviceSpaceTopology();
-      if (mounted) {
-        setState(() {
-          _currentDeviceSpace = deviceSpace;
-          _topology = topology;
-        });
+      final snapshot = await _clients.server.runtimeRemoteLinkService
+          .deviceSpaceSnapshot();
+      if (mounted && generation == _spaceReadGeneration) {
+        _applyDeviceSpaceSnapshot(snapshot);
       }
     } catch (error) {
-      if (mounted) {
+      if (mounted && generation == _spaceReadGeneration) {
         setState(() {
           _connectionMessage = error.toString();
           _connectionFailed = true;
@@ -163,15 +212,14 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
     setState(() => _busy = true);
     try {
-      final topology = await _clients.server.runtimeRemoteLinkService
-          .deviceSpaceTopology();
+      await _refreshCurrentDeviceSpace();
       if (!mounted) {
         return;
       }
       await _DeviceSpaceTopologyDialog.show(
         context,
-        spaceName: currentDeviceSpace.spaceName,
-        topology: topology,
+        spaceName: _currentDeviceSpace!.spaceName,
+        topology: _topology!,
         onDisconnectDevice: _disconnectDeviceSpaceConnection,
       );
     } catch (error) {
@@ -1569,7 +1617,7 @@ class _SpaceDeviceNode extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
     final accent = online ? scheme.primary : scheme.outline;
-    final iconColor = current ? scheme.onPrimary : scheme.onSurface;
+    final iconColor = scheme.onPrimary;
     final gradient = current
         ? RadialGradient(
             center: const Alignment(-0.32, -0.38),

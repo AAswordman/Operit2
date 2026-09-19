@@ -2650,6 +2650,61 @@ mod tests {
         testLocalRuntimeWithHolder(storage).0
     }
 
+    #[tokio::test]
+    async fn device_space_watch_tracks_remote_membership_without_reopening() {
+        use crate::RuntimeRemoteLinkService::RuntimeRemoteLinkService;
+        use operit_store::CoreSpaceStore::CoreSpaceDeviceProfile;
+        installTestRuntimeScheduler();
+        let storage: Arc<dyn RuntimeStorageHost> = Arc::new(TestRuntimeStorageHost::default());
+        let store = CoreSpaceStore::new(storage.clone());
+        let initial = store.initialize().unwrap();
+        let localId = initial.members[0].clone();
+        let peerId = "overview-watch-peer".to_string();
+        store
+            .importDeviceProfiles(
+                [localId.clone(), peerId.clone()]
+                    .into_iter()
+                    .map(|nodeId| CoreSpaceDeviceProfile {
+                        displayName: nodeId.clone(),
+                        nodeId,
+                        userName: String::new(),
+                        platform: "test".to_string(),
+                        model: "test".to_string(),
+                        coreVersion: None,
+                        updatedAt: 1,
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        let service = RuntimeRemoteLinkService::new(testLocalRuntime(storage.clone()));
+        let watch = service.deviceSpaceSnapshotFlow().unwrap();
+        assert_eq!(watch.value().space.members.len(), 1);
+        // Simulate the inbound Access handler using a separate store handle.
+        CoreSpaceStore::new(storage)
+            .adopt(CoreSpace {
+                members: vec![localId, peerId],
+                spaceRevision: initial.spaceRevision + 1,
+                ..initial
+            })
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while watch.value().space.members.len() != 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(watch.value().topology.devices.len(), 2);
+        store.rename("renamed-from-peer".to_string()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while watch.value().space.spaceName != "renamed-from-peer" {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
     /// Creates a local runtime shell and returns its real chat holder for end-to-end tests.
     #[allow(non_snake_case)]
     fn testLocalRuntimeWithHolder(
