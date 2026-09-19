@@ -147,7 +147,105 @@ def _host_cargo_environment() -> dict[str, str]:
             text=True,
         )
         environment["SDKROOT"] = completed.stdout.strip()
+    _apply_rustup_proxy_environment(environment)
     return environment
+
+
+# Fills rustup proxy variables when MSBuild or IDE builds omit the user env.
+def _apply_rustup_proxy_environment(environment: dict[str, str]) -> None:
+    if environment.get("RUSTUP_HOME") and environment.get("CARGO_HOME"):
+        return
+    derived: dict[str, str] = {}
+    cargo = shutil.which("cargo")
+    if cargo is not None:
+        cargo_path = Path(cargo)
+        derived.update(_environment_from_cargo_cmd(cargo_path))
+        derived.update(_rustup_proxy_environment_from_cargo(cargo_path))
+    if "RUSTUP_HOME" not in derived or "CARGO_HOME" not in derived:
+        derived.update(_rustup_proxy_environment_from_path(environment.get("PATH", os.environ.get("PATH", ""))))
+    for key, value in derived.items():
+        if not environment.get(key):
+            environment[key] = value
+
+
+# Reads rustup variables assigned by a cargo.cmd wrapper.
+def _environment_from_cargo_cmd(cargo: Path) -> dict[str, str]:
+    if cargo.suffix.lower() not in {".cmd", ".bat"}:
+        sibling = cargo.with_name("cargo.cmd")
+        if not sibling.is_file():
+            sibling = cargo.with_name("cargo.bat")
+        cargo = sibling
+    if not cargo.is_file():
+        return {}
+    derived: dict[str, str] = {}
+    dp0 = str(cargo.parent) + os.sep
+    try:
+        lines = cargo.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.lower().startswith("set "):
+            continue
+        assignment = stripped[4:].strip().strip('"')
+        if "=" not in assignment:
+            continue
+        key, value = assignment.split("=", 1)
+        key = key.strip()
+        if key not in {"CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"}:
+            continue
+        derived[key] = value.replace("%~dp0", dp0).replace("%~DP0", dp0)
+    return derived
+
+
+# Walks PATH for a rustup-proxy cargo.exe when the first cargo is a wrapper.
+def _rustup_proxy_environment_from_path(path_value: str) -> dict[str, str]:
+    names = ("cargo.exe", "cargo")
+    for directory in path_value.split(os.pathsep):
+        if not directory:
+            continue
+        for name in names:
+            candidate = Path(directory) / name
+            derived = _rustup_proxy_environment_from_cargo(candidate)
+            if derived.get("RUSTUP_HOME") and derived.get("CARGO_HOME"):
+                return derived
+    return {}
+
+
+# Derives CARGO_HOME/RUSTUP_HOME from a rustup-proxy cargo executable.
+def _rustup_proxy_environment_from_cargo(cargo: Path) -> dict[str, str]:
+    if not cargo.exists():
+        return {}
+    bin_dir = cargo.resolve().parent
+    rustup_names = ("rustup.exe", "rustup")
+    if not any((bin_dir / name).exists() for name in rustup_names):
+        return {}
+    cargo_home = bin_dir.parent
+    root = cargo_home.parent
+    derived = {"CARGO_HOME": str(cargo_home)}
+    for rustup_home in (root / "rustup", root / ".rustup"):
+        if rustup_home.is_dir():
+            derived["RUSTUP_HOME"] = str(rustup_home)
+            toolchain = _rustup_default_toolchain(rustup_home)
+            if toolchain:
+                derived["RUSTUP_TOOLCHAIN"] = toolchain
+            break
+    return derived
+
+
+# Reads the default toolchain pinned by a rustup home.
+def _rustup_default_toolchain(rustup_home: Path) -> str | None:
+    settings = rustup_home / "settings.toml"
+    if not settings.is_file():
+        return None
+    for line in settings.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("default_toolchain"):
+            continue
+        _, _, value = stripped.partition("=")
+        toolchain = value.strip().strip('"').strip("'")
+        return toolchain or None
+    return None
 
 
 # Resolves host tools through the configured toolchain before handing them to subprocess.
@@ -159,6 +257,10 @@ def _platform_command(executable: str) -> str:
         # cargo.exe is a rustup proxy and otherwise depends on the caller's
         # default-toolchain state (which is often stale inside VS Code).
         cargo_home = os.environ.get("CARGO_HOME", "").strip()
+        if not cargo_home:
+            derived: dict[str, str] = {}
+            _apply_rustup_proxy_environment(derived)
+            cargo_home = derived.get("CARGO_HOME", "").strip()
         if cargo_home:
             configured_wrapper = Path(cargo_home) / "bin" / f"{executable}.cmd"
             if configured_wrapper.is_file():

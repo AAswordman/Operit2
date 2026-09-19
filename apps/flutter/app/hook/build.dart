@@ -117,15 +117,19 @@ void main(List<String> args) async {
         environment: await _wasmCargoEnvironment(repoRoot),
       );
 
-      await _run(Platform.isWindows ? 'wasm-bindgen.exe' : 'wasm-bindgen', [
-        '--target',
-        'web',
-        '--out-dir',
-        webBuildDir.path,
-        '--out-name',
-        'operit_flutter_bridge',
-        wasmSource.path,
-      ], workingDirectory: packageRoot.path);
+      await _run(
+        Platform.isWindows ? 'wasm-bindgen.exe' : 'wasm-bindgen',
+        [
+          '--target',
+          'web',
+          '--out-dir',
+          webBuildDir.path,
+          '--out-name',
+          'operit_flutter_bridge',
+          wasmSource.path,
+        ],
+        workingDirectory: packageRoot.path,
+      );
       await _validateWasmBindgenImports(
         File.fromUri(webBuildDir.uri.resolve('operit_flutter_bridge.js')),
       );
@@ -797,11 +801,17 @@ Future<void> _run(
   required String workingDirectory,
   Map<String, String>? environment,
 }) async {
+  var resolvedEnvironment = environment;
+  if (_isCargoExecutable(executable)) {
+    resolvedEnvironment = _withRustupProxyEnvironment(
+      Map<String, String>.from(resolvedEnvironment ?? Platform.environment),
+    );
+  }
   final result = await Process.run(
     executable,
     arguments,
     workingDirectory: workingDirectory,
-    environment: environment,
+    environment: resolvedEnvironment,
   );
   stdout.write(result.stdout);
   stderr.write(result.stderr);
@@ -820,6 +830,184 @@ String _command(String executable) {
     return '$executable.cmd';
   }
   return executable;
+}
+
+bool _isCargoExecutable(String executable) {
+  final name = executable.split(RegExp(r'[\\/]')).last.toLowerCase();
+  return name == 'cargo' ||
+      name == 'cargo.exe' ||
+      name == 'cargo.cmd' ||
+      name == 'cargo.bat';
+}
+
+/// Fills rustup proxy variables when IDE/MSBuild builds omit the user env.
+Map<String, String> _withRustupProxyEnvironment(
+  Map<String, String> environment,
+) {
+  if ((environment['RUSTUP_HOME'] ?? '').isNotEmpty &&
+      (environment['CARGO_HOME'] ?? '').isNotEmpty) {
+    return environment;
+  }
+  final derived = <String, String>{};
+  final cargo = _which('cargo');
+  if (cargo != null) {
+    derived.addAll(_environmentFromCargoCmd(File(cargo)));
+    derived.addAll(_rustupProxyEnvironmentFromCargo(File(cargo)));
+  }
+  if ((derived['RUSTUP_HOME'] ?? '').isEmpty ||
+      (derived['CARGO_HOME'] ?? '').isEmpty) {
+    derived.addAll(
+      _rustupProxyEnvironmentFromPath(
+        environment['PATH'] ?? Platform.environment['PATH'] ?? '',
+      ),
+    );
+  }
+  for (final entry in derived.entries) {
+    if ((environment[entry.key] ?? '').isEmpty) {
+      environment[entry.key] = entry.value;
+    }
+  }
+  return environment;
+}
+
+Map<String, String> _environmentFromCargoCmd(File cargo) {
+  var cmd = cargo;
+  final name = cargo.uri.pathSegments.isEmpty
+      ? cargo.path
+      : cargo.uri.pathSegments.last.toLowerCase();
+  if (!name.endsWith('.cmd') && !name.endsWith('.bat')) {
+    cmd = File.fromUri(cargo.parent.uri.resolve('cargo.cmd'));
+    if (!cmd.existsSync()) {
+      cmd = File.fromUri(cargo.parent.uri.resolve('cargo.bat'));
+    }
+  }
+  if (!cmd.existsSync()) {
+    return const <String, String>{};
+  }
+  final dp0 = '${cmd.parent.path}${Platform.pathSeparator}';
+  final derived = <String, String>{};
+  for (final line in cmd.readAsLinesSync()) {
+    final stripped = line.trim();
+    if (!stripped.toLowerCase().startsWith('set ')) {
+      continue;
+    }
+    final assignment = stripped.substring(4).trim().replaceAll('"', '');
+    final separator = assignment.indexOf('=');
+    if (separator < 0) {
+      continue;
+    }
+    final key = assignment.substring(0, separator).trim();
+    if (key != 'CARGO_HOME' &&
+        key != 'RUSTUP_HOME' &&
+        key != 'RUSTUP_TOOLCHAIN') {
+      continue;
+    }
+    derived[key] = assignment
+        .substring(separator + 1)
+        .replaceAll('%~dp0', dp0)
+        .replaceAll('%~DP0', dp0);
+  }
+  return derived;
+}
+
+Map<String, String> _rustupProxyEnvironmentFromPath(String pathValue) {
+  final pathSeparator = Platform.isWindows ? ';' : ':';
+  final names = Platform.isWindows
+      ? <String>['cargo.exe', 'cargo']
+      : <String>['cargo'];
+  for (final directory in pathValue.split(pathSeparator)) {
+    if (directory.isEmpty) {
+      continue;
+    }
+    for (final name in names) {
+      final derived = _rustupProxyEnvironmentFromCargo(
+        File('$directory${Platform.pathSeparator}$name'),
+      );
+      if ((derived['RUSTUP_HOME'] ?? '').isNotEmpty &&
+          (derived['CARGO_HOME'] ?? '').isNotEmpty) {
+        return derived;
+      }
+    }
+  }
+  return const <String, String>{};
+}
+
+String? _which(String executable) {
+  final path = Platform.environment['PATH'];
+  if (path == null || path.isEmpty) {
+    return null;
+  }
+  final pathSeparator = Platform.isWindows ? ';' : ':';
+  final extensions = Platform.isWindows
+      ? <String>['.exe', '.cmd', '.bat', '']
+      : <String>[''];
+  for (final directory in path.split(pathSeparator)) {
+    if (directory.isEmpty) {
+      continue;
+    }
+    for (final extension in extensions) {
+      final candidate = File(
+        '$directory${Platform.pathSeparator}$executable$extension',
+      );
+      if (candidate.existsSync()) {
+        return candidate.path;
+      }
+    }
+  }
+  return null;
+}
+
+Map<String, String> _rustupProxyEnvironmentFromCargo(File cargo) {
+  if (!cargo.existsSync()) {
+    return const <String, String>{};
+  }
+  final binDir = Directory(cargo.parent.path);
+  final rustup = File.fromUri(binDir.uri.resolve('rustup.exe')).existsSync()
+      ? File.fromUri(binDir.uri.resolve('rustup.exe'))
+      : File.fromUri(binDir.uri.resolve('rustup'));
+  if (!rustup.existsSync()) {
+    return const <String, String>{};
+  }
+  final cargoHome = binDir.parent;
+  final root = cargoHome.parent;
+  final derived = <String, String>{'CARGO_HOME': cargoHome.path};
+  for (final name in <String>['rustup', '.rustup']) {
+    final rustupHome = Directory.fromUri(root.uri.resolve('$name/'));
+    if (!rustupHome.existsSync()) {
+      continue;
+    }
+    derived['RUSTUP_HOME'] = rustupHome.path;
+    final toolchain = _rustupDefaultToolchain(rustupHome);
+    if (toolchain != null) {
+      derived['RUSTUP_TOOLCHAIN'] = toolchain;
+    }
+    break;
+  }
+  return derived;
+}
+
+String? _rustupDefaultToolchain(Directory rustupHome) {
+  final settings = File.fromUri(rustupHome.uri.resolve('settings.toml'));
+  if (!settings.existsSync()) {
+    return null;
+  }
+  for (final line in settings.readAsLinesSync()) {
+    final stripped = line.trim();
+    if (!stripped.startsWith('default_toolchain')) {
+      continue;
+    }
+    final separator = stripped.indexOf('=');
+    if (separator < 0) {
+      return null;
+    }
+    final toolchain = stripped
+        .substring(separator + 1)
+        .trim()
+        .replaceAll('"', '')
+        .replaceAll("'", '');
+    return toolchain.isEmpty ? null : toolchain;
+  }
+  return null;
 }
 
 String _pythonExecutable(Directory repoRoot) {
@@ -855,8 +1043,9 @@ String _targetOs(BuildInput input) {
 }
 
 Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
-  final environment = Map<String, String>.from(Platform.environment)
-    ..['RUSTFLAGS'] = '-Awarnings';
+  final environment = _withRustupProxyEnvironment(
+    Map<String, String>.from(Platform.environment),
+  )..['RUSTFLAGS'] = '-Awarnings';
 
   final toolsDir = Directory.fromUri(
     repoRoot.uri.resolve('target/operit-build-tools/'),
