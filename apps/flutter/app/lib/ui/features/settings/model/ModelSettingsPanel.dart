@@ -15,6 +15,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+import 'ModelConnectionTestCapabilities.dart';
 import 'ProviderLogo.dart';
 
 class ModelSettingsPanel extends StatefulWidget {
@@ -494,7 +495,8 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       initialBuiltinTools: config.builtinTools,
       initialContext: config.context,
       initialSummary: config.summary,
-      onTest: () => _testModelConnection(provider, model),
+      onTest: (capabilities) =>
+          _testModelConnection(provider, model, capabilities),
     );
     if (result == null || !mounted) {
       return;
@@ -546,6 +548,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
   Future<core_proxy.ModelConnectionTestReport?> _testModelConnection(
     core_proxy.ProviderProfile provider,
     core_proxy.ModelProfile model,
+    core_proxy.ModelCapabilities capabilities,
   ) async {
     final l10n = AppLocalizations.of(context)!;
     final testKey = _modelTestKey(provider.id, model.id);
@@ -553,6 +556,12 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       _testingModelKey = testKey;
     });
     try {
+      await widget.clients.preferencesModelConfigManager
+          .updateCapabilitiesForModel(
+            providerId: provider.id,
+            modelId: model.id,
+            capabilities: capabilities,
+          );
       final report = await widget.clients.application.testModelConnection(
         providerId: provider.id,
         modelId: model.id,
@@ -564,6 +573,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         providerId: provider.id,
         modelId: model.id,
         report: report,
+        current: capabilities,
       );
       if (!mounted) {
         return report;
@@ -592,8 +602,9 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     required String providerId,
     required String modelId,
     required core_proxy.ModelConnectionTestReport report,
+    required core_proxy.ModelCapabilities current,
   }) async {
-    final chatPassed = _connectionTestSucceeded(
+    final chatPassed = connectionTestSucceeded(
       report,
       core_proxy.ModelConnectionTestType.chat,
     );
@@ -604,24 +615,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         .updateCapabilitiesForModel(
           providerId: providerId,
           modelId: modelId,
-          capabilities: core_proxy.ModelCapabilities(
-            directImage: _connectionTestSucceeded(
-              report,
-              core_proxy.ModelConnectionTestType.image,
-            ),
-            directAudio: _connectionTestSucceeded(
-              report,
-              core_proxy.ModelConnectionTestType.audio,
-            ),
-            directVideo: _connectionTestSucceeded(
-              report,
-              core_proxy.ModelConnectionTestType.video,
-            ),
-            toolCall: _connectionTestSucceeded(
-              report,
-              core_proxy.ModelConnectionTestType.toolCall,
-            ),
-          ),
+          capabilities: capabilitiesFromConnectionTest(report, current),
         );
     if (!mounted) {
       return;
@@ -4454,7 +4448,10 @@ class _ModelSettingsEditorDialog extends StatefulWidget {
   final List<core_proxy.ModelBuiltinTool> initialBuiltinTools;
   final core_proxy.ModelContextSpec initialContext;
   final core_proxy.ModelSummarySettings initialSummary;
-  final Future<core_proxy.ModelConnectionTestReport?> Function() onTest;
+  final Future<core_proxy.ModelConnectionTestReport?> Function(
+    core_proxy.ModelCapabilities capabilities,
+  )
+  onTest;
 
   static Future<_ModelSettingsEditorResult?> show({
     required BuildContext context,
@@ -4464,7 +4461,10 @@ class _ModelSettingsEditorDialog extends StatefulWidget {
     required List<core_proxy.ModelBuiltinTool> initialBuiltinTools,
     required core_proxy.ModelContextSpec initialContext,
     required core_proxy.ModelSummarySettings initialSummary,
-    required Future<core_proxy.ModelConnectionTestReport?> Function() onTest,
+    required Future<core_proxy.ModelConnectionTestReport?> Function(
+      core_proxy.ModelCapabilities capabilities,
+    )
+    onTest,
   }) {
     return showDialog<_ModelSettingsEditorResult>(
       context: context,
@@ -4554,35 +4554,34 @@ class _ModelSettingsEditorDialogState
     });
   }
 
+  core_proxy.ModelCapabilities _editorCapabilities() {
+    return core_proxy.ModelCapabilities(
+      directImage: _directImage,
+      directAudio: _directAudio,
+      directVideo: _directVideo,
+      toolCall: _toolCall,
+    );
+  }
+
   Future<void> _runConnectionTest() async {
     setState(() {
       _testingConnection = true;
     });
     try {
-      final report = await widget.onTest();
+      final current = _editorCapabilities();
+      final report = await widget.onTest(current);
       if (mounted &&
           report != null &&
-          _connectionTestSucceeded(
+          connectionTestSucceeded(
             report,
             core_proxy.ModelConnectionTestType.chat,
           )) {
+        final next = capabilitiesFromConnectionTest(report, current);
         setState(() {
-          _directImage = _connectionTestSucceeded(
-            report,
-            core_proxy.ModelConnectionTestType.image,
-          );
-          _directAudio = _connectionTestSucceeded(
-            report,
-            core_proxy.ModelConnectionTestType.audio,
-          );
-          _directVideo = _connectionTestSucceeded(
-            report,
-            core_proxy.ModelConnectionTestType.video,
-          );
-          _toolCall = _connectionTestSucceeded(
-            report,
-            core_proxy.ModelConnectionTestType.toolCall,
-          );
+          _directImage = next.directImage;
+          _directAudio = next.directAudio;
+          _directVideo = next.directVideo;
+          _toolCall = next.toolCall;
         });
       }
     } finally {
@@ -5524,11 +5523,4 @@ String _connectionTestTypeLabel(
 
 String _modelTestKey(String providerId, String modelId) {
   return '$providerId:$modelId';
-}
-
-bool _connectionTestSucceeded(
-  core_proxy.ModelConnectionTestReport report,
-  core_proxy.ModelConnectionTestType type,
-) {
-  return report.items.any((item) => item.type == type && item.success);
 }
