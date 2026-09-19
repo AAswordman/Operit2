@@ -312,10 +312,20 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
     if (confirmed != true) {
       return;
     }
-    await widget.clients.preferencesModelConfigManager.deleteProvider(
-      providerId: provider.id,
-    );
-    _reload();
+    try {
+      await widget.clients.preferencesModelConfigManager.deleteProvider(
+        providerId: provider.id,
+      );
+      _reload();
+    } on CoreLinkError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      await _showProviderConfigError(
+        title: AppLocalizations.of(context)!.settingsModelEditProvider,
+        error: error,
+      );
+    }
   }
 
   /// Opens one provider detail page using the latest loaded snapshot.
@@ -989,6 +999,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final editing = widget.provider != null;
+    final isBuiltIn = widget.provider?.providerTypeId == 'LOCAL_MODEL';
     final endpointOptions = _selectedEndpointOptions;
     return AlertDialog(
       title: Text(
@@ -1127,7 +1138,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         ),
       ),
       actions: <Widget>[
-        if (editing)
+        if (editing && !isBuiltIn)
           TextButton.icon(
             onPressed: () =>
                 Navigator.of(context).pop(const _ProviderEditDeleteResult()),
