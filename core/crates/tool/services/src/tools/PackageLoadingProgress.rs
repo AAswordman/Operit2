@@ -5,6 +5,8 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use serde::{Deserialize, Serialize};
 
+const PLUGIN_LOADING_COMPLETE_PREVIEW_DELAY_MS: u64 = 120;
+
 pub const PLUGIN_LOAD_STATUS_WAITING: &str = "waiting";
 pub const PLUGIN_LOAD_STATUS_LOADING: &str = "loading";
 pub const PLUGIN_LOAD_STATUS_SUCCESS: &str = "success";
@@ -134,6 +136,19 @@ pub fn skipPluginLoading() {
     });
 }
 
+/// Hides the overlay after a completed session unless a newer load started.
+fn hidePluginLoadingIfSessionComplete() {
+    if PLUGIN_LOADING_SESSION_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+    let current = pluginLoadingProgressFlow().value();
+    if current.visible
+        && (current.phase == "complete_success" || current.phase == "complete_with_failures")
+    {
+        skipPluginLoading();
+    }
+}
+
 /// Creates one waiting overlay row for a package or plugin.
 pub fn pluginLoadingItem(id: String, displayName: String, kind: String) -> PluginLoadingItem {
     PluginLoadingItem {
@@ -250,11 +265,12 @@ pub fn completePluginLoadingSession() {
         }
         progress.forceExpanded = false;
     });
-    defaultHostRuntimeTaskSchedulerHost()
-        .scheduleDelayedHostRuntimeTask(
-            "plugin-loading-overlay-hide",
-            120,
-            Box::new(skipPluginLoading),
-        )
-        .expect("plugin loading overlay hide task must be scheduled");
+    let scheduled = defaultHostRuntimeTaskSchedulerHost().scheduleDelayedHostRuntimeTask(
+        "operit-plugin-loading-complete",
+        PLUGIN_LOADING_COMPLETE_PREVIEW_DELAY_MS,
+        Box::new(hidePluginLoadingIfSessionComplete),
+    );
+    if scheduled.is_err() {
+        skipPluginLoading();
+    }
 }

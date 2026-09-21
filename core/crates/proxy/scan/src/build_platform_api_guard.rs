@@ -33,6 +33,9 @@ pub(crate) fn enforce_host_platform_boundaries(source_roots: &[SourceRoot], targ
             messages
         );
     }
+    for violation in &violations {
+        println!("cargo:warning={}", violation.message());
+    }
     println!(
         "cargo:warning=Host platform boundary audit found {} native-source violation(s); Wasm builds reject these APIs.",
         violations.len()
