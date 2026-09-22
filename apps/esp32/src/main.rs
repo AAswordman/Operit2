@@ -115,6 +115,11 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     // Show the launcher even if the configured network is unavailable.
     lvgl.pump(1);
     let (_wifi, wifiMode) = Esp32Wifi::connectOrSetup(modem, &config, nvsPartition.clone())?;
+    let _sntp = if wifiMode == crate::wifi::Esp32WifiMode::Station {
+        Some(Esp32Wifi::startTimeSync()?)
+    } else {
+        None
+    };
     let _setupServer = match wifiMode {
         crate::wifi::Esp32WifiMode::Station => {
             let ip = _wifi.ipv4()?;

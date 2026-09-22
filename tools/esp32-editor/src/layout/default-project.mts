@@ -76,7 +76,7 @@ export function defaultProject(): LayoutDocument {
     label('home_theme', 242, 16, 74, 24, 'Aurora'),
     node('home_card', 'panel', 18, 48, 284, 111, '', {radius: 22}),
     label('home_clock', 31, 56, 262, 58, '00:00', {binding: 'clock', fontSize: 48}),
-    label('home_caption', 73, 119, 230, 24, 'DEVICE TIME / UPTIME'),
+    label('home_caption', 73, 119, 230, 24, 'DEVICE TIME'),
     label('home_connection', 24, 177, 272, 24, 'WIFI STARTING', {binding: 'connection', color: '#53dfc5'}),
     button('home_apps', 180, 205, 124, 28, 'Apps >', 'go:apps'),
   ];

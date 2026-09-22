@@ -6,6 +6,7 @@ use esp_idf_hal::modem::Modem;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::netif::{EspNetif, NetifConfiguration, NetifStack};
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::sntp::EspSntp;
 use esp_idf_svc::wifi::{
     AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi, WifiDriver,
 };
@@ -26,6 +27,17 @@ pub enum Esp32WifiMode {
 }
 
 impl Esp32Wifi {
+    /// Starts SNTP after station networking is ready and configures local time.
+    pub fn startTimeSync() -> HostResult<EspSntp<'static>> {
+        let timezone = option_env!("OPERIT_TIMEZONE").unwrap_or("CST-8");
+        std::env::set_var("TZ", timezone);
+        unsafe {
+            tzset();
+        }
+        EspSntp::new_default()
+            .map_err(|error| HostError::new(format!("SNTP init: {error}")))
+    }
+
     /// Connects to the compile-time station network and waits for IPv4.
     #[allow(dead_code)]
     pub fn connect(
@@ -212,4 +224,8 @@ fn setupAccessPointNetif() -> HostResult<EspNetif> {
     }
     EspNetif::new_with_conf(&configuration)
         .map_err(|error| HostError::new(format!("setup AP netif: {error}")))
+}
+
+unsafe extern "C" {
+    fn tzset();
 }

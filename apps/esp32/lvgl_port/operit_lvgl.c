@@ -110,7 +110,7 @@ static void tick_clock(lv_timer_t *timer) {
     time_t now = time(NULL); struct tm tm;
     char text[24];
     if (now > 1700000000 && localtime_r(&now, &tm)) strftime(text, sizeof(text), "%H:%M", &tm);
-    else { unsigned seconds = (unsigned)(esp_timer_get_time() / 1000000); snprintf(text, sizeof(text), "%02u:%02u", (seconds / 60) % 100, seconds % 60); }
+    else snprintf(text, sizeof(text), "--:--");
     lv_label_set_text(clock_label, text);
 }
 static void icon(lv_obj_t *p, const char *symbol, const char *name, int x, int y, uint32_t color) {
@@ -135,7 +135,7 @@ static void builtin_home(void) {
     clock_label = label(watch, "00:00", 31, 56, 262, 0xf4f8ff);
     lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_align(clock_label, LV_TEXT_ALIGN_CENTER, 0);
-    label(watch, "DEVICE TIME / UPTIME", 73, 119, 220, theme()->muted);
+    label(watch, "DEVICE TIME", 73, 119, 220, theme()->muted);
     connection_label = label(watch, wifi_ready ? "WIFI CONNECTED" : "WIFI STARTING", 24, 177, 190, theme()->accent);
     label(watch, "Swipe left  >", 195, 207, 110, theme()->muted);
     box(watch, 141, 225, 20, 3, theme()->accent, 2);
