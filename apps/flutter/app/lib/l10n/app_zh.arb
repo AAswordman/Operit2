@@ -345,7 +345,7 @@
       "error": {}
     }
   },
-  "chatSpeechInputConfigurationRequired": "请先在设置 > 语音与识别中添加并选中一个语音识别配置。",
+  "chatSpeechInputConfigurationRequired": "请先在设置 > 模型与 AI 中添加并选中一个语音识别配置。",
   "chatSpeechNoTextRecognized": "未识别到文本",
   "history": "历史记录",
   "bookmarks": "收藏夹",

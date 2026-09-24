@@ -20,6 +20,7 @@ import '../components/SettingsControlStyles.dart';
 import 'CodexLoginDialog.dart';
 import 'ModelConnectionTestCapabilities.dart';
 import 'ProviderLogo.dart';
+import '../tts/TtsSettingsPanel.dart';
 
 class ModelSettingsPanel extends StatefulWidget {
   const ModelSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -652,8 +653,14 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
-            _ProviderSectionCard(
-              onCreateProvider: _createProvider,
+            _SectionCard(
+              title: l10n.settingsModelProvidersSection,
+              icon: Icons.dns_outlined,
+              initiallyExpanded: true,
+              action: SettingsSectionAddButton(
+                tooltip: '添加模型供应商',
+                onPressed: _createProvider,
+              ),
               children: <Widget>[
                 _ProviderCardList(
                   providers: data.providers,
@@ -663,8 +670,17 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
                 ),
               ],
             ),
+            TtsProviderSection(
+              clients: widget.clients,
+              initiallyExpanded: false,
+            ),
+            SttProviderSection(
+              clients: widget.clients,
+              initiallyExpanded: false,
+            ),
             _SectionCard(
               title: l10n.settingsModelFunctionMappingsSection,
+              icon: Icons.tune_outlined,
               initiallyExpanded: false,
               children: <Widget>[
                 _FunctionMappingGroups(
@@ -3752,108 +3768,6 @@ class _TextInputDialogState extends State<_TextInputDialog> {
   }
 }
 
-class _ProviderSectionCard extends StatelessWidget {
-  const _ProviderSectionCard({
-    required this.onCreateProvider,
-    required this.children,
-  });
-
-  final VoidCallback onCreateProvider;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(12);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        shape: RoundedRectangleBorder(
-          borderRadius: radius,
-          side: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: OperitGlassSurface(
-          color: Colors.transparent,
-          borderRadius: radius,
-          material: true,
-          clip: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: _CreateProviderPill(
-                    label: l10n.settingsModelProvidersSection,
-                    onTap: onCreateProvider,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ...children,
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CreateProviderPill extends StatelessWidget {
-  const _CreateProviderPill({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final borderColor = colorScheme.outlineVariant.withValues(alpha: 0.6);
-    return InkWell(
-      onTap: onTap,
-      customBorder: const StadiumBorder(),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 7, 8, 7),
-        decoration: ShapeDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-          shape: StadiumBorder(side: BorderSide(color: borderColor)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              label,
-              style: Theme.of(
-                context,
-              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: borderColor),
-              ),
-              child: Icon(
-                Icons.add,
-                size: 15,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ProviderCardList extends StatelessWidget {
   const _ProviderCardList({
     required this.providers,
@@ -3917,7 +3831,7 @@ class _ProviderCard extends StatelessWidget {
     final multimodal = _isMultimodalCapabilities(
       displayedSummary?.capabilities,
     );
-    final radius = BorderRadius.circular(16);
+    final radius = BorderRadius.circular(12);
     return Material(
       color: chatProvider
           ? colorScheme.primaryContainer.withValues(alpha: 0.16)
@@ -3927,50 +3841,37 @@ class _ProviderCard extends StatelessWidget {
         side: BorderSide(
           color: chatProvider
               ? colorScheme.primary.withValues(alpha: 0.45)
-              : colorScheme.outlineVariant.withValues(alpha: 0.38),
+              : colorScheme.outlineVariant.withValues(alpha: 0.28),
         ),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
+        borderRadius: radius,
         onTap: onOpen,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: <Widget>[
               ProviderLogo(
                 providerTypeId: provider.providerTypeId,
                 fallbackName: provider.name,
+                size: 30,
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        Flexible(
-                          child: Text(
-                            provider.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        if (chatProvider) ...<Widget>[
-                          const SizedBox(width: 7),
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: Colors.green.shade400,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ],
-                      ],
+                    Text(
+                      provider.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Row(
                       children: <Widget>[
                         Flexible(
@@ -3998,11 +3899,14 @@ class _ProviderCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(
-                Icons.arrow_forward,
-                size: 18,
-                color: colorScheme.onSurfaceVariant,
-              ),
+              if (chatProvider)
+                const SettingsActivePill(label: '当前主模型')
+              else
+                Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: colorScheme.onSurfaceVariant,
+                ),
             ],
           ),
         ),
@@ -5926,7 +5830,7 @@ class _CapabilityCapsule extends StatelessWidget {
 
 typedef _ModelCapabilityIcons = _ModelCapabilityCapsules;
 
-class _FunctionMappingGroups extends StatelessWidget {
+class _FunctionMappingGroups extends StatefulWidget {
   const _FunctionMappingGroups({
     required this.data,
     required this.onSelectFunction,
@@ -5941,19 +5845,27 @@ class _FunctionMappingGroups extends StatelessWidget {
   onSelectFunction;
   final Future<void> Function() onFollowAll;
 
-  static const List<core_proxy.FunctionType> _backgroundTypes =
+  @override
+  State<_FunctionMappingGroups> createState() => _FunctionMappingGroupsState();
+}
+
+class _FunctionMappingGroupsState extends State<_FunctionMappingGroups> {
+  bool _showAdvanced = false;
+
+  static const List<core_proxy.FunctionType> _coreTypes =
       <core_proxy.FunctionType>[
-        core_proxy.FunctionType.summary,
+        core_proxy.FunctionType.chat,
         core_proxy.FunctionType.titleGeneration,
+        core_proxy.FunctionType.summary,
         core_proxy.FunctionType.memory,
-        core_proxy.FunctionType.uiController,
-        core_proxy.FunctionType.translation,
-        core_proxy.FunctionType.grep,
         core_proxy.FunctionType.roleResponsePlanner,
       ];
 
-  static const List<core_proxy.FunctionType> _multimodalTypes =
+  static const List<core_proxy.FunctionType> _advancedTypes =
       <core_proxy.FunctionType>[
+        core_proxy.FunctionType.uiController,
+        core_proxy.FunctionType.translation,
+        core_proxy.FunctionType.grep,
         core_proxy.FunctionType.imageRecognition,
         core_proxy.FunctionType.audioRecognition,
         core_proxy.FunctionType.videoRecognition,
@@ -5963,82 +5875,139 @@ class _FunctionMappingGroups extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
+    final followingCount = widget.data.functionBindings.entries
+        .where(
+          (entry) =>
+              entry.key != core_proxy.FunctionType.chat &&
+              entry.value.followsChat,
+        )
+        .length;
+    final totalNonChat = _coreTypes.length - 1 + _advancedTypes.length;
+    final customAdvancedCount = _advancedTypes
+        .where((t) => !(widget.data.functionBindings[t]?.followsChat ?? true))
+        .length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                l10n.settingsModelFunctionMappingsDescription,
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: <Widget>[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: ShapeDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.5,
+                  ),
+                  shape: const StadiumBorder(),
+                ),
+                child: Text(
+                  '$followingCount/$totalNonChat 跟随主模型',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: widget.onFollowAll,
+                style: SettingsControlStyles.sectionTextButton(),
+                icon: const Icon(Icons.link, size: 16),
+                label: Text(l10n.settingsModelFunctionFollowChatAll),
+              ),
+            ],
+          ),
+        ),
+        for (final functionType in _coreTypes)
+          _FunctionMappingRow(
+            functionType: functionType,
+            displayBinding: _resolveFunctionBinding(widget.data, functionType),
+            followsChat:
+                functionType != core_proxy.FunctionType.chat &&
+                (widget.data.functionBindings[functionType]?.followsChat ??
+                    false),
+            summary: widget.data.summaryForBinding(
+              _resolveFunctionBinding(widget.data, functionType),
+            ),
+            onSelect: () => widget.onSelectFunction(functionType, widget.data),
+          ),
+        const SizedBox(height: 4),
+        Material(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => _showAdvanced = !_showAdvanced),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    _showAdvanced
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 18,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '更多高级与多模态配置 (${_advancedTypes.length})',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (customAdvancedCount > 0) ...<Widget>[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 1,
+                      ),
+                      decoration: ShapeDecoration(
+                        color: colorScheme.primaryContainer.withValues(
+                          alpha: 0.6,
+                        ),
+                        shape: const StadiumBorder(),
+                      ),
+                      child: Text(
+                        '$customAdvancedCount 个独立配置',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: colorScheme.primary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+                ],
               ),
             ),
-            const SizedBox(width: 12),
-            TextButton.icon(
-              onPressed: onFollowAll,
-              style: SettingsControlStyles.sectionTextButton(),
-              icon: const Icon(Icons.link, size: 18),
-              label: Text(l10n.settingsModelFunctionFollowChatAll),
-            ),
-          ],
-        ),
-        const SizedBox(height: 2),
-        _FunctionGroupHeader(label: l10n.settingsModelFunctionGroupMain),
-        _FunctionMappingRow(
-          functionType: core_proxy.FunctionType.chat,
-          displayBinding: data.chatBinding,
-          followsChat: false,
-          summary: data.summaryForBinding(data.chatBinding),
-          onSelect: () => onSelectFunction(core_proxy.FunctionType.chat, data),
-        ),
-        const SizedBox(height: 10),
-        _FunctionGroupHeader(label: l10n.settingsModelFunctionGroupBackground),
-        for (final functionType in _backgroundTypes)
-          _FunctionMappingRow(
-            functionType: functionType,
-            displayBinding: _resolveFunctionBinding(data, functionType),
-            followsChat: data.functionBindings[functionType]!.followsChat,
-            summary: data.summaryForBinding(
-              _resolveFunctionBinding(data, functionType),
-            ),
-            onSelect: () => onSelectFunction(functionType, data),
           ),
-        const SizedBox(height: 10),
-        _FunctionGroupHeader(label: l10n.settingsModelFunctionGroupMultimodal),
-        for (final functionType in _multimodalTypes)
-          _FunctionMappingRow(
-            functionType: functionType,
-            displayBinding: _resolveFunctionBinding(data, functionType),
-            followsChat: data.functionBindings[functionType]!.followsChat,
-            summary: data.summaryForBinding(
-              _resolveFunctionBinding(data, functionType),
+        ),
+        if (_showAdvanced) ...<Widget>[
+          const SizedBox(height: 2),
+          for (final functionType in _advancedTypes)
+            _FunctionMappingRow(
+              functionType: functionType,
+              displayBinding: _resolveFunctionBinding(
+                widget.data,
+                functionType,
+              ),
+              followsChat:
+                  widget.data.functionBindings[functionType]?.followsChat ??
+                  false,
+              summary: widget.data.summaryForBinding(
+                _resolveFunctionBinding(widget.data, functionType),
+              ),
+              onSelect: () =>
+                  widget.onSelectFunction(functionType, widget.data),
             ),
-            onSelect: () => onSelectFunction(functionType, data),
-          ),
+        ],
       ],
-    );
-  }
-}
-
-class _FunctionGroupHeader extends StatelessWidget {
-  const _FunctionGroupHeader({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 4, 6, 2),
-      child: Text(
-        label.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: colorScheme.onSurfaceVariant,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.4,
-        ),
-      ),
     );
   }
 }
@@ -6072,101 +6041,98 @@ class _FunctionMappingRow extends StatelessWidget {
       summary?.providerName ?? displayBinding.providerId,
       displayBinding.modelId,
     );
-    return Material(
-      type: MaterialType.transparency,
-      child: InkWell(
-        onTap: onSelect,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        Flexible(
-                          child: Text(
-                            _functionTypeTitle(l10n, functionType),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        if (followsChat) ...<Widget>[
-                          const SizedBox(width: 6),
-                          const _FollowChatBadge(),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: <Widget>[
-                        ProviderLogo(
-                          providerTypeId: summary?.providerTypeId ?? '',
-                          fallbackName:
-                              summary?.providerName ??
-                              displayBinding.providerId,
-                          size: 20,
-                          contentScale: 0.72,
-                        ),
-                        const SizedBox(width: 7),
-                        Flexible(
-                          child: Text(
-                            bindingText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: summary == null
-                                      ? colorScheme.error
-                                      : colorScheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                        if (warning != null) ...<Widget>[
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.warning_amber_outlined,
-                            size: 14,
-                            color: colorScheme.error,
-                          ),
-                          const SizedBox(width: 4),
+    final description = _functionTypeDescription(l10n, functionType);
+
+    return Tooltip(
+      message: description,
+      waitDuration: const Duration(milliseconds: 500),
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onSelect,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
                           Flexible(
                             child: Text(
-                              warning,
+                              _functionTypeTitle(l10n, functionType),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: colorScheme.error),
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(fontWeight: FontWeight.w600),
                             ),
                           ),
+                          if (followsChat) ...<Widget>[
+                            const SizedBox(width: 6),
+                            const _FollowChatBadge(),
+                          ],
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _functionTypeDescription(l10n, functionType),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      Row(
+                        children: <Widget>[
+                          ProviderLogo(
+                            providerTypeId: summary?.providerTypeId ?? '',
+                            fallbackName:
+                                summary?.providerName ??
+                                displayBinding.providerId,
+                            size: 16,
+                            contentScale: 0.72,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              bindingText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: summary == null
+                                        ? colorScheme.error
+                                        : colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
+                          if (warning != null) ...<Widget>[
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.warning_amber_outlined,
+                              size: 13,
+                              color: colorScheme.error,
+                            ),
+                            const SizedBox(width: 3),
+                            Flexible(
+                              child: Text(
+                                warning,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(color: colorScheme.error),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ],
+                const SizedBox(width: 6),
+                Icon(
+                  Icons.chevron_right,
+                  size: 18,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -6182,7 +6148,7 @@ class _FollowChatBadge extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: ShapeDecoration(
         color: colorScheme.primaryContainer.withValues(alpha: 0.45),
         shape: const StadiumBorder(),
@@ -6190,12 +6156,13 @@ class _FollowChatBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(Icons.link, size: 11, color: colorScheme.primary),
+          Icon(Icons.link, size: 10, color: colorScheme.primary),
           const SizedBox(width: 3),
           Text(
             l10n.settingsModelFunctionFollowChat,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: colorScheme.primary,
+              fontSize: 10,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -7384,11 +7351,15 @@ class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
     required this.children,
+    this.icon,
+    this.action,
     this.initiallyExpanded = true,
   });
 
   final String title;
   final List<Widget> children;
+  final IconData? icon;
+  final Widget? action;
   final bool initiallyExpanded;
 
   @override
@@ -7417,9 +7388,23 @@ class _SectionCard extends StatelessWidget {
             childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
             shape: RoundedRectangleBorder(borderRadius: radius),
             collapsedShape: RoundedRectangleBorder(borderRadius: radius),
-            title: Text(
-              title,
-              style: SettingsControlStyles.sectionTitleTextStyle(context),
+            title: Row(
+              children: <Widget>[
+                if (icon != null) ...<Widget>[
+                  Icon(icon, size: 18, color: colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    title,
+                    style: SettingsControlStyles.sectionTitleTextStyle(context),
+                  ),
+                ),
+                if (action != null) ...<Widget>[
+                  action!,
+                  const SizedBox(width: 4),
+                ],
+              ],
             ),
             children: children,
           ),

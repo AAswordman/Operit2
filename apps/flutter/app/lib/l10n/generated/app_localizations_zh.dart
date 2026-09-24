@@ -614,7 +614,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatSpeechInputConfigurationRequired =>
-      '请先在设置 > 语音与识别中添加并选中一个语音识别配置。';
+      '请先在设置 > 模型与 AI 中添加并选中一个语音识别配置。';
 
   @override
   String get chatSpeechNoTextRecognized => '未识别到文本';

@@ -22,11 +22,13 @@ class _SttProviderManager extends StatelessWidget {
   Widget build(BuildContext context) {
     if (configs.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Text(
-          '尚未配置语音识别供应商',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: Text(
+            '尚未配置语音识别供应商',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       );
@@ -68,31 +70,47 @@ class _SttProviderTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final endpoint = config.endpoint.trim();
+    final radius = BorderRadius.circular(12);
+    final subtitle = <String>[
+      config.providerType,
+      if (endpoint.isNotEmpty) endpoint,
+      if (config.model.trim().isNotEmpty) config.model.trim(),
+    ].join(' · ');
+
     return Material(
       color: current
-          ? colorScheme.primaryContainer.withValues(alpha: 0.22)
-          : colorScheme.surfaceContainerLow.withValues(alpha: 0.24),
-      borderRadius: BorderRadius.circular(8),
+          ? colorScheme.primaryContainer.withValues(alpha: 0.16)
+          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(
+          color: current
+              ? colorScheme.primary.withValues(alpha: 0.45)
+              : colorScheme.outlineVariant.withValues(alpha: 0.28),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: radius,
         onTap: onEdit,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
             children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Icon(
-                    Icons.mic_outlined,
-                    size: 19,
-                    color: current
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
+              Icon(
+                Icons.mic_outlined,
+                size: 20,
+                color: current
+                    ? colorScheme.primary
+                    : colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
                       config.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -100,71 +118,36 @@ class _SttProviderTile extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                  if (current) const SettingsActivePill(label: '全局当前'),
-                ],
-              ),
-              const SizedBox(height: 5),
-              Padding(
-                padding: const EdgeInsets.only(left: 29),
-                child: Text(
-                  endpoint.isEmpty
-                      ? config.providerType
-                      : '${config.providerType} · $endpoint',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 3),
-              Padding(
-                padding: const EdgeInsets.only(left: 29),
-                child: Row(
-                  children: <Widget>[
-                    Icon(
-                      Icons.model_training_outlined,
-                      size: 15,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 5),
-                    Expanded(
-                      child: Text(
-                        config.model,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: colorScheme.onSurfaceVariant),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Wrap(
-                  spacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: <Widget>[
-                    SettingsEntityIconButton(
-                      tooltip: '编辑 STT 供应商',
-                      icon: Icons.edit_outlined,
-                      onPressed: onEdit,
-                    ),
-                    SettingsEntityIconButton(
-                      tooltip: current ? '当前配置不能删除' : '删除 STT 供应商',
-                      icon: Icons.delete_outline,
-                      onPressed: current ? null : onDelete,
-                    ),
-                    if (!current)
-                      SettingsSetActiveButton(
-                        label: '设为全局',
-                        onPressed: onSetCurrent,
-                      ),
-                  ],
+              const SizedBox(width: 8),
+              if (current)
+                const SettingsActivePill(label: '全局当前')
+              else
+                SettingsSetActiveButton(
+                  label: '设为全局',
+                  onPressed: onSetCurrent,
                 ),
+              const SizedBox(width: 4),
+              SettingsEntityIconButton(
+                tooltip: '编辑',
+                icon: Icons.edit_outlined,
+                onPressed: onEdit,
+              ),
+              SettingsEntityIconButton(
+                tooltip: current ? '当前配置不能删除' : '删除',
+                icon: Icons.delete_outline,
+                onPressed: current ? null : onDelete,
               ),
             ],
           ),

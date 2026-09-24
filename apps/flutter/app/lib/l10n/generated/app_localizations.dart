@@ -1211,7 +1211,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatSpeechInputConfigurationRequired.
   ///
   /// In en, this message translates to:
-  /// **'Select a speech recognition configuration in Settings > Voice & Recognition before using speech input.'**
+  /// **'Select a speech recognition configuration in Settings > Models & AI before using speech input.'**
   String get chatSpeechInputConfigurationRequired;
 
   /// No description provided for @chatSpeechNoTextRecognized.
