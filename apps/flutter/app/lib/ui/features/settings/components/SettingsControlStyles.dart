@@ -220,3 +220,95 @@ class SettingsEntityPopupIconButton<T> extends StatelessWidget {
     );
   }
 }
+
+class SettingsSectionAddButton extends StatelessWidget {
+  const SettingsSectionAddButton({
+    super.key,
+    required this.tooltip,
+    required this.onPressed,
+    this.label = '添加',
+    this.icon = Icons.add,
+  });
+
+  final String tooltip;
+  final VoidCallback onPressed;
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: isDark
+            ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.55)
+            : colorScheme.surfaceContainerHigh.withValues(alpha: 0.7),
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(
+              alpha: isDark ? 0.35 : 0.45,
+            ),
+            width: 0.8,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onPressed,
+          child: Container(
+            height: 26,
+            padding: const EdgeInsets.fromLTRB(7, 0, 9, 0),
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  icon,
+                  size: 13,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurface,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SettingsInfoBadge extends StatelessWidget {
+  const SettingsInfoBadge({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: ShapeDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        shape: const StadiumBorder(),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}

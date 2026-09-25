@@ -1721,7 +1721,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryCharactersTitle.
   ///
   /// In en, this message translates to:
-  /// **'Characters & Memory'**
+  /// **'Characters'**
   String get settingsCategoryCharactersTitle;
 
   /// No description provided for @settingsCategoryCharactersSubtitle.
@@ -1735,6 +1735,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.'**
   String get settingsCategoryCharactersDescription;
+
+  /// No description provided for @settingsCategoryMemoryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory'**
+  String get settingsCategoryMemoryTitle;
+
+  /// No description provided for @settingsCategoryMemorySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory graph, shared stores, user profile'**
+  String get settingsCategoryMemorySubtitle;
+
+  /// No description provided for @settingsCategoryMemoryDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage character and shared memory stores, memory graph visualization, user profiles, and auto-update behavior.'**
+  String get settingsCategoryMemoryDescription;
 
   /// No description provided for @settingsCategoryToolsTitle.
   ///

@@ -892,7 +892,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Manage local models and inference engines installed on demand.';
 
   @override
-  String get settingsCategoryCharactersTitle => 'Characters & Memory';
+  String get settingsCategoryCharactersTitle => 'Characters';
 
   @override
   String get settingsCategoryCharactersSubtitle => 'Cards, groups, bindings';
@@ -900,6 +900,17 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsCategoryCharactersDescription =>
       'Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.';
+
+  @override
+  String get settingsCategoryMemoryTitle => 'Memory';
+
+  @override
+  String get settingsCategoryMemorySubtitle =>
+      'Memory graph, shared stores, user profile';
+
+  @override
+  String get settingsCategoryMemoryDescription =>
+      'Manage character and shared memory stores, memory graph visualization, user profiles, and auto-update behavior.';
 
   @override
   String get settingsCategoryToolsTitle => 'Tools & Permissions';

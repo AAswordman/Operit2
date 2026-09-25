@@ -28,6 +28,7 @@ class SettingsCategoryList extends StatelessWidget {
           SettingsCategory.localModels,
           SettingsCategory.tts,
           SettingsCategory.characters,
+          SettingsCategory.memory,
         ],
       ),
       _SettingsCategoryGroup(
