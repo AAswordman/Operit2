@@ -201,6 +201,7 @@
   "workspaceNameLabel": "Workspace name",
   "workspaceNameHint": "Enter a workspace name",
   "workspaceBindExistingTitle": "Choose workspace",
+  "workspacePickLocalFolder": "Choose a folder on this device",
   "workspaceBindExistingDescription": "Bind an existing workspace",
   "workspaceAddFolderTitle": "Add folder",
   "workspaceAddFolderDescription": "Mount another folder into the current workspace",

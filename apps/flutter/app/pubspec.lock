@@ -577,6 +577,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "9.5.0"
+  operit_folder_access:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/operit_folder_access"
+      relative: true
+    source: path
+    version: "0.1.0"
   package_config:
     dependency: transitive
     description:

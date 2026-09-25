@@ -374,6 +374,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get workspaceBindExistingTitle => 'Choose workspace';
 
   @override
+  String get workspacePickLocalFolder => 'Choose a folder on this device';
+
+  @override
   String get workspaceBindExistingDescription => 'Bind an existing workspace';
 
   @override

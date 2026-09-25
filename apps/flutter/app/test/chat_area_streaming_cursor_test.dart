@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1103,66 +1104,72 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('pauses live bottom follow while a touch drag is active', (
-    tester,
-  ) async {
-    final scrollController = ScrollController();
-    final autoScrollToBottom = ValueNotifier<bool>(true);
-    addTearDown(() {
-      scrollController.dispose();
-      autoScrollToBottom.dispose();
-    });
+  for (final kind in [PointerDeviceKind.touch, PointerDeviceKind.trackpad]) {
+    testWidgets('pauses live bottom follow while a $kind drag is active', (
+      tester,
+    ) async {
+      final scrollController = ScrollController();
+      final autoScrollToBottom = ValueNotifier<bool>(true);
+      addTearDown(() {
+        scrollController.dispose();
+        autoScrollToBottom.dispose();
+      });
 
-    Widget chatArea(String content, {double bottomContentInset = 0}) {
-      return _chatArea(
-        message: _aiMessage(
-          parts: <MessagePart>[
-            MessagePart(
-              partId: 'part-0',
-              sequence: 0,
-              kind: MessagePartKind.markdown,
-              content: content,
-              toolCallId: null,
-              toolName: null,
-              attributes: <String, String>{},
-            ),
-          ],
-          stream: const Stream.empty(),
-        ),
-        isLoading: false,
-        scrollController: scrollController,
-        autoScrollToBottom: autoScrollToBottom,
-        onAutoScrollToBottomChanged: (value) =>
-            autoScrollToBottom.value = value,
-        bottomContentInset: bottomContentInset,
+      Widget chatArea(String content, {double bottomContentInset = 0}) {
+        return _chatArea(
+          message: _aiMessage(
+            parts: <MessagePart>[
+              MessagePart(
+                partId: 'part-0',
+                sequence: 0,
+                kind: MessagePartKind.markdown,
+                content: content,
+                toolCallId: null,
+                toolName: null,
+                attributes: <String, String>{},
+              ),
+            ],
+            stream: const Stream.empty(),
+          ),
+          isLoading: false,
+          scrollController: scrollController,
+          autoScrollToBottom: autoScrollToBottom,
+          onAutoScrollToBottomChanged: (value) =>
+              autoScrollToBottom.value = value,
+          bottomContentInset: bottomContentInset,
+        );
+      }
+
+      await tester.pumpWidget(chatArea('start', bottomContentInset: 800));
+      await tester.pump();
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byType(Scrollable).first),
+        kind: kind,
       );
-    }
+      await tester.pumpWidget(chatArea('updated', bottomContentInset: 1600));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 120));
 
-    await tester.pumpWidget(chatArea('start'));
-    await tester.pump();
+      final maxScrollExtent = scrollController.position.maxScrollExtent;
+      final pausedOffset = scrollController.offset;
+      expect(maxScrollExtent - pausedOffset, greaterThan(80));
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(scrollController.offset, pausedOffset);
 
-    final gesture = await tester.startGesture(
-      tester.getCenter(find.byType(Scrollable).first),
-    );
-    await tester.pumpWidget(chatArea('updated', bottomContentInset: 800));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 120));
-
-    final maxScrollExtent = scrollController.position.maxScrollExtent;
-    final pausedOffset = scrollController.offset;
-    expect(maxScrollExtent - pausedOffset, greaterThan(80));
-    await tester.pump(const Duration(milliseconds: 120));
-    expect(scrollController.offset, pausedOffset);
-
-    await gesture.moveBy(const Offset(0, 120));
-    await tester.pump();
-    await gesture.up();
-    await tester.pump();
-    await tester.drag(find.byType(ListView).first, const Offset(0, -120));
-    await tester.pump();
-    expect(scrollController.offset, greaterThan(pausedOffset));
-    expect(autoScrollToBottom.value, isFalse);
-  });
+      // Contact alone must not turn off following, but the same gesture must
+      // take over immediately once the user pans, without lifting and retrying.
+      expect(autoScrollToBottom.value, isTrue);
+      await gesture.moveBy(const Offset(0, -120));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -120));
+      await tester.pump();
+      expect(scrollController.offset, greaterThan(pausedOffset));
+      expect(autoScrollToBottom.value, isFalse);
+      await gesture.up();
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
 }
 
 /// Pumps the renderer through stream delivery, throttled flush, and readiness frames.

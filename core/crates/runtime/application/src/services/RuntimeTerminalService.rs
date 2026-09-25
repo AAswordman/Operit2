@@ -429,7 +429,9 @@ impl RuntimeTerminalService {
 
 fn resolve_terminal_working_dir(context: &HostManager, workingDir: &str) -> Result<String, String> {
     let trimmed = workingDir.trim();
-    if trimmed.starts_with("/app/") || trimmed == "/app" {
+    if trimmed == "/app" || trimmed.starts_with("/app/")
+        || trimmed == "/mnt" || trimmed.starts_with("/mnt/")
+    {
         return terminal_vfs(context)?
             .resolvePath(trimmed)
             .map(|path| path.physicalPath);

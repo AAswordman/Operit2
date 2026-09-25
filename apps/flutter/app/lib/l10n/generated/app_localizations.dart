@@ -764,6 +764,12 @@ abstract class AppLocalizations {
   /// **'Choose workspace'**
   String get workspaceBindExistingTitle;
 
+  /// No description provided for @workspacePickLocalFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a folder on this device'**
+  String get workspacePickLocalFolder;
+
   /// No description provided for @workspaceBindExistingDescription.
   ///
   /// In en, this message translates to:

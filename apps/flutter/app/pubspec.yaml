@@ -28,6 +28,8 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  operit_folder_access:
+    path: ../thirdparty/operit_folder_access
   flutter:
     sdk: flutter
   flutter_localizations:

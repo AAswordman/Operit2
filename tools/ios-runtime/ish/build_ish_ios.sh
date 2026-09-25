@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Homebrew installs LLD separately from LLVM; expose it to clang even when
+# Flutter is launched from an IDE that does not inherit the interactive PATH.
+if [[ -d /opt/homebrew/opt/lld/bin ]]; then
+    PATH="/opt/homebrew/opt/lld/bin:$PATH"
+elif [[ -d /usr/local/opt/lld/bin ]]; then
+    PATH="/usr/local/opt/lld/bin:$PATH"
+fi
+export PATH
+
 # Reports the command and source line that caused the iSH build to terminate.
 report_build_failure() {
     local exit_code="$?"
@@ -88,6 +97,7 @@ build_target() {
         -configuration "$target_configuration" \
         -sdk "$sdk_name" \
         ARCHS="$architectures" \
+        IPHONEOS_DEPLOYMENT_TARGET=16.4 \
         CONFIGURATION_BUILD_DIR="$build_products_dir" \
         MESON_BUILD_DIR="$meson_build_dir" \
         CODE_SIGNING_ALLOWED=NO \

@@ -5,6 +5,7 @@ import CoreMedia
 import Foundation
 import FlutterMacOS
 import Network
+import operit_folder_access
 import UserNotifications
 import Vision
 
@@ -428,6 +429,8 @@ final class AppleRuntimeChannel: NSObject {
     do {
       let runtimeRoot = try absoluteDirectory(from: arguments["runtimeRoot"] ?? nil, label: "runtimeRoot")
       let workspaceRoot = try absoluteDirectory(from: arguments["workspaceRoot"] ?? nil, label: "workspaceRoot")
+      try FolderAccessStore.shared.ensureAccess(to: runtimeRoot)
+      try FolderAccessStore.shared.ensureAccess(to: workspaceRoot)
       result([
         "runtimeRoot": runtimeRoot.path,
         "workspaceRoot": workspaceRoot.path,
@@ -446,6 +449,8 @@ final class AppleRuntimeChannel: NSObject {
     do {
       let runtimeRoot = try absoluteDirectory(from: arguments["runtimeRoot"] ?? nil, label: "runtimeRoot")
       let workspaceRoot = try absoluteDirectory(from: arguments["workspaceRoot"] ?? nil, label: "workspaceRoot")
+      try FolderAccessStore.shared.ensureAccess(to: runtimeRoot)
+      try FolderAccessStore.shared.ensureAccess(to: workspaceRoot)
       if handle != nil {
         if configuredRuntimeRoot == runtimeRoot && configuredWorkspaceRoot == workspaceRoot {
           result(nil)

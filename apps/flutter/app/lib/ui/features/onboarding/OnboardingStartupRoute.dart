@@ -4,7 +4,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
-import 'package:file_selector/file_selector.dart';
+import 'package:operit_folder_access/operit_folder_access.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -683,8 +683,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
 
   /// Lets the user select the runtime data directory.
   Future<void> _selectRuntimeRoot() async {
-    final path = await getDirectoryPath();
-    if (path == null || path.trim().isEmpty) {
+    final path = await OperitFolderAccess.pickDirectory();
+    if (!mounted || path == null || path.trim().isEmpty) {
       return;
     }
     _runtimeRootController.text = path.trim();
@@ -695,8 +695,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
 
   /// Lets the user select the workspace data directory.
   Future<void> _selectWorkspaceRoot() async {
-    final path = await getDirectoryPath();
-    if (path == null || path.trim().isEmpty) {
+    final path = await OperitFolderAccess.pickDirectory();
+    if (!mounted || path == null || path.trim().isEmpty) {
       return;
     }
     _workspaceRootController.text = path.trim();
