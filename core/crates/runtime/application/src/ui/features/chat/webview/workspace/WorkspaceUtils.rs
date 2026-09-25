@@ -216,7 +216,11 @@ fn generateFlutterProjectConfig() -> Value {
             dedicatedCommand("flutter_run_web_server", "Run Web Server", "flutter run -d web-server --web-hostname 0.0.0.0 --web-port 5013", "Flutter Web Server"),
             command("flutter_analyze", "Flutter Analyze", "flutter analyze"),
             command("flutter_test", "Flutter Test", "flutter test"),
-            command("flutter_build_apk", "Build APK", "flutter build apk"),
+            command(
+                "flutter_build_apk",
+                "Build APK",
+                "flutter build apk --split-per-abi --target-platform android-arm64,android-arm,android-x64",
+            ),
             command("flutter_build_web", "Build Web", "flutter build web --no-tree-shake-icons")
         ],
         "export": {"enabled": false}
