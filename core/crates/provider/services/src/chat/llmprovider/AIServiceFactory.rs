@@ -20,6 +20,7 @@ pub struct LlmRequestTraceContext {
 pub enum ProviderServiceKind {
     OpenAIProvider,
     OpenAIResponsesProvider,
+    OpenCodeProvider,
     ClaudeProvider,
     GeminiProvider,
     OllamaProvider,
@@ -65,6 +66,18 @@ pub enum ProviderCreateParams {
         model_name: String,
         custom_headers: BTreeMap<String, String>,
         responses_provider_type: ApiProviderType,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
+        enable_tool_call: bool,
+    },
+    OpenCodeProvider {
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        protocol: ApiProviderType,
         supports_vision: bool,
         supports_audio: bool,
         supports_video: bool,
@@ -465,9 +478,17 @@ impl AIServiceFactory {
                 enable_tool_call,
             ),
             ApiProviderType::OPENCODE => {
-                return Err(AiServiceError::ProviderNotImplemented(
-                    "OPENCODE chat inference".to_string(),
-                ));
+                Self::open_code_provider(
+                    api_endpoint,
+                    api_key_provider,
+                    model_name,
+                    custom_headers,
+                    supports_vision,
+                    supports_audio,
+                    supports_video,
+                    builtin_tools,
+                    enable_tool_call,
+                )
             }
             ApiProviderType::FOUR_ROUTER => Self::four_router_provider(
                 api_endpoint,
@@ -594,6 +615,49 @@ impl AIServiceFactory {
                 supports_vision,
                 supports_audio,
                 supports_video,
+                enable_tool_call,
+            },
+        })
+    }
+
+    /// Builds the OpenCode routing provider spec.
+    fn open_code_provider(
+        api_endpoint: String,
+        api_key_provider: ApiKeyProviderSpec,
+        model_name: String,
+        custom_headers: BTreeMap<String, String>,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        builtin_tools: Vec<ModelBuiltinTool>,
+        enable_tool_call: bool,
+    ) -> Result<ProviderServiceSpec, AiServiceError> {
+        let model_name = model_name.trim();
+        let model_name = if let Some(value) = model_name.strip_prefix("opencode/") {
+            value
+        } else if let Some(value) = model_name.strip_prefix("opencode-go/") {
+            value
+        } else {
+            model_name
+        }
+        .to_string();
+        let protocol = crate::chat::llmprovider::OpenCodeProvider::OpenCodeRouting::protocol_for(
+            &api_endpoint,
+            &model_name,
+        )
+        .map_err(AiServiceError::RequestFailed)?;
+        Ok(ProviderServiceSpec {
+            kind: ProviderServiceKind::OpenCodeProvider,
+            params: ProviderCreateParams::OpenCodeProvider {
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                protocol,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                builtin_tools,
                 enable_tool_call,
             },
         })

@@ -38,6 +38,7 @@ pub struct GeminiProvider {
     pub custom_headers: Vec<(String, String)>,
     pub builtin_tools: Vec<ModelBuiltinTool>,
     pub enable_tool_call: bool,
+    pub api_key_header_name: Option<String>,
     state: Arc<Mutex<GeminiProviderState>>,
     isInThinkingMode: bool,
 }
@@ -67,6 +68,30 @@ impl GeminiProvider {
         builtin_tools: Vec<ModelBuiltinTool>,
         enable_tool_call: bool,
     ) -> Self {
+        Self::new_with_request_options(
+            api_endpoint,
+            api_key,
+            model_name,
+            provider_type,
+            custom_headers,
+            builtin_tools,
+            enable_tool_call,
+            None,
+        )
+    }
+
+    /// Creates a Gemini provider with an optional API-key header transport mode.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_request_options(
+        api_endpoint: String,
+        api_key: String,
+        model_name: String,
+        provider_type: String,
+        custom_headers: Vec<(String, String)>,
+        builtin_tools: Vec<ModelBuiltinTool>,
+        enable_tool_call: bool,
+        api_key_header_name: Option<String>,
+    ) -> Self {
         Self {
             api_endpoint,
             api_key,
@@ -75,6 +100,7 @@ impl GeminiProvider {
             custom_headers,
             builtin_tools,
             enable_tool_call,
+            api_key_header_name,
             state: Arc::new(Mutex::new(GeminiProviderState::default())),
             isInThinkingMode: false,
         }
@@ -647,6 +673,24 @@ impl GeminiProvider {
     }
 
     fn request_url(&self, stream: bool) -> String {
+        if let Some(api_key_header_name) = self.api_key_header_name.as_deref() {
+            let base_url = self
+                .api_endpoint
+                .split("/models/")
+                .next()
+                .expect("endpoint split always has one segment")
+                .trim_end_matches('/');
+            let method = if stream {
+                "streamGenerateContent"
+            } else {
+                "generateContent"
+            };
+            let suffix = if stream { "?alt=sse" } else { "" };
+            return format!(
+                "{base_url}/models/{}:{method}{suffix}",
+                self.model_name
+            );
+        }
         let base_url = determine_base_url(&self.api_endpoint);
         let method = if stream {
             "streamGenerateContent"
@@ -664,6 +708,16 @@ impl GeminiProvider {
     fn headers(&self) -> Result<HeaderMap, AiServiceError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        if let Some(api_key_header_name) = self.api_key_header_name.as_deref() {
+            if !self.api_key.trim().is_empty() {
+                headers.insert(
+                    HeaderName::from_bytes(api_key_header_name.as_bytes())
+                        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?,
+                    HeaderValue::from_str(self.api_key.trim())
+                        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?,
+                );
+            }
+        }
         for (name, value) in &self.custom_headers {
             headers.insert(
                 HeaderName::from_bytes(name.as_bytes())

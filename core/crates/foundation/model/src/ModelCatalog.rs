@@ -34,7 +34,7 @@ MISTRAL|Mistral|https://codestral.mistral.ai/v1/chat/completions||list_models:GE
 SILICONFLOW|SiliconFlow|https://api.siliconflow.cn/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true,balance:GET:/v1/user/info:$.data.balance::true
 IFLOW|iFlow|https://apis.iflow.cn/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 OPENROUTER|OpenRouter|https://openrouter.ai/api/v1/chat/completions||list_models:GET:/api/v1/models:$.data:$.id:$.pricing.prompt:$.pricing.input_cache_read:$.pricing.completion::USD:$.context_length:$.architecture.input_modalities~image:$.architecture.input_modalities~audio:$.architecture.input_modalities~video::$.supported_parameters~tools:$.supported_parameters~tools:true,balance:GET:/api/v1/credits:$.data.total_credits::true
-OPENCODE|OpenCode|https://opencode.ai/zen|https://opencode.ai/zen~Zen;https://opencode.ai/zen/go~Go|
+OPENCODE|OpenCode|https://opencode.ai/zen|https://opencode.ai/zen~Zen;https://opencode.ai/zen/go~Go|list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 FOUR_ROUTER|4Router|https://4router.net/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 NOUS_PORTAL|Nous Portal|https://inference-api.nousresearch.com/v1/chat/completions||list_models:GET:/v1/models:$.data:$.id:::::::::::::true
 INFINIAI|InfiniAI|https://cloud.infini-ai.com/maas/v1/chat/completions||list_models:GET:/maas/v1/models:$.data:$.id:::::::::::::true

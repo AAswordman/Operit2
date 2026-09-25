@@ -46,6 +46,8 @@ pub mod OllamaProvider;
 pub mod OpenAIProvider;
 #[path = "OpenAIResponsesProvider.rs"]
 pub mod OpenAIResponsesProvider;
+#[path = "OpenCodeProvider.rs"]
+pub mod OpenCodeProvider;
 #[path = "OpenRouterProvider.rs"]
 pub mod OpenRouterProvider;
 #[path = "QwenAIProvider.rs"]

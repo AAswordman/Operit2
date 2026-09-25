@@ -47,6 +47,7 @@ pub struct OpenAIProvider {
     pub supports_video: bool,
     pub enable_tool_call: bool,
     pub custom_headers: Vec<(String, String)>,
+    pub preserve_reasoning_content: bool,
     responsesProtocol: ResponsesStreamProtocol,
     state: Arc<Mutex<OpenAIProviderState>>,
 }
@@ -470,6 +471,7 @@ impl OpenAIProvider {
             supports_video: false,
             enable_tool_call,
             custom_headers,
+            preserve_reasoning_content: false,
             responsesProtocol: ResponsesStreamProtocol::OpenAi,
             state: Arc::new(Mutex::new(OpenAIProviderState::default())),
         }
@@ -487,6 +489,34 @@ impl OpenAIProvider {
         supports_video: bool,
         enable_tool_call: bool,
     ) -> Self {
+        Self::new_with_capabilities_and_reasoning(
+            api_endpoint,
+            api_key,
+            model_name,
+            provider_type,
+            custom_headers,
+            supports_vision,
+            supports_audio,
+            supports_video,
+            enable_tool_call,
+            false,
+        )
+    }
+
+    /// Creates an OpenAI-compatible provider with explicit history reasoning behavior.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_capabilities_and_reasoning(
+        api_endpoint: String,
+        api_key: String,
+        model_name: String,
+        provider_type: String,
+        custom_headers: Vec<(String, String)>,
+        supports_vision: bool,
+        supports_audio: bool,
+        supports_video: bool,
+        enable_tool_call: bool,
+        preserve_reasoning_content: bool,
+    ) -> Self {
         Self {
             api_endpoint,
             api_key,
@@ -497,6 +527,7 @@ impl OpenAIProvider {
             supports_video,
             enable_tool_call,
             custom_headers,
+            preserve_reasoning_content,
             responsesProtocol: ResponsesStreamProtocol::OpenAi,
             state: Arc::new(Mutex::new(OpenAIProviderState::default())),
         }
@@ -745,11 +776,13 @@ impl OpenAIProvider {
             json_object.insert("tool_choice".to_string(), json!("auto"));
         }
 
+        let preserve_think_in_history =
+            request.preserve_think_in_history || self.preserve_reasoning_content;
         let (messagesArray, _) = self.build_messages_and_count_tokens(
             chat_history,
             effectiveEnableToolCall,
             toolsJson.as_deref(),
-            request.preserve_think_in_history,
+            preserve_think_in_history,
         )?;
         json_object.insert("messages".to_string(), messagesArray);
 
@@ -773,7 +806,39 @@ impl OpenAIProvider {
             &request.thinking_configurations,
             &request.thinking_option_id,
         )?;
+        if self.preserve_reasoning_content {
+            self.extract_opencode_reasoning_content(&mut request_object);
+        }
         Ok(request_object)
+    }
+
+    /// Moves assistant thinking markup into the provider reasoning field.
+    fn extract_opencode_reasoning_content(&self, request_object: &mut Value) {
+        let Some(messages) = request_object
+            .get_mut("messages")
+            .and_then(Value::as_array_mut)
+        else {
+            return;
+        };
+        for message in messages {
+            let Some(message_object) = message.as_object_mut() else {
+                continue;
+            };
+            if message_object.get("role").and_then(Value::as_str) != Some("assistant") {
+                continue;
+            }
+            let Some(content) = message_object
+                .get("content")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+            else {
+                message_object.insert("reasoning_content".to_string(), json!(""));
+                continue;
+            };
+            let (clean_content, reasoning) = ChatUtils::extract_thinking_content(&content);
+            message_object.insert("reasoning_content".to_string(), json!(reasoning));
+            message_object.insert("content".to_string(), json!(clean_content));
+        }
     }
 
     pub fn customize_final_request_object(&self, _request_object: &mut Map<String, Value>) {}
