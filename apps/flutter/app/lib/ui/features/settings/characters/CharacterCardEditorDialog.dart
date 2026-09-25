@@ -36,10 +36,6 @@ class _CharacterCardEditorDialog extends StatefulWidget {
     required this.modelSummaries,
     required this.sharedMemoryStores,
     required this.ttsConfigs,
-    required this.enableMemoryAutoUpdate,
-    required this.disableUserPreferenceDescription,
-    required this.onSaveMemoryAutoUpdate,
-    required this.onSavePreferenceDescription,
     required this.builtinToolOptions,
     required this.packageToolOptions,
     required this.skillToolOptions,
@@ -53,10 +49,6 @@ class _CharacterCardEditorDialog extends StatefulWidget {
   final List<core_proxy.ProviderModelSummary> modelSummaries;
   final List<core_proxy.SharedMemoryStore> sharedMemoryStores;
   final List<core_proxy.TtsConfig> ttsConfigs;
-  final bool enableMemoryAutoUpdate;
-  final bool disableUserPreferenceDescription;
-  final Future<void> Function(bool enabled) onSaveMemoryAutoUpdate;
-  final Future<void> Function(bool enabled) onSavePreferenceDescription;
   final List<ToolAccessOption> builtinToolOptions;
   final List<ToolAccessOption> packageToolOptions;
   final List<ToolAccessOption> skillToolOptions;
@@ -71,10 +63,6 @@ class _CharacterCardEditorDialog extends StatefulWidget {
     required List<core_proxy.ProviderModelSummary> modelSummaries,
     required List<core_proxy.SharedMemoryStore> sharedMemoryStores,
     required List<core_proxy.TtsConfig> ttsConfigs,
-    required bool enableMemoryAutoUpdate,
-    required bool disableUserPreferenceDescription,
-    required Future<void> Function(bool enabled) onSaveMemoryAutoUpdate,
-    required Future<void> Function(bool enabled) onSavePreferenceDescription,
     required List<ToolAccessOption> builtinToolOptions,
     required List<ToolAccessOption> packageToolOptions,
     required List<ToolAccessOption> skillToolOptions,
@@ -90,10 +78,6 @@ class _CharacterCardEditorDialog extends StatefulWidget {
         modelSummaries: modelSummaries,
         sharedMemoryStores: sharedMemoryStores,
         ttsConfigs: ttsConfigs,
-        enableMemoryAutoUpdate: enableMemoryAutoUpdate,
-        disableUserPreferenceDescription: disableUserPreferenceDescription,
-        onSaveMemoryAutoUpdate: onSaveMemoryAutoUpdate,
-        onSavePreferenceDescription: onSavePreferenceDescription,
         builtinToolOptions: builtinToolOptions,
         packageToolOptions: packageToolOptions,
         skillToolOptions: skillToolOptions,
@@ -126,8 +110,6 @@ class _CharacterCardEditorDialogState
   String? _ttsConfigId;
   late String _memoryBindingMode;
   String? _sharedMemoryId;
-  late bool _enableMemoryAutoUpdate;
-  late bool _disableUserPreferenceDescription;
   late List<String> _attachedTagIds;
   late List<core_proxy.PromptTag> _tags;
   final List<_PromptTagCreateDraft> _createdTagDrafts =
@@ -169,8 +151,6 @@ class _CharacterCardEditorDialogState
     _ttsConfigId = card.ttsConfigId;
     _memoryBindingMode = _normalizeMemoryBindingMode(card.memoryBindingMode);
     _sharedMemoryId = card.sharedMemoryId;
-    _enableMemoryAutoUpdate = widget.enableMemoryAutoUpdate;
-    _disableUserPreferenceDescription = widget.disableUserPreferenceDescription;
     _attachedTagIds = List<String>.from(card.attachedTagIds);
     _tags = List<core_proxy.PromptTag>.from(widget.tags);
     _toolAccessConfig = _normalizedToolAccessConfig(card.toolAccessConfig);
@@ -352,9 +332,10 @@ class _CharacterCardEditorDialogState
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.settingsCharactersDeleteTag),
-        content: Text(l10n.settingsCharactersDeleteTagMessage(tag.name)),
+      builder: (context) => OperitDialogScaffold(
+        title: l10n.settingsCharactersDeleteTag,
+        maxWidth: 420,
+        showCloseButton: true,
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -365,6 +346,7 @@ class _CharacterCardEditorDialogState
             child: Text(l10n.delete),
           ),
         ],
+        child: Text(l10n.settingsCharactersDeleteTagMessage(tag.name)),
       ),
     );
     if (!mounted || confirmed != true) {
@@ -484,26 +466,6 @@ class _CharacterCardEditorDialogState
     }
     setState(() {
       _ttsConfigId = selected.id;
-    });
-  }
-
-  Future<void> _setMemoryAutoUpdate(bool enabled) async {
-    await widget.onSaveMemoryAutoUpdate(enabled);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _enableMemoryAutoUpdate = enabled;
-    });
-  }
-
-  Future<void> _setPreferenceDescription(bool enabled) async {
-    await widget.onSavePreferenceDescription(enabled);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _disableUserPreferenceDescription = !enabled;
     });
   }
 
@@ -751,28 +713,6 @@ class _CharacterCardEditorDialogState
                                     }
                                   });
                                 },
-                          footerChildren: <Widget>[
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              children: <Widget>[
-                                _BindingTogglePill(
-                                  label: '读取记忆',
-                                  selected: !_disableUserPreferenceDescription,
-                                  onTap: () => _setPreferenceDescription(
-                                    _disableUserPreferenceDescription,
-                                  ),
-                                ),
-                                _BindingTogglePill(
-                                  label: '写入记忆',
-                                  selected: _enableMemoryAutoUpdate,
-                                  onTap: () => _setMemoryAutoUpdate(
-                                    !_enableMemoryAutoUpdate,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
                           children: <Widget>[
                             if (widget.sharedMemoryStores.isEmpty)
                               const Padding(
@@ -937,7 +877,6 @@ class _BindingSwitchSection extends StatelessWidget {
     required this.value,
     required this.onChanged,
     required this.children,
-    this.footerChildren = const <Widget>[],
   });
 
   final String title;
@@ -946,7 +885,6 @@ class _BindingSwitchSection extends StatelessWidget {
   final bool value;
   final ValueChanged<bool>? onChanged;
   final List<Widget> children;
-  final List<Widget> footerChildren;
 
   @override
   Widget build(BuildContext context) {
@@ -1014,70 +952,6 @@ class _BindingSwitchSection extends StatelessWidget {
                 const SizedBox(height: 6),
                 ...children,
               ],
-              if (footerChildren.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Divider(height: 1, color: colorScheme.outlineVariant),
-                const SizedBox(height: 4),
-                ...footerChildren,
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BindingTogglePill extends StatelessWidget {
-  const _BindingTogglePill({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final backgroundColor = selected
-        ? colorScheme.primaryContainer.withValues(alpha: 0.86)
-        : colorScheme.surfaceContainerHighest.withValues(alpha: 0.36);
-    final foregroundColor = selected
-        ? colorScheme.onPrimaryContainer
-        : colorScheme.onSurfaceVariant;
-    return Material(
-      color: backgroundColor,
-      shape: StadiumBorder(
-        side: BorderSide(
-          color: selected
-              ? colorScheme.primary.withValues(alpha: 0.42)
-              : colorScheme.outlineVariant.withValues(alpha: 0.42),
-        ),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const StadiumBorder(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                selected ? Icons.check_rounded : Icons.close_rounded,
-                size: 16,
-                color: foregroundColor,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: foregroundColor,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
             ],
           ),
         ),
@@ -1183,27 +1057,20 @@ class _CharacterModelSelectorDialogState
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    if (widget.summaries.isEmpty) {
-      return AlertDialog(
-        title: Text(widget.title),
-        content: SizedBox(width: 420, child: Text(l10n.noData)),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancel),
-          ),
-        ],
-      );
-    }
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(width: 560, height: 480, child: _modelList(l10n)),
+    return OperitDialogScaffold(
+      title: widget.title,
+      maxWidth: 580,
+      maxHeight: 560,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
         ),
       ],
+      child: widget.summaries.isEmpty
+          ? SizedBox(height: 120, child: Center(child: Text(l10n.noData)))
+          : _modelList(l10n),
     );
   }
 }
@@ -1355,27 +1222,20 @@ class _CharacterTtsConfigSelectorDialogState
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    if (widget.configs.isEmpty) {
-      return AlertDialog(
-        title: const Text('选择 TTS 配置'),
-        content: SizedBox(width: 420, child: Text(l10n.noData)),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancel),
-          ),
-        ],
-      );
-    }
-    return AlertDialog(
-      title: const Text('选择 TTS 配置'),
-      content: SizedBox(width: 560, height: 480, child: _configList(l10n)),
+    return OperitDialogScaffold(
+      title: '选择 TTS 配置',
+      maxWidth: 580,
+      maxHeight: 560,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
         ),
       ],
+      child: widget.configs.isEmpty
+          ? SizedBox(height: 120, child: Center(child: Text(l10n.noData)))
+          : _configList(l10n),
     );
   }
 }

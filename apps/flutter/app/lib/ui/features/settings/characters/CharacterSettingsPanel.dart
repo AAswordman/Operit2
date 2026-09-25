@@ -206,14 +206,6 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         'ttsConfigManager.getAllTtsConfigs',
         _loadTtsConfigs,
       );
-      final enableMemoryAutoUpdate = await _timeLoadStep(
-        'apiPreferences.enableMemoryAutoUpdateFlow',
-        () => apiPreferences.enableMemoryAutoUpdateFlow().first,
-      );
-      final disableUserPreferenceDescription = await _timeLoadStep(
-        'apiPreferences.disableUserPreferenceDescriptionFlow',
-        () => apiPreferences.disableUserPreferenceDescriptionFlow().first,
-      );
       final data = CharacterSettingsData(
         cards: cards,
         groups: groups,
@@ -227,8 +219,6 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
         mcpToolOptions: mcpOptions,
         activeCardId: activePrompt.cardId,
         activeGroupId: activePrompt.groupId,
-        enableMemoryAutoUpdate: enableMemoryAutoUpdate,
-        disableUserPreferenceDescription: disableUserPreferenceDescription,
       );
       stopwatch.stop();
       _writeTiming(
@@ -618,10 +608,6 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       modelSummaries: data.modelSummaries,
       sharedMemoryStores: data.sharedMemoryStores,
       ttsConfigs: data.ttsConfigs,
-      enableMemoryAutoUpdate: data.enableMemoryAutoUpdate,
-      disableUserPreferenceDescription: data.disableUserPreferenceDescription,
-      onSaveMemoryAutoUpdate: _saveMemoryAutoUpdate,
-      onSavePreferenceDescription: _savePreferenceDescription,
       builtinToolOptions: data.builtinToolOptions,
       packageToolOptions: data.packageToolOptions,
       skillToolOptions: data.skillToolOptions,
@@ -660,10 +646,6 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
       modelSummaries: data.modelSummaries,
       sharedMemoryStores: data.sharedMemoryStores,
       ttsConfigs: data.ttsConfigs,
-      enableMemoryAutoUpdate: data.enableMemoryAutoUpdate,
-      disableUserPreferenceDescription: data.disableUserPreferenceDescription,
-      onSaveMemoryAutoUpdate: _saveMemoryAutoUpdate,
-      onSavePreferenceDescription: _savePreferenceDescription,
       builtinToolOptions: data.builtinToolOptions,
       packageToolOptions: data.packageToolOptions,
       skillToolOptions: data.skillToolOptions,
@@ -820,43 +802,6 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     _reload();
   }
 
-  Future<void> _createSharedMemoryStore() async {
-    final edited = await _SharedMemoryStoreEditorDialog.show(
-      context: context,
-      title: '新建共享记忆库',
-    );
-    if (edited == null) {
-      return;
-    }
-    await widget.clients.preferencesSharedMemoryStoreManager
-        .createSharedMemoryStore(name: edited.name);
-    _reload();
-  }
-
-  Future<void> _renameSharedMemoryStore(
-    core_proxy.SharedMemoryStore store,
-  ) async {
-    final edited = await _SharedMemoryStoreEditorDialog.show(
-      context: context,
-      title: '编辑共享记忆库',
-      store: store,
-    );
-    if (edited == null) {
-      return;
-    }
-    await widget.clients.preferencesSharedMemoryStoreManager
-        .renameSharedMemoryStore(id: store.id, name: edited.name);
-    _reload();
-  }
-
-  Future<void> _deleteSharedMemoryStore(
-    core_proxy.SharedMemoryStore store,
-  ) async {
-    await widget.clients.preferencesSharedMemoryStoreManager
-        .deleteSharedMemoryStore(id: store.id);
-    _reload();
-  }
-
   Future<void> _editOwnerUserMarkdown({
     required String ownerKey,
     required String titleName,
@@ -896,19 +841,6 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
     );
   }
 
-  Future<void> _saveMemoryAutoUpdate(bool enabled) async {
-    await widget.clients.preferencesApiPreferences.saveEnableMemoryAutoUpdate(
-      isEnabled: enabled,
-    );
-    _reload();
-  }
-
-  Future<void> _savePreferenceDescription(bool enabled) async {
-    await widget.clients.preferencesApiPreferences
-        .saveDisableUserPreferenceDescription(isDisabled: !enabled);
-    _reload();
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -943,22 +875,22 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
           children: <Widget>[
             _SectionCard(
               title: l10n.settingsCharactersCardsSection,
+              icon: Icons.badge_outlined,
               action: Wrap(
-                spacing: 8,
+                spacing: 6,
                 runSpacing: 4,
                 alignment: WrapAlignment.end,
                 children: <Widget>[
-                  TextButton.icon(
+                  SettingsSectionAddButton(
+                    tooltip: l10n.settingsCharactersImport,
+                    label: l10n.settingsCharactersImport,
+                    icon: Icons.upload_file_outlined,
                     onPressed: _chooseCharacterCardImport,
-                    style: SettingsControlStyles.sectionTextButton(),
-                    icon: const Icon(Icons.upload_file_outlined, size: 18),
-                    label: Text(l10n.settingsCharactersImport),
                   ),
-                  FilledButton.icon(
+                  SettingsSectionAddButton(
+                    tooltip: l10n.create,
+                    label: l10n.create,
                     onPressed: () => _createCard(data),
-                    style: SettingsControlStyles.sectionFilledButton(),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: Text(l10n.create),
                   ),
                 ],
               ),
@@ -984,22 +916,22 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
             ),
             _SectionCard(
               title: l10n.settingsCharactersGroupsSection,
+              icon: Icons.groups_outlined,
               action: Wrap(
-                spacing: 8,
+                spacing: 6,
                 runSpacing: 4,
                 alignment: WrapAlignment.end,
                 children: <Widget>[
-                  TextButton.icon(
+                  SettingsSectionAddButton(
+                    tooltip: l10n.settingsCharactersImportJson,
+                    label: l10n.settingsCharactersImportJson,
+                    icon: Icons.upload_file_outlined,
                     onPressed: _importCharacterGroupJson,
-                    style: SettingsControlStyles.sectionTextButton(),
-                    icon: const Icon(Icons.upload_file_outlined, size: 18),
-                    label: Text(l10n.settingsCharactersImportJson),
                   ),
-                  FilledButton.icon(
+                  SettingsSectionAddButton(
+                    tooltip: l10n.create,
+                    label: l10n.create,
                     onPressed: () => _createGroup(data),
-                    style: SettingsControlStyles.sectionFilledButton(),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: Text(l10n.create),
                   ),
                 ],
               ),
@@ -1014,37 +946,7 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
                   ),
               ],
             ),
-            _ExpandableSectionCard(
-              title: l10n.settingsAdvanced,
-              children: <Widget>[
-                _AdvancedSettingsGroup(
-                  title: '共享记忆',
-                  description: '配置可被多个角色卡挂载的共享记忆库。',
-                  action: FilledButton.icon(
-                    onPressed: _createSharedMemoryStore,
-                    style: SettingsControlStyles.sectionFilledButton(),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: Text(l10n.create),
-                  ),
-                  children: <Widget>[
-                    for (final store in data.sharedMemoryStores)
-                      _SharedMemoryStoreTile(
-                        store: store,
-                        onEdit: () => _renameSharedMemoryStore(store),
-                        onDelete: () => _deleteSharedMemoryStore(store),
-                        onEditUserMarkdown: () => _editOwnerUserMarkdown(
-                          ownerKey: _sharedOwnerKey(store.id),
-                          titleName: store.name,
-                        ),
-                        onOpenMemoryGraph: () => _openMemoryGraph(
-                          ownerKey: _sharedOwnerKey(store.id),
-                          titleName: store.name,
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
+
           ],
         );
       },
