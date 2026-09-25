@@ -3,21 +3,18 @@ import UIKit
 import UserNotifications
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
-    if let controller = window?.rootViewController as? FlutterViewController {
-      AppleRuntimeChannel.register(binaryMessenger: controller.binaryMessenger)
-      AppleSnapshotImportInputChannel.register(
-        binaryMessenger: controller.binaryMessenger,
-        presenter: controller
-      )
-    }
     UNUserNotificationCenter.current().delegate = self
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    AppleRuntimeChannel.register(binaryMessenger: engineBridge.applicationRegistrar.messenger())
   }
 
   /// Forwards a local-notification click to the Flutter notification activation receiver.

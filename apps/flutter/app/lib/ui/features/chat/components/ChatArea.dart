@@ -197,9 +197,11 @@ class _ChatAreaState extends State<ChatArea>
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _handleScrollNotification,
                   child: Listener(
-                    onPointerDown: _handleUserPointerDown,
+                    onPointerDown: _handleUserPointerStart,
                     onPointerUp: _handleUserPointerEnd,
                     onPointerCancel: _handleUserPointerEnd,
+                    onPointerPanZoomStart: _handleUserPointerStart,
+                    onPointerPanZoomEnd: _handleUserPointerEnd,
                     child: ListView.builder(
                       controller: widget.scrollController,
                       padding: EdgeInsets.fromLTRB(
@@ -452,8 +454,10 @@ class _ChatAreaState extends State<ChatArea>
     });
   }
 
-  /// Freezes automatic bottom following while a touch drag can own the gesture.
-  void _handleUserPointerDown(PointerDownEvent event) {
+  /// Pauses automatic jumps before a touch or trackpad drag takes ownership.
+  /// Trackpads send pan/zoom events rather than pointer-down/up events; a
+  /// follower jumpTo between pan start and drag acceptance cancels their hold.
+  void _handleUserPointerStart(PointerEvent event) {
     _clearPendingMessageJump();
     _activeUserScrollPointers.add(event.pointer);
     if (_bottomFollowTicker.isActive) {
@@ -462,7 +466,7 @@ class _ChatAreaState extends State<ChatArea>
     }
   }
 
-  /// Resumes follow scheduling only after the touch gesture is fully ended.
+  /// Resumes follow scheduling only after all touch/trackpad gestures end.
   void _handleUserPointerEnd(PointerEvent event) {
     _activeUserScrollPointers.remove(event.pointer);
     if (_activeUserScrollPointers.isNotEmpty) {

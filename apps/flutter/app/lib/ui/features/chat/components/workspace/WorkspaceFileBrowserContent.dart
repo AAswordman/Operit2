@@ -16,6 +16,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
     required this.onListWorkspaceFiles,
     required this.onOpenFile,
     this.onSelectCurrentDirectory,
+    this.onPickLocalDirectory,
   });
 
   final String rootLabel;
@@ -24,6 +25,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
   onListWorkspaceFiles;
   final Future<void> Function(WorkspaceFileEntry entry) onOpenFile;
   final Future<void> Function(String path)? onSelectCurrentDirectory;
+  final Future<void> Function()? onPickLocalDirectory;
 
   @override
   State<WorkspaceFileBrowserContent> createState() =>
@@ -347,6 +349,16 @@ class _WorkspaceFileBrowserContentState
                       : const Icon(Icons.check),
                   label: Text(l10n.workspaceBindExistingTitle),
                 ),
+                if (widget.onPickLocalDirectory != null) ...<Widget>[
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _selectingCurrentDirectory
+                        ? null
+                        : _pickLocalDirectory,
+                    icon: const Icon(Icons.folder_open),
+                    label: Text(l10n.workspacePickLocalFolder),
+                  ),
+                ],
               ],
             ),
             if (_selectionError != null) ...<Widget>[
@@ -362,6 +374,25 @@ class _WorkspaceFileBrowserContentState
         ),
       ),
     );
+  }
+
+  Future<void> _pickLocalDirectory() async {
+    final picker = widget.onPickLocalDirectory;
+    if (picker == null || _selectingCurrentDirectory) return;
+    setState(() {
+      _selectingCurrentDirectory = true;
+      _selectionError = null;
+    });
+    try {
+      await picker();
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Local workspace folder selection failed: $error\n$stackTrace',
+      );
+      if (mounted) setState(() => _selectionError = error.toString());
+    } finally {
+      if (mounted) setState(() => _selectingCurrentDirectory = false);
+    }
   }
 
   Future<void> _selectCurrentDirectory() async {

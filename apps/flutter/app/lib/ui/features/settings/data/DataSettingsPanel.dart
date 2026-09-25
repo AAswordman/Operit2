@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
+
+import 'package:operit_folder_access/operit_folder_access.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -1320,8 +1322,8 @@ class _StorageLocationEditDialogState
 
   /// Selects a new runtime root directory.
   Future<void> _selectRuntimeRoot() async {
-    final path = await getDirectoryPath();
-    if (path == null || path.trim().isEmpty) {
+    final path = await OperitFolderAccess.pickDirectory();
+    if (!mounted || path == null || path.trim().isEmpty) {
       return;
     }
     setState(() {
@@ -1332,8 +1334,8 @@ class _StorageLocationEditDialogState
 
   /// Selects a new workspace root directory.
   Future<void> _selectWorkspaceRoot() async {
-    final path = await getDirectoryPath();
-    if (path == null || path.trim().isEmpty) {
+    final path = await OperitFolderAccess.pickDirectory();
+    if (!mounted || path == null || path.trim().isEmpty) {
       return;
     }
     setState(() {

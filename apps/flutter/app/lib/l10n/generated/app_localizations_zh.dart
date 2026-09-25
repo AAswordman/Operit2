@@ -366,6 +366,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get workspaceBindExistingTitle => '选择工作区';
 
   @override
+  String get workspacePickLocalFolder => '选择本机文件夹';
+
+  @override
   String get workspaceBindExistingDescription => '绑定已有工作区';
 
   @override

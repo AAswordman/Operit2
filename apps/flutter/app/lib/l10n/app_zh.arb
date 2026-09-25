@@ -201,6 +201,7 @@
   "workspaceNameLabel": "工作区名称",
   "workspaceNameHint": "请输入工作区名称",
   "workspaceBindExistingTitle": "选择工作区",
+  "workspacePickLocalFolder": "选择本机文件夹",
   "workspaceBindExistingDescription": "绑定已有工作区",
   "workspaceAddFolderTitle": "添加文件夹",
   "workspaceAddFolderDescription": "把另一个文件夹挂进当前工作区",

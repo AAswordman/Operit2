@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:operit_folder_access/operit_folder_access.dart';
 
 /// Opens Compose DSL file-picker requests through Flutter's platform selector.
 class ComposeDslFilePickerService {
@@ -13,7 +14,7 @@ class ComposeDslFilePickerService {
     final request = _ComposeDslFilePickerRequest.fromJson(requestJson);
     if (request.picker == _ComposeDslFilePickerMode.directory) {
       final paths = request.allowMultiple
-          ? await getDirectoryPaths()
+          ? await OperitFolderAccess.pickDirectories()
           : await _openSingleDirectory();
       return _encodeResult(
         cancelled: paths.isEmpty,
@@ -55,7 +56,7 @@ class ComposeDslFilePickerService {
 
   /// Opens one directory and represents cancellation as an empty selection.
   static Future<List<String>> _openSingleDirectory() async {
-    final path = await getDirectoryPath();
+    final path = await OperitFolderAccess.pickDirectory();
     return path == null ? const <String>[] : <String>[path];
   }
 

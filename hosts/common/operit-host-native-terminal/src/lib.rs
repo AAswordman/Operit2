@@ -93,7 +93,7 @@ impl PtyCommandSpec {
     /// Builds the default interactive bash command configuration.
     fn nativeBash() -> Self {
         Self {
-            program: "bash".to_string(),
+            program: if cfg!(target_os = "macos") { "/bin/bash" } else { "bash" }.to_string(),
             args: vec![
                 "--noprofile".to_string(),
                 "--norc".to_string(),
@@ -671,11 +671,19 @@ fn createPtySession(
     let ptySystem = native_pty_system();
     let pair = ptySystem
         .openpty(ptySize(rows, cols))
-        .map_err(toHostError)?;
+        .map_err(|error| HostError::new(format!("PTY open failed: {error}")))?;
+    // Acquire all master handles before spawning, so setup errors cannot leak a shell.
+    let mut reader = pair.master.try_clone_reader()
+        .map_err(|error| HostError::new(format!("PTY reader setup failed: {error}")))?;
+    let writer = Arc::new(Mutex::new(pair.master.take_writer()
+        .map_err(|error| HostError::new(format!("PTY writer setup failed: {error}")))?));
     let command = posixPtyCommand(&workingDir, commandSpec);
-    let mut child = pair.slave.spawn_command(command).map_err(toHostError)?;
-    let mut reader = pair.master.try_clone_reader().map_err(toHostError)?;
-    let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(toHostError)?));
+    let mut child = pair.slave.spawn_command(command).map_err(|error| {
+        HostError::new(format!(
+            "PTY shell spawn failed (program={}, cwd={}): {error}",
+            commandSpec.program, workingDir
+        ))
+    })?;
     let output = Arc::new(Mutex::new(VecDeque::new()));
     let commandOutput: PtyCommandOutput = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
@@ -779,6 +787,15 @@ fn posixPtyCommand(workingDir: &str, commandSpec: &PtyCommandSpec) -> CommandBui
         PtySessionWorkingDirectoryEnvironment::None => {}
         PtySessionWorkingDirectoryEnvironment::Name(key) => command.env(key, workingDir),
     }
+    // App Sandbox permits creating a PTY but rejects TIOCSCTTY when the child
+    // tries to make it the controlling terminal (EPERM). The PTY master/slave
+    // still provides terminal I/O, resize support, and bash interaction; only
+    // controlling-terminal-only signal delivery is unavailable. Avoiding this
+    // ioctl is required for the App Store sandbox build and keeps the same
+    // host implementation usable by future non-sandboxed builds.
+    #[cfg(target_os = "macos")]
+    command.set_controlling_tty(false);
+
     command.env(
         "PS1",
         match commandSpec.commandProtocol {

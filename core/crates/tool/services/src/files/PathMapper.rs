@@ -14,6 +14,7 @@ const APP_WORKSPACES: &str = WORKSPACE_DIR_PATH;
 const MNT_WINDOWS: &str = "windows";
 const MNT_ANDROID: &str = "android";
 const MNT_LINUX: &str = "linux";
+const MNT_MACOS: &str = "macos";
 const MNT_ANDROID_SDCARD: &str = "sdcard";
 
 /// Resolved mapping from a public VFS path to a host physical path.
@@ -205,6 +206,15 @@ impl PathMapper {
                     physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
                 })
             }
+            [ROOT_MNT, MNT_MACOS, rest @ ..] => {
+                if !macosRootMounted() {
+                    return Err("/mnt/macos is not mounted".to_string());
+                }
+                Ok(ResolvedVfsPath {
+                    vfsPath: joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], rest),
+                    physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
+                })
+            }
             [ROOT_SDCARD, rest @ ..] => {
                 if !androidSdcardMounted() {
                     return Err("/sdcard is not mounted".to_string());
@@ -355,6 +365,9 @@ fn normalizeWorkspaceBindingVfsPath(path: &str) -> Result<Option<String>, String
         [ROOT_MNT, MNT_LINUX, rest @ ..] => {
             Ok(Some(joinNormalizedSegments(&[ROOT_MNT, MNT_LINUX], rest)))
         }
+        [ROOT_MNT, MNT_MACOS, rest @ ..] => {
+            Ok(Some(joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], rest)))
+        }
         [ROOT_SDCARD, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_SDCARD], rest))),
         [ROOT_DATA, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_DATA], rest))),
         ["workspace", ..] => Err("Workspace binding cannot use /workspace".to_string()),
@@ -393,6 +406,9 @@ fn normalizeAbsoluteHostWorkspacePath(path: &str) -> Result<String, String> {
         [ROOT_APP, ..] | [ROOT_MNT, ..] => Err(format!(
             "Workspace binding must use /app/workspaces/<id> or a mounted VFS path: {path}"
         )),
+        #[cfg(target_os = "macos")]
+        _ => Ok(joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], &segments)),
+        #[cfg(not(target_os = "macos"))]
         _ => Ok(joinNormalizedSegments(&[ROOT_MNT, MNT_LINUX], &segments)),
     }
 }
@@ -478,6 +494,9 @@ fn mntMountEntries() -> Vec<FileEntry> {
     if linuxRootMounted() {
         entries.push(directoryEntry(MNT_LINUX));
     }
+    if macosRootMounted() {
+        entries.push(directoryEntry(MNT_MACOS));
+    }
     entries
 }
 
@@ -542,6 +561,18 @@ fn linuxRootMounted() -> bool {
 #[allow(non_snake_case)]
 #[cfg(not(target_os = "linux"))]
 fn linuxRootMounted() -> bool {
+    false
+}
+
+#[allow(non_snake_case)]
+#[cfg(target_os = "macos")]
+fn macosRootMounted() -> bool {
+    Path::new("/").exists()
+}
+
+#[allow(non_snake_case)]
+#[cfg(not(target_os = "macos"))]
+fn macosRootMounted() -> bool {
     false
 }
 
@@ -614,6 +645,16 @@ mod tests {
                 "/home/user"
             );
         }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                mapper()
+                    .resolve("/mnt/macos/Users/user/project")
+                    .unwrap()
+                    .physicalPath,
+                "/Users/user/project"
+            );
+        }
     }
 
     #[test]
@@ -629,6 +670,10 @@ mod tests {
         #[cfg(not(target_os = "linux"))]
         {
             assert!(mapper().resolve("/mnt/linux/home/user").is_err());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(mapper().resolve("/mnt/macos/Users/user").is_err());
         }
     }
 
@@ -678,6 +723,12 @@ mod tests {
             PathMapper::normalizeWorkspaceBindingPath("D:/code").unwrap(),
             "/mnt/windows/d/code"
         );
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            PathMapper::normalizeWorkspaceBindingPath("/Users/user/project").unwrap(),
+            "/mnt/macos/Users/user/project"
+        );
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             PathMapper::normalizeWorkspaceBindingPath("/home/user/project").unwrap(),
             "/mnt/linux/home/user/project"

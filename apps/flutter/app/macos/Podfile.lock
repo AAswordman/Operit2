@@ -13,6 +13,8 @@ PODS:
   - file_selector_macos (0.0.1):
     - FlutterMacOS
   - FlutterMacOS (1.0.0)
+  - operit_folder_access (0.1.0):
+    - FlutterMacOS
   - printing (1.0.0):
     - FlutterMacOS
   - record_macos (1.2.1):
@@ -34,6 +36,7 @@ DEPENDENCIES:
   - dynamic_color (from `Flutter/ephemeral/.symlinks/plugins/dynamic_color/macos`)
   - file_selector_macos (from `Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
+  - operit_folder_access (from `Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos`)
   - printing (from `Flutter/ephemeral/.symlinks/plugins/printing/macos`)
   - record_macos (from `Flutter/ephemeral/.symlinks/plugins/record_macos/macos`)
   - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
@@ -55,6 +58,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
+  operit_folder_access:
+    :path: Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos
   printing:
     :path: Flutter/ephemeral/.symlinks/plugins/printing/macos
   record_macos:
@@ -74,6 +79,7 @@ SPEC CHECKSUMS:
   dynamic_color: 5fdff3953fb3457311091863f72914fc76ea3209
   file_selector_macos: 3e56eaea051180007b900eacb006686fd54da150
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  operit_folder_access: e49c215aae854e85a2c736a3105f8992373a9768
   printing: 1dd6a1fce2209ec240698e2439a4adbb9b427637
   record_macos: ccd7864c9922136e50c2937b21384f0b175922f2
   url_launcher_macos: 175a54c831f4375a6cf895875f716ee5af3888ce

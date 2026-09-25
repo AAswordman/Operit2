@@ -3,6 +3,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
+import 'package:operit_folder_access/operit_folder_access.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
@@ -111,6 +112,12 @@ class WorkspaceTabContent extends StatelessWidget {
           onListWorkspaceFiles: onListWorkspaceBindingDirectories,
           onOpenFile: onOpenFile,
           onSelectCurrentDirectory: onBindWorkspace,
+          onPickLocalDirectory: () async {
+            final path = await OperitFolderAccess.pickDirectory();
+            if (path != null && path.trim().isNotEmpty) {
+              await onBindWorkspace(path.trim());
+            }
+          },
         );
       case WorkspaceTabKind.files:
         final rootPath = workspacePath?.trim();
