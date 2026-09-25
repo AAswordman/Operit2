@@ -199,11 +199,40 @@ fn render_object_path_predicate(object: &SourceObject) -> String {
     format!("object_id == {}", object.object_id)
 }
 
+/// Renders remote watches through typed decoding and the proxy's attachment sink.
+fn render_routed_watch_dispatch(objects: &[SourceObject], snapshot: bool) -> String {
+    let mut output = String::from("    if let Some(runtime) = operit_link::coreRouteRuntime() {\n        if runtime.shouldRouteWatch(&request.propertyName, &request.args)? {\n            match (request.targetObjectId, request.propertyName.as_str()) {\n");
+    for object in objects {
+        for method in &object.methods {
+            let Some(watch) = method.watch_protocol() else { continue; };
+            if !method.is_async || !matches!(watch.stream, WatchStreamProtocol::JsonState { fallible: false }) {
+                continue;
+            }
+            let value_type = watch.snapshot_type.as_ref().expect("StateFlow must have a snapshot type");
+            output.push_str(&render_object_item_cfg_attrs(object));
+            output.push_str(&render_cfg_attrs(method));
+            output.push_str(&format!(
+                "                ({}, {:?}) => {{\n                    let mut stream = operit_rslink_runtime::core_route_proxy_watch::<{}>(runtime, request, proxy.streamAttachmentAdopter(), {}).await?;\n",
+                object.object_id, method.name, value_type, snapshot,
+            ));
+            if snapshot {
+                output.push_str("                    return stream.recv().await.ok_or_else(|| operit_link::CoreLinkError::new(\"WATCH_STREAM_EMPTY\", \"Routed snapshot stream is empty\"));\n");
+            } else {
+                output.push_str("                    return Ok(stream);\n");
+            }
+            output.push_str("                }\n");
+        }
+    }
+    output.push_str("                _ => return Err(operit_link::CoreLinkError::watchNotFound(&request.registryKey())),\n            }\n        }\n    }\n");
+    output
+}
+
+/// Renders proxy dispatch and translates routed requests into the annotation namespace.
 pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_call(proxy: &LocalCoreProxy, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
-    output.push_str("    if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {\n        if __core_route_runtime.shouldRoute(&request.methodName, &request.args)? {\n            return __core_route_runtime.call(request).await.result;\n        }\n    }\n");
+    output.push_str("    if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {\n        if __core_route_runtime.shouldRoute(&request.methodName, &request.args)? {\n            let request = operit_link::CoreCallRequest { targetObjectId: operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID, ..request };\n            return __core_route_runtime.call(request).await.result;\n        }\n    }\n");
     output.push_str("    #[cfg(not(target_arch = \"wasm32\"))]\n");
     let application_id = objects
         .iter()
@@ -307,7 +336,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_watch_snapshot_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEvent, operit_link::CoreLinkError> {\n");
-    output.push_str("    if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {\n        if __core_route_runtime.shouldRouteWatch(&request.propertyName, &request.args)? {\n            return operit_link::coreRouteWatchSnapshot(__core_route_runtime, request).await;\n        }\n    }\n");
+    output.push_str(&render_routed_watch_dispatch(objects, true));
     for object in objects {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
@@ -348,7 +377,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_watch_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
     output.push_str("    if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {\n        return proxy.openCoreStreamWatch(request);\n    }\n");
-    output.push_str("    if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {\n        if __core_route_runtime.shouldRouteWatch(&request.propertyName, &request.args)? {\n            return __core_route_runtime.watch(request).await;\n        }\n    }\n");
+    output.push_str(&render_routed_watch_dispatch(objects, false));
     for object in objects {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;

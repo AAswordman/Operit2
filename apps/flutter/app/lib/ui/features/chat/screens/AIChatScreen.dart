@@ -1178,6 +1178,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Cancels the previous chat watches before opening the requested pair.
   Future<void> _rebindChatFlows(String? chatId, int generation) async {
+    final transition = ChatSelectionTransition.requests.value;
+    final switchTimer = transition?.chatId == chatId
+        ? transition?.startedAt
+        : null;
+    var firstMessagesLogged = false;
+    var firstStateLogged = false;
     final previousMessagesSubscription = _messagesSubscription;
     final previousChatStateSubscription = _chatStateSubscription;
     _messagesSubscription = null;
@@ -1218,6 +1224,13 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           (messages) {
             if (generation == _chatFlowBindingGeneration &&
                 _requestedChatFlowChatId == chatId) {
+              if (!firstMessagesLogged && switchTimer != null) {
+                firstMessagesLogged = true;
+                ClientLogger.i(
+                  'chat_switch.messages_received chatId=$chatId elapsedMs=${switchTimer.elapsedMilliseconds} count=${messages.length}',
+                  tag: 'ChatSwitchTrace',
+                );
+              }
               _applyMessages(messages);
             }
           },
@@ -1237,6 +1250,13 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
             if (generation == _chatFlowBindingGeneration &&
                 _requestedChatFlowChatId == chatId &&
                 state.currentChatId == chatId) {
+              if (!firstStateLogged && switchTimer != null) {
+                firstStateLogged = true;
+                ClientLogger.i(
+                  'chat_switch.state_received chatId=$chatId elapsedMs=${switchTimer.elapsedMilliseconds}',
+                  tag: 'ChatSwitchTrace',
+                );
+              }
               _applyChatState(state);
             }
           },

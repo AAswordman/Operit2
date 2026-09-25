@@ -2616,6 +2616,7 @@ dependencies = [
  "base64",
  "chrono",
  "futures-util",
+ "getrandom 0.2.17",
  "json5",
  "operit-host-api",
  "operit-link",

@@ -100,7 +100,6 @@ pub(crate) fn subscribeRemoteDeviceAnnouncements(
 fn discoveryEndpointFromServiceInfo(
     info: &ServiceInfo,
 ) -> Result<Option<(MdnsIpv4Rank, RuntimeRemoteDiscoveryEndpoint)>, String> {
-    let fullName = info.get_fullname().to_string();
     let mut addresses = info
         .get_addresses()
         .iter()
@@ -116,30 +115,24 @@ fn discoveryEndpointFromServiceInfo(
     let selectedAddress = addresses[0];
     let selectedRank = mdnsIpv4Rank(&selectedAddress);
     let properties = info.get_properties();
+    let (Some(deviceId), Some(tokenHash), Some(version)) = (
+        properties.get_property_val_str("deviceId"),
+        properties.get_property_val_str("tokenHash"),
+        properties.get_property_val_str("version"),
+    ) else {
+        return Ok(None);
+    };
     Ok(Some((
         selectedRank,
         RuntimeRemoteDiscoveryEndpoint {
-            deviceId: requiredMdnsProperty(properties, "deviceId", &fullName)?,
+            deviceId: deviceId.to_string(),
             baseUrl: format!("http://{}:{}", selectedAddress, info.get_port()),
             hostname: info.get_hostname().to_string(),
             port: info.get_port(),
-            tokenHash: requiredMdnsProperty(properties, "tokenHash", &fullName)?,
-            version: requiredMdnsProperty(properties, "version", &fullName)?,
+            tokenHash: tokenHash.to_string(),
+            version: version.to_string(),
         },
     )))
-}
-
-/// Reads one required property from a resolved Operit mDNS service record.
-#[allow(non_snake_case)]
-fn requiredMdnsProperty(
-    properties: &mdns_sd::TxtProperties,
-    name: &str,
-    serviceName: &str,
-) -> Result<String, String> {
-    properties
-        .get(name)
-        .map(|property| property.val_str().to_string())
-        .ok_or_else(|| format!("mDNS service missing {name}: {serviceName}"))
 }
 
 /// Assigns a deterministic preference to private IPv4 addresses for a discovered service.
@@ -157,4 +150,43 @@ fn mdnsIpv4Rank(address: &Ipv4Addr) -> MdnsIpv4Rank {
         1
     };
     (class, address.octets())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Verifies incomplete mDNS resolution waits for TXT without rejecting the scan.
+    #[test]
+    fn discovery_waits_for_txt_properties() {
+        let incomplete = ServiceInfo::new(
+            OPERIT_SERVICE_TYPE,
+            "operit-core-test",
+            "operit-core-test.local.",
+            "192.168.8.11",
+            37194,
+            HashMap::<String, String>::new(),
+        )
+        .unwrap();
+        assert!(discoveryEndpointFromServiceInfo(&incomplete).unwrap().is_none());
+
+        let complete = ServiceInfo::new(
+            OPERIT_SERVICE_TYPE,
+            "operit-core-test",
+            "operit-core-test.local.",
+            "192.168.8.11",
+            37194,
+            HashMap::from([
+                ("deviceId".to_string(), "core-test".to_string()),
+                ("tokenHash".to_string(), "token-test".to_string()),
+                ("version".to_string(), "1".to_string()),
+            ]),
+        )
+        .unwrap();
+        let (_, endpoint) = discoveryEndpointFromServiceInfo(&complete).unwrap().unwrap();
+        assert_eq!(endpoint.deviceId, "core-test");
+        assert_eq!(endpoint.baseUrl, "http://192.168.8.11:37194");
+        assert_eq!(endpoint.tokenHash, "token-test");
+    }
 }

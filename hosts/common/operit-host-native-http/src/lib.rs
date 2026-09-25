@@ -23,6 +23,18 @@ use tungstenite::client::IntoClientRequest;
 pub struct NativeHttpHost {
     byteStreams: Arc<Mutex<BTreeMap<String, tokio::sync::watch::Sender<bool>>>>,
     webSockets: Arc<Mutex<BTreeMap<String, mpsc::Sender<NativeWebSocketCommand>>>>,
+    httpClients: Arc<Mutex<BTreeMap<HttpClientPolicy, BlockingClient>>>,
+}
+
+/// Identifies the connection pool for an exact buffered HTTP request policy.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct HttpClientPolicy {
+    connectTimeoutSeconds: u64,
+    readTimeoutSeconds: u64,
+    followRedirects: bool,
+    ignoreSsl: bool,
+    proxyHost: String,
+    proxyPort: u16,
 }
 
 /// Carries one command from a Link carrier into a host-owned WebSocket thread.
@@ -329,9 +341,10 @@ fn executeHttpByteStream(
 }
 
 impl HttpHost for NativeHttpHost {
-    /// Executes a buffered request on a dedicated native HTTP thread.
+    /// Executes a buffered request with a shared policy-specific connection pool.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
-        std::thread::spawn(move || executeHttpRequestOnBlockingThread(request))
+        let clients = self.httpClients.clone();
+        std::thread::spawn(move || executeHttpRequestOnBlockingThread(request, clients))
             .join()
             .map_err(|_| HostError::new("native HTTP request thread panicked"))?
     }
@@ -350,17 +363,39 @@ impl HttpHost for NativeHttpHost {
 }
 
 /// Executes one buffered request outside every caller-owned async runtime context.
-fn executeHttpRequestOnBlockingThread(request: HttpRequestData) -> HostResult<HttpResponseData> {
+fn executeHttpRequestOnBlockingThread(
+    request: HttpRequestData,
+    clients: Arc<Mutex<BTreeMap<HttpClientPolicy, BlockingClient>>>,
+) -> HostResult<HttpResponseData> {
+    let policy = HttpClientPolicy {
+        connectTimeoutSeconds: request.connectTimeoutSeconds,
+        readTimeoutSeconds: request.readTimeoutSeconds,
+        followRedirects: request.followRedirects,
+        ignoreSsl: request.ignoreSsl,
+        proxyHost: request.proxyHost.clone(),
+        proxyPort: request.proxyPort,
+    };
+    let client = {
+        let mut clients = clients
+            .lock()
+            .map_err(|error| HostError::new(format!("HTTP client pool lock poisoned: {error}")))?;
+        if let Some(client) = clients.get(&policy) {
+            client.clone()
+        } else {
+            let client = buildHttpClient(
+                policy.connectTimeoutSeconds,
+                policy.readTimeoutSeconds,
+                policy.followRedirects,
+                policy.ignoreSsl,
+                &policy.proxyHost,
+                policy.proxyPort,
+            )?;
+            clients.insert(policy, client.clone());
+            client
+        }
+    };
     let method = Method::from_bytes(request.method.as_bytes())
         .map_err(|error| HostError::new(error.to_string()))?;
-    let client = buildHttpClient(
-        request.connectTimeoutSeconds,
-        request.readTimeoutSeconds,
-        request.followRedirects,
-        request.ignoreSsl,
-        &request.proxyHost,
-        request.proxyPort,
-    )?;
     let mut httpRequest = client.request(method, request.url);
     httpRequest = httpRequest.headers(headersToReqwest(&request.headers)?);
     if !request.fileParts.is_empty() || !request.formFields.is_empty() {
@@ -1062,6 +1097,47 @@ mod tests {
     use std::sync::mpsc;
     use std::sync::Barrier;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    /// Verifies successive buffered requests share the same live HTTP connection.
+    #[tokio::test(flavor = "current_thread")]
+    async fn bufferedRequestsReuseConnection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            for _ in 0..2 {
+                let request = readHttpRequest(&mut stream);
+                assert!(request.starts_with("GET /reuse "));
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                    .unwrap();
+            }
+        });
+        let host = NativeHttpHost::new();
+        for _ in 0..2 {
+            let response = host
+                .executeHttpRequest(HttpRequestData {
+                    url: format!("http://{address}/reuse"),
+                    method: "GET".to_string(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                    formFields: Vec::new(),
+                    fileParts: Vec::new(),
+                    connectTimeoutSeconds: 2,
+                    readTimeoutSeconds: 2,
+                    followRedirects: false,
+                    ignoreSsl: false,
+                    proxyHost: String::new(),
+                    proxyPort: 0,
+                })
+                .unwrap();
+            assert_eq!(response.body, b"ok");
+        }
+        server.join().unwrap();
+    }
 
     /// Verifies the native WebSocket carrier keeps polling until a delayed server message arrives.
     #[test]

@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 struct MemoryStorageHost {
     files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     writeCount: Arc<AtomicUsize>,
+    readCount: Arc<AtomicUsize>,
 }
 
 impl MemoryStorageHost {
@@ -33,6 +34,7 @@ impl RuntimeStorageHost for MemoryStorageHost {
     }
 
     fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+        self.readCount.fetch_add(1, Ordering::SeqCst);
         let files = self
             .files
             .lock()
@@ -174,6 +176,98 @@ fn sequences(operations: &[SyncOperation]) -> Vec<i64> {
         .iter()
         .map(|operation| operation.sequence)
         .collect()
+}
+
+/// Ensures domain reads avoid unrelated encrypted payloads and observe every append path.
+#[test]
+fn domain_reads_reuse_logs_and_observe_local_remote_and_unobserved_appends() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(storage.clone(), "domain-read-test");
+    let mut unrelated = operationFromOrigin("peer", 1, "preference", "secret", "upsert", json!({
+        "format": ENCRYPTED_SYNC_PAYLOAD_FORMAT,
+        "envelope": {"invalid": true}
+    }));
+    unrelated.domain = "unrelated".into();
+    store.appendOperation(&unrelated).unwrap();
+    let domains = vec!["chat".to_string()];
+    assert!(store.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap().is_empty());
+    let reads = storage.readCount.load(Ordering::SeqCst);
+    for _ in 0..20 {
+        assert!(store.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap().is_empty());
+    }
+    assert_eq!(storage.readCount.load(Ordering::SeqCst), reads);
+    let remote = operationFromOrigin("peer", 2, "message", "remote", "upsert", json!({}));
+    store.appendOperation(&remote).unwrap();
+    let local = store.appendLocalOperation("peer", NewSyncOperation {
+        domain: "chat".into(), entityType: "message".into(), entityId: "local".into(),
+        operation: "upsert".into(), semantics: SyncOperationSemantics::EntityState, payload: json!({}),
+    }).unwrap();
+    let unobserved = operationFromOrigin("peer", 7, "message", "unobserved", "upsert", json!({}));
+    store.appendUnobservedOperation(&unobserved).unwrap();
+    let shared = SyncOperationStore::new(storage.clone(), "domain-read-test");
+    let result = shared.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap();
+    assert_eq!(result.len(), 3);
+    for expected in [&remote, &local, &unobserved] {
+        assert!(result.iter().any(|operation| operation == expected));
+    }
+    let mut clock = SyncClock::empty();
+    clock.setSequence("peer", local.sequence);
+    assert_eq!(shared.operationsSince(&clock, &domains, usize::MAX).unwrap(), vec![unobserved]);
+    shared.setExportFloor("peer", 7).unwrap();
+    assert!(shared.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap().is_empty());
+}
+
+/// Verifies cached policy reads immediately apply revocation and match a fresh replay.
+#[test]
+fn policy_cache_observes_remote_revocation_and_matches_fresh_replay() {
+    use crate::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlStore};
+    let storage = Arc::new(MemoryStorageHost::default());
+    let reader = NetworkControlStore::new(storage.clone()).unwrap();
+    reader.bootstrapCurrentSpace().unwrap();
+    let writer = NetworkControlStore::new(storage.clone()).unwrap();
+    writer.admitMember("peer".into()).unwrap();
+    writer.setIdentity(NetworkControlIdentityAssignment {
+        nodeId: "peer".into(), roleId: "user".into(),
+    }).unwrap();
+    assert!(reader.nodeHasCapability("peer", "chat.read", None).unwrap());
+    assert!(!reader.nodeIsDisconnected("peer").unwrap());
+    writer.clearIdentity("peer".into()).unwrap();
+    assert!(!reader.nodeHasCapability("peer", "chat.read", None).unwrap());
+    writer.disconnectNode("peer".into()).unwrap();
+    assert!(reader.nodeIsDisconnected("peer").unwrap());
+    assert_eq!(reader.currentState().unwrap(), writer.currentState().unwrap());
+    let fresh = NetworkControlStore::new(storage).unwrap();
+    assert_eq!(reader.currentState().unwrap(), fresh.currentState().unwrap());
+}
+
+/// Measures warm policy queries without rereading or decoding unrelated chat history.
+#[test]
+fn repeated_domain_queries_do_not_rescan_large_history() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(storage.clone(), "large-history");
+    let history = (1..=5000).map(|sequence| operationFromOrigin("peer", sequence,
+        "message", &sequence.to_string(), "upsert", json!({"content": "x".repeat(512)})))
+        .collect::<Vec<_>>();
+    store.appendOperations(&history).unwrap();
+    let mut policy = operationFromOrigin("peer", 5001, "command", "policy", "apply", json!({}));
+    policy.domain = "network_control".into();
+    store.appendOperation(&policy).unwrap();
+    let domains = vec!["network_control".to_string()];
+    assert_eq!(store.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap(), vec![policy.clone()]);
+    let reads = storage.readCount.load(Ordering::SeqCst);
+    let started = std::time::Instant::now();
+    for _ in 0..100 {
+        assert_eq!(store.operationsSince(&SyncClock::empty(), &domains, usize::MAX).unwrap(), vec![policy.clone()]);
+    }
+    let indexed = started.elapsed();
+    assert_eq!(storage.readCount.load(Ordering::SeqCst), reads);
+    let started = std::time::Instant::now();
+    for _ in 0..100 {
+        let content = store.readOperationLog("peer").unwrap();
+        let decoded = store.decodeOperationLog(&content).unwrap();
+        assert_eq!(decoded.into_iter().filter(|operation| operation.domain == "network_control").count(), 1);
+    }
+    eprintln!("domain-query comparison: 100 queries, 5000 history records; indexed={indexed:?}, full_log_decode={:?}; warm_storage_reads=0", started.elapsed());
 }
 
 /// Verifies a synchronization clock includes every required origin sequence.

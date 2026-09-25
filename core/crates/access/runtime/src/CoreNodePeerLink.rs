@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 #[cfg(feature = "test-support")]
 use std::sync::Weak;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, defaultHttpHost};
@@ -438,6 +439,14 @@ impl PeerLinkClient {
             .lock()
             .map_err(|error| CoreLinkError::internal(error.to_string()))?
             .insert(subscriptionId.clone(), sender);
+        operit_util::AppLogger::AppLogger::i(
+            "PeerWatchTrace",
+            &format!(
+                "outgoing_watch_request local={} peer={} subscription={} requestId={} target={} property={}",
+                self.connection.localNodeId, self.connection.peerNodeId,
+                subscriptionId, requestId, targetObjectId, propertyName
+            ),
+        );
         let opened = self
             .connection
             .request(PeerRequest::WatchOpen(PeerWatchOpenRequest {
@@ -463,7 +472,7 @@ impl PeerLinkClient {
                 return Err(error);
             }
         }
-        operit_util::AppLogger::AppLogger::trace(
+        operit_util::AppLogger::AppLogger::i(
             "PeerWatchTrace",
             &format!(
                 "outgoing_watch_opened local={} peer={} subscription={} requestId={} target={} property={}",
@@ -866,10 +875,26 @@ impl PeerConnection {
     ) -> Result<(), CoreLinkError> {
         let watchRequestId = request.request.payload.requestId.0.clone();
         let watchProperty = request.request.payload.propertyName.clone();
+        operit_util::AppLogger::AppLogger::i(
+            "PeerWatchTrace",
+            &format!(
+                "incoming_watch_start local={} peer={} subscription={} requestId={} property={}",
+                self.localNodeId, self.peerNodeId, request.subscriptionId,
+                watchRequestId, watchProperty
+            ),
+        );
         let mut stream = self
             .core
             .routedWatch(self.peerNodeId.clone(), request.request)
             .await?;
+        operit_util::AppLogger::AppLogger::i(
+            "PeerWatchTrace",
+            &format!(
+                "incoming_watch_source_opened local={} peer={} subscription={} requestId={} property={}",
+                self.localNodeId, self.peerNodeId, request.subscriptionId,
+                watchRequestId, watchProperty
+            ),
+        );
         let (cancelSender, mut cancelReceiver) = oneshot::channel();
         {
             let mut watches = self.incomingWatches.lock().await;
@@ -1484,7 +1509,7 @@ struct OutboundPeerFrameBatchState {
 /// Queues client-originated frames for ordered HTTP batch delivery.
 struct OutboundPeerFrameSender {
     state: Arc<OutboundPeerFrameBatchState>,
-    frameSender: mpsc::UnboundedSender<PeerFrame>,
+    frameSender: mpsc::UnboundedSender<(Instant, PeerFrame)>,
 }
 
 #[async_trait]
@@ -1504,7 +1529,7 @@ impl PeerFrameSender for OutboundPeerFrameSender {
             return Err("Outbound Peer frame sender is closed".to_string());
         }
         self.frameSender
-            .send(frame)
+            .send((Instant::now(), frame))
             .map_err(|_| "Outbound Peer frame queue is closed".to_string())
     }
 
@@ -1542,7 +1567,7 @@ fn failOutboundPeerFrameBatch(state: &Arc<OutboundPeerFrameBatchState>, error: S
 /// Drains queued Peer frames into ordered bounded HTTP batches.
 async fn runOutboundPeerFrameBatchSender(
     state: Arc<OutboundPeerFrameBatchState>,
-    mut receiver: mpsc::UnboundedReceiver<PeerFrame>,
+    mut receiver: mpsc::UnboundedReceiver<(Instant, PeerFrame)>,
     mut closeReceiver: oneshot::Receiver<()>,
 ) {
     loop {
@@ -1551,18 +1576,20 @@ async fn runOutboundPeerFrameBatchSender(
             _ = &mut closeReceiver => return,
             frame = receiver.recv() => frame,
         };
-        let Some(firstFrame) = firstFrame else {
+        let Some((queuedAt, firstFrame)) = firstFrame else {
             return;
         };
         let mut frames = Vec::with_capacity(OUTBOUND_PEER_FRAME_BATCH_MAX_FRAMES);
         frames.push(firstFrame);
         while frames.len() < OUTBOUND_PEER_FRAME_BATCH_MAX_FRAMES {
             match receiver.try_recv() {
-                Ok(frame) => frames.push(frame),
+                Ok((_, frame)) => frames.push(frame),
                 Err(mpsc::error::TryRecvError::Empty)
                 | Err(mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
+        let frameCount = frames.len();
+        let queueWaitMs = queuedAt.elapsed().as_millis();
         let body = match operit_link::encodeLink(&PeerFrameBatch { frames }) {
             Ok(body) => body,
             Err(error) => {
@@ -1570,7 +1597,19 @@ async fn runOutboundPeerFrameBatchSender(
                 return;
             }
         };
-        if let Err(error) = state.session.signedRemotePost("peer/channel/frame", body) {
+        let postStartedAt = Instant::now();
+        let result = state.session.signedRemotePost("peer/channel/frame", body);
+        operit_util::AppLogger::AppLogger::v_with_level(
+            "PeerCarrierTrace",
+            &format!(
+                "http_frame_batch_sent frames={} queueWaitMs={} postMs={}",
+                frameCount,
+                queueWaitMs,
+                postStartedAt.elapsed().as_millis()
+            ),
+            operit_util::AppLogger::VERBOSE_LEVEL_5,
+        );
+        if let Err(error) = result {
             failOutboundPeerFrameBatch(&state, error);
             return;
         }

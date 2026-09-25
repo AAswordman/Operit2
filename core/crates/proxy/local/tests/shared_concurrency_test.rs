@@ -902,3 +902,203 @@ async fn shared_core_serializes_application_child_access() {
         })
         .await;
 }
+
+/// Covers the local-proxy to annotation-route boundary used by Flutter chat pages.
+mod annotated_route_tests {
+    use super::*;
+    use operit_link::{
+        CoreCallResponse, CoreLinkError, CoreRouteRuntime, CORE_INTERNAL_ROUTE_OBJECT_ID,
+    };
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Validates requests against the production Space route catalog.
+    #[derive(Default)]
+    struct AnnotatedRouteRuntime {
+        closed_watches: Arc<AtomicUsize>,
+    }
+
+    impl CoreRouteRuntime for AnnotatedRouteRuntime {
+        /// Selects the annotated methods exercised by this regression test.
+        fn shouldRoute(&self, method: &str, _args: &CoreValue) -> Result<bool, CoreLinkError> {
+            Ok(matches!(
+                method,
+                "cancelMessage" | "chatMessagesFlow" | "chatStateFlow"
+            ))
+        }
+
+        /// Checks the routed call address and returns its arguments unchanged.
+        fn call(
+            &self,
+            request: CoreCallRequest,
+        ) -> Pin<Box<dyn Future<Output = CoreCallResponse>>> {
+            Box::pin(async move {
+                let route = operit_node_runtime::generated_space_call_route(&request)
+                    .expect("proxy calls must use the annotation route namespace");
+                assert_eq!(request.targetObjectId, CORE_INTERNAL_ROUTE_OBJECT_ID);
+                assert_eq!(route.bindingKey(&request.args).unwrap(), "proxy-route-chat");
+                CoreCallResponse::ok(request.requestId, request.args)
+            })
+        }
+
+        /// Checks the routed watch address and records when its consumer closes it.
+        fn watch(
+            &self,
+            request: CoreWatchRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<CoreEventStream, CoreLinkError>>>> {
+            let closed_watches = self.closed_watches.clone();
+            Box::pin(async move {
+                if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+                    let args = operit_rslink_runtime::object_args(request.args.clone())?;
+                    assert_eq!(args.get(operit_link::CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT), Some(&CoreValue::String("chatMessagesFlow".into())));
+                    assert_eq!(args.get(operit_link::CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT).unwrap().clone(), toCoreValue(json!({"chatId":"proxy-route-chat", "__core_instance_id":"detached-route-slot"})).unwrap());
+                    let (sender, stream) = CoreEventStream::channel();
+                    sender.send(CoreEvent { requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName: request.propertyName, kind: CoreEventKind::Changed, value: CoreValue::String("remote content".into()) }).unwrap();
+                    return Ok(stream);
+                }
+                let route = operit_node_runtime::generated_space_watch_route(&request)
+                    .expect("proxy watches must use the annotation route namespace");
+                assert_eq!(request.targetObjectId, CORE_INTERNAL_ROUTE_OBJECT_ID);
+                assert_eq!(route.bindingKey(&request.args).unwrap(), "proxy-route-chat");
+                let (sender, stream) = CoreEventStream::channel();
+                sender
+                    .send(CoreEvent {
+                        requestId: Some(request.requestId),
+                        targetObjectId: request.targetObjectId,
+                        propertyName: request.propertyName,
+                        kind: CoreEventKind::Snapshot,
+                        value: {
+                            let mut message = ChatMessage::new("ai".into());
+                            message.contentStream = Some(CoreStream::fromSourceWithId("remote-stream".into(), Arc::new(CoreStreamSource::new(|_| panic!("remote source must be reopened through routing")))));
+                            toCoreValue(vec![message]).unwrap()
+                        },
+                    })
+                    .expect("new watch must accept its snapshot");
+                Ok(stream.withOnClose(move || {
+                    drop(sender);
+                    closed_watches.fetch_add(1, Ordering::SeqCst);
+                }))
+            })
+        }
+    }
+
+    /// Restores the global route registration even when an assertion panics.
+    struct RouteRuntimeScope(Option<Arc<dyn CoreRouteRuntime>>);
+
+    impl RouteRuntimeScope {
+        /// Installs the test runtime and saves the exact previous registration.
+        fn new(runtime: Arc<dyn CoreRouteRuntime>) -> Self {
+            let previous = operit_link::coreRouteRuntime();
+            operit_link::installCoreRouteRuntime(runtime);
+            Self(previous)
+        }
+    }
+
+    impl Drop for RouteRuntimeScope {
+        /// Restores the registration owned by the surrounding test environment.
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(runtime) => operit_link::installCoreRouteRuntime(runtime),
+                None => operit_link::clearCoreRouteRuntime(),
+            }
+        }
+    }
+
+    /// Opens a wire-only content descriptor through the receiving proxy's registered source.
+    async fn assert_remote_content_opens(proxy: &LocalCoreProxy, value: CoreValue) {
+        let messages: Vec<ChatMessage> = fromCoreValue(value).unwrap();
+        let descriptor = &messages[0].contentStream.as_ref().unwrap().descriptor;
+        let mut content = CoreLinkSharedClient::watch(proxy, CoreWatchRequest::new(
+            "remote-content-probe", descriptor.targetObjectId, &descriptor.propertyName, descriptor.args.clone(),
+        )).await.expect("remote source must be registered before the message is visible");
+        assert_eq!(receive_proxy_test_event(&mut content).await.value, CoreValue::String("remote content".into()));
+    }
+
+    /// Verifies calls, snapshots, and reopened chat watches register embedded sources.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generated_proxy_routes_chat_watches_after_reopening() {
+        let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let storage_host = register_test_runtime_roots();
+                let mut host_manager =
+                    HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+                host_manager.runtimeStorageHost = Some(storage_host.clone());
+                host_manager.runtimeSqliteHost = Some(storage_host);
+                host_manager.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+                host_manager.hostJavaScriptRuntimeHost =
+                    Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+                host_manager.hostRuntimeTaskSchedulerHost =
+                    Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+                let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
+                let object_id = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                    .expect("chat proxy object must be registered");
+                assert_ne!(object_id, CORE_INTERNAL_ROUTE_OBJECT_ID);
+                let runtime = Arc::new(AnnotatedRouteRuntime::default());
+                let _route_scope = RouteRuntimeScope::new(runtime.clone());
+                let args = toCoreValue(json!({
+                    "chatId": "proxy-route-chat", "__core_instance_id": "detached-route-slot"
+                }))
+                .unwrap();
+
+                for generation in 0..3 {
+                    let mut streams = Vec::new();
+                    for property in ["chatMessagesFlow"] {
+                        let request = CoreWatchRequest::new(
+                            format!("proxy-route-{generation}-{property}"),
+                            object_id,
+                            property,
+                            args.clone(),
+                        );
+                        let mut stream = CoreLinkSharedClient::watch(&proxy, request.clone())
+                            .await
+                            .expect("routed chat watch must open");
+                        let event = receive_proxy_test_event(&mut stream).await;
+                        assert_eq!(event.requestId, Some(request.requestId));
+                        assert_eq!(event.propertyName, property);
+                        assert_eq!(event.kind, CoreEventKind::Snapshot);
+                        assert_remote_content_opens(&proxy, event.value).await;
+                        streams.push(stream);
+                    }
+                    drop(streams);
+                    tokio::time::timeout(Duration::from_secs(2), async {
+                        while runtime.closed_watches.load(Ordering::SeqCst) != generation + 1 {
+                            tokio::task::yield_now().await;
+                        }
+                    }).await.expect("dropping proxy watch must close the upstream watch");
+                    assert_eq!(
+                        runtime.closed_watches.load(Ordering::SeqCst),
+                        generation + 1
+                    );
+                }
+
+                for property in ["chatMessagesFlow"] {
+                    let request = CoreWatchRequest::new(
+                        format!("proxy-snapshot-{property}"),
+                        object_id,
+                        property,
+                        args.clone(),
+                    );
+                    let event = CoreLinkSharedClient::watchSnapshot(&proxy, request.clone())
+                        .await
+                        .expect("routed chat snapshot must resolve");
+                    assert_eq!(event.requestId, Some(request.requestId));
+                    assert_eq!(event.propertyName, property);
+                    assert_remote_content_opens(&proxy, event.value).await;
+                }
+                assert_eq!(runtime.closed_watches.load(Ordering::SeqCst), 4);
+
+                let request = CoreCallRequest::new(
+                    "proxy-routed-call",
+                    object_id,
+                    "cancelMessage",
+                    args.clone(),
+                );
+                let response = CoreLinkSharedClient::call(&proxy, request.clone()).await;
+                assert_eq!(response.requestId, request.requestId);
+                assert_eq!(response.result.expect("annotated call must resolve"), args);
+            })
+            .await;
+    }
+}

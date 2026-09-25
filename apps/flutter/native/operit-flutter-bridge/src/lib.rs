@@ -442,7 +442,7 @@ impl OperitFlutterBridge {
                 props.insert("model".to_string(), identity.deviceInfo.model.clone());
                 props.insert("tokenHash".to_string(), link_token_hash(&token));
                 props.insert("version".to_string(), "1".to_string());
-                mdns.register(address.port(), props)?;
+                mdns.register(&deviceId, address.port(), props)?;
                 *mdns_guard = Some(mdns);
             }
         }

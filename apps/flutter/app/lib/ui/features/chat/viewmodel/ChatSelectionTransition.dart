@@ -4,13 +4,15 @@ import 'package:flutter/foundation.dart';
 
 class ChatSelectionTransitionRequest {
   /// Creates one visual chat-selection transition request.
-  const ChatSelectionTransitionRequest({
+  ChatSelectionTransitionRequest({
     required this.generation,
     required this.chatId,
+    required this.startedAt,
   });
 
   final int generation;
   final String chatId;
+  final Stopwatch startedAt;
 }
 
 class ChatSelectionTransition {
@@ -31,6 +33,7 @@ class ChatSelectionTransition {
     _requests.value = ChatSelectionTransitionRequest(
       generation: _generation,
       chatId: chatId,
+      startedAt: Stopwatch()..start(),
     );
   }
 

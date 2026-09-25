@@ -242,6 +242,7 @@ where
 #[derive(Default)]
 struct SyncOperationLogIndex {
     loaded: bool,
+    domainOperations: BTreeMap<String, Vec<SyncOperation>>,
     operationIds: BTreeSet<String>,
     sequenceOffsets: BTreeMap<i64, u64>,
     highestSequence: i64,
@@ -331,6 +332,9 @@ impl SyncOperationStore {
         };
         let operationOffset = operationLog.encodedByteLength;
         let writtenBytes = self.appendOperationLine(&op)?;
+        if let Some(operations) = operationLog.domainOperations.get_mut(&op.domain) {
+            operations.push(op.clone());
+        }
         operationLog.operationIds.insert(op.opId.clone());
         operationLog
             .sequenceOffsets
@@ -461,6 +465,9 @@ impl SyncOperationStore {
                 self.storageHost
                     .appendBytes(&self.operationsPath(&originDeviceId), &content)?;
                 for (operation, offset, lineLength) in appendedOperations {
+                    if let Some(operations) = operationLog.domainOperations.get_mut(&operation.domain) {
+                        operations.push(operation.clone());
+                    }
                     operationLog.operationIds.insert(operation.opId.clone());
                     operationLog
                         .sequenceOffsets
@@ -499,6 +506,9 @@ impl SyncOperationStore {
         }
         let operationOffset = operationLog.encodedByteLength;
         let writtenBytes = self.appendOperationLine(operation)?;
+        if let Some(operations) = operationLog.domainOperations.get_mut(&operation.domain) {
+            operations.push(operation.clone());
+        }
         operationLog.operationIds.insert(operation.opId.clone());
         operationLog
             .sequenceOffsets
@@ -527,6 +537,36 @@ impl SyncOperationStore {
         let mut out = Vec::new();
         for deviceId in self.devices()? {
             let operationLog = self.operationLog(&deviceId)?;
+            if !domainSet.is_empty() {
+                let selected = {
+                    let mut index = lockSyncState(&operationLog, "operation log")?;
+                    self.loadOperationLogIndex(&deviceId, &mut index)?;
+                    let missing = domainSet.iter()
+                        .filter(|domain| !index.domainOperations.contains_key(*domain))
+                        .cloned().collect::<BTreeSet<_>>();
+                    if !missing.is_empty() {
+                        let content = self.readOperationLog(&deviceId)?;
+                        let mut domains = missing.iter().map(|domain| (domain.clone(), Vec::new()))
+                            .collect::<BTreeMap<_, _>>();
+                        for line in content.lines().filter(|line| !line.trim().is_empty()) {
+                            let operation: SyncOperation = serde_json::from_str(line)?;
+                            if let Some(operations) = domains.get_mut(&operation.domain) {
+                                operations.push(operation);
+                            }
+                        }
+                        index.domainOperations.extend(domains);
+                    }
+                    let minimumSequence = clock.sequenceFor(&deviceId)
+                        .max(exportFloors.get(&deviceId).copied().unwrap_or(0));
+                    domainSet.iter().flat_map(|domain| index.domainOperations[domain].iter())
+                        .filter(|operation| operation.sequence > minimumSequence)
+                        .cloned().collect::<Vec<_>>()
+                };
+                for operation in selected {
+                    out.push(self.decodeOperationPayload(operation)?);
+                }
+                continue;
+            }
             let content = {
                 let mut operationLog = lockSyncState(&operationLog, "operation log")?;
                 self.loadOperationLogIndex(&deviceId, &mut operationLog)?;

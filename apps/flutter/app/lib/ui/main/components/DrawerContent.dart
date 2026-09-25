@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../data/preferences/UserPreferencesManager.dart';
@@ -346,6 +347,7 @@ class _DrawerContentState extends State<DrawerContent> {
   Future<void> _switchConversation(
     core_proxy.ChatHistoryListItem history,
   ) async {
+    final switchStartedAt = Stopwatch()..start();
     setState(() {
       _errorMessage = null;
     });
@@ -359,6 +361,10 @@ class _DrawerContentState extends State<DrawerContent> {
         return;
       }
       await _chatCoreProxy.switchChat(chatId: history.id);
+      ClientLogger.i(
+        'chat_switch.command_completed chatId=${history.id} elapsedMs=${switchStartedAt.elapsedMilliseconds}',
+        tag: 'ChatSwitchTrace',
+      );
     } catch (error, stackTrace) {
       ChatSelectionTransition.complete(history.id);
       debugPrint('Failed to switch chat: $error\n$stackTrace');

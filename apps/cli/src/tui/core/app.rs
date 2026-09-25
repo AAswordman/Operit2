@@ -148,6 +148,7 @@ pub(super) struct OperitTui {
 }
 
 struct TuiMessageContentStreamState {
+    eventCount: u64,
     revisionTracker: TextStreamRevisionTracker,
     partStream: AssistantMarkupStreamState,
 }
@@ -191,6 +192,7 @@ impl TuiMessageContentStreamState {
     /// Creates an empty semantic projection for one embedded AI content stream.
     fn new() -> Self {
         Self {
+            eventCount: 0,
             revisionTracker: TextStreamRevisionTracker::new(""),
             partStream: AssistantMarkupStreamState::new(),
         }
@@ -413,6 +415,7 @@ impl OperitTui {
                     isLoadingDisplayWindow: false,
                     pendingQueueMessages: Vec::new(),
                     isPendingQueueExpanded: false,
+                    toolPermissionRequests: Vec::new(),
                 }
             }
             Err(error) => return Err(error.to_string()),
@@ -2565,10 +2568,19 @@ impl OperitTui {
         let eventKind = event.kind.clone();
         let streamId = info.streamId.clone();
         let messageTimestamp = info.messageTimestamp;
+        let traceFingerprint = if tui_sync_trace_enabled() {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&serde_json::to_vec(&markdown).map_err(|error| error.to_string())?, &mut hash);
+            Some(std::hash::Hasher::finish(&hash))
+        } else {
+            None
+        };
         let state = self
             .content_stream_states
             .entry(streamId.clone())
             .or_insert_with(TuiMessageContentStreamState::new);
+        state.eventCount += 1;
+        let eventSequence = state.eventCount;
         let parts = match markdown.eventType.as_str() {
             "reset" => {
                 state.reset();
@@ -2599,6 +2611,12 @@ impl OperitTui {
         let partCount = parts.as_ref().map(Vec::len);
         if let Some(parts) = parts {
             self.update_cached_content_stream_message(messageTimestamp, parts);
+        }
+        if let Some(fingerprint) = traceFingerprint {
+            AppLogger::trace("TuiSyncMeasure", &format!(
+                "event.applied streamId={} sequence={} fingerprint={:016x} eventType={}",
+                streamId, eventSequence, fingerprint, markdown.eventType
+            ));
         }
         if is_content_stream_boundary_event(&markdown.eventType) {
             AppLogger::trace(
@@ -3170,6 +3188,12 @@ impl OperitTui {
 /// Returns whether a Markdown stream event should be logged as a lifecycle boundary.
 fn is_content_stream_boundary_event(eventType: &str) -> bool {
     matches!(eventType, "reset" | "savepoint" | "rollback" | "completed")
+}
+
+/// Enables explicit per-event synchronization measurements without logging message content.
+fn tui_sync_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("OPERIT_TUI_SYNC_TRACE").as_deref() == Ok("1"))
 }
 
 fn parse_permission_level(value: Option<&str>) -> Result<AiPermissionMode, String> {

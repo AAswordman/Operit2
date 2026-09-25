@@ -1641,6 +1641,7 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Switches the selected chat and refreshes in-memory message state.
     pub fn switchChat(&mut self, chatId: String, syncToGlobal: bool) {
+        let switchStartedAt = std::time::Instant::now();
         let previousChatId = self.currentChatIdFlow.value();
         AppLogger::trace(
             "ChatFlowTrace",
@@ -1680,6 +1681,10 @@ impl ChatHistoryDelegate {
         self.allowAddMessage = false;
         self.loadChatMessages(chatId);
         self.allowAddMessage = true;
+        AppLogger::i(
+            "ChatSwitchTrace",
+            &format!("chat_switch.core_loaded elapsedMs={}", switchStartedAt.elapsed().as_millis()),
+        );
         AppLogger::v_with_level(
             "ChatFlowTrace",
             "switch.done",

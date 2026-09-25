@@ -79,7 +79,7 @@ impl CoreStreamPool {
         AppLogger::i(
             "CoreRouteStream",
             &format!(
-                "pool.open.ready requestId={} property={} streamId={}",
+                "pool.source.found requestId={} property={} streamId={}",
                 request.requestId.0, request.propertyName, streamId
             ),
         );
@@ -604,6 +604,88 @@ where
     Ok(state_flow.asStateFlow())
 }
 
+/// Registers routed sources from a typed watch value before exposing its wire event.
+fn adopt_routed_watch_value<T: Serialize>(
+    value: T,
+    adopter: &CoreStreamAttachmentAdopter,
+) -> Result<(), CoreLinkError> {
+    let (encoded, attachments) = operit_link::withCoreStreamCaptureSync(|| to_core_value(value));
+    encoded?;
+    adopter(attachments);
+    Ok(())
+}
+
+/// Opens a routed proxy watch and registers embedded sources before forwarding events.
+pub async fn core_route_proxy_watch<T>(
+    runtime: Arc<dyn CoreRouteRuntime>,
+    request: CoreWatchRequest,
+    adopter: CoreStreamAttachmentAdopter,
+    snapshot: bool,
+) -> Result<CoreEventStream, CoreLinkError>
+where
+    T: Serialize + DeserializeOwned + Send + 'static,
+{
+    let decoder = core_route_state_flow_value_decoder::<T>(
+        runtime.clone(), request.propertyName.clone(), request.args.clone(),
+    );
+    let routed_request = CoreWatchRequest {
+        targetObjectId: operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+        ..request.clone()
+    };
+    let mut upstream = runtime.watch(routed_request).await?;
+    let mut first = upstream.recv().await.ok_or_else(|| CoreLinkError::new(
+        "WATCH_STREAM_EMPTY", "Core watch stream completed before its snapshot",
+    ))?;
+    if first.kind != CoreEventKind::Snapshot {
+        return Err(CoreLinkError::new("WATCH_SNAPSHOT_REQUIRED", "Routed watch must begin with a snapshot"));
+    }
+    adopt_routed_watch_value(decoder(first.value.clone())?, &adopter)?;
+    let mut previous = first.value.clone();
+    first.requestId = Some(request.requestId.clone());
+    first.targetObjectId = request.targetObjectId;
+    let (sender, receiver) = core_event_stream_channel();
+    sender.send(first).map_err(|error| CoreLinkError::internal(error.to_string()))?;
+    if snapshot {
+        return Ok(receiver);
+    }
+    let (cancel, mut cancelled) = oneshot::channel();
+    defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+        "core-routed-proxy-watch",
+        Box::new(move || Box::pin(async move {
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    _ = &mut cancelled => break,
+                    next = upstream.recv() => next,
+                };
+                let Some(mut event) = next else { break; };
+                let completed = event.kind == CoreEventKind::Completed;
+                if !completed {
+                    let value = if event.kind == CoreEventKind::Delta {
+                        previous.applyIncrementalDelta(&event.value)
+                    } else {
+                        Ok(event.value.clone())
+                    };
+                    let result = value.map_err(|error| CoreLinkError::internal(error.to_string()))
+                        .and_then(|value| {
+                            adopt_routed_watch_value(decoder(value.clone())?, &adopter)?;
+                            previous = value;
+                            Ok(())
+                        });
+                    if let Err(error) = result {
+                        AppLogger::e("CoreRouteStream", &format!("proxy.watch.decode_failed requestId={} error={error}", request.requestId.0));
+                        break;
+                    }
+                }
+                event.requestId = Some(request.requestId.clone());
+                event.targetObjectId = request.targetObjectId;
+                if sender.send(event).is_err() || completed { break; }
+            }
+        })),
+    ).map_err(|error| CoreLinkError::internal(error.to_string()))?;
+    Ok(receiver.withOnClose(move || { let _ = cancel.send(()); }))
+}
+
 /// Routes one annotation-generated StateFlow watch through the Core route runtime.
 pub async fn core_route_state_flow<T>(
     runtime: Arc<dyn CoreRouteRuntime>,
@@ -885,16 +967,24 @@ fn core_route_embedded_stream_source(
                         match runtime.watch(routed_open_request).await {
                             Ok(mut stream) => {
                                 let mut event_count = 0_u64;
-                                AppLogger::v_with_level(
+                                AppLogger::i(
                                     "CoreRouteStream",
                                     &format!(
                                         "embedded.watch.opened requestId={} streamId={} property={}",
                                         request_id.0, stream_id, property_name
                                     ),
-                                    VERBOSE_LEVEL_5,
                                 );
                                 while let Some(event) = stream.recv().await {
                                     event_count += 1;
+                                    if event_count == 1 {
+                                        AppLogger::i(
+                                            "CoreRouteStream",
+                                            &format!(
+                                                "embedded.watch.first_event requestId={} streamId={} kind={:?}",
+                                                request_id.0, stream_id, event.kind
+                                            ),
+                                        );
+                                    }
                                     let completed = event.kind == CoreEventKind::Completed;
                                     AppLogger::v_with_level(
                                         "CoreRouteStream",

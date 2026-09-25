@@ -343,14 +343,11 @@ impl CoreNodeRouter {
     #[allow(non_snake_case)]
     fn bindingRouteNodeId(&self, key: &str) -> Result<String, CoreLinkError> {
         let targetNodeId = self.bindingStore.bindingNodeId(key)?;
-        let reachable = self
-            .nodeIsReachable(&targetNodeId)
-            .map_err(CoreLinkError::internal)?;
         operit_util::AppLogger::AppLogger::trace(
             "CoreNodeRouteTrace",
             &format!(
-                "binding_target_resolve key={} local={} selected={} reachable={}",
-                key, self.localNodeId, targetNodeId, reachable
+                "binding_target_resolve key={} local={} selected={}",
+                key, self.localNodeId, targetNodeId
             ),
         );
         Ok(targetNodeId)
@@ -637,25 +634,14 @@ impl CoreNodeRouter {
         for peerNodeId in excludedPeerNodeIds {
             peers.remove(peerNodeId);
         }
-        let blockedPeers = peers
-            .iter()
-            .map(|peerNodeId| {
-                self.networkControlStore
-                    .nodeIsDisconnected(peerNodeId)
-                    .map(|blocked| (peerNodeId.clone(), blocked))
-            })
-            .collect::<Result<Vec<_>, _>>()
+        let (blockedNodeIds, transitNodeIds) = self
+            .networkControlStore
+            .routingPolicySnapshot()
             .map_err(CoreLinkError::internal)?;
-        for (peerNodeId, blocked) in blockedPeers {
-            if blocked {
-                peers.remove(&peerNodeId);
-            }
+        for peerNodeId in blockedNodeIds {
+            peers.remove(&peerNodeId);
         }
         let activePeers = peers.iter().cloned().collect::<Vec<_>>();
-        let transitNodeIds = self
-            .networkControlStore
-            .relayNodeIds()
-            .map_err(CoreLinkError::internal)?;
         let nextHop = self
             .spaceStore
             .reachableNextHopThroughPeersWithTransitNodes(
@@ -1381,6 +1367,7 @@ impl CoreNodeRouter {
         let requestId = request.requestId.0.clone();
         let propertyName = request.propertyName.clone();
         let mut segmentCount = 0_u64;
+        let mut initialSnapshotForwarded = false;
         'outer: loop {
             let binding = match self.bindingStore.binding(&bindingKey) {
                 Ok(binding) => binding,
@@ -1532,7 +1519,7 @@ impl CoreNodeRouter {
                             );
                             break;
                         }
-                        if segmentCount > 1 && event.kind == CoreEventKind::Snapshot {
+                        if initialSnapshotForwarded && event.kind == CoreEventKind::Snapshot {
                             continue;
                         }
                         if !self.bindingStillCurrent(&bindingKey, &binding) {
@@ -1574,6 +1561,9 @@ impl CoreNodeRouter {
                                     requestId, propertyName, binding.nodeId, binding.generation
                                 ),
                             );
+                        }
+                        if event.kind == CoreEventKind::Snapshot {
+                            initialSnapshotForwarded = true;
                         }
                         if sender.send(event).is_err() {
                             AppLogger::v_with_level(
@@ -2307,10 +2297,9 @@ impl CoreRouteRuntime for CoreNodeRouter {
                     Err(error) if error.code == "CORE_BINDING_NOT_FOUND" => return Ok(false),
                     Err(error) => return Err(error),
                 };
-                Ok(targetNodeId != self.localNodeId
-                    && self
-                        .nodeIsReachable(&targetNodeId)
-                        .map_err(CoreLinkError::internal)?)
+                // Ownership is independent of transport availability. The managed
+                // Binding flow owns connection establishment for this remote source.
+                Ok(targetNodeId != self.localNodeId)
             }
         }
     }
@@ -3184,6 +3173,23 @@ mod tests {
             ),
             chatRuntimeHolder,
         )
+    }
+
+    /// Keeps remote-owned watches routed even before their peer connection becomes available.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_watch_owner_is_preserved_while_peer_is_offline() {
+        let _globalGuard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let router = testCoreNodeRouter("offline-client", "offline-owner", "offline-chat");
+        router.spaceStore.setDirectPeers(Vec::new()).unwrap();
+        let args = CoreValue::Map(BTreeMap::from([
+            ("chatId".to_string(), CoreValue::String("offline-chat".to_string())),
+        ]));
+        assert!(!router.nodeIsReachable("offline-owner").unwrap());
+        for method in ["chatMessagesFlow", "chatStateFlow"] {
+            assert!(router.shouldRouteWatch(method, &args).unwrap(), "{method} must retain its remote owner");
+            assert!(!router.shouldUseLocalWatchSource(method, &args).unwrap());
+        }
     }
 
     /// Creates one real router with synthetic local runtime and in-memory route state.
@@ -5253,21 +5259,24 @@ mod tests {
             &targetNodeId,
             joinedSpace,
         );
-        let peerHandle = connectInMemoryPeerLinks(
-            localNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(localRouter.clone()),
-            targetNodeId.clone(),
-            TestCoreNodeRouterEndpoint::new(targetRouter),
-        )
-        .expect("in-memory PeerLink must connect both real CoreNodeRouters");
-        let _routeGuard = installTestCoreRouteRuntime(Arc::new(localRouter));
-        let routedFlow = {
-            let mut holder = localHolder.lock().await;
-            holder
-                .getCore(ChatRuntimeSlot::MAIN)
-                .chatStateFlow(chatId.clone())
-                .await
-        };
+        let _routeGuard = installTestCoreRouteRuntime(Arc::new(localRouter.clone()));
+        let (routedFlow, peerHandle) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                async {
+                    let mut holder = localHolder.lock().await;
+                    holder.getCore(ChatRuntimeSlot::MAIN).chatStateFlow(chatId.clone()).await
+                },
+                async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    connectInMemoryPeerLinks(
+                        localNodeId.clone(),
+                        TestCoreNodeRouterEndpoint::new(localRouter.clone()),
+                        targetNodeId.clone(),
+                        TestCoreNodeRouterEndpoint::new(targetRouter),
+                    ).expect("late peer must connect the pending remote watch")
+                }
+            )
+        }).await.expect("the first snapshot must survive failed opening attempts");
         let selectedState = InputProcessingState::Receiving {
             message: "receiving_from_target_core".to_string(),
         };
@@ -5281,6 +5290,13 @@ mod tests {
         let state = waitForRoutedChatState(&routedFlow, &selectedState).await;
         assert_eq!(state.currentChatId, chatId);
         assert!(!state.isLoading);
+        {
+            let mut holder = targetHolder.lock().await;
+            holder.getCore(ChatRuntimeSlot::MAIN).messageProcessingDelegate
+                .finishChatExecution(chatId.clone(), InputProcessingState::Completed);
+        }
+        let completed = waitForRoutedChatState(&routedFlow, &InputProcessingState::Completed).await;
+        assert!(!completed.isLoading);
         peerHandle.close();
     }
 
