@@ -7,12 +7,16 @@ class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
     required this.children,
+    this.icon,
     this.action,
+    this.initiallyExpanded = true,
   });
 
   final String title;
   final List<Widget> children;
+  final IconData? icon;
   final Widget? action;
+  final bool initiallyExpanded;
 
   /// Builds the section card with its content expanded by default.
   @override
@@ -36,20 +40,27 @@ class _SectionCard extends StatelessWidget {
           material: true,
           clip: false,
           child: ExpansionTile(
-            initiallyExpanded: true,
+            initiallyExpanded: initiallyExpanded,
             tilePadding: const EdgeInsets.symmetric(horizontal: 14),
             childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
             shape: RoundedRectangleBorder(borderRadius: radius),
             collapsedShape: RoundedRectangleBorder(borderRadius: radius),
             title: Row(
               children: <Widget>[
+                if (icon != null) ...<Widget>[
+                  Icon(icon, size: 18, color: colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   child: Text(
                     title,
                     style: SettingsControlStyles.sectionTitleTextStyle(context),
                   ),
                 ),
-                ?action,
+                if (action != null) ...<Widget>[
+                  action!,
+                  const SizedBox(width: 4),
+                ],
               ],
             ),
             children: children,

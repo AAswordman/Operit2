@@ -13,7 +13,6 @@ import '../local_models/LocalModelSettingsPanel.dart';
 import '../models/SettingsModels.dart';
 import '../profile/UserProfileSettingsPanel.dart';
 import '../tools/ToolSettingsPanel.dart';
-import '../tts/TtsSettingsPanel.dart';
 import '../workspace/WorkspaceSettingsPanel.dart';
 
 class SettingsDetailView extends StatelessWidget {
@@ -39,7 +38,7 @@ class SettingsDetailView extends StatelessWidget {
       ),
       SettingsCategory.model => const ModelSettingsPanel(),
       SettingsCategory.localModels => const LocalModelSettingsPanel(),
-      SettingsCategory.tts => const TtsSettingsPanel(),
+      SettingsCategory.tts => const ModelSettingsPanel(),
       SettingsCategory.characters => const CharacterSettingsPanel(),
       SettingsCategory.tools => const ToolSettingsPanel(),
       SettingsCategory.workspace => const WorkspaceSettingsPanel(),

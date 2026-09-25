@@ -2,21 +2,27 @@
 
 part of 'TtsSettingsPanel.dart';
 
-class _TtsSettingsData {
-  const _TtsSettingsData({
+class _TtsSectionData {
+  const _TtsSectionData({
     required this.configs,
     required this.currentConfigId,
     required this.providerCatalogEntries,
     required this.characterBoundConfigIds,
-    required this.sttConfigs,
-    required this.currentSttConfigId,
-    required this.sttProviderCatalogEntries,
   });
 
   final List<core_proxy.TtsConfig> configs;
   final String currentConfigId;
   final List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries;
   final Set<String> characterBoundConfigIds;
+}
+
+class _SttSectionData {
+  const _SttSectionData({
+    required this.sttConfigs,
+    required this.currentSttConfigId,
+    required this.sttProviderCatalogEntries,
+  });
+
   final List<core_proxy.SttConfig> sttConfigs;
   final String? currentSttConfigId;
   final List<core_proxy.SttProviderCatalogEntry> sttProviderCatalogEntries;

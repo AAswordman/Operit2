@@ -220,3 +220,68 @@ class SettingsEntityPopupIconButton<T> extends StatelessWidget {
     );
   }
 }
+
+class SettingsSectionAddButton extends StatelessWidget {
+  const SettingsSectionAddButton({
+    super.key,
+    required this.tooltip,
+    required this.onPressed,
+    this.label = '添加',
+  });
+
+  final String tooltip;
+  final VoidCallback onPressed;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: isDark
+            ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.55)
+            : colorScheme.surfaceContainerHigh.withValues(alpha: 0.7),
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(
+              alpha: isDark ? 0.35 : 0.45,
+            ),
+            width: 0.8,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onPressed,
+          child: Container(
+            height: 26,
+            padding: const EdgeInsets.fromLTRB(7, 0, 9, 0),
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  Icons.add,
+                  size: 13,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurface,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -627,7 +627,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatSpeechInputConfigurationRequired =>
-      'Select a speech recognition configuration in Settings > Voice & Recognition before using speech input.';
+      'Select a speech recognition configuration in Settings > Models & AI before using speech input.';
 
   @override
   String get chatSpeechNoTextRecognized => 'No speech recognized.';
