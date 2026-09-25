@@ -13,24 +13,13 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitFormStyles.dart';
 
 const XTypeGroup _memoryJsonFileTypeGroup = XTypeGroup(
   label: 'Operit memory JSON',
   extensions: <String>['json'],
 );
-
-const double _memoryFolderDrawerMaxWidth = 320;
-const double _memoryFolderDrawerWidthFactor = 0.82;
-
-/// Returns the Material drawer width for the memory folder picker.
-double _memoryFolderDrawerWidth(BuildContext context) {
-  final viewportWidth = MediaQuery.sizeOf(context).width;
-  return math.min(
-    _memoryFolderDrawerMaxWidth,
-    viewportWidth * _memoryFolderDrawerWidthFactor,
-  );
-}
 
 class MemoryGraphScreen extends StatefulWidget {
   /// Creates the owner-scoped memory management graph page.
@@ -216,12 +205,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       _selectedMemoryFuture = null;
       _linkSourceNodeId = null;
     });
-  }
-
-  /// Closes the folder drawer and applies the selected folder filter.
-  void _selectFolderFromDrawer(String folderPath) {
-    Navigator.of(context).pop();
-    _selectFolder(folderPath);
   }
 
   /// Recomputes the graph layout when data or size changed.
@@ -615,9 +598,10 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   }) async {
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
+      builder: (context) => OperitDialogScaffold(
+        title: title,
+        maxWidth: 420,
+        showCloseButton: true,
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -628,6 +612,7 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
             child: Text(confirmLabel),
           ),
         ],
+        child: Text(message),
       ),
     );
     return result == true;
@@ -640,36 +625,34 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Builds the Material drawer layer for memory folder filtering.
-  Widget _buildFolderDrawer(ColorScheme colorScheme) {
-    return Drawer(
-      width: _memoryFolderDrawerWidth(context),
-      backgroundColor: colorScheme.surfaceContainerLow,
-      surfaceTintColor: Colors.transparent,
-      shadowColor: colorScheme.shadow.withValues(alpha: 0.22),
-      elevation: 12,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.horizontal(right: Radius.circular(20)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: FutureBuilder<_MemoryGraphData>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
-          }
-          final data = snapshot.data;
-          if (data == null) {
-            return const M3LoadingPane();
-          }
-          return _MemoryFolderPanel(
-            folders: data.folders,
+  /// Opens the folder filter picker dialog.
+  Future<void> _openFolderPickerDialog(List<String> folders) async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => OperitDialogScaffold(
+        title: '选择记忆文件夹',
+        maxWidth: 420,
+        maxHeight: 520,
+        showCloseButton: true,
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+        child: SizedBox(
+          height: 360,
+          child: _MemoryFolderPanel(
+            folders: folders,
             selectedFolderPath: _folderPath,
-            onSelected: _selectFolderFromDrawer,
-          );
-        },
+            onSelected: (folder) => Navigator.of(context).pop(folder),
+          ),
+        ),
       ),
     );
+    if (selected != null) {
+      _selectFolder(selected);
+    }
   }
 
   /// Builds the page scaffold and graph canvas.
@@ -704,32 +687,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
           ),
         ],
       ),
-      drawer: _buildFolderDrawer(colorScheme),
-      drawerScrimColor: colorScheme.scrim.withValues(alpha: 0.32),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          FloatingActionButton.small(
-            heroTag: 'memory-link',
-            tooltip: '创建关系',
-            backgroundColor: _linkMode
-                ? colorScheme.primary
-                : colorScheme.secondaryContainer,
-            foregroundColor: _linkMode
-                ? colorScheme.onPrimary
-                : colorScheme.onSecondaryContainer,
-            onPressed: _busy ? null : _toggleLinkMode,
-            child: const Icon(Icons.link),
-          ),
-          const SizedBox(height: 10),
-          FloatingActionButton(
-            heroTag: 'memory-create',
-            tooltip: '新建记忆',
-            onPressed: _busy ? null : _createMemory,
-            child: const Icon(Icons.add),
-          ),
-        ],
-      ),
       body: FutureBuilder<_MemoryGraphData>(
         future: _future,
         builder: (context, snapshot) {
@@ -742,16 +699,16 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
           }
           return Column(
             children: <Widget>[
-              Builder(
-                builder: (toolbarContext) {
-                  return _MemoryToolbar(
-                    controller: _searchController,
-                    busy: _busy,
-                    onSearch: _runSearch,
-                    onClearSearch: _clearSearch,
-                    onOpenFolders: Scaffold.of(toolbarContext).openDrawer,
-                  );
-                },
+              _MemoryToolbar(
+                controller: _searchController,
+                busy: _busy,
+                linkMode: _linkMode,
+                folderPath: _folderPath,
+                onSearch: _runSearch,
+                onClearSearch: _clearSearch,
+                onOpenFolders: () => _openFolderPickerDialog(data.folders),
+                onToggleLinkMode: _toggleLinkMode,
+                onCreateMemory: _createMemory,
               ),
               if (_busy) const LinearProgressIndicator(minHeight: 2),
               Expanded(child: _buildGraphCanvas(data, colorScheme, textTheme)),
@@ -1200,58 +1157,147 @@ class _MemoryGraphPainter extends CustomPainter {
 }
 
 class _MemoryToolbar extends StatelessWidget {
-  /// Creates the top filter and action toolbar.
+  /// Creates the memory graph search and action toolbar.
   const _MemoryToolbar({
     required this.controller,
     required this.busy,
+    required this.linkMode,
+    required this.folderPath,
     required this.onSearch,
     required this.onClearSearch,
     required this.onOpenFolders,
+    required this.onToggleLinkMode,
+    required this.onCreateMemory,
   });
 
   final TextEditingController controller;
   final bool busy;
+  final bool linkMode;
+  final String folderPath;
   final VoidCallback onSearch;
   final VoidCallback onClearSearch;
   final VoidCallback onOpenFolders;
+  final VoidCallback onToggleLinkMode;
+  final VoidCallback onCreateMemory;
 
   /// Builds the top memory toolbar.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final folderLabel = folderPath.isEmpty ? '全部文件夹' : folderPath;
     return Material(
-      color: colorScheme.surface,
-      elevation: 1,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.2),
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
         child: Row(
           children: <Widget>[
-            IconButton(
-              tooltip: '文件夹',
+            OutlinedButton.icon(
               onPressed: busy ? null : onOpenFolders,
-              icon: const Icon(Icons.folder_outlined),
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                minimumSize: const Size(0, 32),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                side: BorderSide(
+                  color: folderPath.isNotEmpty
+                      ? colorScheme.primary.withValues(alpha: 0.5)
+                      : colorScheme.outlineVariant.withValues(alpha: 0.35),
+                ),
+                foregroundColor: folderPath.isNotEmpty
+                    ? colorScheme.primary
+                    : colorScheme.onSurface,
+              ),
+              icon: const Icon(Icons.folder_outlined, size: 16),
+              label: Text(
+                folderLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
             Expanded(
-              child: TextField(
-                controller: controller,
-                enabled: !busy,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => onSearch(),
-                decoration: InputDecoration(
-                  isDense: true,
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: controller.text.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: '清空',
-                          onPressed: busy ? null : onClearSearch,
-                          icon: const Icon(Icons.clear),
-                        ),
-                  hintText: '搜索标题、正文、来源或标签',
-                  border: const OutlineInputBorder(),
+              child: SizedBox(
+                height: 32,
+                child: TextField(
+                  controller: controller,
+                  enabled: !busy,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => onSearch(),
+                  style: Theme.of(context).textTheme.bodySmall,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    prefixIcon: const Icon(Icons.search, size: 16),
+                    suffixIcon: controller.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: '清空',
+                            padding: EdgeInsets.zero,
+                            iconSize: 14,
+                            onPressed: busy ? null : onClearSearch,
+                            icon: const Icon(Icons.clear),
+                          ),
+                    hintText: '搜索标题、正文、来源或标签',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(
+                        color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  ),
                 ),
               ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: busy ? null : onToggleLinkMode,
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                minimumSize: const Size(0, 32),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                side: BorderSide(
+                  color: linkMode
+                      ? colorScheme.primary
+                      : colorScheme.outlineVariant.withValues(alpha: 0.35),
+                ),
+                backgroundColor: linkMode
+                    ? colorScheme.primary.withValues(alpha: 0.12)
+                    : null,
+                foregroundColor: linkMode
+                    ? colorScheme.primary
+                    : colorScheme.onSurface,
+              ),
+              icon: const Icon(Icons.link, size: 16),
+              label: const Text('关系模式'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: busy ? null : onCreateMemory,
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                minimumSize: const Size(0, 32),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('新建记忆'),
             ),
           ],
         ),
@@ -1444,10 +1490,16 @@ class _MemoryGraphSelectionCard extends StatelessWidget {
     final subtitle = edge == null
         ? node?.id
         : '${_nodeLabel(edge!.sourceId)}  →  ${_nodeLabel(edge!.targetId)}';
+    final radius = BorderRadius.circular(12);
     return Material(
-      color: colorScheme.surfaceContainerHighest,
-      elevation: 3,
-      borderRadius: BorderRadius.circular(20),
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.95),
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
         child: Column(
@@ -1798,96 +1850,11 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
       ...widget.folders,
       _folderController.text,
     }.map((folder) => folder.trim()).toSet().toList(growable: false)..sort();
-    return AlertDialog(
-      title: Text(widget.memory == null ? '新建记忆' : '编辑记忆'),
-      content: SizedBox(
-        width: 720,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                TextFormField(
-                  controller: _titleController,
-                  decoration: const InputDecoration(labelText: '标题'),
-                  validator: (value) =>
-                      value == null || value.trim().isEmpty ? '请输入标题' : null,
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _contentController,
-                  minLines: 8,
-                  maxLines: 14,
-                  decoration: const InputDecoration(
-                    labelText: '内容',
-                    alignLabelWithHint: true,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: TextFormField(
-                        controller: _contentTypeController,
-                        decoration: const InputDecoration(labelText: '内容类型'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _sourceController,
-                        decoration: const InputDecoration(labelText: '来源'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                OperitFormStyles.dropdownButtonFormField<String>(
-                  context,
-                  initialValue:
-                      folderOptions.contains(_folderController.text.trim())
-                      ? _folderController.text.trim()
-                      : '',
-                  items: <DropdownMenuItem<String>>[
-                    for (final folder in folderOptions)
-                      DropdownMenuItem<String>(
-                        value: folder,
-                        child: Text(_folderLabel(folder)),
-                      ),
-                  ],
-                  decoration: const InputDecoration(labelText: '文件夹'),
-                  onChanged: (value) {
-                    _folderController.text = value ?? '';
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _folderController,
-                  decoration: const InputDecoration(labelText: '文件夹路径'),
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _tagsController,
-                  decoration: const InputDecoration(labelText: '标签（逗号分隔）'),
-                ),
-                const SizedBox(height: 12),
-                _SliderEditor(
-                  label: '可信度',
-                  value: _credibility,
-                  onChanged: (value) => setState(() => _credibility = value),
-                ),
-                _SliderEditor(
-                  label: '重要性',
-                  value: _importance,
-                  onChanged: (value) => setState(() => _importance = value),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return OperitDialogScaffold(
+      title: widget.memory == null ? '新建记忆' : '编辑记忆',
+      maxWidth: 720,
+      maxHeight: 680,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -1895,6 +1862,95 @@ class _MemoryEditorDialogState extends State<_MemoryEditorDialog> {
         ),
         FilledButton(onPressed: _save, child: const Text('保存')),
       ],
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              TextFormField(
+                controller: _titleController,
+                decoration: const InputDecoration(labelText: '标题'),
+                validator: (value) =>
+                    value == null || value.trim().isEmpty ? '请输入标题' : null,
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _contentController,
+                minLines: 8,
+                maxLines: 14,
+                decoration: const InputDecoration(
+                  labelText: '内容',
+                  alignLabelWithHint: true,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: TextFormField(
+                      controller: _contentTypeController,
+                      decoration: const InputDecoration(labelText: '内容类型'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _sourceController,
+                      decoration: const InputDecoration(labelText: '来源'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              OperitFormStyles.dropdownButtonFormField<String>(
+                context,
+                initialValue:
+                    folderOptions.contains(_folderController.text.trim())
+                    ? _folderController.text.trim()
+                    : '',
+                items: <DropdownMenuItem<String>>[
+                  for (final folder in folderOptions)
+                    DropdownMenuItem<String>(
+                      value: folder,
+                      child: Text(_folderLabel(folder)),
+                    ),
+                ],
+                decoration: const InputDecoration(labelText: '文件夹'),
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  setState(() {
+                    _folderController.text = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _tagsController,
+                decoration: const InputDecoration(
+                  labelText: '标签',
+                  helperText: '多个标签请用逗号分隔',
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SliderEditor(
+                label: '可信度',
+                value: _credibility,
+                onChanged: (value) => setState(() => _credibility = value),
+              ),
+              const SizedBox(height: 10),
+              _SliderEditor(
+                label: '重要度',
+                value: _importance,
+                onChanged: (value) => setState(() => _importance = value),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2009,39 +2065,10 @@ class _MemoryLinkEditorDialogState extends State<_MemoryLinkEditorDialog> {
   /// Builds the memory link dialog.
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('创建记忆关系'),
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Text('${widget.sourceTitle}  →  ${widget.targetTitle}'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _typeController,
-              decoration: const InputDecoration(labelText: '关系类型'),
-            ),
-            const SizedBox(height: 10),
-            _SliderEditor(
-              label: '权重',
-              value: _weight,
-              onChanged: (value) => setState(() => _weight = value),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _descriptionController,
-              minLines: 2,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: '描述',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return OperitDialogScaffold(
+      title: '创建记忆关系',
+      maxWidth: 520,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -2049,6 +2076,39 @@ class _MemoryLinkEditorDialogState extends State<_MemoryLinkEditorDialog> {
         ),
         FilledButton(onPressed: _save, child: const Text('创建')),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            '${widget.sourceTitle}  →  ${widget.targetTitle}',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _typeController,
+            decoration: const InputDecoration(labelText: '关系类型'),
+          ),
+          const SizedBox(height: 10),
+          _SliderEditor(
+            label: '权重',
+            value: _weight,
+            onChanged: (value) => setState(() => _weight = value),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _descriptionController,
+            minLines: 2,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: '描述',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2070,9 +2130,10 @@ class _ImportStrategyDialog extends StatelessWidget {
   /// Builds the import strategy dialog.
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('导入记忆 JSON'),
-      content: const Text('请选择同名记忆的处理方式。'),
+    return OperitDialogScaffold(
+      title: '导入记忆 JSON',
+      maxWidth: 440,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -2094,6 +2155,10 @@ class _ImportStrategyDialog extends StatelessWidget {
           child: const Text('创建新记忆'),
         ),
       ],
+      child: const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Text('请选择同名记忆的处理方式。'),
+      ),
     );
   }
 }
