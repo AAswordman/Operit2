@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::output::CoreCommandOutput;
-use operit_local_models::LocalModelManifest::LocalModelKind;
+use operit_local_models::LocalModelManifest::{LocalModelKind, LocalModelSourceKind};
 use operit_local_models::LocalModelRegistry::{InstalledLocalEngine, InstalledLocalModel};
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::services::LocalModelService::{LocalModelCatalogStatus, LocalModelService};
@@ -45,6 +45,27 @@ pub fn run_local_models_command(
         }
         Some("engine-delete") if args.len() == 3 => {
             delete_installed_engine(application, &args[1], &args[2], output)
+        }
+        Some("source-get") if args.len() == 1 => {
+            print_preferred_source(application, output)
+        }
+        Some("source-set") if args.len() == 2 => {
+            set_preferred_source(application, &args[1], output)
+        }
+        Some("hub-search") if args.len() == 2 || args.len() == 3 => {
+            search_hub_models(application, &args[1], args.get(2).map(String::as_str), output)
+        }
+        Some("hub-import") if (2..=4).contains(&args.len()) => {
+            import_hub_model(
+                application,
+                &args[1],
+                args.get(2).map(String::as_str),
+                args.get(3).map(String::as_str),
+                output,
+            )
+        }
+        Some("custom-remove") if args.len() == 3 => {
+            remove_custom_model(application, &args[1], &args[2], output)
         }
         _ => {
             print_local_models_usage(output);
@@ -338,17 +359,142 @@ fn find_catalog_status(
         .ok_or_else(|| format!("local model catalog entry not found: {model_id}@{version}"))
 }
 
+/// Prints the current preferred download source.
+fn print_preferred_source(
+    application: &OperitApplication,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let source = local_model_service(application)?.getPreferredSource()?;
+    let label = local_model_source_kind_name(&source);
+    output.push_stdout_line(format!("Preferred local model source: {label}"));
+    output.setJsonStdout(json!({ "preferredSource": label }));
+    Ok(())
+}
+
+/// Sets the preferred download source from CLI input.
+fn set_preferred_source(
+    application: &OperitApplication,
+    raw_source: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let source = parse_local_model_source_kind(raw_source)?;
+    local_model_service(application)?.setPreferredSource(source)?;
+    let label = local_model_source_kind_name(&source);
+    output.push_stdout_line(format!("Preferred local model source updated: {label}"));
+    output.setJsonStdout(json!({ "preferredSource": label }));
+    Ok(())
+}
+
+/// Searches Hugging Face or ModelScope repositories from the CLI.
+fn search_hub_models(
+    application: &OperitApplication,
+    query: &str,
+    raw_source: Option<&str>,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let source = match raw_source {
+        Some(raw) => Some(parse_local_model_source_kind(raw)?),
+        None => None,
+    };
+    let results = local_model_service(application)?.searchHubModels(query.to_string(), source)?;
+    output.push_stdout_line(format!("Hub models found: {}", results.len()));
+    for item in &results {
+        output.push_stdout_line(format!(
+            "- {} | source: {} | downloads: {} | likes: {} | {}",
+            item.repository,
+            local_model_source_kind_name(&item.sourceKind),
+            item.downloads,
+            item.likes,
+            item.description
+        ));
+    }
+    output.setJsonStdout(serde_json::to_value(&results).map_err(|error| error.to_string())?);
+    Ok(())
+}
+
+/// Inspects a remote Hub repository and imports it into the local catalog.
+fn import_hub_model(
+    application: &OperitApplication,
+    repository: &str,
+    revision: Option<&str>,
+    raw_source: Option<&str>,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let source = match raw_source {
+        Some(raw) => Some(parse_local_model_source_kind(raw)?),
+        None => None,
+    };
+    let status = local_model_service(application)?.importModelFromHub(
+        repository.to_string(),
+        revision.map(str::to_string),
+        source,
+    )?;
+    output.push_stdout_line("Imported local model into catalog");
+    print_catalog_row(&status, output);
+    output.setJsonStdout(serde_json::to_value(&status).map_err(|error| error.to_string())?);
+    Ok(())
+}
+
+/// Removes one custom imported model from the local catalog.
+fn remove_custom_model(
+    application: &OperitApplication,
+    model_id: &str,
+    version: &str,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    local_model_service(application)?.removeCustomModel(
+        model_id.to_string(),
+        version.to_string(),
+    )?;
+    output.push_stdout_line(format!("Removed custom model: {model_id}@{version}"));
+    output.setJsonStdout(json!({
+        "removed": true,
+        "modelId": model_id,
+        "version": version
+    }));
+    Ok(())
+}
+
+/// Parses a CLI source kind argument into a typed enum.
+fn parse_local_model_source_kind(raw: &str) -> Result<LocalModelSourceKind, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "huggingface" | "hf" => Ok(LocalModelSourceKind::HuggingFace),
+        "modelscope" | "ms" => Ok(LocalModelSourceKind::ModelScope),
+        "hf-mirror" | "hfmirror" | "mirror" => Ok(LocalModelSourceKind::HfMirror),
+        other => Err(format!(
+            "unsupported local model source '{other}' (expected: huggingface, modelscope, hf-mirror)"
+        )),
+    }
+}
+
+/// Returns the stable display name for a local model source kind.
+fn local_model_source_kind_name(kind: &LocalModelSourceKind) -> &'static str {
+    match kind {
+        LocalModelSourceKind::HuggingFace => "HuggingFace",
+        LocalModelSourceKind::ModelScope => "ModelScope",
+        LocalModelSourceKind::HfMirror => "HfMirror",
+        LocalModelSourceKind::DirectHttp => "DirectHttp",
+    }
+}
+
 /// Prints one built-in model status as a readable row.
 fn print_catalog_row(status: &LocalModelCatalogStatus, output: &mut CoreCommandOutput) {
     let manifest = &status.manifest;
     let engine = catalog_engine_label(status);
+    let sources = manifest
+        .sources
+        .iter()
+        .map(|s| local_model_source_kind_name(&s.kind))
+        .collect::<Vec<_>>()
+        .join(",");
     output.push_stdout_line(format!(
-        "- {}@{} | {} | {} bytes | license: {} | engine: {} | compatible: {} | model installed: {} | engine installed: {}",
+        "- {}@{} | {} | {} bytes | license: {} | sources: {} | engine: {} | compatible: {} | model installed: {} | engine installed: {}",
         manifest.id,
         manifest.version,
         local_model_kind_name(&manifest.kind),
         manifest.declaredByteSize(),
         manifest.license,
+        sources,
         engine,
         status.platformCompatible,
         status.installedModel.is_some(),
@@ -449,6 +595,11 @@ fn print_local_models_usage(output: &mut CoreCommandOutput) {
         "operit2 local-models verify <model-id> <version>",
         "operit2 local-models delete <model-id> <version>",
         "operit2 local-models engine-delete <engine-id> <version>",
+        "operit2 local-models source-get",
+        "operit2 local-models source-set <huggingface|modelscope|hf-mirror>",
+        "operit2 local-models hub-search <query> [huggingface|modelscope|hf-mirror]",
+        "operit2 local-models hub-import <owner/repo-or-url> [revision] [huggingface|modelscope|hf-mirror]",
+        "operit2 local-models custom-remove <model-id> <version>",
     ];
     for line in lines {
         output.push_stdout_line(line);

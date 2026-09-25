@@ -36,6 +36,8 @@ registry.
 - `src/LocalModelManifest.rs`: model kind, engine kind, manifest records, and
   file checksum helpers.
 - `src/LocalModelCatalog.rs`: built-in local model manifests.
+- `src/LocalModelHub.rs`: Hugging Face and ModelScope repository search, file
+  tree inspection, and automatic driver manifest inference.
 - `src/LocalModelDownload.rs`: manifest-driven local model installation and
   download progress mapping.
 - `src/LocalModelRegistry.rs`: installed model records and registry snapshot
@@ -64,8 +66,8 @@ The active built-in catalog starts with Sherpa ONNX speech models:
   bundle with 904 speakers.
 - Engine: `SherpaOnnx` version `1.13.2`.
 - Licenses: model-specific; entries carry their own license field.
-- Sources: pinned Hugging Face revisions with declared size and SHA-256 for
-  every file.
+- Sources: pinned Hugging Face and ModelScope repositories (plus HF-Mirror
+  resolution) with declared size and SHA-256 for every file.
 
 Native Sherpa drivers and browser bundle drivers are separate enum variants.
 Catalog status and installation both validate the current platform against the

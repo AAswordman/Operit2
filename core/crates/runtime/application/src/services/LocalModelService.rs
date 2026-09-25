@@ -16,11 +16,12 @@ use operit_local_models::LocalEngineManifest::{
     LocalEngineDelivery, LocalEngineManifest, LocalPlatformTarget,
 };
 use operit_local_models::LocalModelCatalog::LocalModelCatalog;
+use operit_local_models::LocalModelHub::{LocalModelHubClient, LocalModelHubRepoSummary};
 use operit_local_models::LocalModelDownload::{
     LocalModelDownloadProgress, LocalModelDownloadProgressCallback, LocalModelInstallRequest,
     LocalModelInstaller,
 };
-use operit_local_models::LocalModelManifest::LocalModelManifest;
+use operit_local_models::LocalModelManifest::{LocalModelManifest, LocalModelSourceKind};
 use operit_local_models::LocalModelRegistry::{
     InstalledLocalEngine, InstalledLocalModel, LocalModelRegistrySnapshot,
 };
@@ -128,7 +129,7 @@ impl LocalModelService {
         let target = LocalPlatformTarget::current()?;
         let registry = self.registryStore()?.read().map_err(errorString)?;
         let mut statuses = Vec::new();
-        for manifest in LocalModelCatalog::manifests() {
+        for manifest in allCatalogManifests(&registry) {
             let installedModel = registry
                 .getInstalledModel(&manifest.id, &manifest.version)
                 .cloned();
@@ -164,6 +165,80 @@ impl LocalModelService {
     /// Returns the shared local model and engine registry snapshot.
     pub fn getRegistry(&self) -> Result<LocalModelRegistrySnapshot, String> {
         self.registryStore()?.read().map_err(errorString)
+    }
+
+    /// Returns the preferred model download source kind.
+    pub fn getPreferredSource(&self) -> Result<LocalModelSourceKind, String> {
+        let registry = self.registryStore()?.read().map_err(errorString)?;
+        Ok(registry.preferredSource())
+    }
+
+    /// Sets and persists the preferred model download source kind.
+    pub fn setPreferredSource(
+        &self,
+        sourceKind: LocalModelSourceKind,
+    ) -> Result<LocalModelRegistrySnapshot, String> {
+        let store = self.registryStore()?;
+        let mut registry = store.read().map_err(errorString)?;
+        registry.setPreferredSource(sourceKind);
+        store.write(&registry).map_err(errorString)?;
+        Ok(registry)
+    }
+
+    /// Searches Hugging Face or ModelScope for compatible model repositories.
+    pub fn searchHubModels(
+        &self,
+        query: String,
+        sourceKind: Option<LocalModelSourceKind>,
+    ) -> Result<Vec<LocalModelHubRepoSummary>, String> {
+        let activeSource = match sourceKind {
+            Some(kind) => kind,
+            None => self.getPreferredSource()?,
+        };
+        let hubClient = LocalModelHubClient::new(self.httpHost.clone());
+        hubClient.searchRepositories(activeSource, &query, 20)
+    }
+
+    /// Inspects one remote repository on Hugging Face or ModelScope and imports it into the local catalog.
+    pub fn importModelFromHub(
+        &self,
+        repository: String,
+        revision: Option<String>,
+        sourceKind: Option<LocalModelSourceKind>,
+    ) -> Result<LocalModelCatalogStatus, String> {
+        let activeSource = match sourceKind {
+            Some(kind) => kind,
+            None => self.getPreferredSource()?,
+        };
+        let hubClient = LocalModelHubClient::new(self.httpHost.clone());
+        let manifest = hubClient.inspectRepositoryManifest(
+            activeSource,
+            &repository,
+            revision.as_deref(),
+        )?;
+        let store = self.registryStore()?;
+        let mut registry = store.read().map_err(errorString)?;
+        registry.upsertCustomModel(manifest.clone());
+        store.write(&registry).map_err(errorString)?;
+        self.catalogStatus(&manifest.id, &manifest.version)
+    }
+
+    /// Removes one custom imported model from the local catalog and deletes any installed artifacts.
+    pub fn removeCustomModel(&self, modelId: String, version: String) -> Result<(), String> {
+        let store = self.registryStore()?;
+        let registry = store.read().map_err(errorString)?;
+        if registry.getCustomModel(&modelId, &version).is_none() {
+            return Err(format!(
+                "custom local model catalog entry not found: {}@{}",
+                modelId.trim(),
+                version.trim()
+            ));
+        }
+        self.deleteModel(modelId.clone(), version.clone())?;
+        let mut updatedRegistry = store.read().map_err(errorString)?;
+        updatedRegistry.removeCustomModel(&modelId, &version);
+        store.write(&updatedRegistry).map_err(errorString)?;
+        Ok(())
     }
 
     /// Returns the current local engine platform target.
@@ -359,10 +434,16 @@ impl LocalModelService {
         if engineControl.isCancelled() || modelControl.isCancelled() {
             return Err(format!("local model installation cancelled: {operationId}"));
         }
+        let preferredSourceKind = self
+            .registryStore()?
+            .read()
+            .map_err(errorString)?
+            .preferredSourceKind;
         let modelResult = self.modelInstaller()?.install(
             LocalModelInstallRequest {
                 manifest,
                 installedAtMs: currentTimeMillis(),
+                preferredSourceKind,
             },
             modelControl,
             modelInstallProgressCallback(operationId, engineDownloadedBytes),
@@ -472,9 +553,10 @@ impl LocalModelService {
             .ok_or_else(|| format!("local model catalog entry not found: {modelId}@{version}"))
     }
 
-    /// Returns one model manifest from the built-in catalog.
+    /// Returns one model manifest from the built-in or custom imported catalog.
     fn catalogModel(&self, modelId: &str, version: &str) -> Result<LocalModelManifest, String> {
-        LocalModelCatalog::manifests()
+        let registry = self.registryStore()?.read().map_err(errorString)?;
+        allCatalogManifests(&registry)
             .into_iter()
             .find(|manifest| manifest.id == modelId.trim() && manifest.version == version.trim())
             .ok_or_else(|| format!("local model catalog entry not found: {modelId}@{version}"))
@@ -538,6 +620,20 @@ impl LocalModelService {
             self.runtimeStorageHost.clone(),
         ))
     }
+}
+
+/// Merges built-in catalog manifests with custom Hub-imported manifests.
+fn allCatalogManifests(registry: &LocalModelRegistrySnapshot) -> Vec<LocalModelManifest> {
+    let mut manifests = LocalModelCatalog::manifests();
+    for custom in &registry.customModels {
+        if !manifests
+            .iter()
+            .any(|existing| existing.id == custom.id && existing.version == custom.version)
+        {
+            manifests.push(custom.clone());
+        }
+    }
+    manifests
 }
 
 /// Converts one displayable error into a string.

@@ -1546,6 +1546,56 @@ class AppLocalizationsEn extends AppLocalizations {
   String get localModelsDeleteEngine => 'Delete engine';
 
   @override
+  String get localModelsDownloadSource => 'Download source';
+
+  @override
+  String get localModelsSourceHuggingFace => 'Hugging Face';
+
+  @override
+  String get localModelsSourceModelScope => 'ModelScope';
+
+  @override
+  String get localModelsSourceHfMirror => 'HF-Mirror';
+
+  @override
+  String get localModelsSourceDirectHttp => 'Direct HTTP';
+
+  @override
+  String get localModelsExploreHub => 'Explore / Import Models';
+
+  @override
+  String get localModelsHubSearchHint => 'Search models or enter owner/repo...';
+
+  @override
+  String get localModelsHubImport => 'Import';
+
+  @override
+  String get localModelsHubImporting => 'Analyzing and importing model...';
+
+  @override
+  String get localModelsHubImportSuccess =>
+      'Model successfully imported into catalog';
+
+  @override
+  String get localModelsRemoveFromCatalog => 'Remove from catalog';
+
+  @override
+  String get localModelsCustomBadge => 'Custom';
+
+  @override
+  String get localModelsHubSearching => 'Searching...';
+
+  @override
+  String get localModelsHubNoResults => 'No matching model repositories found';
+
+  @override
+  String get localModelsHubDirectImportTitle => 'Import by Repository';
+
+  @override
+  String get localModelsHubDirectImportPrompt =>
+      'Enter a Hugging Face or ModelScope repository (owner/repo) or URL:';
+
+  @override
   String get localModelDescriptionSherpaOnnxStreamingStt =>
       'Streaming bilingual Chinese and English speech recognition.';
 

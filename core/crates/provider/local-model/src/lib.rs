@@ -12,6 +12,8 @@ pub mod LocalInference;
 pub mod LocalModelCatalog;
 #[path = "LocalModelDownload.rs"]
 pub mod LocalModelDownload;
+#[path = "LocalModelHub.rs"]
+pub mod LocalModelHub;
 #[path = "LocalModelManifest.rs"]
 pub mod LocalModelManifest;
 #[path = "LocalModelProvider.rs"]
@@ -32,6 +34,7 @@ pub use LocalEngineManifest::*;
 pub use LocalInference::*;
 pub use LocalModelCatalog::*;
 pub use LocalModelDownload::*;
+pub use LocalModelHub::*;
 pub use LocalModelManifest::*;
 pub use LocalModelProvider::*;
 pub use LocalModelRegistry::*;

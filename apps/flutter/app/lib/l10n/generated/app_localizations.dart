@@ -2852,6 +2852,102 @@ abstract class AppLocalizations {
   /// **'Delete engine'**
   String get localModelsDeleteEngine;
 
+  /// No description provided for @localModelsDownloadSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Download source'**
+  String get localModelsDownloadSource;
+
+  /// No description provided for @localModelsSourceHuggingFace.
+  ///
+  /// In en, this message translates to:
+  /// **'Hugging Face'**
+  String get localModelsSourceHuggingFace;
+
+  /// No description provided for @localModelsSourceModelScope.
+  ///
+  /// In en, this message translates to:
+  /// **'ModelScope'**
+  String get localModelsSourceModelScope;
+
+  /// No description provided for @localModelsSourceHfMirror.
+  ///
+  /// In en, this message translates to:
+  /// **'HF-Mirror'**
+  String get localModelsSourceHfMirror;
+
+  /// No description provided for @localModelsSourceDirectHttp.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct HTTP'**
+  String get localModelsSourceDirectHttp;
+
+  /// No description provided for @localModelsExploreHub.
+  ///
+  /// In en, this message translates to:
+  /// **'Explore / Import Models'**
+  String get localModelsExploreHub;
+
+  /// No description provided for @localModelsHubSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search models or enter owner/repo...'**
+  String get localModelsHubSearchHint;
+
+  /// No description provided for @localModelsHubImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get localModelsHubImport;
+
+  /// No description provided for @localModelsHubImporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Analyzing and importing model...'**
+  String get localModelsHubImporting;
+
+  /// No description provided for @localModelsHubImportSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Model successfully imported into catalog'**
+  String get localModelsHubImportSuccess;
+
+  /// No description provided for @localModelsRemoveFromCatalog.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from catalog'**
+  String get localModelsRemoveFromCatalog;
+
+  /// No description provided for @localModelsCustomBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom'**
+  String get localModelsCustomBadge;
+
+  /// No description provided for @localModelsHubSearching.
+  ///
+  /// In en, this message translates to:
+  /// **'Searching...'**
+  String get localModelsHubSearching;
+
+  /// No description provided for @localModelsHubNoResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching model repositories found'**
+  String get localModelsHubNoResults;
+
+  /// No description provided for @localModelsHubDirectImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import by Repository'**
+  String get localModelsHubDirectImportTitle;
+
+  /// No description provided for @localModelsHubDirectImportPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a Hugging Face or ModelScope repository (owner/repo) or URL:'**
+  String get localModelsHubDirectImportPrompt;
+
   /// No description provided for @localModelDescriptionSherpaOnnxStreamingStt.
   ///
   /// In en, this message translates to:

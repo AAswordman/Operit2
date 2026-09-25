@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::LocalEngineManifest::{LocalEngineArtifact, LocalEngineManifest, LocalPlatformTarget};
-use crate::LocalModelManifest::{LocalModelInstallSource, LocalModelKind, LocalModelManifest};
+use crate::LocalModelManifest::{LocalModelInstallSource, LocalModelKind, LocalModelManifest, LocalModelSourceKind};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -47,6 +47,10 @@ pub struct LocalModelRegistrySnapshot {
     pub installedModels: Vec<InstalledLocalModel>,
     #[serde(default)]
     pub installedEngines: Vec<InstalledLocalEngine>,
+    #[serde(default)]
+    pub preferredSourceKind: Option<LocalModelSourceKind>,
+    #[serde(default)]
+    pub customModels: Vec<LocalModelManifest>,
 }
 
 impl LocalModelRegistrySnapshot {
@@ -55,7 +59,46 @@ impl LocalModelRegistrySnapshot {
         Self {
             installedModels: Vec::new(),
             installedEngines: Vec::new(),
+            preferredSourceKind: None,
+            customModels: Vec::new(),
         }
+    }
+
+    /// Returns one custom imported model manifest matching id and version.
+    pub fn getCustomModel(&self, modelId: &str, version: &str) -> Option<&LocalModelManifest> {
+        let modelId = modelId.trim();
+        let version = version.trim();
+        self.customModels
+            .iter()
+            .find(|manifest| manifest.id == modelId && manifest.version == version)
+    }
+
+    /// Adds or replaces one custom imported model manifest by id and version.
+    pub fn upsertCustomModel(&mut self, manifest: LocalModelManifest) {
+        self.customModels
+            .retain(|existing| existing.id != manifest.id || existing.version != manifest.version);
+        self.customModels.push(manifest);
+    }
+
+    /// Removes one custom imported model manifest by id and version.
+    pub fn removeCustomModel(&mut self, modelId: &str, version: &str) -> bool {
+        let before = self.customModels.len();
+        let modelId = modelId.trim();
+        let version = version.trim();
+        self.customModels
+            .retain(|manifest| manifest.id != modelId || manifest.version != version);
+        self.customModels.len() != before
+    }
+
+    /// Returns the active preferred model download source kind.
+    pub fn preferredSource(&self) -> LocalModelSourceKind {
+        self.preferredSourceKind
+            .unwrap_or(LocalModelSourceKind::HuggingFace)
+    }
+
+    /// Sets the active preferred model download source kind.
+    pub fn setPreferredSource(&mut self, sourceKind: LocalModelSourceKind) {
+        self.preferredSourceKind = Some(sourceKind);
     }
 
     /// Returns the installed model matching the supplied model id and version.
