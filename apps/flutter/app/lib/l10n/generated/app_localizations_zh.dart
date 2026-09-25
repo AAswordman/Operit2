@@ -1499,6 +1499,55 @@ class AppLocalizationsZh extends AppLocalizations {
   String get localModelsDeleteEngine => '删除引擎';
 
   @override
+  String get localModelsDownloadSource => '下载源';
+
+  @override
+  String get localModelsSourceHuggingFace => 'Hugging Face';
+
+  @override
+  String get localModelsSourceModelScope => 'ModelScope (魔搭)';
+
+  @override
+  String get localModelsSourceHfMirror => 'HF-Mirror (镜像)';
+
+  @override
+  String get localModelsSourceDirectHttp => '直链下载';
+
+  @override
+  String get localModelsExploreHub => '探索 / 导入模型';
+
+  @override
+  String get localModelsHubSearchHint => '搜索模型或输入 owner/repo...';
+
+  @override
+  String get localModelsHubImport => '导入';
+
+  @override
+  String get localModelsHubImporting => '正在解析并导入模型...';
+
+  @override
+  String get localModelsHubImportSuccess => '模型已成功导入模型目录';
+
+  @override
+  String get localModelsRemoveFromCatalog => '从目录移除';
+
+  @override
+  String get localModelsCustomBadge => '自定义导入';
+
+  @override
+  String get localModelsHubSearching => '正在搜索...';
+
+  @override
+  String get localModelsHubNoResults => '未找到匹配的模型仓库';
+
+  @override
+  String get localModelsHubDirectImportTitle => '按仓库地址导入';
+
+  @override
+  String get localModelsHubDirectImportPrompt =>
+      '输入 Hugging Face 或 ModelScope 的仓库路径（如 owner/repo）或完整 URL：';
+
+  @override
   String get localModelDescriptionSherpaOnnxStreamingStt => '流式中英双语语音识别。';
 
   @override

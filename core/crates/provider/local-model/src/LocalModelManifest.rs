@@ -135,10 +135,11 @@ impl LocalEngineKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LocalModelSourceKind {
     HuggingFace,
     ModelScope,
+    HfMirror,
     DirectHttp,
 }
 
@@ -159,6 +160,22 @@ impl LocalModelSource {
         let path = relativePath.trim_start_matches('/');
         format!("{base}/{path}")
     }
+
+    /// Derives a mirror source if the target kind represents an HTTP mirror of this source.
+    pub fn withSourceKind(&self, kind: LocalModelSourceKind) -> Self {
+        match (self.kind, kind) {
+            (LocalModelSourceKind::HuggingFace, LocalModelSourceKind::HfMirror) => Self {
+                id: format!("{}-mirror", self.id),
+                kind: LocalModelSourceKind::HfMirror,
+                repository: self.repository.clone(),
+                revision: self.revision.clone(),
+                baseUrl: self
+                    .baseUrl
+                    .replace("https://huggingface.co/", "https://hf-mirror.com/"),
+            },
+            _ => self.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,11 +188,15 @@ pub struct LocalModelFile {
 }
 
 impl LocalModelFile {
-    /// Verifies that the supplied bytes match the manifest checksum.
+    /// Verifies that the supplied bytes match the manifest checksum or size when checksum is omitted.
     pub fn verifySha256(&self, bytes: &[u8]) -> bool {
+        let expected = self.sha256.trim();
+        if expected.is_empty() {
+            return bytes.len() as u64 == self.byteSize;
+        }
         let digest = Sha256::digest(bytes);
         let calculated = format!("{digest:x}");
-        calculated.eq_ignore_ascii_case(self.sha256.trim())
+        calculated.eq_ignore_ascii_case(expected)
     }
 }
 
@@ -267,6 +288,126 @@ impl LocalModelManifest {
     /// Returns the download source for one manifest archive.
     pub fn sourceForArchive(&self, archive: &LocalModelArchive) -> Option<&LocalModelSource> {
         self.sourceById(&archive.sourceId)
+    }
+
+    /// Resolves the download source for one manifest file taking the preferred source kind into account.
+    pub fn sourceForFileWithPreferredKind(
+        &self,
+        file: &LocalModelFile,
+        preferredKind: Option<LocalModelSourceKind>,
+    ) -> Result<LocalModelSource, String> {
+        let primarySource = self.sourceForFile(file).ok_or_else(|| {
+            format!("manifest source not found for file: {}", file.sourceId)
+        })?;
+        if primarySource.kind == LocalModelSourceKind::DirectHttp {
+            return Ok(primarySource.clone());
+        }
+        let preferred = match preferredKind {
+            Some(kind) => kind,
+            None => return Ok(primarySource.clone()),
+        };
+        match preferred {
+            LocalModelSourceKind::HuggingFace => {
+                let source = self
+                    .sources
+                    .iter()
+                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
+                    .ok_or_else(|| {
+                        format!(
+                            "HuggingFace source is not configured for model: {}@{}",
+                            self.id, self.version
+                        )
+                    })?;
+                Ok(source.clone())
+            }
+            LocalModelSourceKind::HfMirror => {
+                let source = self
+                    .sources
+                    .iter()
+                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
+                    .ok_or_else(|| {
+                        format!(
+                            "HuggingFace source is not configured for model: {}@{}",
+                            self.id, self.version
+                        )
+                    })?;
+                Ok(source.withSourceKind(LocalModelSourceKind::HfMirror))
+            }
+            LocalModelSourceKind::ModelScope => {
+                let source = self
+                    .sources
+                    .iter()
+                    .find(|s| s.kind == LocalModelSourceKind::ModelScope)
+                    .ok_or_else(|| {
+                        format!(
+                            "ModelScope source is not configured for model: {}@{}",
+                            self.id, self.version
+                        )
+                    })?;
+                Ok(source.clone())
+            }
+            LocalModelSourceKind::DirectHttp => Ok(primarySource.clone()),
+        }
+    }
+
+    /// Resolves the download source for one manifest archive taking the preferred source kind into account.
+    pub fn sourceForArchiveWithPreferredKind(
+        &self,
+        archive: &LocalModelArchive,
+        preferredKind: Option<LocalModelSourceKind>,
+    ) -> Result<LocalModelSource, String> {
+        let primarySource = self.sourceForArchive(archive).ok_or_else(|| {
+            format!("manifest source not found for archive: {}", archive.sourceId)
+        })?;
+        if primarySource.kind == LocalModelSourceKind::DirectHttp {
+            return Ok(primarySource.clone());
+        }
+        let preferred = match preferredKind {
+            Some(kind) => kind,
+            None => return Ok(primarySource.clone()),
+        };
+        match preferred {
+            LocalModelSourceKind::HuggingFace => {
+                let source = self
+                    .sources
+                    .iter()
+                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
+                    .ok_or_else(|| {
+                        format!(
+                            "HuggingFace source is not configured for archive: {}@{}",
+                            self.id, self.version
+                        )
+                    })?;
+                Ok(source.clone())
+            }
+            LocalModelSourceKind::HfMirror => {
+                let source = self
+                    .sources
+                    .iter()
+                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
+                    .ok_or_else(|| {
+                        format!(
+                            "HuggingFace source is not configured for archive: {}@{}",
+                            self.id, self.version
+                        )
+                    })?;
+                Ok(source.withSourceKind(LocalModelSourceKind::HfMirror))
+            }
+            LocalModelSourceKind::ModelScope => {
+                let source = self
+                    .sources
+                    .iter()
+                    .find(|s| s.kind == LocalModelSourceKind::ModelScope)
+                    .ok_or_else(|| {
+                        format!(
+                            "ModelScope source is not configured for archive: {}@{}",
+                            self.id, self.version
+                        )
+                    })?;
+                Ok(source.clone())
+            }
+            LocalModelSourceKind::DirectHttp => Ok(primarySource.clone()),
+        }
     }
 }
 

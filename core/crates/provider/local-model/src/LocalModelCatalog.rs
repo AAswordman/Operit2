@@ -67,11 +67,18 @@ impl LocalModelCatalog {
                 tokens: "tokens.txt".to_string(),
                 modelType: "zipformer".to_string(),
             }),
-            sources: vec![huggingFaceSource(
-                sourceId,
-                &format!("csukuangfj/{SHERPA_ONNX_STT_ID}"),
-                SHERPA_ONNX_STT_REVISION,
-            )],
+            sources: vec![
+                huggingFaceSource(
+                    sourceId,
+                    &format!("csukuangfj/{SHERPA_ONNX_STT_ID}"),
+                    SHERPA_ONNX_STT_REVISION,
+                ),
+                modelScopeSource(
+                    "modelscope-sherpa-onnx-stt",
+                    &format!("pkufool/{SHERPA_ONNX_STT_ID}"),
+                    "master",
+                ),
+            ],
             installSource: LocalModelInstallSource::Files,
             files: vec![
                 modelFile(
@@ -129,11 +136,21 @@ impl LocalModelCatalog {
                 ruleFars: Vec::new(),
                 speakerCount: 175,
             }),
-            sources: vec![huggingFaceSource(
-                sourceId,
-                "csukuangfj/vits-zh-aishell3",
-                SHERPA_ONNX_TTS_REVISION,
-            )],
+            sources: vec![
+                huggingFaceSource(
+                    sourceId,
+                    "csukuangfj/vits-zh-aishell3",
+                    SHERPA_ONNX_TTS_REVISION,
+                ),
+                LocalModelSource {
+                    id: "modelscope-sherpa-onnx-tts".to_string(),
+                    kind: LocalModelSourceKind::ModelScope,
+                    repository: "KuaiTec-Labs/kuaitec-model-suite".to_string(),
+                    revision: "master".to_string(),
+                    baseUrl: "https://modelscope.cn/models/KuaiTec-Labs/kuaitec-model-suite/resolve/master/vits-aishell3"
+                        .to_string(),
+                },
+            ],
             installSource: LocalModelInstallSource::Files,
             files: vec![
                 modelFile(
@@ -190,11 +207,18 @@ impl LocalModelCatalog {
                 ruleFars: Vec::new(),
                 speakerCount: 5,
             }),
-            sources: vec![huggingFaceSource(
-                sourceId,
-                "csukuangfj/sherpa-onnx-vits-zh-ll",
-                SHERPA_ONNX_TTS_ZH_LL_REVISION,
-            )],
+            sources: vec![
+                huggingFaceSource(
+                    sourceId,
+                    "csukuangfj/sherpa-onnx-vits-zh-ll",
+                    SHERPA_ONNX_TTS_ZH_LL_REVISION,
+                ),
+                modelScopeSource(
+                    "modelscope-sherpa-onnx-vits-zh-ll",
+                    "liaowenbin/sherpa-onnx-vits-zh-ll",
+                    "master",
+                ),
+            ],
             installSource: LocalModelInstallSource::Files,
             files: vec![
                 modelFile(
@@ -281,6 +305,11 @@ impl LocalModelCatalog {
                     modelSourceId,
                     "csukuangfj/matcha-icefall-zh-baker",
                     SHERPA_ONNX_MATCHA_BAKER_REVISION,
+                ),
+                modelScopeSource(
+                    "modelscope-sherpa-onnx-matcha-baker",
+                    "liaowenbin/matcha-icefall-zh-baker",
+                    "master",
                 ),
                 LocalModelSource {
                     id: vocoderSourceId.to_string(),
@@ -695,6 +724,17 @@ fn huggingFaceSource(id: &str, repository: &str, revision: &str) -> LocalModelSo
     }
 }
 
+/// Builds one pinned ModelScope model source.
+fn modelScopeSource(id: &str, repository: &str, revision: &str) -> LocalModelSource {
+    LocalModelSource {
+        id: id.to_string(),
+        kind: LocalModelSourceKind::ModelScope,
+        repository: repository.to_string(),
+        revision: revision.to_string(),
+        baseUrl: format!("https://modelscope.cn/models/{repository}/resolve/{revision}"),
+    }
+}
+
 /// Builds one model file entry bound to a source id.
 fn modelFile(sourceId: &str, relativePath: &str, sha256: &str, byteSize: u64) -> LocalModelFile {
     LocalModelFile {
@@ -794,5 +834,40 @@ mod tests {
             manifest.installSource,
             LocalModelInstallSource::Archives { .. }
         ));
+    }
+
+    /// Verifies native file-based catalog models declare both HuggingFace and ModelScope sources.
+    #[test]
+    fn nativeFileCatalogModelsDeclareHuggingFaceAndModelScopeSources() {
+        let models = [
+            LocalModelCatalog::sherpaOnnxStreamingStt(),
+            LocalModelCatalog::sherpaOnnxVitsTts(),
+            LocalModelCatalog::sherpaOnnxVitsZhLlTts(),
+            LocalModelCatalog::sherpaOnnxMatchaBakerTts(),
+        ];
+        for manifest in models {
+            assert!(manifest
+                .sources
+                .iter()
+                .any(|s| s.kind == LocalModelSourceKind::HuggingFace));
+            assert!(manifest
+                .sources
+                .iter()
+                .any(|s| s.kind == LocalModelSourceKind::ModelScope));
+            for file in &manifest.files {
+                let hf = manifest
+                    .sourceForFileWithPreferredKind(file, Some(LocalModelSourceKind::HuggingFace))
+                    .unwrap();
+                let ms = manifest
+                    .sourceForFileWithPreferredKind(file, Some(LocalModelSourceKind::ModelScope))
+                    .unwrap();
+                let mirror = manifest
+                    .sourceForFileWithPreferredKind(file, Some(LocalModelSourceKind::HfMirror))
+                    .unwrap();
+                assert!(!hf.fileUrl(&file.relativePath).is_empty());
+                assert!(!ms.fileUrl(&file.relativePath).is_empty());
+                assert!(!mirror.fileUrl(&file.relativePath).is_empty());
+            }
+        }
     }
 }
