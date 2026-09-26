@@ -128,6 +128,9 @@ impl OperitApplication {
         if let Some(webSocketHost) = hostManager.webSocketHost.clone() {
             setDefaultWebSocketHost(webSocketHost);
         }
+        if let Some(discoveryHost) = hostManager.serviceDiscoveryHost.clone() {
+            operit_host_api::HostManager::setDefaultServiceDiscoveryHost(discoveryHost);
+        }
         if let Some(serialPortHost) = hostManager.serialPortHost.clone() {
             setDefaultSerialPortHost(serialPortHost);
         }

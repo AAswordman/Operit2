@@ -79,6 +79,7 @@ pub fn createRuntimeHostManager(
     .withHostRuntimeEventHost(Arc::new(LinuxHostRuntimeEventHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(LinuxHostRuntimeEventSchedulerHost::new()))
     .withHostJavaScriptRuntimeHost(Arc::new(LinuxHostJavaScriptRuntimeHost::new()))
+    .withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(LinuxHostRuntimeTaskSchedulerHost::new()))
     .withPluginSdkIpcHost(Arc::new(LinuxPluginSdkIpcHost::new()))
 }

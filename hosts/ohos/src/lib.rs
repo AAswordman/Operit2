@@ -87,6 +87,7 @@ pub fn createRuntimeHostManager(
         .withHostRuntimeEventSchedulerHost(Arc::new(OhosHostRuntimeEventSchedulerHost::new()));
     context = context.withHostJavaScriptRuntimeHost(Arc::new(OhosHostJavaScriptRuntimeHost::new()));
     context =
-        context.withHostRuntimeTaskSchedulerHost(Arc::new(OhosHostRuntimeTaskSchedulerHost::new()));
+        context.withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
+    .withHostRuntimeTaskSchedulerHost(Arc::new(OhosHostRuntimeTaskSchedulerHost::new()));
     context
 }

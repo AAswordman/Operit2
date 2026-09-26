@@ -27,3 +27,6 @@ pub use operit_host_native_terminal::{NativePtyShellCommand, NativePtyTerminalHo
 mod ManagedRuntimePty;
 #[cfg(feature = "terminal")]
 pub use ManagedRuntimePty::{TerminalManagedRuntimeLaunch, TerminalManagedRuntimeProcess};
+
+#[cfg(not(any(target_os = "espidf", target_arch = "wasm32")))]
+pub mod ServiceDiscovery;

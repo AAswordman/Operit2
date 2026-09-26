@@ -1952,5 +1952,14 @@
         "type": "String"
       }
     }
-  }
+  },
+  "edgePairingCodeTitle": "Enter the pairing code for {deviceName}",
+  "@edgePairingCodeTitle": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "edgePairingCodeHint": "Read the six-digit code shown by the device."
 }

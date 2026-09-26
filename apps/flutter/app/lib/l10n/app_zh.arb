@@ -1945,5 +1945,14 @@
         "type": "String"
       }
     }
-  }
+  },
+  "edgePairingCodeTitle": "输入 {deviceName} 的配对码",
+  "@edgePairingCodeTitle": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "edgePairingCodeHint": "查看设备提供的 6 位配对码。"
 }

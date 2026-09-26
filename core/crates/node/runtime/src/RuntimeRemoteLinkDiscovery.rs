@@ -1,8 +1,9 @@
+use core::net::Ipv4Addr;
 use std::collections::BTreeMap;
-use std::net::Ipv4Addr;
-use std::time::{Duration, Instant};
 
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use operit_host_api::HostManager::defaultServiceDiscoveryHost;
+use operit_host_api::ServiceDiscovery::{DiscoveredService, DiscoverySubscription};
+use std::sync::Arc;
 
 const OPERIT_SERVICE_TYPE: &str = "_operit._tcp.local.";
 pub(crate) const OPERIT_EDGE_SERVICE_TYPE: &str = "_operit-edge._tcp.local.";
@@ -24,43 +25,18 @@ pub(crate) struct RuntimeRemoteDiscoveryEndpoint {
 pub(crate) fn discoverRemoteDevices(
     timeoutMs: u64,
 ) -> Result<Vec<RuntimeRemoteDiscoveryEndpoint>, String> {
-    let daemon = ServiceDaemon::new().map_err(|error| error.to_string())?;
-    let receiver = daemon
-        .browse(OPERIT_SERVICE_TYPE)
+    let records = defaultServiceDiscoveryHost()
+        .map_err(|error| error.to_string())?
+        .discover(OPERIT_SERVICE_TYPE, timeoutMs)
         .map_err(|error| error.to_string())?;
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     let mut devices = BTreeMap::<String, (MdnsIpv4Rank, RuntimeRemoteDiscoveryEndpoint)>::new();
-
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        match receiver.recv_timeout(remaining) {
-            Ok(ServiceEvent::ServiceResolved(info)) => {
-                let Some((selectedRank, device)) = discoveryEndpointFromServiceInfo(&info)? else {
-                    continue;
-                };
-                let fullName = info.get_fullname().to_string();
-                match devices.get_mut(&fullName) {
-                    Some((currentRank, currentDevice)) if selectedRank < *currentRank => {
-                        *currentRank = selectedRank;
-                        *currentDevice = device;
-                    }
-                    Some(_) => {}
-                    None => {
-                        devices.insert(fullName, (selectedRank, device));
-                    }
-                }
-            }
-            Ok(_) => {}
-            Err(_) => break,
+    for info in records {
+        if let Some(device) = discoveryEndpointFromServiceInfo(&info)? {
+            devices.insert(info.fullName, device);
         }
     }
-
     Ok(devices.into_values().map(|(_, device)| device).collect())
 }
-
 
 /// Describes one raw TCP Edge endpoint advertised on the local network.
 #[derive(Clone, Debug)]
@@ -82,129 +58,111 @@ pub(crate) struct RuntimeEdgeDiscoveryEndpoint {
 pub(crate) fn discoverEdgeDevices(
     timeoutMs: u64,
 ) -> Result<Vec<RuntimeEdgeDiscoveryEndpoint>, String> {
-    let daemon = ServiceDaemon::new().map_err(|error| error.to_string())?;
-    let receiver = daemon
-        .browse(OPERIT_EDGE_SERVICE_TYPE)
+    let records = defaultServiceDiscoveryHost()
+        .map_err(|error| error.to_string())?
+        .discover(OPERIT_EDGE_SERVICE_TYPE, timeoutMs)
         .map_err(|error| error.to_string())?;
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
     let mut devices = BTreeMap::<String, (MdnsIpv4Rank, RuntimeEdgeDiscoveryEndpoint)>::new();
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() { break; }
-        match receiver.recv_timeout(remaining) {
-            Ok(ServiceEvent::ServiceResolved(info)) => {
-                let Some((rank, device)) = edgeDiscoveryFromServiceInfo(&info)? else { continue; };
-                let fullName = info.get_fullname().to_string();
-                match devices.get_mut(&fullName) {
-                    Some((currentRank, current)) if rank < *currentRank => {
-                        *currentRank = rank;
-                        *current = device;
-                    }
-                    Some(_) => {}
-                    None => { devices.insert(fullName, (rank, device)); }
-                }
-            }
-            Ok(_) => {}
-            Err(_) => break,
+    for info in records {
+        if let Some(device) = edgeDiscoveryFromServiceInfo(&info)? {
+            devices.insert(info.fullName, device);
         }
     }
     Ok(devices.into_values().map(|(_, device)| device).collect())
 }
 
+/// Requires a nonempty protocol TXT property from a host advertisement.
 #[allow(non_snake_case)]
 fn requiredMdnsProperty(
-    properties: &mdns_sd::TxtProperties,
+    properties: &BTreeMap<String, String>,
     name: &str,
     fullName: &str,
 ) -> Result<String, String> {
     properties
-        .get_property_val_str(name)
-        .map(str::to_owned)
+        .get(name)
+        .cloned()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| format!("mDNS service {fullName} is missing TXT property {name}"))
 }
 
+/// Converts an Edge advertisement into a protocol endpoint.
 #[allow(non_snake_case)]
 fn edgeDiscoveryFromServiceInfo(
-
-    info: &ServiceInfo,
+    info: &DiscoveredService,
 ) -> Result<Option<(MdnsIpv4Rank, RuntimeEdgeDiscoveryEndpoint)>, String> {
-    let fullName = info.get_fullname().to_string();
-    let mut addresses = info.get_addresses().iter().filter_map(|address| match address {
-        std::net::IpAddr::V4(address) => Some(*address),
-        std::net::IpAddr::V6(_) => None,
-    }).collect::<Vec<_>>();
-    if addresses.is_empty() { return Ok(None); }
+    let fullName = info.fullName.as_str().to_string();
+    let mut addresses = info
+        .addresses
+        .iter()
+        .filter_map(|address| match address {
+            core::net::IpAddr::V4(address) => Some(*address),
+            core::net::IpAddr::V6(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        return Ok(None);
+    }
     addresses.sort_by_key(mdnsIpv4Rank);
     let address = addresses[0];
     let rank = mdnsIpv4Rank(&address);
-    let properties = info.get_properties();
+    let properties = &info.properties;
     let required = |name: &str| requiredMdnsProperty(properties, name, &fullName);
     let deviceId = required("deviceId")?;
     let tokenHash = required("tokenHash")?;
     let version = required("version")?;
-    if deviceId.trim().is_empty() || tokenHash.trim().is_empty() || info.get_port() == 0 {
+    if deviceId.trim().is_empty() || tokenHash.trim().is_empty() || info.port == 0 {
         return Ok(None);
     }
-    Ok(Some((rank, RuntimeEdgeDiscoveryEndpoint {
-        deviceId,
-        displayName: required("displayName")?,
-        platform: required("platform")?,
-        model: required("model")?,
-        hostname: info.get_hostname().to_string(),
-        address,
-        port: info.get_port(),
-        tokenHash,
-        version,
-    })))
+    Ok(Some((
+        rank,
+        RuntimeEdgeDiscoveryEndpoint {
+            deviceId,
+            displayName: required("displayName")?,
+            platform: required("platform")?,
+            model: required("model")?,
+            hostname: info.hostname.as_str().to_string(),
+            address,
+            port: info.port,
+            tokenHash,
+            version,
+        },
+    )))
 }
 
 /// Subscribes to Link-enabled runtime announcements from the native mDNS transport.
 #[allow(non_snake_case)]
 pub(crate) fn subscribeRemoteDeviceAnnouncements(
-    onDevice: impl Fn(RuntimeRemoteDiscoveryEndpoint) + Send + 'static,
-) -> Result<(), String> {
-    let daemon = ServiceDaemon::new().map_err(|error| error.to_string())?;
-    let receiver = daemon
-        .browse(OPERIT_SERVICE_TYPE)
-        .map_err(|error| error.to_string())?;
-    std::thread::Builder::new()
-        .name("operit-mdns-link-announcements".to_string())
-        .spawn(move || {
-            let _daemon = daemon;
-            while let Ok(event) = receiver.recv() {
-                let ServiceEvent::ServiceResolved(info) = event else {
-                    continue;
-                };
-                let endpoint = match discoveryEndpointFromServiceInfo(&info) {
-                    Ok(Some((_, endpoint))) => endpoint,
-                    Ok(None) => continue,
-                    Err(error) => {
-                        operit_util::AppLogger::AppLogger::w(
-                            "RuntimeRemoteLinkDiscovery",
-                            &format!("mDNS announcement ignored: {error}"),
-                        );
-                        continue;
-                    }
-                };
-                onDevice(endpoint);
-            }
-        })
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    onDevice: impl Fn(RuntimeRemoteDiscoveryEndpoint) + Send + Sync + 'static,
+) -> Result<Box<dyn DiscoverySubscription>, String> {
+    defaultServiceDiscoveryHost()
+        .map_err(|error| error.to_string())?
+        .subscribe(
+            OPERIT_SERVICE_TYPE,
+            Arc::new(move |info| match discoveryEndpointFromServiceInfo(&info) {
+                Ok(Some((_, endpoint))) => onDevice(endpoint),
+                Ok(None) => {}
+                Err(error) => {
+                    operit_util::AppLogger::AppLogger::w(
+                        "RuntimeRemoteLinkDiscovery",
+                        &format!("invalid service announcement: {error}"),
+                    );
+                }
+            }),
+        )
+        .map_err(|error| error.to_string())
 }
 
 /// Converts one resolved mDNS service into a reachable Link endpoint.
 #[allow(non_snake_case)]
 fn discoveryEndpointFromServiceInfo(
-    info: &ServiceInfo,
+    info: &DiscoveredService,
 ) -> Result<Option<(MdnsIpv4Rank, RuntimeRemoteDiscoveryEndpoint)>, String> {
     let mut addresses = info
-        .get_addresses()
+        .addresses
         .iter()
         .filter_map(|address| match address {
-            std::net::IpAddr::V4(address) => Some(*address),
-            std::net::IpAddr::V6(_) => None,
+            core::net::IpAddr::V4(address) => Some(*address),
+            core::net::IpAddr::V6(_) => None,
         })
         .collect::<Vec<_>>();
     if addresses.is_empty() {
@@ -213,11 +171,11 @@ fn discoveryEndpointFromServiceInfo(
     addresses.sort_by_key(mdnsIpv4Rank);
     let selectedAddress = addresses[0];
     let selectedRank = mdnsIpv4Rank(&selectedAddress);
-    let properties = info.get_properties();
+    let properties = &info.properties;
     let (Some(deviceId), Some(tokenHash), Some(version)) = (
-        properties.get_property_val_str("deviceId"),
-        properties.get_property_val_str("tokenHash"),
-        properties.get_property_val_str("version"),
+        properties.get("deviceId"),
+        properties.get("tokenHash"),
+        properties.get("version"),
     ) else {
         return Ok(None);
     };
@@ -225,9 +183,9 @@ fn discoveryEndpointFromServiceInfo(
         selectedRank,
         RuntimeRemoteDiscoveryEndpoint {
             deviceId: deviceId.to_string(),
-            baseUrl: format!("http://{}:{}", selectedAddress, info.get_port()),
-            hostname: info.get_hostname().to_string(),
-            port: info.get_port(),
+            baseUrl: format!("http://{}:{}", selectedAddress, info.port),
+            hostname: info.hostname.as_str().to_string(),
+            port: info.port,
             tokenHash: tokenHash.to_string(),
             version: version.to_string(),
         },
@@ -254,36 +212,24 @@ fn mdnsIpv4Rank(address: &Ipv4Addr) -> MdnsIpv4Rank {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
-    /// Verifies incomplete mDNS resolution waits for TXT without rejecting the scan.
+    /// Verifies incomplete Core records do not produce a connectable endpoint.
     #[test]
     fn discovery_waits_for_txt_properties() {
-        let incomplete = ServiceInfo::new(
-            OPERIT_SERVICE_TYPE,
-            "operit-core-test",
-            "operit-core-test.local.",
-            "192.168.8.11",
-            37194,
-            HashMap::<String, String>::new(),
-        )
-        .unwrap();
-        assert!(discoveryEndpointFromServiceInfo(&incomplete).unwrap().is_none());
-
-        let complete = ServiceInfo::new(
-            OPERIT_SERVICE_TYPE,
-            "operit-core-test",
-            "operit-core-test.local.",
-            "192.168.8.11",
-            37194,
-            HashMap::from([
-                ("deviceId".to_string(), "core-test".to_string()),
-                ("tokenHash".to_string(), "token-test".to_string()),
-                ("version".to_string(), "1".to_string()),
-            ]),
-        )
-        .unwrap();
-        let (_, endpoint) = discoveryEndpointFromServiceInfo(&complete).unwrap().unwrap();
+        let mut info = DiscoveredService {
+            fullName: "core._operit._tcp.local.".to_owned(),
+            hostname: "core.local.".to_owned(),
+            addresses: vec!["192.168.8.11".parse().unwrap()],
+            port: 37194,
+            properties: BTreeMap::new(),
+        };
+        assert!(discoveryEndpointFromServiceInfo(&info).unwrap().is_none());
+        info.properties = BTreeMap::from([
+            ("deviceId".to_owned(), "core-test".to_owned()),
+            ("tokenHash".to_owned(), "token-test".to_owned()),
+            ("version".to_owned(), "1".to_owned()),
+        ]);
+        let (_, endpoint) = discoveryEndpointFromServiceInfo(&info).unwrap().unwrap();
         assert_eq!(endpoint.deviceId, "core-test");
         assert_eq!(endpoint.baseUrl, "http://192.168.8.11:37194");
         assert_eq!(endpoint.tokenHash, "token-test");

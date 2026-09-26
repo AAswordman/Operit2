@@ -241,6 +241,9 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     let coreApplication = create_cli_core_application("client").await?;
     let service = coreApplication.accessServices();
     if is_edge_endpoint(&url) {
+        if transport.is_some() {
+            return Err("--transport is only valid for Core HTTP/WebSocket sessions".to_string());
+        }
         let endpoint = normalize_edge_endpoint(&url)?;
         let pairing = service
             .startEdgePairingWithToken(
@@ -392,31 +395,26 @@ async fn run_link_pair_finish_command(args: &[String]) -> Result<(), String> {
     let (pairing_id, pairing_code, name, transport) = parse_pair_finish_args(args, USAGE)?;
     let coreApplication = create_cli_core_application("client").await?;
     let service = coreApplication.accessServices();
-    match service
-        .finishEdgePairing(pairing_id.clone(), pairing_code.clone(), name.clone())
-        .await
-    {
-        Ok(session) => {
-            if transport.is_some() {
-                return Err("--transport is only valid for Core HTTP/WebSocket sessions".to_string());
-            }
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!({
-                    "name": name,
-                    "pairedDevice": session.edgeDeviceInfo.displayName(),
-                    "deviceId": session.edgeDeviceId,
-                    "localDeviceId": session.deviceId,
-                    "transport": "tcp",
-                }));
-            } else {
-                println!("Paired Edge device {}", session.edgeDeviceInfo.displayName());
-                println!("Saved as: {name}");
-                println!("Use: operit2 cli link sessions");
-            }
-            return Ok(());
+    let kind = service.outboundPairingKind(pairing_id.clone())?;
+    if kind == operit_access_runtime::OutboundPairingKind::Edge {
+        if transport.is_some() {
+            return Err("--transport is only valid for Core HTTP/WebSocket sessions".to_string());
         }
-        Err(error) if error.contains("pending Edge pairing does not exist") => {}
-        Err(error) => return Err(error),
+        let session = service.finishEdgePairing(pairing_id, pairing_code, name.clone()).await?;
+        if cli_json_mode() {
+            emit_cli_json(serde_json::json!({
+                "name": name,
+                "pairedDevice": session.edgeDeviceInfo.displayName(),
+                "deviceId": session.edgeDeviceId,
+                "localDeviceId": session.deviceId,
+                "transport": "tcp",
+            }));
+        } else {
+            println!("Paired Edge device {}", session.edgeDeviceInfo.displayName());
+            println!("Saved as: {name}");
+            println!("Use: operit2 cli link sessions");
+        }
+        return Ok(());
     }
     let mut session = service
         .finishPairedRemote(pairing_id, pairing_code, name.clone())

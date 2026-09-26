@@ -3752,4 +3752,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatRouteUnknown => '运行设备状态未知';
+
+  @override
+  String edgePairingCodeTitle(String deviceName) {
+    return '输入 $deviceName 的配对码';
+  }
+
+  @override
+  String get edgePairingCodeHint => '查看设备提供的 6 位配对码。';
 }

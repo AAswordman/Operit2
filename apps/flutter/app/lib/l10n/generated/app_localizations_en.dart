@@ -3904,4 +3904,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatRouteUnknown => 'Execution device status unknown';
+
+  @override
+  String edgePairingCodeTitle(String deviceName) {
+    return 'Enter the pairing code for $deviceName';
+  }
+
+  @override
+  String get edgePairingCodeHint =>
+      'Read the six-digit code shown by the device.';
 }

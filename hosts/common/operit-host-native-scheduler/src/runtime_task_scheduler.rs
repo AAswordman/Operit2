@@ -28,14 +28,14 @@ mod tests {
     use std::{rc::Rc, sync::mpsc, time::Duration};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // Joining the native thread ensures its request executor has returned before
-    // a subsequent request touches the saved connection or spawned receiver.
+    /// Waits for a request thread to finish before accessing shared resources.
     fn runRequest(task: HostRuntimeAsyncTask) {
         std::thread::spawn(move || runAsyncRuntimeTask(task))
             .join()
             .expect("request thread panicked");
     }
 
+    /// Verifies socket I/O remains valid after the creating request ends.
     #[test]
     fn connectionSurvivesBetweenRequests() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -64,6 +64,7 @@ mod tests {
         }));
     }
 
+    /// Verifies spawned receivers outlive their initiating request.
     #[test]
     fn spawnedReceiverSurvivesRequestCompletion() {
         let (release, released) = tokio::sync::oneshot::channel();
@@ -83,6 +84,7 @@ mod tests {
         completion.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 
+    /// Verifies non-Send futures remain on the request thread.
     #[test]
     fn requestFutureCanRemainNonSend() {
         runRequest(Box::new(|| {

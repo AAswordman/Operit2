@@ -48,9 +48,8 @@ struct SpacePersistenceSyncState {
     spaceStore: CoreSpaceStore,
     synchronizationScheduled: AtomicBool,
     active: AtomicBool,
-    #[cfg(not(target_arch = "wasm32"))]
-    discoveryAnnouncementsStarted: AtomicBool,
     mutationSubscription: Mutex<Option<SyncMutationSubscription>>,
+    discoverySubscription: Mutex<Option<Box<dyn operit_host_api::ServiceDiscovery::DiscoverySubscription>>>,
 }
 
 /// Exchanges coalesced persistent changes with every directly paired Space member.
@@ -83,9 +82,8 @@ impl SpacePersistenceSyncService {
                 spaceStore,
                 synchronizationScheduled: AtomicBool::new(false),
                 active: AtomicBool::new(false),
-                #[cfg(not(target_arch = "wasm32"))]
-                discoveryAnnouncementsStarted: AtomicBool::new(false),
                 mutationSubscription: Mutex::new(None),
+                discoverySubscription: Mutex::new(None),
             }),
         }
     }
@@ -173,6 +171,8 @@ impl SpacePersistenceSyncService {
     /// Stops this CoreNode's persistence synchronizer and detaches its mutation listener.
     pub fn stop(&self) -> Result<(), String> {
         self.state.active.store(false, Ordering::Release);
+        self.state.discoverySubscription.lock()
+            .map_err(|error| format!("discovery subscription lock poisoned: {error}"))?.take();
         self.state
             .mutationSubscription
             .lock()
@@ -195,16 +195,16 @@ impl SpacePersistenceSyncService {
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(non_snake_case)]
     fn startDiscoveryAnnouncementWatcher(&self) -> Result<(), String> {
-        if self
-            .state
-            .discoveryAnnouncementsStarted
-            .swap(true, Ordering::AcqRel)
-        {
+        let mut subscription = self.state.discoverySubscription.lock()
+            .map_err(|error| format!("discovery subscription lock poisoned: {error}"))?;
+        if subscription.is_some() {
             return Ok(());
         }
-        let service = self.clone();
+        let weakState = Arc::downgrade(&self.state);
         let subscribeResult = subscribeRemoteDeviceAnnouncements(move |endpoint| {
-            let service = service.clone();
+            let Some(state) = weakState.upgrade() else { return; };
+            if !state.active.load(Ordering::Acquire) { return; }
+            let service = SpacePersistenceSyncService { state };
             let scheduleResult = defaultHostRuntimeTaskSchedulerHost()
                 .scheduleHostRuntimeAsyncTask(
                     "core-node-space-link-announcement",
@@ -226,12 +226,7 @@ impl SpacePersistenceSyncService {
                 );
             }
         });
-        if let Err(error) = subscribeResult {
-            self.state
-                .discoveryAnnouncementsStarted
-                .store(false, Ordering::Release);
-            return Err(error);
-        }
+        *subscription = Some(subscribeResult?);
         Ok(())
     }
 

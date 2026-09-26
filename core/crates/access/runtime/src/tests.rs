@@ -338,3 +338,33 @@ fn session_persistence_does_not_read_space_topology() {
         .expect("outbound sessions must read")
         .is_empty());
 }
+
+/// Verifies explicit protocol selection and rejects missing or ambiguous transactions.
+#[test]
+fn outbound_pairing_kind_uses_persisted_records() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = LinkAccessStore::new(storage.clone());
+    assert!(store.outboundPairingKind("pair-test").is_err());
+    store.savePendingOutboundEdgePairing("pair-test".to_owned(), PendingOutboundEdgePairingRecord {
+        endpoint: "192.168.8.11:37195".to_owned(),
+        pairingState: serde_json::json!({"pairingId": "pair-test"}),
+    }).unwrap();
+    let reopened = LinkAccessStore::new(storage);
+    assert_eq!(reopened.outboundPairingKind("pair-test").unwrap(), OutboundPairingKind::Edge);
+    let device = RemoteDeviceInfo { platform: "test".to_owned(), model: "test".to_owned() };
+    reopened.savePendingOutboundPairing("pair-test".to_owned(), PendingOutboundPairingRecord {
+        baseUrl: "http://192.168.8.12:37194".to_owned(),
+        state: PairStartState {
+            pairingId: "pair-test".to_owned(), pairingServiceVersion: 1,
+            clientDeviceId: "local".to_owned(), clientDeviceInfo: device.clone(),
+            clientPublicKey: "key".to_owned(), coreDeviceId: "remote".to_owned(),
+            coreDeviceInfo: device, clientNonce: "client".to_owned(),
+            serverNonce: "server".to_owned(), sharedSecret: vec![1; 32],
+        },
+    }).unwrap();
+    assert!(reopened.outboundPairingKind("pair-test").is_err());
+    reopened.removePendingOutboundEdgePairing("pair-test").unwrap();
+    assert_eq!(reopened.outboundPairingKind("pair-test").unwrap(), OutboundPairingKind::Core);
+    reopened.removePendingOutboundPairing("pair-test").unwrap();
+    assert!(reopened.outboundPairingKind("pair-test").is_err());
+}

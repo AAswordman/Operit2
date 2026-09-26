@@ -71,7 +71,6 @@ impl GeneratedSpaceRoute {
 include!(concat!(env!("OUT_DIR"), "/generated_route_catalog.rs"));
 
 pub mod CoreNodeRouter;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod RuntimeRemoteLinkDiscovery;
 pub mod RuntimeRemoteLinkService;
 pub mod SpacePersistenceSyncService;

@@ -7016,6 +7016,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Execution device status unknown'**
   String get chatRouteUnknown;
+
+  /// No description provided for @edgePairingCodeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the pairing code for {deviceName}'**
+  String edgePairingCodeTitle(String deviceName);
+
+  /// No description provided for @edgePairingCodeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Read the six-digit code shown by the device.'**
+  String get edgePairingCodeHint;
 }
 
 class _AppLocalizationsDelegate

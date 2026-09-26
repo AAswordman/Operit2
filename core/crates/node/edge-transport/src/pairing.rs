@@ -582,4 +582,47 @@ mod tests {
         assert_eq!(clientSession.sessionId, authoritySession.sessionId);
         assert_eq!(clientSession.sessionSecret, authoritySession.sessionSecret);
     }
+
+    /// Creates a bidirectional in-memory carrier for pairing lifecycle tests.
+    fn pairingChannelPair() -> (Arc<MemoryChannel>, Arc<MemoryChannel>) {
+        let (clientSender, authorityReceiver) = mpsc::unbounded_channel();
+        let (authoritySender, clientReceiver) = mpsc::unbounded_channel();
+        (
+            Arc::new(MemoryChannel { sender: clientSender, receiver: AsyncMutex::new(clientReceiver) }),
+            Arc::new(MemoryChannel { sender: authoritySender, receiver: AsyncMutex::new(authorityReceiver) }),
+        )
+    }
+
+    /// Verifies a pending transaction survives closure of its initial carrier.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn completesPairingOnFreshCarrier() {
+        let displayedCode = Arc::new(Mutex::new(None));
+        let callbackCode = displayedCode.clone();
+        let authority = Arc::new(EdgePairingAuthority::new(
+            "edge-token", "edge-1",
+            LinkDeviceInfo { platform: "edge".to_owned(), model: "test".to_owned() },
+            move |code| { *callbackCode.lock().unwrap() = Some(code); },
+        ));
+        let (client, server) = pairingChannelPair();
+        let firstAuthority = authority.clone();
+        let startTask = tokio::spawn(async move { firstAuthority.pair(server).await });
+        let state = startPairAsClient(client.clone(), linkTokenHash("edge-token"), "core-1".to_owned(),
+            LinkDeviceInfo { platform: "test".to_owned(), model: "test".to_owned() }).await.unwrap();
+        let code = displayedCode.lock().unwrap().clone().unwrap();
+        drop(client);
+        assert!(startTask.await.unwrap().is_err());
+        let (client, server) = pairingChannelPair();
+        let finishTask = tokio::spawn(async move {
+            let frame = server.receive().await.unwrap().unwrap();
+            let LinkFramePayload::PairFinish(request) = frame.payload else {
+                panic!("expected pairing completion on the fresh carrier");
+            };
+            authority.pairFinishFromRequest(server, request).await.unwrap()
+        });
+        let clientSession = finishPairAsClient(client, state, code).await.unwrap();
+        let serverSession = finishTask.await.unwrap();
+        assert_eq!(clientSession.sessionId, serverSession.sessionId);
+        assert_eq!(clientSession.sessionSecret, serverSession.sessionSecret);
+    }
+
 }

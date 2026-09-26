@@ -136,7 +136,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
               isThreeLine: true,
               trailing: IconButton(
                 icon: const Icon(Icons.link_outlined),
-                tooltip: '配对',
+                tooltip: l10n.settingsRuntimeConnect,
                 onPressed: _controlsEnabled
                     ? () => _pairDiscoveredEdge(edge)
                     : null,
@@ -280,16 +280,13 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
       _discoveredDeviceSpaces = <generated.RuntimeRemoteDiscoveredSpace>[];
       _discoveredEdges = <generated.RuntimeEdgeDiscoveredDevice>[];
     });
-    // Run the two mDNS browsers sequentially. On Windows both browsers use
-    // the shared UDP 5353 socket; starting two ServiceDaemon instances at the
-    // same time can cause one of them to miss all announcements.
-    await _scanCoreSpaces();
-    await _scanEdges();
+    await Future.wait<void>([_scanCoreSpaces(), _scanEdges()]);
     if (mounted) {
       setState(() => _scanning = false);
     }
   }
 
+  /// Requests Edge discovery through the host-owned runtime capability.
   Future<void> _scanEdges() async {
     try {
       final edges = await widget.clients.server.runtimeRemoteLinkService
@@ -304,6 +301,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     }
   }
 
+  /// Pairs a discovered Edge without depending on its board model.
   Future<void> _pairDiscoveredEdge(
     generated.RuntimeEdgeDiscoveredDevice edge,
   ) async {
@@ -314,23 +312,27 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
         tokenHash: edge.tokenHash,
       );
       if (!mounted) return;
-      final code = await _Esp32EdgeCodeDialog.show(context, edge.displayName);
+      final code = await _EdgeCodeDialog.show(context, edge.displayName);
       if (code == null || !mounted) return;
       await const RemotePairingBridge().finishEdge(
         pairingId: pairing.pairingId,
         pairingCode: code,
-        name: 'esp32-${pairing.edgeDeviceId}',
+        name: 'edge-${pairing.edgeDeviceId}',
       );
       if (mounted) {
         setState(() {
-          _connectionMessage = '${edge.displayName} 已连接';
+          _connectionMessage = AppLocalizations.of(
+            context,
+          )!.settingsRuntimePairingComplete;
           _connectionFailed = false;
         });
       }
     } catch (error) {
       if (mounted) {
         setState(() {
-          _connectionMessage = 'ESP32 配对失败：$error';
+          _connectionMessage = AppLocalizations.of(
+            context,
+          )!.settingsRuntimeConnectionFailed(error.toString());
           _connectionFailed = true;
         });
       }
@@ -556,56 +558,63 @@ class _DiscoveryStatus extends StatelessWidget {
   }
 }
 
-class _Esp32EdgeCodeDialog extends StatefulWidget {
-  const _Esp32EdgeCodeDialog({required this.deviceName});
+class _EdgeCodeDialog extends StatefulWidget {
+  const _EdgeCodeDialog({required this.deviceName});
 
   final String deviceName;
 
+  /// Opens the protocol-level pairing code prompt.
   static Future<String?> show(BuildContext context, String deviceName) {
     return showDialog<String>(
       context: context,
-      builder: (_) => _Esp32EdgeCodeDialog(deviceName: deviceName),
+      builder: (_) => _EdgeCodeDialog(deviceName: deviceName),
     );
   }
 
+  /// Creates state for the pairing input.
   @override
-  State<_Esp32EdgeCodeDialog> createState() => _Esp32EdgeCodeDialogState();
+  State<_EdgeCodeDialog> createState() => _EdgeCodeDialogState();
 }
 
-class _Esp32EdgeCodeDialogState extends State<_Esp32EdgeCodeDialog> {
+class _EdgeCodeDialogState extends State<_EdgeCodeDialog> {
   final _code = TextEditingController();
 
+  /// Releases the pairing code controller.
   @override
   void dispose() {
     _code.dispose();
     super.dispose();
   }
 
+  /// Builds a device-neutral, localized pairing prompt.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: Text('输入 ${widget.deviceName} 的配对码'),
+      title: Text(l10n.edgePairingCodeTitle(widget.deviceName)),
       content: TextField(
         controller: _code,
         autofocus: true,
         keyboardType: TextInputType.number,
         maxLength: 6,
-        decoration: const InputDecoration(
-          labelText: '6 位配对码',
-          hintText: '查看 ESP32 屏幕或 /status.json',
+        decoration: InputDecoration(
+          labelText: l10n.settingsRuntimePairCode,
+          hintText: l10n.edgePairingCodeHint,
         ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: () {
             final code = _code.text.trim();
-            if (code.length == 6) Navigator.of(context).pop(code);
+            if (RegExp(r'^[0-9]{6}$').hasMatch(code)) {
+              Navigator.of(context).pop(code);
+            }
           },
-          child: const Text('配对'),
+          child: Text(l10n.settingsRuntimeConnect),
         ),
       ],
     );

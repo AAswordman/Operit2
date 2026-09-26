@@ -63,6 +63,7 @@ pub fn createRuntimeHostManager(
     .withHostRuntimeEventSchedulerHost(Arc::new(WindowsHostRuntimeEventSchedulerHost::new()))
     .withPluginSdkIpcHost(Arc::new(WindowsPluginSdkIpcHost::new()))
     .withHostJavaScriptRuntimeHost(Arc::new(WindowsHostJavaScriptRuntimeHost::new()))
+    .withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(WindowsHostRuntimeTaskSchedulerHost::new()))
 }
 use std::path::PathBuf;

@@ -1462,6 +1462,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-kit-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617ee6cf8e3f66f3b4ea67a4058564628cde41901316e19f559e14c7c72c5e7b"
+dependencies = [
+ "core-foundation-sys",
+ "mach2",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1598,6 +1608,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
+name = "mach2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "matchit"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1690,8 +1709,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
 dependencies = [
  "libc",
+ "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mio-serial"
+version = "5.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d4ba3f20276f21b7cad3f1b54c97489cf096a3894fd627cc6951cb3abdd4c60"
+dependencies = [
+ "log",
+ "mio",
+ "nix 0.31.3",
+ "serialport",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1723,6 +1756,17 @@ dependencies = [
 
 [[package]]
 name = "nix"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
+dependencies = [
+ "bitflags 1.3.2",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
@@ -1744,6 +1788,18 @@ dependencies = [
  "cfg_aliases 0.2.2",
  "libc",
  "memoffset",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases 0.2.2",
+ "libc",
 ]
 
 [[package]]
@@ -1886,6 +1942,8 @@ dependencies = [
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
+ "operit-plugin-sdk-ipc",
+ "operit-plugin-sdk-ipc-bridge",
  "operit-proxy-local",
  "operit-runtime",
 ]
@@ -1893,6 +1951,23 @@ dependencies = [
 [[package]]
 name = "operit-edge-contract"
 version = "0.1.0"
+
+[[package]]
+name = "operit-edge-transport"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "hmac",
+ "operit-host-api",
+ "operit-link",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "tokio",
+ "uuid",
+ "x25519-dalek",
+]
 
 [[package]]
 name = "operit-host-api"
@@ -1917,6 +1992,7 @@ dependencies = [
  "libc",
  "operit-host-api",
  "operit-host-native-common",
+ "operit-host-native-plugin-sdk-ipc",
  "portable-pty",
  "regex",
  "reqwest",
@@ -1933,10 +2009,14 @@ dependencies = [
 name = "operit-host-native-common"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "mdns-sd",
  "operit-host-api",
  "operit-host-native-http",
  "operit-host-native-scheduler",
  "operit-host-native-storage",
+ "tokio",
+ "tokio-serial",
 ]
 
 [[package]]
@@ -1947,6 +2027,13 @@ dependencies = [
  "reqwest",
  "tokio",
  "tungstenite",
+]
+
+[[package]]
+name = "operit-host-native-plugin-sdk-ipc"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
 ]
 
 [[package]]
@@ -2043,8 +2130,9 @@ name = "operit-node-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "mdns-sd",
+ "base64",
  "operit-access-runtime",
+ "operit-edge-transport",
  "operit-host-api",
  "operit-link",
  "operit-runtime",
@@ -2097,10 +2185,31 @@ dependencies = [
 name = "operit-plugin-sdk-codegen"
 version = "2.0.0-preview.8"
 dependencies = [
+ "operit-rslink-codegen",
  "quote",
  "syn 2.0.119",
  "tree-sitter",
  "tree-sitter-javascript",
+]
+
+[[package]]
+name = "operit-plugin-sdk-ipc"
+version = "2.0.0-preview.8"
+dependencies = [
+ "async-trait",
+ "operit-host-api",
+ "operit-link",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "operit-plugin-sdk-ipc-bridge"
+version = "2.0.0-preview.8"
+dependencies = [
+ "operit-host-api",
+ "operit-link",
+ "operit-plugin-sdk-ipc",
 ]
 
 [[package]]
@@ -2111,6 +2220,7 @@ dependencies = [
  "base64",
  "chrono",
  "futures-util",
+ "getrandom 0.2.17",
  "json5",
  "operit-host-api",
  "operit-link",
@@ -2154,6 +2264,7 @@ dependencies = [
  "operit-edge-contract",
  "operit-host-api",
  "operit-link",
+ "operit-node-edge",
  "serde",
 ]
 
@@ -2170,6 +2281,8 @@ dependencies = [
  "operit-model",
  "operit-node-runtime",
  "operit-plugin-sdk",
+ "operit-plugin-sdk-codegen",
+ "operit-plugin-sdk-ipc",
  "operit-providers",
  "operit-proxy-bridge",
  "operit-proxy-dart-codegen",
@@ -2314,6 +2427,7 @@ dependencies = [
  "operit-model",
  "operit-plugin-sdk",
  "operit-plugin-sdk-codegen",
+ "operit-route-macros",
  "operit-store",
  "operit-util",
  "quickjs-wasm-rs",
@@ -2337,12 +2451,14 @@ name = "operit-util"
 version = "2.0.0-preview.8"
 dependencies = [
  "chrono",
+ "flate2",
  "operit-host-api",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "zip",
 ]
 
 [[package]]
@@ -3181,6 +3297,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "serialport"
+version = "4.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba5f8f29aa20853c4e3e85a33ec580eb66be1f057142e77a333834a318bacf2"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "io-kit-sys",
+ "mach2",
+ "nix 0.26.4",
+ "scopeguard",
+ "unescaper",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3500,6 +3634,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-serial"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd00f5f8b1e01c3e5afccd9e42ed80c2ad2df6d007877f29f8592c62e69cd116"
+dependencies = [
+ "cfg-if",
+ "futures-core",
+ "futures-sink",
+ "log",
+ "mio-serial",
+ "serialport",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-tungstenite"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3710,6 +3859,15 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "unescaper"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7285e83a80ce76f5e7bce79fa41f68d78ba62d1003cf27bf748ab24413808cf4"
+dependencies = [
+ "thiserror 2.0.20",
 ]
 
 [[package]]

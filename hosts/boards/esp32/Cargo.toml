@@ -13,3 +13,7 @@ operit-ui = { path = "../../../core/crates/ui" }
 
 [target.'cfg(target_os = "espidf")'.dependencies]
 esp-idf-hal = "0.46.2"
+async-trait = "0.1"
+operit-edge-transport = { path = "../../../core/crates/node/edge-transport" }
+operit-link = { path = "../../../core/crates/foundation/link" }
+tokio = { version = "1", default-features = false, features = ["sync", "time"] }

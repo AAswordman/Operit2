@@ -1,4 +1,5 @@
 use std::sync::{Arc, OnceLock};
+use crate::ServiceDiscovery::ServiceDiscoveryHost;
 
 use crate::{
     ArchiveStagingHost, AudioPlaybackHost, BluetoothHost, BrowserAutomationHost,
@@ -29,6 +30,19 @@ static DEFAULT_JAVASCRIPT_RUNTIME_HOST: OnceLock<Arc<dyn HostJavaScriptRuntimeHo
     OnceLock::new();
 static DEFAULT_RUNTIME_TASK_SCHEDULER_HOST: OnceLock<Arc<dyn HostRuntimeTaskSchedulerHost>> =
     OnceLock::new();
+
+static DEFAULT_SERVICE_DISCOVERY_HOST: OnceLock<Arc<dyn ServiceDiscoveryHost>> = OnceLock::new();
+
+/// Registers the service discovery provider installed by the active host.
+pub fn setDefaultServiceDiscoveryHost(host: Arc<dyn ServiceDiscoveryHost>) {
+    let _ = DEFAULT_SERVICE_DISCOVERY_HOST.set(host);
+}
+
+/// Returns the service discovery capability or an explicit unsupported-capability error.
+pub fn defaultServiceDiscoveryHost() -> crate::HostResult<Arc<dyn ServiceDiscoveryHost>> {
+    DEFAULT_SERVICE_DISCOVERY_HOST.get().cloned()
+        .ok_or_else(|| crate::HostError::new("The active Host has not registered service discovery"))
+}
 
 /// Command callback used by hosts that expose core operations as argv-style calls.
 pub type CoreCommandExecutor = Arc<dyn Fn(Vec<String>) -> Result<String, String> + Send + Sync>;
@@ -96,6 +110,7 @@ pub fn defaultHostRuntimeTaskSchedulerHost() -> Arc<dyn HostRuntimeTaskScheduler
 /// Bundles host-provided capabilities that the runtime can call through stable traits.
 #[derive(Clone, Default)]
 pub struct HostManager {
+    pub serviceDiscoveryHost: Option<Arc<dyn ServiceDiscoveryHost>>,
     pub serialPortHost: Option<Arc<dyn SerialPortHost>>,
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
@@ -130,6 +145,12 @@ pub struct HostManager {
 }
 
 impl HostManager {
+    /// Installs the host-owned service discovery capability.
+    pub fn withServiceDiscoveryHost(mut self, host: Arc<dyn ServiceDiscoveryHost>) -> Self {
+        self.serviceDiscoveryHost = Some(host);
+        self
+    }
+
     /// Creates a context with no host integrations and the default Android descriptor.
     pub fn new() -> Self {
         Self {
@@ -141,6 +162,7 @@ impl HostManager {
             httpHost: None,
             webSocketHost: None,
             serialPortHost: None,
+            serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
             audioPlaybackHost: None,
@@ -180,6 +202,7 @@ impl HostManager {
             httpHost: None,
             webSocketHost: None,
             serialPortHost: None,
+            serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
             audioPlaybackHost: None,
@@ -222,6 +245,7 @@ impl HostManager {
             httpHost: None,
             webSocketHost: None,
             serialPortHost: None,
+            serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
             audioPlaybackHost: None,
@@ -265,6 +289,7 @@ impl HostManager {
             httpHost: None,
             webSocketHost: None,
             serialPortHost: None,
+            serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
             toastHost: None,
             audioPlaybackHost: None,
@@ -312,6 +337,7 @@ impl HostManager {
             httpHost: Some(httpHost),
             webSocketHost: None,
             serialPortHost: None,
+            serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
             toastHost: None,
             audioPlaybackHost: None,

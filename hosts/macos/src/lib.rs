@@ -66,6 +66,7 @@ pub fn createRuntimeHostManager(
     .withHostRuntimeEventHost(Arc::new(MacosHostRuntimeEventHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(MacosHostRuntimeEventSchedulerHost::new()))
     .withHostJavaScriptRuntimeHost(Arc::new(MacosHostJavaScriptRuntimeHost::new()))
+    .withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(MacosHostRuntimeTaskSchedulerHost::new()))
     .withPluginSdkIpcHost(Arc::new(MacosPluginSdkIpcHost::new()))
 }

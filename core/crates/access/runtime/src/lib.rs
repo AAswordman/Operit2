@@ -435,6 +435,18 @@ impl LinkAccessStore {
         )
     }
 
+    /// Resolves a pairing protocol from persisted records without executing either protocol.
+    pub fn outboundPairingKind(&self, pairingId: &str) -> Result<OutboundPairingKind, String> {
+        let core = self.pendingOutboundPairings()?.contains_key(pairingId);
+        let edge = self.pendingOutboundEdgePairings()?.contains_key(pairingId);
+        match (core, edge) {
+            (true, false) => Ok(OutboundPairingKind::Core),
+            (false, true) => Ok(OutboundPairingKind::Edge),
+            (false, false) => Err(format!("pending pairing does not exist: {pairingId}")),
+            (true, true) => Err(format!("ambiguous pending pairing protocol: {pairingId}")),
+        }
+    }
+
     /// Returns every pending lightweight Edge pairing initiated by this Core.
     #[allow(non_snake_case)]
     pub fn pendingOutboundEdgePairings(
@@ -1460,6 +1472,13 @@ pub struct PairStartState {
 pub struct PendingOutboundPairingRecord {
     pub baseUrl: String,
     pub state: PairStartState,
+}
+
+/// Identifies the protocol owning a persisted outbound pairing transaction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutboundPairingKind {
+    Core,
+    Edge,
 }
 
 /// Stores the serializable half of a pending Core-to-Edge pairing.

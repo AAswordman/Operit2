@@ -8,6 +8,9 @@ use operit_host_api::{
     HostOnboardingRequirement, HostRequirementAction, HostRequirementStatus,
 };
 
+#[cfg(target_os = "espidf")]
+pub mod link_channel;
+
 pub mod face;
 pub mod mirror_color;
 pub mod pins;

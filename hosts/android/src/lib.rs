@@ -97,6 +97,7 @@ pub fn createRuntimeHostManager(
     .withLocalInferenceHost(Arc::new(AndroidLocalInferenceHost::new()))
     .withHostRuntimeEventSchedulerHost(Arc::new(AndroidHostRuntimeEventSchedulerHost::new()))
     .withHostJavaScriptRuntimeHost(Arc::new(AndroidHostJavaScriptRuntimeHost::new()))
+    .withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(AndroidHostRuntimeTaskSchedulerHost::new()))
     .withPluginSdkIpcHost(Arc::new(AndroidPluginSdkIpcHost::new()))
 }

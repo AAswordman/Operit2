@@ -2850,3 +2850,5 @@ mod tests {
         assert!(request.allowMultiple);
     }
 }
+
+pub mod ServiceDiscovery;

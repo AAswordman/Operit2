@@ -75,6 +75,7 @@ pub fn createRuntimeHostManager(
         .withHostRuntimeEventSchedulerHost(Arc::new(IosHostRuntimeEventSchedulerHost::new()));
     hostManager =
         hostManager.withHostJavaScriptRuntimeHost(Arc::new(IosHostJavaScriptRuntimeHost::new()));
-    hostManager.withHostRuntimeTaskSchedulerHost(Arc::new(IosHostRuntimeTaskSchedulerHost::new()))
+    hostManager.withServiceDiscoveryHost(Arc::new(operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()))
+    .withHostRuntimeTaskSchedulerHost(Arc::new(IosHostRuntimeTaskSchedulerHost::new()))
         .withPluginSdkIpcHost(Arc::new(IosPluginSdkIpcHost::new()))
 }

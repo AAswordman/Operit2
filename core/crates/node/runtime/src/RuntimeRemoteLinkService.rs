@@ -1,4 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
 use crate::RuntimeRemoteLinkDiscovery::{
     discoverEdgeDevices, discoverRemoteDevices, RuntimeEdgeDiscoveryEndpoint,
     RuntimeRemoteDiscoveryEndpoint,
@@ -44,9 +43,10 @@ use operit_store::SyncOperationStore::subscribeSyncMutations;
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc, OnceLock};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use tokio::sync::oneshot;
 #[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
     CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
@@ -92,22 +92,6 @@ pub struct RuntimeEdgePairStartResult {
     pub pairingServiceVersion: u16,
     pub edgeDeviceId: String,
     pub edgeDeviceInfo: RemoteDeviceInfo,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct PendingEdgePairing {
-    endpoint: String,
-    state: EdgePairStartState,
-    channel: Arc<dyn LinkChannel>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-static EDGE_PENDING_PAIRINGS: OnceLock<AsyncMutex<BTreeMap<String, PendingEdgePairing>>> =
-    OnceLock::new();
-
-#[cfg(not(target_arch = "wasm32"))]
-fn pendingEdgePairings() -> &'static AsyncMutex<BTreeMap<String, PendingEdgePairing>> {
-    EDGE_PENDING_PAIRINGS.get_or_init(|| AsyncMutex::new(BTreeMap::new()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -169,7 +153,6 @@ async fn connectEdgeChannel(endpoint: &str) -> Result<Arc<dyn LinkChannel>, Stri
 }
 
 /// Describes one lightweight Edge discovered through local mDNS.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeEdgeDiscoveredDevice {
     pub deviceId: String,
@@ -184,7 +167,6 @@ pub struct RuntimeEdgeDiscoveredDevice {
 }
 
 /// Describes a Link-enabled runtime discovered by the local runtime.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeRemoteDiscoveredDevice {
     pub deviceId: String,
@@ -200,7 +182,6 @@ pub struct RuntimeRemoteDiscoveredDevice {
 }
 
 /// Groups every discovered CoreNode that currently advertises the same Space identity.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RuntimeRemoteDiscoveredSpace {
     pub spaceId: String,
@@ -1157,7 +1138,6 @@ impl RuntimeRemoteLinkService {
     }
 
     /// Discovers nearby Spaces and groups their directly connectable CoreNodes.
-    #[cfg(not(target_arch = "wasm32"))]
     #[allow(non_snake_case)]
     pub async fn discoverSpaces(
         &self,
@@ -1166,6 +1146,8 @@ impl RuntimeRemoteLinkService {
         if timeoutMs == 0 {
             return Err("remote discovery timeout must be greater than 0".to_string());
         }
+        operit_host_api::HostManager::defaultServiceDiscoveryHost()
+            .map_err(|error| error.to_string())?;
         let (sender, receiver) = oneshot::channel();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeTask(
@@ -1186,7 +1168,6 @@ impl RuntimeRemoteLinkService {
     /// Discovers raw TCP Edge devices without requiring a token entry. The
     /// token hash is only an mDNS pairing hint; the authenticated pairing
     /// exchange still verifies the secret and displays the pairing code.
-    #[cfg(not(target_arch = "wasm32"))]
     #[allow(non_snake_case)]
     pub async fn discoverEdges(
         &self,
@@ -1195,6 +1176,8 @@ impl RuntimeRemoteLinkService {
         if timeoutMs == 0 {
             return Err("Edge discovery timeout must be greater than 0".to_string());
         }
+        operit_host_api::HostManager::defaultServiceDiscoveryHost()
+            .map_err(|error| error.to_string())?;
         let (sender, receiver) = oneshot::channel();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeTask(
@@ -1296,6 +1279,11 @@ impl RuntimeRemoteLinkService {
         Ok(record)
     }
 
+    /// Returns the persisted transaction protocol before any pairing side effects.
+    pub fn outboundPairingKind(&self, pairingId: String) -> Result<operit_access_runtime::OutboundPairingKind, String> {
+        self.linkAccessStore.outboundPairingKind(&pairingId)
+    }
+
     /// Starts the standard Link pairing exchange with a lightweight Edge.
     /// `tokenHash` is the SHA-256/base64 hash of the Edge token, matching the
     /// normal Link Access pairing contract.
@@ -1345,14 +1333,8 @@ impl RuntimeRemoteLinkService {
                 pairingState,
             },
         )?;
-        pendingEdgePairings().lock().await.insert(
-            state.pairingId.clone(),
-            PendingEdgePairing {
-                endpoint,
-                state,
-                channel,
-            },
-        );
+        // Pairing transactions survive independently of their initial carrier.
+        channel.close().await;
         Ok(result)
     }
 
@@ -1544,45 +1526,26 @@ impl RuntimeRemoteLinkService {
         }
         let localNodeId = self.nodeRouter.localNodeId();
         self.networkControlStore.initializeCurrentSpace()?;
-        let pending = {
-            let mut pendingPairings = pendingEdgePairings().lock().await;
-            if let Some(pending) = pendingPairings.remove(&pairingId) {
-                if !self.networkControlStore.nodeHasCapability(
-                    &localNodeId, "network.members.join", Some(&pending.state.edgeDeviceId),
-                )? {
-                    return Err("current device cannot admit an Edge into this Space".to_string());
-                }
-                pending
-            } else {
-                let stored = self
-                    .linkAccessStore
-                    .pendingOutboundEdgePairings()?
-                    .get(&pairingId)
-                    .cloned()
-                    .ok_or_else(|| format!("pending Edge pairing does not exist: {pairingId}"))?;
-                let state: EdgePairStartState = serde_json::from_value(stored.pairingState)
-                    .map_err(|error| format!("invalid persisted Edge pairing state: {error}"))?;
-                if !self.networkControlStore.nodeHasCapability(
-                    &localNodeId, "network.members.join", Some(&state.edgeDeviceId),
-                )? {
-                    return Err("current device cannot admit an Edge into this Space".to_string());
-                }
-                let channel = connectEdgeChannel(&stored.endpoint).await?;
-                PendingEdgePairing {
-                    endpoint: stored.endpoint,
-                    state,
-                    channel,
-                }
-            }
-        };
+        let stored = self.linkAccessStore.pendingOutboundEdgePairings()?
+            .get(&pairingId)
+            .cloned()
+            .ok_or_else(|| format!("pending Edge pairing does not exist: {pairingId}"))?;
+        let state: EdgePairStartState = serde_json::from_value(stored.pairingState)
+            .map_err(|error| format!("invalid persisted Edge pairing state: {error}"))?;
+        if !self.networkControlStore.nodeHasCapability(
+            &localNodeId, "network.members.join", Some(&state.edgeDeviceId),
+        )? {
+            return Err("current device cannot admit an Edge into this Space".to_string());
+        }
+        let channel = connectEdgeChannel(&stored.endpoint).await?;
         let edgeDeviceInfo = RemoteDeviceInfo {
-            platform: pending.state.edgeDeviceInfo.platform.clone(),
-            model: pending.state.edgeDeviceInfo.model.clone(),
+            platform: state.edgeDeviceInfo.platform.clone(),
+            model: state.edgeDeviceInfo.model.clone(),
         };
         let session =
-            finishPairAsClient(pending.channel.clone(), pending.state, pairingCode).await?;
+            finishPairAsClient(channel.clone(), state, pairingCode).await?;
         let record = PairedEdgeSessionRecord {
-            endpoint: pending.endpoint,
+            endpoint: stored.endpoint,
             sessionId: session.sessionId.clone(),
             deviceId: session.deviceId.clone(),
             edgeDeviceId: session.peerDeviceId.clone(),
@@ -1618,11 +1581,9 @@ impl RuntimeRemoteLinkService {
         }
         self.linkAccessStore
             .saveEdgeSession(name.clone(), record.clone())?;
-        self.attachEdgePeerChannel(name, record.clone(), pending.channel, session)
+        self.attachEdgePeerChannel(name, record.clone(), channel, session)
             .await?;
-        let _ = self
-            .linkAccessStore
-            .removePendingOutboundEdgePairing(&pairingId);
+        self.linkAccessStore.removePendingOutboundEdgePairing(&pairingId)?;
         Ok(record)
     }
 
@@ -1749,7 +1710,6 @@ impl RuntimeRemoteLinkService {
     }
 
     /// Verifies and persists discovered endpoints for every matching paired remote session.
-    #[cfg(not(target_arch = "wasm32"))]
     #[allow(non_snake_case)]
     async fn refreshDiscoveredPairedRemoteEndpoints(
         &self,
@@ -1770,7 +1730,6 @@ impl RuntimeRemoteLinkService {
     }
 
     /// Resolves live Space identities for discovered devices and groups them by Space id.
-    #[cfg(not(target_arch = "wasm32"))]
     #[allow(non_snake_case)]
     async fn groupDiscoveredSpaces(
         &self,
