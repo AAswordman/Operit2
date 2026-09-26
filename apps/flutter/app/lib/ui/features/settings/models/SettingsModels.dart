@@ -10,6 +10,7 @@ enum SettingsCategory {
   localModels,
   tts,
   characters,
+  memory,
   tools,
   workspace,
   globalBehavior,
@@ -67,6 +68,12 @@ class SettingsCategorySpec {
         subtitle: l10n.settingsCategoryCharactersSubtitle,
         description: l10n.settingsCategoryCharactersDescription,
         icon: Icons.badge_outlined,
+      ),
+      SettingsCategory.memory => SettingsCategorySpec(
+        title: l10n.settingsCategoryMemoryTitle,
+        subtitle: l10n.settingsCategoryMemorySubtitle,
+        description: l10n.settingsCategoryMemoryDescription,
+        icon: Icons.account_tree_outlined,
       ),
       SettingsCategory.tools => SettingsCategorySpec(
         title: l10n.settingsCategoryToolsTitle,

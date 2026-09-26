@@ -875,7 +875,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryLocalModelsDescription => '管理按需安装的本地模型和推理引擎。';
 
   @override
-  String get settingsCategoryCharactersTitle => '角色与记忆';
+  String get settingsCategoryCharactersTitle => '角色';
 
   @override
   String get settingsCategoryCharactersSubtitle => '角色卡、群组、绑定';
@@ -883,6 +883,16 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsCategoryCharactersDescription =>
       '管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。';
+
+  @override
+  String get settingsCategoryMemoryTitle => '记忆';
+
+  @override
+  String get settingsCategoryMemorySubtitle => '记忆图谱、共享记忆库、用户资料';
+
+  @override
+  String get settingsCategoryMemoryDescription =>
+      '管理角色与共享记忆库、记忆图谱可视化、用户资料与自动更新策略。';
 
   @override
   String get settingsCategoryToolsTitle => '工具与权限';
