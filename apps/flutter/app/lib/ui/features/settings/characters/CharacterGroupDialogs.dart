@@ -114,60 +114,10 @@ class _CharacterGroupEditorDialogState
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 620,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _DialogTextField(
-                  controller: _nameController,
-                  label: l10n.settingsCharactersGroupName,
-                  requiredField: true,
-                ),
-                _DialogTextField(
-                  controller: _descriptionController,
-                  label: l10n.settingsCharactersDescription,
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 8, bottom: 4),
-                    child: Text(
-                      l10n.settingsCharactersGroupMembersTitle,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ),
-                for (final card in widget.cards)
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    visualDensity: VisualDensity.compact,
-                    title: Text(card.name),
-                    subtitle: card.description.trim().isEmpty
-                        ? null
-                        : Text(card.description.trim()),
-                    value: _selectedCardIds.contains(card.id),
-                    onChanged: (value) {
-                      setState(() {
-                        if (value == true) {
-                          _selectedCardIds.add(card.id);
-                        } else {
-                          _selectedCardIds.remove(card.id);
-                        }
-                      });
-                    },
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return OperitDialogScaffold(
+      title: widget.title,
+      maxWidth: 620,
+      showCloseButton: true,
       actions: <Widget>[
         if (widget.showItemActions)
           TextButton(
@@ -188,6 +138,139 @@ class _CharacterGroupEditorDialogState
         ),
         FilledButton(onPressed: _save, child: Text(l10n.save)),
       ],
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _DialogTextField(
+                controller: _nameController,
+                label: l10n.settingsCharactersGroupName,
+                requiredField: true,
+              ),
+              _DialogTextField(
+                controller: _descriptionController,
+                label: l10n.settingsCharactersDescription,
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 8),
+                child: Text(
+                  l10n.settingsCharactersGroupMembersTitle,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              for (final card in widget.cards)
+                _CharacterGroupMemberOptionTile(
+                  card: card,
+                  selected: _selectedCardIds.contains(card.id),
+                  onTap: () {
+                    setState(() {
+                      if (_selectedCardIds.contains(card.id)) {
+                        _selectedCardIds.remove(card.id);
+                      } else {
+                        _selectedCardIds.add(card.id);
+                      }
+                    });
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CharacterGroupMemberOptionTile extends StatelessWidget {
+  const _CharacterGroupMemberOptionTile({
+    required this.card,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final core_proxy.CharacterCard card;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(10);
+    final descriptionText = card.description.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: selected
+            ? colorScheme.primaryContainer.withValues(alpha: 0.16)
+            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(
+            color: selected
+                ? colorScheme.primary.withValues(alpha: 0.45)
+                : colorScheme.outlineVariant.withValues(alpha: 0.28),
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  size: 18,
+                  color: selected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: ClipOval(
+                    child: CharacterAvatarImage(
+                      avatarUri: card.avatarUri,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        card.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (descriptionText.isNotEmpty)
+                        Text(
+                          descriptionText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -195,6 +278,63 @@ class _CharacterGroupEditorDialogState
 enum _CharacterCardImportAction { nativeJson, tavernJson }
 
 enum _CharacterCardExportAction { nativeJson, tavernJson }
+
+class _DialogActionOptionTile extends StatelessWidget {
+  const _DialogActionOptionTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(10);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.28),
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: <Widget>[
+                Icon(icon, size: 20, color: colorScheme.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right,
+                  size: 18,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _CharacterCardExportDialog extends StatelessWidget {
   const _CharacterCardExportDialog();
@@ -211,36 +351,35 @@ class _CharacterCardExportDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(l10n.settingsCharactersExport),
-      content: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.data_object_outlined),
-              title: Text(l10n.settingsCharactersExportJson),
-              onTap: () => Navigator.of(
-                context,
-              ).pop(_CharacterCardExportAction.nativeJson),
-            ),
-            ListTile(
-              leading: const Icon(Icons.badge_outlined),
-              title: Text(l10n.settingsCharactersExportTavernJson),
-              onTap: () => Navigator.of(
-                context,
-              ).pop(_CharacterCardExportAction.tavernJson),
-            ),
-          ],
-        ),
-      ),
+    return OperitDialogScaffold(
+      title: l10n.settingsCharactersExport,
+      maxWidth: 420,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
         ),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _DialogActionOptionTile(
+            icon: Icons.data_object_outlined,
+            title: l10n.settingsCharactersExportJson,
+            onTap: () => Navigator.of(
+              context,
+            ).pop(_CharacterCardExportAction.nativeJson),
+          ),
+          _DialogActionOptionTile(
+            icon: Icons.badge_outlined,
+            title: l10n.settingsCharactersExportTavernJson,
+            onTap: () => Navigator.of(
+              context,
+            ).pop(_CharacterCardExportAction.tavernJson),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -260,36 +399,35 @@ class _CharacterCardImportDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(l10n.settingsCharactersImport),
-      content: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.data_object_outlined),
-              title: Text(l10n.settingsCharactersImportJson),
-              onTap: () => Navigator.of(
-                context,
-              ).pop(_CharacterCardImportAction.nativeJson),
-            ),
-            ListTile(
-              leading: const Icon(Icons.badge_outlined),
-              title: Text(l10n.settingsCharactersImportTavernJson),
-              onTap: () => Navigator.of(
-                context,
-              ).pop(_CharacterCardImportAction.tavernJson),
-            ),
-          ],
-        ),
-      ),
+    return OperitDialogScaffold(
+      title: l10n.settingsCharactersImport,
+      maxWidth: 420,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
         ),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _DialogActionOptionTile(
+            icon: Icons.data_object_outlined,
+            title: l10n.settingsCharactersImportJson,
+            onTap: () => Navigator.of(
+              context,
+            ).pop(_CharacterCardImportAction.nativeJson),
+          ),
+          _DialogActionOptionTile(
+            icon: Icons.badge_outlined,
+            title: l10n.settingsCharactersImportTavernJson,
+            onTap: () => Navigator.of(
+              context,
+            ).pop(_CharacterCardImportAction.tavernJson),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -432,34 +570,29 @@ class _FullscreenTextEditDialogState extends State<_FullscreenTextEditDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Dialog.fullscreen(
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.title),
-          leading: IconButton(
-            tooltip: l10n.cancel,
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close),
-          ),
-          actions: <Widget>[
-            TextButton(onPressed: _save, child: Text(l10n.save)),
-          ],
+    return OperitDialogScaffold(
+      title: widget.title,
+      maxWidth: 760,
+      maxHeight: 620,
+      showCloseButton: true,
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(20),
-          child: TextField(
-            controller: _controller,
-            style: Theme.of(context).textTheme.bodyMedium,
-            autofocus: true,
-            expands: true,
-            minLines: null,
-            maxLines: null,
-            textAlignVertical: TextAlignVertical.top,
-            decoration: InputDecoration(
-              labelText: widget.title,
-              alignLabelWithHint: true,
-            ),
-          ),
+        FilledButton(onPressed: _save, child: Text(l10n.save)),
+      ],
+      child: TextField(
+        controller: _controller,
+        style: Theme.of(context).textTheme.bodyMedium,
+        autofocus: true,
+        expands: true,
+        minLines: null,
+        maxLines: null,
+        textAlignVertical: TextAlignVertical.top,
+        decoration: InputDecoration(
+          labelText: widget.title,
+          alignLabelWithHint: true,
         ),
       ),
     );
@@ -512,12 +645,16 @@ class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
     required this.children,
+    this.icon,
     this.action,
+    this.initiallyExpanded = true,
   });
 
   final String title;
   final List<Widget> children;
+  final IconData? icon;
   final Widget? action;
+  final bool initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {
@@ -525,110 +662,45 @@ class _SectionCard extends StatelessWidget {
     final radius = BorderRadius.circular(12);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: OperitGlassSurface(
+      child: Material(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        borderRadius: radius,
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-        ),
-        material: true,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final titleText = Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: SettingsControlStyles.sectionTitleTextStyle(context),
-                  );
-                  if (action == null) {
-                    return titleText;
-                  }
-                  if (constraints.maxWidth < 420) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        titleText,
-                        const SizedBox(height: 6),
-                        Align(alignment: Alignment.centerRight, child: action!),
-                      ],
-                    );
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: <Widget>[
-                      Expanded(child: titleText),
-                      const SizedBox(width: 12),
-                      Flexible(
-                        flex: 0,
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: action!,
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 6),
-              ...children,
-            ],
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.18),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _ExpandableSectionCard extends StatelessWidget {
-  const _ExpandableSectionCard({required this.title, required this.children});
-
-  final String title;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(12);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: OperitGlassSurface(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        borderRadius: radius,
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-        ),
-        material: true,
-        child: Theme(
-          data: Theme.of(context).copyWith(
-            dividerColor: Colors.transparent,
-            dividerTheme: const DividerThemeData(color: Colors.transparent),
-          ),
+        clipBehavior: Clip.antiAlias,
+        child: OperitGlassSurface(
+          color: Colors.transparent,
+          borderRadius: radius,
+          material: true,
+          clip: false,
           child: ExpansionTile(
-            initiallyExpanded: false,
-            tilePadding: const EdgeInsets.fromLTRB(14, 2, 14, 2),
-            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-            shape: const Border(),
-            collapsedShape: const Border(),
-            title: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: SettingsControlStyles.sectionTitleTextStyle(context),
-            ),
-            children: <Widget>[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: children,
+            initiallyExpanded: initiallyExpanded,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            shape: RoundedRectangleBorder(borderRadius: radius),
+            collapsedShape: RoundedRectangleBorder(borderRadius: radius),
+            title: Row(
+              children: <Widget>[
+                if (icon != null) ...<Widget>[
+                  Icon(icon, size: 18, color: colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    title,
+                    style: SettingsControlStyles.sectionTitleTextStyle(context),
+                  ),
                 ),
-              ),
-            ],
+                if (action != null) ...<Widget>[
+                  action!,
+                  const SizedBox(width: 4),
+                ],
+              ],
+            ),
+            children: children,
           ),
         ),
       ),

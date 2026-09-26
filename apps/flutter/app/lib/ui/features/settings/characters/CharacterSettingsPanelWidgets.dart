@@ -2,109 +2,6 @@
 
 part of 'CharacterSettingsPanel.dart';
 
-class _AdvancedSettingsGroup extends StatelessWidget {
-  const _AdvancedSettingsGroup({
-    required this.title,
-    required this.description,
-    required this.children,
-    this.action,
-  });
-
-  final String title;
-  final String description;
-  final Widget? action;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final radius = BorderRadius.circular(14);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.34),
-          borderRadius: radius,
-          border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.24),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              LayoutBuilder(
-                builder: (context, _) {
-                  final titleColumn = Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Container(
-                        width: 4,
-                        height: 34,
-                        margin: const EdgeInsets.only(top: 2, right: 10),
-                        decoration: BoxDecoration(
-                          color: colorScheme.primary.withValues(alpha: 0.76),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(
-                              title,
-                              style: textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              description,
-                              style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                  if (action == null) {
-                    return titleColumn;
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: <Widget>[
-                      Expanded(child: titleColumn),
-                      const SizedBox(width: 8),
-                      Flexible(flex: 0, child: action!),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-              Divider(
-                height: 1,
-                color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-              ),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.only(left: 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: children,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class CharacterSettingsData {
   /// Creates an immutable character settings snapshot.
   const CharacterSettingsData({
@@ -120,8 +17,6 @@ class CharacterSettingsData {
     required this.mcpToolOptions,
     required this.activeCardId,
     required this.activeGroupId,
-    required this.enableMemoryAutoUpdate,
-    required this.disableUserPreferenceDescription,
   });
 
   final List<core_proxy.CharacterCard> cards;
@@ -136,8 +31,6 @@ class CharacterSettingsData {
   final List<ToolAccessOption> mcpToolOptions;
   final String? activeCardId;
   final String? activeGroupId;
-  final bool enableMemoryAutoUpdate;
-  final bool disableUserPreferenceDescription;
 }
 
 class _ActivePromptSelection {
@@ -189,20 +82,24 @@ class _CharacterCardTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final tagNames = _tagNamesFor(tags, card.attachedTagIds);
+    final descriptionText = card.description.trim();
+    final modelBadgeText =
+        card.chatModelBindingMode.trim().toUpperCase() == _chatModelFixedConfig
+        ? l10n.settingsCharactersChatModelFixedConfig
+        : l10n.settingsCharactersChatModelFollowGlobal;
     return _SettingsEntityTile(
+      active: active,
       leading: _SettingsListAvatar(
         avatar: CharacterAvatarImage(avatarUri: avatarUri, fit: BoxFit.cover),
         active: active,
       ),
       title: Text(card.name),
-      subtitle: Text(
-        [
-          if (card.description.trim().isNotEmpty) card.description.trim(),
-          if (tagNames.isNotEmpty) tagNames.join(', '),
-          card.chatModelBindingMode,
-          _memoryBindingSummary(card),
-        ].join(' · '),
-      ),
+      subtitle: descriptionText.isEmpty ? null : Text(descriptionText),
+      badges: <Widget>[
+        SettingsInfoBadge(label: modelBadgeText),
+        SettingsInfoBadge(label: _memoryBindingSummary(card)),
+        for (final tagName in tagNames) SettingsInfoBadge(label: tagName),
+      ],
       onTap: onEdit,
       actions: <Widget>[
         SettingsEntityIconButton(
@@ -249,17 +146,18 @@ class _CharacterGroupTile extends StatelessWidget {
         .nonNulls
         .join(', ');
     return _SettingsEntityTile(
+      active: active,
       leading: _SettingsListAvatar(
         avatar: _CharacterGroupCompositeAvatar(group: group, cards: cards),
         active: active,
       ),
       title: Text(group.name),
-      subtitle: Text(
-        [
-          l10n.settingsCharactersGroupMembers(group.members.length),
-          if (memberNames.isNotEmpty) memberNames,
-        ].join(' · '),
-      ),
+      subtitle: memberNames.isEmpty ? null : Text(memberNames),
+      badges: <Widget>[
+        SettingsInfoBadge(
+          label: l10n.settingsCharactersGroupMembers(group.members.length),
+        ),
+      ],
       onTap: onEdit,
       actions: <Widget>[
         active
@@ -414,77 +312,49 @@ class _SettingsListAvatar extends StatelessWidget {
   }
 }
 
-class _SharedMemoryStoreTile extends StatelessWidget {
-  const _SharedMemoryStoreTile({
-    required this.store,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onEditUserMarkdown,
-    required this.onOpenMemoryGraph,
-  });
-
-  final core_proxy.SharedMemoryStore store;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final VoidCallback onEditUserMarkdown;
-  final VoidCallback onOpenMemoryGraph;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return _SettingsEntityTile(
-      leading: const Icon(Icons.hub_outlined),
-      title: Text(store.name),
-      subtitle: Text(_sharedOwnerKey(store.id)),
-      onTap: onEdit,
-      actions: <Widget>[
-        SettingsEntityIconButton(
-          tooltip: l10n.settingsCharactersOpenMemoryGraph,
-          icon: Icons.account_tree_outlined,
-          onPressed: onOpenMemoryGraph,
-        ),
-        SettingsEntityIconButton(
-          tooltip: l10n.settingsCharactersEditUserMarkdown,
-          icon: Icons.assignment_ind_outlined,
-          onPressed: onEditUserMarkdown,
-        ),
-        SettingsEntityIconButton(
-          tooltip: l10n.delete,
-          icon: Icons.delete_outline,
-          onPressed: onDelete,
-        ),
-      ],
-    );
-  }
-}
-
 class _SettingsEntityTile extends StatelessWidget {
   const _SettingsEntityTile({
     required this.leading,
     required this.title,
-    required this.subtitle,
     required this.actions,
+    this.subtitle,
+    this.badges = const <Widget>[],
+    this.active = false,
     this.onTap,
   });
 
   final Widget leading;
   final Widget title;
-  final Widget subtitle;
+  final Widget? subtitle;
+  final List<Widget> badges;
   final List<Widget> actions;
+  final bool active;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(12);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: Colors.transparent,
+        color: active
+            ? colorScheme.primaryContainer.withValues(alpha: 0.16)
+            : colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(
+            color: active
+                ? colorScheme.primary.withValues(alpha: 0.45)
+                : colorScheme.outlineVariant.withValues(alpha: 0.28),
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: radius,
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final content = Row(
@@ -500,29 +370,40 @@ class _SettingsEntityTile extends StatelessWidget {
                         child: leading,
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: DefaultTextStyle.merge(
                         style: TextStyle(color: colorScheme.onSurface),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: <Widget>[
                             DefaultTextStyle.merge(
                               style: Theme.of(context).textTheme.titleSmall!
                                   .copyWith(fontWeight: FontWeight.w700),
                               child: title,
                             ),
-                            const SizedBox(height: 2),
-                            DefaultTextStyle.merge(
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall!
-                                  .copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                    height: 1.25,
-                                  ),
-                              child: subtitle,
-                            ),
+                            if (subtitle != null) ...<Widget>[
+                              const SizedBox(height: 2),
+                              DefaultTextStyle.merge(
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall!
+                                    .copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                      height: 1.25,
+                                    ),
+                                child: subtitle!,
+                              ),
+                            ],
+                            if (badges.isNotEmpty) ...<Widget>[
+                              const SizedBox(height: 5),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: badges,
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -532,8 +413,8 @@ class _SettingsEntityTile extends StatelessWidget {
                 final actionBar = Align(
                   alignment: Alignment.centerRight,
                   child: Wrap(
-                    spacing: 2,
-                    runSpacing: 2,
+                    spacing: 4,
+                    runSpacing: 4,
                     alignment: WrapAlignment.end,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: actions,
@@ -547,7 +428,7 @@ class _SettingsEntityTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
                       content,
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       actionBar,
                     ],
                   );
@@ -558,7 +439,7 @@ class _SettingsEntityTile extends StatelessWidget {
                     Expanded(child: content),
                     const SizedBox(width: 8),
                     ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 180),
+                      constraints: const BoxConstraints(maxWidth: 190),
                       child: actionBar,
                     ),
                   ],
@@ -570,12 +451,6 @@ class _SettingsEntityTile extends StatelessWidget {
       ),
     );
   }
-}
-
-class _SharedMemoryStoreEditResult {
-  const _SharedMemoryStoreEditResult({required this.name});
-
-  final String name;
 }
 
 class _PromptTagEditResult {
@@ -685,37 +560,10 @@ class _PromptTagEditorDialogState extends State<_PromptTagEditorDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 580,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _DialogTextField(
-                  controller: _nameController,
-                  label: l10n.settingsCharactersTagName,
-                  requiredField: true,
-                ),
-                _DialogTextField(
-                  controller: _descriptionController,
-                  label: l10n.settingsCharactersTagDescription,
-                  maxLines: 2,
-                ),
-                _DialogTextField(
-                  controller: _promptContentController,
-                  label: l10n.settingsCharactersTagPromptContent,
-                  requiredField: true,
-                  maxLines: 8,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return OperitDialogScaffold(
+      title: widget.title,
+      maxWidth: 580,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -723,90 +571,32 @@ class _PromptTagEditorDialogState extends State<_PromptTagEditorDialog> {
         ),
         FilledButton(onPressed: _save, child: Text(l10n.save)),
       ],
-    );
-  }
-}
-
-class _SharedMemoryStoreEditorDialog extends StatefulWidget {
-  const _SharedMemoryStoreEditorDialog({required this.title, this.store});
-
-  final String title;
-  final core_proxy.SharedMemoryStore? store;
-
-  static Future<_SharedMemoryStoreEditResult?> show({
-    required BuildContext context,
-    required String title,
-    core_proxy.SharedMemoryStore? store,
-  }) {
-    return showDialog<_SharedMemoryStoreEditResult>(
-      context: context,
-      builder: (context) =>
-          _SharedMemoryStoreEditorDialog(title: title, store: store),
-    );
-  }
-
-  @override
-  State<_SharedMemoryStoreEditorDialog> createState() =>
-      _SharedMemoryStoreEditorDialogState();
-}
-
-class _SharedMemoryStoreEditorDialogState
-    extends State<_SharedMemoryStoreEditorDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _nameController;
-
-  @override
-  void initState() {
-    super.initState();
-    final store = widget.store;
-    _nameController = TextEditingController(text: store?.name ?? '');
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-    Navigator.of(
-      context,
-    ).pop(_SharedMemoryStoreEditResult(name: _nameController.text.trim()));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 620,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _DialogTextField(
-                  controller: _nameController,
-                  label: '名称',
-                  requiredField: true,
-                ),
-              ],
-            ),
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              _DialogTextField(
+                controller: _nameController,
+                label: l10n.settingsCharactersTagName,
+                requiredField: true,
+              ),
+              _DialogTextField(
+                controller: _descriptionController,
+                label: l10n.settingsCharactersTagDescription,
+                maxLines: 2,
+              ),
+              _DialogTextField(
+                controller: _promptContentController,
+                label: l10n.settingsCharactersTagPromptContent,
+                requiredField: true,
+                maxLines: 8,
+              ),
+            ],
           ),
         ),
       ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(onPressed: _save, child: Text(l10n.save)),
-      ],
     );
   }
 }
@@ -860,37 +650,32 @@ class _UserMarkdownEditorDialogState extends State<_UserMarkdownEditorDialog> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final textTheme = Theme.of(context).textTheme;
-    return Dialog.fullscreen(
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(widget.title),
-          leading: IconButton(
-            tooltip: l10n.cancel,
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close),
-          ),
-          actions: <Widget>[
-            TextButton(onPressed: _save, child: Text(l10n.save)),
-          ],
+    return OperitDialogScaffold(
+      title: widget.title,
+      maxWidth: 760,
+      maxHeight: 620,
+      showCloseButton: true,
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
-          child: TextField(
-            controller: _controller,
-            autofocus: true,
-            expands: true,
-            minLines: null,
-            maxLines: null,
-            textAlignVertical: TextAlignVertical.top,
-            style: textTheme.bodyMedium?.copyWith(
-              fontFamily: 'monospace',
-              height: 1.35,
-            ),
-            decoration: InputDecoration(
-              labelText: l10n.settingsCharactersUserMarkdownContent,
-              alignLabelWithHint: true,
-            ),
-          ),
+        FilledButton(onPressed: _save, child: Text(l10n.save)),
+      ],
+      child: TextField(
+        controller: _controller,
+        autofocus: true,
+        expands: true,
+        minLines: null,
+        maxLines: null,
+        textAlignVertical: TextAlignVertical.top,
+        style: textTheme.bodyMedium?.copyWith(
+          fontFamily: 'monospace',
+          height: 1.35,
+        ),
+        decoration: InputDecoration(
+          labelText: l10n.settingsCharactersUserMarkdownContent,
+          alignLabelWithHint: true,
         ),
       ),
     );
