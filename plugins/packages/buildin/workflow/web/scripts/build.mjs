@@ -19,14 +19,24 @@ await writeFile(
   "resources/workflow.html",
   `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>工作流</title><style>${css}</style></head><body><div id="root"></div><script>${js.replaceAll("</script", "<\\/script")}</script></body></html>`,
 );
-const packages = new Set(
-  Object.keys(result.metafile.inputs)
-    .map((path) => /^node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(path)?.[1])
-    .filter(Boolean),
-);
+// Resolve package directories from esbuild metafile inputs. With pnpm, bundled
+// inputs live below node_modules/.pnpm/<pkg>/node_modules/<name>; treating
+// `.pnpm` as a package name would make the license pass look for the invalid
+// path node_modules/.pnpm/package.json.
+const packageDirectories = new Map();
+for (const inputPath of Object.keys(result.metafile.inputs)) {
+  const pnpmMatch = /^(node_modules\/\.pnpm\/[^/]+\/node_modules\/(?:@[^/]+\/)?[^/]+)/.exec(inputPath);
+  const directMatch = /^(node_modules\/(?:@[^/]+\/)?[^/]+)/.exec(inputPath);
+  const directory = pnpmMatch?.[1] ?? directMatch?.[1];
+  if (directory) {
+    packageDirectories.set(
+      directory,
+      directory.slice(directory.lastIndexOf("/node_modules/") + "/node_modules/".length),
+    );
+  }
+}
 const notices = [];
-for (const name of [...packages].sort()) {
-  const directory = "node_modules/" + name;
+for (const [directory, name] of [...packageDirectories.entries()].sort(([left], [right]) => left.localeCompare(right))) {
   const metadata = JSON.parse(
     await readFile(directory + "/package.json", "utf8"),
   );
