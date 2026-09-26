@@ -111,6 +111,11 @@ class ChatViewModel {
     return _chat.currentChatIdFlow();
   }
 
+  /// Observes generic Core routing metadata for the selected chat binding.
+  Stream<core_proxy.BindingRouteStatus?> watchRouteStatus(String chatId) {
+    return clients.serverCoreNodeRouter.bindingRouteStatusFlow(key: chatId);
+  }
+
   /// Watches messages for one explicit main-runtime chat id.
   Stream<List<ChatUiMessage>> watchMessages(String chatId) {
     return _chat.chatMessagesFlow(chatId: chatId);

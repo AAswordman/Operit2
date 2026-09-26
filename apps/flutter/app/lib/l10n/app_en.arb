@@ -1929,5 +1929,24 @@
   "pluginLoadingKindMcp": "MCP",
   "pluginLoadingCompleteSuccess": "All packages and plugins loaded",
   "pluginLoadingCompleteWithFailures": "Some packages or plugins failed to load",
-  "pluginLoadingNoLogs": "No logs"
+  "pluginLoadingNoLogs": "No logs",
+  "chatRouteLocal": "Local",
+  "chatRouteRemote": "Remote {platform}",
+  "chatRouteRemoteOffline": "Remote {platform} offline",
+  "chatRouteLoading": "Loading execution device",
+  "chatRouteUnknown": "Execution device status unknown",
+  "@chatRouteRemote": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "@chatRouteRemoteOffline": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  }
 }

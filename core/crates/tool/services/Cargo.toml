@@ -1,6 +1,6 @@
 [package]
 name = "operit-tools"
-version = "2.0.0-preview.7"
+version = "2.0.0-preview.8"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -25,11 +25,11 @@ json5.workspace = true
 md-5 = "0.10"
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
-operit-model = { version = "2.0.0-preview.7", path = "../../foundation/model" }
-operit-plugin-sdk = { version = "2.0.0-preview.7", path = "../../plugin/sdk" }
+operit-model = { version = "2.0.0-preview.8", path = "../../foundation/model" }
+operit-plugin-sdk = { version = "2.0.0-preview.8", path = "../../plugin/sdk" }
 operit-route-macros = { path = "../../node/route-macros" }
 operit-store = { version = "0.1.0", path = "../../persistence/store" }
-operit-util = { version = "2.0.0-preview.7", path = "../../foundation/util" }
+operit-util = { version = "2.0.0-preview.8", path = "../../foundation/util" }
 regex.workspace = true
 serde.workspace = true
 serde_bytes = "0.11"
@@ -53,4 +53,4 @@ wasm-bindgen = { version = "0.2", optional = true }
 web-sys = { version = "0.3", features = ["Window", "XmlHttpRequest"], optional = true }
 
 [build-dependencies]
-operit-plugin-sdk-codegen = { version = "=2.0.0-preview.7", path = "../../plugin/codegen" }
+operit-plugin-sdk-codegen = { version = "=2.0.0-preview.8", path = "../../plugin/codegen" }

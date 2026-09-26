@@ -24,6 +24,7 @@ import 'share/ChatShareImagePreviewDialog.dart';
 import 'style/input/agent/AgentChatInputSection.dart';
 import 'style/input/classic/ClassicChatInputSection.dart';
 import 'style/input/common/InputProcessingStatusLane.dart';
+import 'style/input/common/ChatRouteStatusHint.dart';
 import 'style/input/common/PendingQueueMessageItem.dart';
 
 class ChatScreenContent extends StatelessWidget {
@@ -333,8 +334,18 @@ class ChatScreenContent extends StatelessWidget {
 
   /// Builds the chat input section selected by the saved input style.
   Widget _buildChatInputSection(String inputStyle) {
+    return ChatRouteStatusHint(
+      chatId: currentChatId,
+      viewModel: viewModel,
+      builder: (suffix) => _buildChatInputWithRouteHint(inputStyle, suffix),
+    );
+  }
+
+  /// Passes the same Core-provided route label to both composer styles.
+  Widget _buildChatInputWithRouteHint(String inputStyle, String suffix) {
     return switch (inputStyle) {
       UserPreferencesManager.INPUT_STYLE_AGENT => AgentChatInputSection(
+        hintSuffix: suffix,
         controller: messageController,
         focusNode: inputFocusNode,
         isLoading: loading,
@@ -371,6 +382,7 @@ class ChatScreenContent extends StatelessWidget {
         onSpeechInput: onSpeechInput,
       ),
       UserPreferencesManager.INPUT_STYLE_CLASSIC => ClassicChatInputSection(
+        hintSuffix: suffix,
         controller: messageController,
         focusNode: inputFocusNode,
         isLoading: loading,

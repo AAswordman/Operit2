@@ -17,6 +17,8 @@ use operit_store::CoreNodeBindingStore::{CoreNodeBindingRecord, CoreNodeBindingS
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
 use operit_store::NetworkControlStore::NetworkControlStore;
+use operit_store::PreferencesDataStore::StateFlow;
+use serde::{Deserialize, Serialize};
 use operit_tools::runtime_support::{
     CoreNodeToolRuntime, RuntimeCoreNodeRouteState, RuntimeCoreNodeStatus,
 };
@@ -31,6 +33,18 @@ use crate::GeneratedCoreRoute;
 use crate::SpaceRuntime::SpaceRuntime;
 
 const ROUTED_BINDING_WATCH_RECHECK_DELAY_MS: u64 = 50;
+
+/// Reports both persisted ownership and the device currently selected by routing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BindingRouteStatus {
+    pub ownerNodeId: String,
+    pub ownerPlatform: String,
+    pub ownerIsLocal: bool,
+    pub ownerReachable: bool,
+    pub activeNodeId: String,
+    pub activeIsLocal: bool,
+    pub generation: i64,
+}
 
 /// Stores one push session whose CoreNode route is fixed when the stream opens.
 #[derive(Clone)]
@@ -342,7 +356,7 @@ impl CoreNodeRouter {
     /// Resolves one Binding to its selected device.
     #[allow(non_snake_case)]
     fn bindingRouteNodeId(&self, key: &str) -> Result<String, CoreLinkError> {
-        let targetNodeId = self.bindingStore.bindingNodeId(key)?;
+        let targetNodeId = self.effectiveBinding(key)?.nodeId;
         operit_util::AppLogger::AppLogger::trace(
             "CoreNodeRouteTrace",
             &format!(
@@ -351,6 +365,71 @@ impl CoreNodeRouter {
             ),
         );
         Ok(targetNodeId)
+    }
+
+    /// Selects local execution while the bound owner is unavailable without mutating ownership.
+    fn effectiveBinding(&self, key: &str) -> Result<CoreNodeBindingRecord, CoreLinkError> {
+        let mut binding = self.bindingStore.binding(key)?;
+        if !self.nodeIsReachable(&binding.nodeId).map_err(CoreLinkError::internal)? {
+            binding.nodeId = self.localNodeId.clone();
+        }
+        Ok(binding)
+    }
+
+    /// Returns persisted ownership and the effective route for an opaque binding key.
+    pub fn bindingRouteStatus(&self, key: String) -> Result<BindingRouteStatus, String> {
+        let binding = self.bindingStore.binding(&key).map_err(|error| error.to_string())?;
+        let ownerReachable = self.nodeIsReachable(&binding.nodeId)?;
+        let profiles = self.spaceStore.deviceProfiles()?;
+        let profile = profiles.get(&binding.nodeId).ok_or_else(|| {
+            format!("Binding owner device profile is missing: {}", binding.nodeId)
+        })?;
+        let ownerIsLocal = binding.nodeId == self.localNodeId;
+        Ok(BindingRouteStatus {
+            activeNodeId: if ownerReachable { binding.nodeId.clone() } else { self.localNodeId.clone() },
+            activeIsLocal: ownerIsLocal || !ownerReachable,
+            ownerNodeId: binding.nodeId,
+            ownerPlatform: profile.platform.clone(),
+            ownerIsLocal,
+            ownerReachable,
+            generation: binding.generation,
+        })
+    }
+
+    /// Observes generic binding and reachability changes; None marks invalid route metadata.
+    pub fn bindingRouteStatusFlow(&self, key: String) -> Result<StateFlow<Option<BindingRouteStatus>>, String> {
+        let (changes, mut changed) = tokio::sync::mpsc::channel(1);
+        let subscription = operit_store::SyncOperationStore::subscribeSyncMutations(move || {
+            let _ = changes.try_send(());
+        });
+        let mut peers = operit_access_runtime::CoreNodePeerLink::subscribePeerLinkChanges();
+        let state = StateFlow::new(Some(self.bindingRouteStatus(key.clone())?));
+        let (stop, mut stopped) = oneshot::channel::<()>();
+        let observed = state.map(move |value| { let _keepAlive = &stop; value });
+        let router = self.clone();
+        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+            "binding-route-status-watch", Box::new(move || Box::pin(async move {
+                let _subscription = subscription;
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = &mut stopped => break,
+                        change = changed.recv() => { if change.is_none() { break; } },
+                        change = peers.recv() => {
+                            if matches!(change, Err(tokio::sync::broadcast::error::RecvError::Closed)) { break; }
+                        },
+                    }
+                    match router.bindingRouteStatus(key.clone()) {
+                        Ok(status) => state.set_value(Some(status)),
+                        Err(error) => {
+                            state.set_value(None);
+                            AppLogger::w("CoreNodeRouter", &format!("Binding status invalid: {error}"));
+                        },
+                    }
+                }
+            })),
+        ).map_err(|error| error.to_string())?;
+        Ok(observed)
     }
 
     /// Enforces the capability declared by one generated Space route.
@@ -1368,8 +1447,13 @@ impl CoreNodeRouter {
         let propertyName = request.propertyName.clone();
         let mut segmentCount = 0_u64;
         let mut initialSnapshotForwarded = false;
+        let (changes, mut routeChanges) = tokio::sync::mpsc::channel(1);
+        let _subscription = operit_store::SyncOperationStore::subscribeSyncMutations(move || {
+            let _ = changes.try_send(());
+        });
+        let mut peerChanges = operit_access_runtime::CoreNodePeerLink::subscribePeerLinkChanges();
         'outer: loop {
-            let binding = match self.bindingStore.binding(&bindingKey) {
+            let binding = match self.effectiveBinding(&bindingKey) {
                 Ok(binding) => binding,
                 Err(error) => {
                     operit_util::AppLogger::AppLogger::e(
@@ -1449,7 +1533,7 @@ impl CoreNodeRouter {
                             VERBOSE_LEVEL_6,
                         );
                         if self
-                            .waitForBindingFlowRetryOrCancel(&mut cancelReceiver)
+                            .waitForBindingFlowRetryOrCancel(&mut cancelReceiver, &mut routeChanges, &mut peerChanges)
                             .await
                         {
                             break;
@@ -1474,7 +1558,7 @@ impl CoreNodeRouter {
                         break 'outer;
                     }
                     maybeEvent = stream.recv() => {
-                        let Some(event) = maybeEvent else {
+                        let Some(mut event) = maybeEvent else {
                             if !firstEventLogged {
                                 AppLogger::e(
                                     "CoreNodeRouter",
@@ -1520,7 +1604,7 @@ impl CoreNodeRouter {
                             break;
                         }
                         if initialSnapshotForwarded && event.kind == CoreEventKind::Snapshot {
-                            continue;
+                            event.kind = CoreEventKind::Changed;
                         }
                         if !self.bindingStillCurrent(&bindingKey, &binding) {
                             AppLogger::v_with_level(
@@ -1604,7 +1688,7 @@ impl CoreNodeRouter {
             }
             if self.bindingStillCurrent(&bindingKey, &binding)
                 && self
-                    .waitForBindingFlowRetryOrCancel(&mut cancelReceiver)
+                    .waitForBindingFlowRetryOrCancel(&mut cancelReceiver, &mut routeChanges, &mut peerChanges)
                     .await
             {
                 break;
@@ -1612,28 +1696,26 @@ impl CoreNodeRouter {
         }
     }
 
-    /// Waits briefly before retrying a physical Binding Flow segment.
+    /// Waits for routing evidence before reopening a failed physical segment.
     #[allow(non_snake_case)]
     async fn waitForBindingFlowRetryOrCancel(
         &self,
         cancelReceiver: &mut oneshot::Receiver<()>,
+        routeChanges: &mut tokio::sync::mpsc::Receiver<()>,
+        peerChanges: &mut tokio::sync::broadcast::Receiver<()>,
     ) -> bool {
         tokio::select! {
             biased;
             _ = &mut *cancelReceiver => true,
-            delayResult = defaultHostRuntimeTaskSchedulerHost()
-                .waitForHostRuntimeDelay(ROUTED_BINDING_WATCH_RECHECK_DELAY_MS) => {
-                let _ = delayResult;
-                false
-            }
+            event = routeChanges.recv() => event.is_none(),
+            event = peerChanges.recv() => matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)),
         }
     }
 
     /// Reports whether a Binding record still selects the same physical watch segment.
     #[allow(non_snake_case)]
     fn bindingStillCurrent(&self, bindingKey: &str, previous: &CoreNodeBindingRecord) -> bool {
-        self.bindingStore
-            .binding(bindingKey)
+        self.effectiveBinding(bindingKey)
             .map(|current| {
                 current.nodeId == previous.nodeId && current.generation == previous.generation
             })
@@ -2297,9 +2379,8 @@ impl CoreRouteRuntime for CoreNodeRouter {
                     Err(error) if error.code == "CORE_BINDING_NOT_FOUND" => return Ok(false),
                     Err(error) => return Err(error),
                 };
-                // Ownership is independent of transport availability. The managed
-                // Binding flow owns connection establishment for this remote source.
-                Ok(targetNodeId != self.localNodeId)
+                Ok(targetNodeId != self.localNodeId
+                    && self.nodeIsReachable(&targetNodeId).map_err(CoreLinkError::internal)?)
             }
         }
     }
@@ -2332,7 +2413,8 @@ impl CoreRouteRuntime for CoreNodeRouter {
                     Err(error) if error.code == "CORE_BINDING_NOT_FOUND" => return Ok(false),
                     Err(error) => return Err(error),
                 };
-                Ok(targetNodeId == self.localNodeId)
+                Ok(targetNodeId == self.localNodeId
+                    || !self.nodeIsReachable(&targetNodeId).map_err(CoreLinkError::internal)?)
             }
         }
     }
@@ -3175,9 +3257,9 @@ mod tests {
         )
     }
 
-    /// Keeps remote-owned watches routed even before their peer connection becomes available.
+    /// Selects local sources without rewriting the persisted remote owner while offline.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn remote_watch_owner_is_preserved_while_peer_is_offline() {
+    async fn offline_binding_uses_local_source_without_changing_owner() {
         let _globalGuard = routeTestGlobalLock().lock().await;
         installTestRuntimeScheduler();
         let router = testCoreNodeRouter("offline-client", "offline-owner", "offline-chat");
@@ -3186,9 +3268,15 @@ mod tests {
             ("chatId".to_string(), CoreValue::String("offline-chat".to_string())),
         ]));
         assert!(!router.nodeIsReachable("offline-owner").unwrap());
+        let status = router.bindingRouteStatus("offline-chat".into()).unwrap();
+        assert_eq!(status.ownerNodeId, "offline-owner");
+        assert!(!status.ownerReachable);
+        assert!(status.activeIsLocal);
+        assert_eq!(router.bindingRouteNodeId("offline-chat").unwrap(), "offline-client");
+        assert_eq!(router.bindingStore.bindingNodeId("offline-chat").unwrap(), "offline-owner");
         for method in ["chatMessagesFlow", "chatStateFlow"] {
-            assert!(router.shouldRouteWatch(method, &args).unwrap(), "{method} must retain its remote owner");
-            assert!(!router.shouldUseLocalWatchSource(method, &args).unwrap());
+            assert!(!router.shouldRouteWatch(method, &args).unwrap());
+            assert!(router.shouldUseLocalWatchSource(method, &args).unwrap());
         }
     }
 

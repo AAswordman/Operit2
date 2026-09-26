@@ -27,6 +27,7 @@ import '../common/PendingQueueMessageItem.dart';
 class ClassicChatInputSection extends StatefulWidget {
   const ClassicChatInputSection({
     super.key,
+    this.hintSuffix = '',
     required this.controller,
     required this.focusNode,
     required this.isLoading,
@@ -63,6 +64,7 @@ class ClassicChatInputSection extends StatefulWidget {
     this.onAttachPackage,
   });
 
+  final String hintSuffix;
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isLoading;
@@ -461,15 +463,16 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      if (widget.currentChatId != null)
-                        ChatComposerSlotHost(
-                          viewModel: widget.viewModel,
-                          chatId: widget.currentChatId!,
-                          isProcessing: processing,
-                          pendingQueueCount: widget.pendingQueueMessages.length,
-                        ),
-                      if (widget.pendingQueueMessages.isNotEmpty)
+                      children: <Widget>[
+                        if (widget.currentChatId != null)
+                          ChatComposerSlotHost(
+                            viewModel: widget.viewModel,
+                            chatId: widget.currentChatId!,
+                            isProcessing: processing,
+                            pendingQueueCount:
+                                widget.pendingQueueMessages.length,
+                          ),
+                        if (widget.pendingQueueMessages.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: _ClassicPendingMessageQueuePanel(
@@ -493,6 +496,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                             ),
                           ),
                         _ClassicInputBody(
+                          hintSuffix: widget.hintSuffix,
                           controller: widget.controller,
                           focusNode: widget.focusNode,
                           inputState: widget.inputState,
@@ -533,6 +537,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
 
 class _ClassicInputBody extends StatelessWidget {
   const _ClassicInputBody({
+    required this.hintSuffix,
     required this.controller,
     required this.focusNode,
     required this.inputState,
@@ -559,6 +564,7 @@ class _ClassicInputBody extends StatelessWidget {
     required this.onAttach,
   });
 
+  final String hintSuffix;
   final TextEditingController controller;
   final FocusNode focusNode;
   final core_proxy.InputProcessingState inputState;
@@ -633,7 +639,7 @@ class _ClassicInputBody extends StatelessWidget {
                         height: 20 / 14,
                       ),
                       decoration: InputDecoration(
-                        hintText: l10n.askOperitHint,
+                        hintText: '${l10n.askOperitHint}$hintSuffix',
                         hintStyle: theme.textTheme.bodyMedium?.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),

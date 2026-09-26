@@ -1922,5 +1922,24 @@
   "pluginLoadingKindMcp": "MCP",
   "pluginLoadingCompleteSuccess": "包和插件已全部加载",
   "pluginLoadingCompleteWithFailures": "部分包或插件加载失败",
-  "pluginLoadingNoLogs": "没有日志"
+  "pluginLoadingNoLogs": "没有日志",
+  "chatRouteLocal": "本地",
+  "chatRouteRemote": "远程{platform}",
+  "chatRouteRemoteOffline": "远程{platform} 离线",
+  "chatRouteLoading": "正在读取运行设备",
+  "chatRouteUnknown": "运行设备状态未知",
+  "@chatRouteRemote": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "@chatRouteRemoteOffline": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  }
 }

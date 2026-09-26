@@ -3872,4 +3872,23 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pluginLoadingNoLogs => 'No logs';
+
+  @override
+  String get chatRouteLocal => 'Local';
+
+  @override
+  String chatRouteRemote(String platform) {
+    return 'Remote $platform';
+  }
+
+  @override
+  String chatRouteRemoteOffline(String platform) {
+    return 'Remote $platform offline';
+  }
+
+  @override
+  String get chatRouteLoading => 'Loading execution device';
+
+  @override
+  String get chatRouteUnknown => 'Execution device status unknown';
 }

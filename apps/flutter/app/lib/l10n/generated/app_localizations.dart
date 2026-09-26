@@ -6962,6 +6962,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No logs'**
   String get pluginLoadingNoLogs;
+
+  /// No description provided for @chatRouteLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get chatRouteLocal;
+
+  /// No description provided for @chatRouteRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote {platform}'**
+  String chatRouteRemote(String platform);
+
+  /// No description provided for @chatRouteRemoteOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote {platform} offline'**
+  String chatRouteRemoteOffline(String platform);
+
+  /// No description provided for @chatRouteLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading execution device'**
+  String get chatRouteLoading;
+
+  /// No description provided for @chatRouteUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Execution device status unknown'**
+  String get chatRouteUnknown;
 }
 
 class _AppLocalizationsDelegate

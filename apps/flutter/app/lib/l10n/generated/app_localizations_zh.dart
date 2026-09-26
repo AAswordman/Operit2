@@ -3721,4 +3721,23 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get pluginLoadingNoLogs => '没有日志';
+
+  @override
+  String get chatRouteLocal => '本地';
+
+  @override
+  String chatRouteRemote(String platform) {
+    return '远程$platform';
+  }
+
+  @override
+  String chatRouteRemoteOffline(String platform) {
+    return '远程$platform 离线';
+  }
+
+  @override
+  String get chatRouteLoading => '正在读取运行设备';
+
+  @override
+  String get chatRouteUnknown => '运行设备状态未知';
 }

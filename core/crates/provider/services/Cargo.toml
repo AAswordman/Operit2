@@ -1,6 +1,6 @@
 [package]
 name = "operit-providers"
-version = "2.0.0-preview.7"
+version = "2.0.0-preview.8"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -18,11 +18,11 @@ getrandom.workspace = true
 json5.workspace = true
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
-operit-model = { version = "2.0.0-preview.7", path = "../../foundation/model" }
-operit-plugin-sdk = { version = "2.0.0-preview.7", path = "../../plugin/sdk" }
+operit-model = { version = "2.0.0-preview.8", path = "../../foundation/model" }
+operit-plugin-sdk = { version = "2.0.0-preview.8", path = "../../plugin/sdk" }
 operit-store = { version = "0.1.0", path = "../../persistence/store" }
-operit-tools = { version = "2.0.0-preview.7", path = "../../tool/services", default-features = false }
-operit-util = { version = "2.0.0-preview.7", path = "../../foundation/util" }
+operit-tools = { version = "2.0.0-preview.8", path = "../../tool/services", default-features = false }
+operit-util = { version = "2.0.0-preview.8", path = "../../foundation/util" }
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

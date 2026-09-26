@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "operit-plugin-sdk-ipc"
-version = "2.0.0-preview.7"
+version = "2.0.0-preview.8"
 dependencies = [
  "async-trait",
  "operit-host-api",

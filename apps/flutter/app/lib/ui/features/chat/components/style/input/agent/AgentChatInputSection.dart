@@ -28,6 +28,7 @@ import 'AgentModelSelectorPopup.dart';
 class AgentChatInputSection extends StatefulWidget {
   const AgentChatInputSection({
     super.key,
+    this.hintSuffix = '',
     required this.controller,
     required this.focusNode,
     required this.isLoading,
@@ -66,6 +67,7 @@ class AgentChatInputSection extends StatefulWidget {
     this.onModelSelector,
   });
 
+  final String hintSuffix;
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isLoading;
@@ -648,6 +650,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
                     child: _InputBody(
+                      hintSuffix: widget.hintSuffix,
                       controller: widget.controller,
                       focusNode: widget.focusNode,
                       inputState: widget.inputState,
@@ -1014,6 +1017,7 @@ LiquidGlassSettings _inputTransparentGlassSettings(BuildContext context) {
 
 class _InputBody extends StatelessWidget {
   const _InputBody({
+    required this.hintSuffix,
     required this.controller,
     required this.focusNode,
     required this.inputState,
@@ -1051,6 +1055,7 @@ class _InputBody extends StatelessWidget {
     required this.onModelSelector,
   });
 
+  final String hintSuffix;
   final TextEditingController controller;
   final FocusNode focusNode;
   final core_proxy.InputProcessingState inputState;
@@ -1146,7 +1151,7 @@ class _InputBody extends StatelessWidget {
                       height: 20 / 14,
                     ),
                     decoration: InputDecoration(
-                      hintText: l10n.askOperitHint,
+                      hintText: '${l10n.askOperitHint}$hintSuffix',
                       hintStyle: theme.textTheme.bodyMedium?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
