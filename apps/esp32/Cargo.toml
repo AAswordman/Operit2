@@ -44,10 +44,12 @@ esp_idf_components = [
   "esp_netif",
   "esp_wifi",
   "esp_http_server",
+  "espressif__mdns",
   "lvgl_port",
   "lvgl__lvgl",
 ]
 extra_components = [
+  { remote_component = { name = "espressif/mdns", version = "1.2.0" } },
   { remote_component = { name = "lvgl/lvgl", version = "9.3.0" }, bindings_header = "lvgl_bindings.h", bindings_module = "lvgl" },
   { component_dirs = ["lvgl_port"] },
 ]

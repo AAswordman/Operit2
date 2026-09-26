@@ -1,24 +1,24 @@
 #![allow(non_snake_case)]
 
-mod edge_chat;
-mod edge_session;
 mod config;
+mod edge_chat;
 #[cfg(target_os = "espidf")]
 mod edge_link;
 #[cfg(target_os = "espidf")]
 mod edge_screen;
 #[cfg(target_os = "espidf")]
 mod edge_serial;
+mod edge_session;
 #[cfg(target_os = "espidf")]
 mod edge_store;
 #[cfg(target_os = "espidf")]
 mod lvgl;
 #[cfg(target_os = "espidf")]
-mod ui_deploy;
-#[cfg(target_os = "espidf")]
 mod settings;
 mod status;
 mod ui;
+#[cfg(target_os = "espidf")]
+mod ui_deploy;
 
 #[cfg(target_os = "espidf")]
 mod web;
@@ -45,14 +45,6 @@ fn main() {
 fn runFirmware() -> operit_host_api::HostResult<()> {
     use std::sync::Arc;
 
-    use esp_idf_hal::delay::FreeRtos;
-    use esp_idf_hal::gpio::Gpio0;
-    use esp_idf_hal::peripherals::Peripherals;
-    use esp_idf_hal::uart::{config::Config as UartConfig, UartDriver};
-    use esp_idf_hal::units::Hertz;
-    use esp_idf_svc::nvs::EspDefaultNvsPartition;
-    use operit_board_esp32::{Esp32Board, INITIAL_EXPRESSION, LED_GREEN_PIN, LED_RED_PIN};
-    use operit_host_api::{HostError, RobotFaceHost};
     use crate::config::Esp32FirmwareConfig;
     use crate::edge_screen::Esp32ScreenService;
     use crate::edge_store::Esp32EdgePairingStore;
@@ -61,12 +53,18 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     use crate::status::FirmwareStatus;
     use crate::web::Esp32WebHome;
     use crate::wifi::Esp32Wifi;
+    use esp_idf_hal::delay::FreeRtos;
+    use esp_idf_hal::peripherals::Peripherals;
+    use esp_idf_svc::nvs::EspDefaultNvsPartition;
+    use operit_board_esp32::{Esp32Board, INITIAL_EXPRESSION, LED_GREEN_PIN, LED_RED_PIN};
+    use operit_host_api::{HostError, RobotFaceHost};
 
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
-    log::info!("operit-esp32 stability diagnostics v1; reset_reason={}", unsafe {
-        esp_idf_svc::sys::esp_reset_reason()
-    });
+    log::info!(
+        "operit-esp32 stability diagnostics v1; reset_reason={}",
+        unsafe { esp_idf_svc::sys::esp_reset_reason() }
+    );
     logRuntimeHealth("boot");
 
     let peripherals = Peripherals::take().map_err(|error| HostError::new(error.to_string()))?;
@@ -100,6 +98,9 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     let mut lvgl = Esp32Lvgl::new(&board)?;
     let hostManager = board.installIntoHostManager();
     let screenMirror = board.screenMirror();
+    // Station preview is disabled below. Release its 76,800-byte copy too;
+    // leaving it allocated starves the authenticated Link task of stack/heap.
+    screenMirror.disablePixelMirror();
     let screenService = Arc::new(Esp32ScreenService::new(Arc::clone(&screenMirror)));
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
     let setExpression = |expression: &str| -> operit_host_api::HostResult<()> {
@@ -109,24 +110,31 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         status.setExpression(state.expression);
         Ok(())
     };
-    let deviceIo = hostManager.deviceIoHost.as_ref()
+    let deviceIo = hostManager
+        .deviceIoHost
+        .as_ref()
         .ok_or_else(|| HostError::new("Board digital I/O is unavailable"))?;
     setExpression("booting")?;
     // Show the launcher even if the configured network is unavailable.
     lvgl.pump(1);
     let (_wifi, wifiMode) = Esp32Wifi::connectOrSetup(modem, &config, nvsPartition.clone())?;
+    logRuntimeHealth("wifi-ready");
     let _sntp = if wifiMode == crate::wifi::Esp32WifiMode::Station {
         Some(Esp32Wifi::startTimeSync()?)
     } else {
         None
     };
+    logRuntimeHealth("sntp-ready");
     let _setupServer = match wifiMode {
         crate::wifi::Esp32WifiMode::Station => {
             let ip = _wifi.ipv4()?;
             status.setWifiSsid(config.wifiSsid.clone());
             status.setIpv4(ip.to_string());
             setExpression("online")?;
-            deviceIo.setDigitalOutput(operit_host_api::DeviceDigitalOutputRequest { pin: LED_GREEN_PIN, level: true })?;
+            deviceIo.setDigitalOutput(operit_host_api::DeviceDigitalOutputRequest {
+                pin: LED_GREEN_PIN,
+                level: true,
+            })?;
             log::info!("operit-esp32 online at http://{ip}/");
             None
         }
@@ -134,7 +142,10 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
             status.setWifiSsid("Operit-ESP32-Setup");
             status.setIpv4("192.168.4.1");
             setExpression("error")?;
-            deviceIo.setDigitalOutput(operit_host_api::DeviceDigitalOutputRequest { pin: LED_RED_PIN, level: true })?;
+            deviceIo.setDigitalOutput(operit_host_api::DeviceDigitalOutputRequest {
+                pin: LED_RED_PIN,
+                level: true,
+            })?;
             log::info!("operit-esp32 setup AP ready: Operit-ESP32-Setup / http://192.168.4.1/");
             Some(Esp32SetupServer::start(
                 Arc::clone(&status),
@@ -143,47 +154,30 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
             )?)
         }
     };
-    let edgeLink = edge_link::Esp32EdgeLinkServer::start(
+    let mut edgeLink = edge_link::Esp32EdgeLinkServer::start(
         config.edgePort,
         config.edgeToken.clone(),
         Arc::clone(&status),
         edgeStore,
-        if config.hasEdgeToken() {
-            Some(
-                UartDriver::new(
-                    peripherals.uart0,
-                    peripherals.pins.gpio1,
-                    peripherals.pins.gpio3,
-                    Option::<Gpio0<'static>>::None,
-                    Option::<Gpio0<'static>>::None,
-                    &UartConfig::new().baudrate(Hertz(115_200)),
-                )
-                .map_err(|error| HostError::new(format!("Edge UART: {error}")))?,
-            )
-        } else {
-            None
-        },
+        // UART0 is shared with the USB console; TCP+mDNS is the Windows Core
+        // discovery path and avoids spawning a second reader task.
+        None,
     )?;
-    let edgeReady = edgeLink.is_some();
-    let _home =
-        if wifiMode == crate::wifi::Esp32WifiMode::Station && !status.snapshot().ipv4.is_empty() {
-            Some(Esp32WebHome::start(
-                Arc::clone(&status),
-                screenMirror,
-                Arc::clone(&screenService),
-                config.httpPort,
-                config.edgeToken.clone(),
-            )?)
-        } else {
-            None
-        };
+    log::info!("Edge Link listener enabled: {}", edgeLink.is_some());
+    logRuntimeHealth("edge-thread-started");
+    // The optional station preview stays disabled with its pixel mirror.
+    // Core discovery and pairing use mDNS + TCP 8765.
+    let _home: Option<Esp32WebHome> = None;
+    logRuntimeHealth("http-start-complete");
 
-    updateStatus(&mut lvgl, &status, edgeReady);
+    // The listener being enabled is not the same as having a live Space
+    // route. The display must start offline until Core has admitted the Edge.
+    updateStatus(&mut lvgl, &status, crate::edge_chat::isConnected());
     lvgl.pump(1);
     let mut lastExpression = status.snapshot().expression;
-    let mut swipe = crate::ui::SwipeTracker::new();
     logRuntimeHealth("ready");
     let mut nextHealth = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut nextChatUi = std::time::Instant::now();
     loop {
         for input in screenService.drainInputs() {
             match input.action.as_str() {
@@ -218,11 +212,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 None
             }
         };
-        if let Some(crate::ui::UiGesture::Back) =
-            swipe.onSample(point.map(|sample| (sample.x, sample.y)))
-        {
-            lvgl.goHome();
-        }
+        // The shared LVGL runtime owns drawer gestures; do not intercept Back here.
         lvgl.setTouch(point.map(|sample| (sample.x, sample.y)));
         lvgl.pump(20);
         for action in lvgl.drainActions() {
@@ -241,9 +231,29 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 }
                 "edge_search" => setExpression("listening")?,
                 "edge_pair" => setExpression("listening")?,
+                "edge_unpair" => {
+                    if let Some(edgeLink) = edgeLink.as_ref() {
+                        edgeLink
+                            .clearPairings()
+                            .map_err(|error| HostError::new(format!("clear Edge pairing: {error}")))?;
+                    }
+                    crate::edge_chat::clear();
+                    status.setPairingCode("");
+                    setExpression("neutral")?;
+                }
                 "edge_chat" => {}
+                "edge_send" => {
+                    let draft = lvgl.chatDraft();
+                    if let Err(error) = crate::edge_chat::send(draft) {
+                        log::warn!("operit-esp32 chat send: {error}");
+                        lvgl.chatSendResult(Err(error));
+                    }
+                }
                 _ => log::debug!("operit-esp32 LVGL action: {action}"),
             }
+        }
+        if let Some(result) = crate::edge_chat::takeSendResult() {
+            lvgl.chatSendResult(result);
         }
         if let Ok(face) = faceHost.getExpression() {
             if face.expression != lastExpression {
@@ -251,9 +261,20 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 status.setExpression(face.expression);
             }
         }
-        updateStatus(&mut lvgl, &status, edgeReady);
-        lvgl.setChatPreview(&crate::edge_chat::preview());
-        if std::time::Instant::now() >= nextHealth {
+        // Poll first so a newly accepted Core carrier is reflected on the
+        // display in the same loop iteration.
+        if let Some(edgeLink) = edgeLink.as_mut() {
+            edgeLink.poll();
+        }
+        updateStatus(&mut lvgl, &status, crate::edge_chat::isConnected());
+        let now = std::time::Instant::now();
+        if now >= nextChatUi {
+            lvgl.setChatPreview(&crate::edge_chat::preview());
+            lvgl.setChatScreen(&crate::edge_chat::screenText());
+            lvgl.setChatTask(&crate::edge_chat::taskStatus());
+            nextChatUi = now + std::time::Duration::from_millis(250);
+        }
+        if now >= nextHealth {
             logRuntimeHealth("running");
             nextHealth = std::time::Instant::now() + std::time::Duration::from_secs(30);
         }
@@ -263,7 +284,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
 
 /// Fixed-size diagnostics: no history buffer or framebuffer copies.
 #[cfg(target_os = "espidf")]
-fn logRuntimeHealth(stage: &str) {
+pub(crate) fn logRuntimeHealth(stage: &str) {
     use esp_idf_svc::sys;
     unsafe {
         log::info!(

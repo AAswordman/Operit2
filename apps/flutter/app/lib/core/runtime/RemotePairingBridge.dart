@@ -99,6 +99,19 @@ class RemotePairingBridge {
     );
   }
 
+  /// Starts pairing with an mDNS-discovered Edge using its advertised hash.
+  Future<generated.RuntimeEdgePairStartResult> startEdgeWithTokenHash({
+    required String endpoint,
+    required String tokenHash,
+  }) async {
+    final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
+    return _clients.server.runtimeRemoteLinkService.startEdgePairing(
+      endpoint: endpoint,
+      tokenHash: tokenHash,
+      clientDeviceInfo: clientDeviceInfo,
+    );
+  }
+
   /// Completes Edge pairing and registers the Edge as a Space PeerLink member.
   Future<generated.PairedEdgeSessionRecord> finishEdge({
     required String pairingId,

@@ -1005,3 +1005,8 @@ footer {
 @media(max-width:760px){.header-actions{gap:5px}.header-actions button{padding:6px 8px}.page-toolbar{padding:8px;gap:6px}.page-toolbar label{gap:5px}.page-toolbar select{width:130px;font-size:12px}.page-toolbar button{font-size:11px}.handle-nw{left:-16px;top:-16px}.handle-ne{right:-16px;top:-16px}.handle-sw{left:-16px;bottom:-16px}.handle-se{right:-16px;bottom:-16px}.page-settings{grid-template-columns:1fr}#ai-api-config input{font-size:16px}}
 
 #deploy-dialog{width:min(650px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;color:var(--text);background:var(--panel);border:1px solid #45566a;border-radius:14px;overflow:auto}#deploy-dialog::backdrop{background:#040912b8}#flash-output{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto}#deploy-feedback{color:var(--accent)}
+
+.host-composer { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 12px 0; }
+.host-composer label { flex: 1; min-width: 160px; font-size: 12px; }
+.host-composer input { display: block; width: 100%; margin-top: 6px; }
+.host-composer output { flex-basis: 100%; font-size: 12px; }

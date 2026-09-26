@@ -74,6 +74,10 @@ export interface RuntimeModule {
   _operit_lvgl_set_connection(connected: boolean, configured: boolean): void;
   _operit_lvgl_set_theme(index: number, circle: boolean): void;
   _operit_lvgl_theme_index(): number;
+  _operit_lvgl_debug_tree?(): number;
+  _operit_lvgl_debug_snapshot?(): number;
+  _operit_lvgl_debug_tap?(id: number): boolean;
+  _operit_lvgl_debug_swipe?(direction: number): boolean;
   _simulator_frame(): number;
   _simulator_generation(): number;
   _simulator_heap_used(): number;

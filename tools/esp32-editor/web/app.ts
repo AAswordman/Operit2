@@ -41,18 +41,43 @@ let generation = -1;
 let lastFrame = 0;
 let pressed = false;
 let sourceHash = '';
+interface DeviceState {
+  running?: boolean; connected?: boolean; pairingCode?: string; spaceState?: string;
+  chatPreview?: string; chatScreen?: string; chatTask?: string;
+  chatSendResult?: {ok: boolean; error?: string} | null;
+}
+let deviceRunning = false;
+const composer = document.createElement('form');
+composer.className = 'host-composer';
+composer.innerHTML = '<label>电脑键盘输入（支持中文输入法）<input name="message" maxlength="120" autocomplete="off" placeholder="输入后发送到屏幕中的当前对话"></label><button type="submit">发送</button><output aria-live="polite"></output>';
+stage.after(composer);
+const hostInput = composer.querySelector<HTMLInputElement>('input')!;
+const hostStatus = composer.querySelector<HTMLOutputElement>('output')!;
+let submittedHostText = '';
+composer.addEventListener('submit', event => {
+  event.preventDefault();
+  if (!runtime || window.operitEditor?.isEditing()) return;
+  submittedHostText = hostInput.value;
+  runtime.ccall('operit_lvgl_set_chat_draft', null, ['string'], [hostInput.value]);
+  runtime.ccall('operit_lvgl_submit_chat', null, [], []);
+});
 window.addEventListener('operit-simulator-state', event => {
-  const state = (event as CustomEvent<{running: boolean; connected: boolean; pairingCode?: string; spaceState?: string; chatPreview?: string}>).detail;
-  wifiInput.disabled = state.running;
-  edgeInput.disabled = state.running;
+  const state = (event as CustomEvent<DeviceState>).detail;
+  wifiInput.disabled = !!state.running;
+  edgeInput.disabled = !!state.running;
   if (state.running) {
     wifiInput.checked = true;
-    edgeInput.checked = state.connected;
+    edgeInput.checked = !!state.connected;
     if (runtime) {
       applyControls();
       setDeviceState(state);
     }
+  } else if (deviceRunning && runtime) {
+    wifiInput.checked = edgeInput.checked = false;
+    applyControls();
+    setDeviceState({chatTask: '离线', chatScreen: '模拟设备已停止', chatSendResult: {ok: false, error: '模拟设备已停止，草稿已保留'}});
   }
+  deviceRunning = !!state.running;
 });
 
 /** Adds a timestamped message to the bounded event log. */
@@ -109,11 +134,20 @@ function applyControls(): void {
   currentRuntime.ccall('operit_lvgl_set_expression', null, ['string'], [expressionSelect.value]);
 }
 
-function setDeviceState(state: {pairingCode?: string; spaceState?: string; chatPreview?: string}): void {
+function setDeviceState(state: DeviceState): void {
   if (!runtime) return;
   runtime.ccall('operit_lvgl_set_pairing_code', null, ['string'], [state.pairingCode ?? '']);
-  runtime.ccall('operit_lvgl_set_space_state', null, ['string'], [state.spaceState ?? 'Waiting for Space']);
-  runtime.ccall('operit_lvgl_set_chat_preview', null, ['string'], [state.chatPreview ?? 'No chat session']);
+  runtime.ccall('operit_lvgl_set_space_state', null, ['string'], [state.spaceState ?? '等待连接 Operit']);
+  runtime.ccall('operit_lvgl_set_chat_preview', null, ['string'], [state.chatPreview ?? '尚未连接对话']);
+  runtime.ccall('operit_lvgl_set_chat_screen', null, ['string'], [state.chatScreen ?? '连接 Operit 后开始聊天']);
+  runtime.ccall('operit_lvgl_set_chat_task', null, ['string'], [state.chatTask ?? '离线']);
+  if (state.chatSendResult) finishSend(state.chatSendResult.ok, state.chatSendResult.error);
+}
+
+function finishSend(ok: boolean, error = ''): void {
+  runtime?.ccall('operit_lvgl_chat_send_result', null, ['number', 'string'], [ok ? 1 : 0, error]);
+  hostStatus.textContent = ok ? '已发送' : error;
+  if (ok && hostInput.value === submittedHostText) hostInput.value = '';
 }
 
 /** Converts the Wasm RGB565 framebuffer into the visible Canvas image. */
@@ -186,6 +220,20 @@ function handleRuntimeAction(value: string): void {
     return;
   }
   log('LVGL action: ' + value);
+  if (value === 'edge_send') {
+    const text = activeRuntime().ccall('operit_lvgl_chat_draft', 'string', [], []);
+    hostStatus.textContent = '发送中';
+    void fetch('/api/simulator/send', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text}),
+    }).then(async response => {
+      if (!response.ok) {
+        const result = await response.json() as {error?: string};
+        throw new Error(result.error ?? `发送失败 (${response.status})`);
+      }
+      // The state poll acknowledges completion of the remote call.
+    }).catch(error => finishSend(false, errorMessage(error)));
+    return;
+  }
   if (value.startsWith('edge_')) {
     void fetch('/api/simulator/action', {
       method: 'POST', headers: {'Content-Type': 'application/json'},

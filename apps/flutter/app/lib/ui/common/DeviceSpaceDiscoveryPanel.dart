@@ -40,6 +40,9 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
   bool _discoverable = false;
   bool _scanning = false;
   String? _scanError;
+  String? _edgeScanError;
+  List<generated.RuntimeEdgeDiscoveredDevice> _discoveredEdges =
+      <generated.RuntimeEdgeDiscoveredDevice>[];
   String? _connectionMessage;
   bool _connectionFailed = false;
   List<generated.RuntimeRemoteDiscoveredSpace> _discoveredDeviceSpaces =
@@ -60,7 +63,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     if (widget.autoScan && _supportsDeviceSpaceDiscovery) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          unawaited(_scanForDeviceSpaces());
+          unawaited(_scanAllDevices());
         }
       });
     }
@@ -91,7 +94,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
               FilledButton.tonalIcon(
                 onPressed: !_controlsEnabled || _scanning
                     ? null
-                    : _scanForDeviceSpaces,
+                    : _scanAllDevices,
                 icon: _scanning
                     ? const SizedBox(
                         width: 18,
@@ -112,6 +115,34 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
             ),
           ],
         ),
+        if (_edgeScanError != null) ...<Widget>[
+          const SizedBox(height: 8),
+          _DiscoveryStatus(message: _edgeScanError!, failed: true),
+        ],
+        if (_discoveredEdges.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          Divider(
+            height: 1,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 4),
+          for (final edge in _discoveredEdges)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.memory_outlined),
+              title: Text(edge.displayName),
+              subtitle: Text('${edge.model}\n${edge.endpoint}'),
+              isThreeLine: true,
+              trailing: IconButton(
+                icon: const Icon(Icons.link_outlined),
+                tooltip: '配对',
+                onPressed: _controlsEnabled
+                    ? () => _pairDiscoveredEdge(edge)
+                    : null,
+              ),
+            ),
+        ],
         if (_scanError != null) ...<Widget>[
           const SizedBox(height: 8),
           _DiscoveryStatus(message: _scanError!, failed: true),
@@ -240,13 +271,76 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     }
   }
 
-  /// Scans the LAN and groups directly connectable devices by device space.
-  Future<void> _scanForDeviceSpaces() async {
+  /// Scans Core spaces and Edge advertisements through the same scan action.
+  Future<void> _scanAllDevices() async {
     setState(() {
       _scanning = true;
       _scanError = null;
+      _edgeScanError = null;
       _discoveredDeviceSpaces = <generated.RuntimeRemoteDiscoveredSpace>[];
+      _discoveredEdges = <generated.RuntimeEdgeDiscoveredDevice>[];
     });
+    // Run the two mDNS browsers sequentially. On Windows both browsers use
+    // the shared UDP 5353 socket; starting two ServiceDaemon instances at the
+    // same time can cause one of them to miss all announcements.
+    await _scanCoreSpaces();
+    await _scanEdges();
+    if (mounted) {
+      setState(() => _scanning = false);
+    }
+  }
+
+  Future<void> _scanEdges() async {
+    try {
+      final edges = await widget.clients.server.runtimeRemoteLinkService
+          .discoverEdges(timeoutMs: 2000);
+      if (mounted) {
+        setState(() => _discoveredEdges = edges);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _edgeScanError = error.toString());
+      }
+    }
+  }
+
+  Future<void> _pairDiscoveredEdge(
+    generated.RuntimeEdgeDiscoveredDevice edge,
+  ) async {
+    _setBusy(true);
+    try {
+      final pairing = await const RemotePairingBridge().startEdgeWithTokenHash(
+        endpoint: edge.endpoint,
+        tokenHash: edge.tokenHash,
+      );
+      if (!mounted) return;
+      final code = await _Esp32EdgeCodeDialog.show(context, edge.displayName);
+      if (code == null || !mounted) return;
+      await const RemotePairingBridge().finishEdge(
+        pairingId: pairing.pairingId,
+        pairingCode: code,
+        name: 'esp32-${pairing.edgeDeviceId}',
+      );
+      if (mounted) {
+        setState(() {
+          _connectionMessage = '${edge.displayName} 已连接';
+          _connectionFailed = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _connectionMessage = 'ESP32 配对失败：$error';
+          _connectionFailed = true;
+        });
+      }
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  /// Scans the LAN and groups directly connectable Core devices by Space.
+  Future<void> _scanCoreSpaces() async {
     try {
       final pairedDevices = await widget.clients.server.runtimeRemoteLinkService
           .pairedDevicesFlow()
@@ -258,17 +352,11 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
         pairedDevices,
       );
       if (mounted) {
-        setState(() {
-          _discoveredDeviceSpaces = visibleDeviceSpaces;
-          _scanning = false;
-        });
+        setState(() => _discoveredDeviceSpaces = visibleDeviceSpaces);
       }
     } catch (error) {
       if (mounted) {
-        setState(() {
-          _scanError = error.toString();
-          _scanning = false;
-        });
+        setState(() => _scanError = error.toString());
       }
     }
   }
@@ -464,6 +552,62 @@ class _DiscoveryStatus extends StatelessWidget {
         color: failed ? colorScheme.error : colorScheme.primary,
         fontWeight: FontWeight.w700,
       ),
+    );
+  }
+}
+
+class _Esp32EdgeCodeDialog extends StatefulWidget {
+  const _Esp32EdgeCodeDialog({required this.deviceName});
+
+  final String deviceName;
+
+  static Future<String?> show(BuildContext context, String deviceName) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _Esp32EdgeCodeDialog(deviceName: deviceName),
+    );
+  }
+
+  @override
+  State<_Esp32EdgeCodeDialog> createState() => _Esp32EdgeCodeDialogState();
+}
+
+class _Esp32EdgeCodeDialogState extends State<_Esp32EdgeCodeDialog> {
+  final _code = TextEditingController();
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('输入 ${widget.deviceName} 的配对码'),
+      content: TextField(
+        controller: _code,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        maxLength: 6,
+        decoration: const InputDecoration(
+          labelText: '6 位配对码',
+          hintText: '查看 ESP32 屏幕或 /status.json',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final code = _code.text.trim();
+            if (code.length == 6) Navigator.of(context).pop(code);
+          },
+          child: const Text('配对'),
+        ),
+      ],
     );
   }
 }

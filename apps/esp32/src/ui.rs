@@ -174,7 +174,12 @@ fn statusBar(width: u16) -> Vec<Widget> {
 
 fn homeBar(width: u16, height: u16) -> Vec<Widget> {
     vec![Widget::Panel {
-        rect: Rect::new(width.saturating_sub(40) / 2, height.saturating_sub(16), 40, 4),
+        rect: Rect::new(
+            width.saturating_sub(40) / 2,
+            height.saturating_sub(16),
+            40,
+            4,
+        ),
         color: Color::rgb565(203, 213, 225),
         radius: 0,
     }]
@@ -484,10 +489,7 @@ mod tests {
             gestureFromSwipe(120, 200, 122, 40),
             Some(UiGesture::SwipeUp)
         );
-        assert_eq!(
-            gestureFromSwipe(10, 10, 80, 12),
-            Some(UiGesture::Back)
-        );
+        assert_eq!(gestureFromSwipe(10, 10, 80, 12), Some(UiGesture::Back));
         assert_eq!(
             gestureFromSwipe(120, 20, 120, 50),
             Some(UiGesture::Tap { x: 120, y: 50 })

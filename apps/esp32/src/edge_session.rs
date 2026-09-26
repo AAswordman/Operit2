@@ -14,18 +14,23 @@ pub async fn handleChannel(
         .ok_or_else(|| "Edge Link carrier closed".to_string())?;
     match &first.payload {
         operit_link::LinkFramePayload::PairStart(request) => {
+            log::info!("Edge pairing: PairStart decoded");
             let session = authority
                 .pairFromStart(channel.clone(), request.clone())
                 .await?;
-            let peerId = session.peerDeviceId.clone();
-            let authenticated = AuthenticatedLinkChannel::new(channel, session);
-            let context =
-                tokio::time::timeout(std::time::Duration::from_secs(30), authenticated.receive())
-                    .await
-                    .map_err(|_| "Space admission timed out".to_string())??
-                    .ok_or_else(|| "Space admission context was not received".to_string())?;
-            installSpaceRoute(authenticated, context, &peerId).await?;
-            Ok(())
+            log::info!("Edge pairing: PairFinish accepted");
+            #[cfg(target_os = "espidf")]
+            crate::logRuntimeHealth("edge-paired");
+            serveAuthenticatedSession(channel, session).await
+        }
+        operit_link::LinkFramePayload::PairFinish(request) => {
+            // The CLI deliberately runs pair-start and pair-finish as separate
+            // processes. Therefore PairFinish may be the first frame on a new
+            // carrier; the authority keeps the pending transaction by ID.
+            let session = authority
+                .pairFinishFromRequest(channel.clone(), request.clone())
+                .await?;
+            serveAuthenticatedSession(channel, session).await
         }
         operit_link::LinkFramePayload::Authenticated { .. } => {
             let (session, inner) = authority.authenticateFrame(&first)?;
@@ -36,6 +41,19 @@ pub async fn handleChannel(
         }
         _ => Err("Edge Link connection did not start with pairing or authentication".to_string()),
     }
+}
+
+async fn serveAuthenticatedSession(
+    channel: Arc<dyn LinkChannel>,
+    session: operit_edge_transport::EdgeSession,
+) -> Result<(), String> {
+    let peerId = session.peerDeviceId.clone();
+    let authenticated = AuthenticatedLinkChannel::new(channel, session);
+    let context = tokio::time::timeout(std::time::Duration::from_secs(30), authenticated.receive())
+        .await
+        .map_err(|_| "Space admission timed out".to_string())??
+        .ok_or_else(|| "Space admission context was not received".to_string())?;
+    installSpaceRoute(authenticated, context, &peerId).await
 }
 
 async fn installSpaceRoute(

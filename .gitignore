@@ -228,3 +228,6 @@ plugins/**/.sync_hot_reload_state.json
 AGENTS.md
 .codex*
 tools/ios-runtime/native/sources
+
+# Local ESP32 Edge pairing secret
+apps/esp32/.edge-token

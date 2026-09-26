@@ -46,7 +46,7 @@ pub trait EdgePairingStore: Send + Sync {
 }
 
 /// Client-side state kept between pairing start and the user-entered code.
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EdgePairStartState {
     pub pairingId: String,
     pub clientDeviceId: String,
@@ -293,6 +293,20 @@ impl EdgePairingAuthority {
             LinkFramePayload::PairFinish(request) => request,
             _ => return Err("expected Link pairing finish".to_string()),
         };
+        self.pairFinishFromRequest(channel, finish).await
+    }
+
+    /// Completes a pending pairing from a PairFinish request.
+    ///
+    /// PairStart and PairFinish normally share one carrier, but the CLI is
+    /// intentionally stateless between commands. Accepting PairFinish on a
+    /// fresh carrier lets `pair-start` and `pair-finish` run in separate
+    /// processes while retaining the same pending transaction on the Edge.
+    pub async fn pairFinishFromRequest(
+        &self,
+        channel: Arc<dyn LinkChannel>,
+        finish: LinkPairFinishRequest,
+    ) -> Result<EdgeSession, String> {
         let pending = self
             .pending
             .lock()
@@ -332,6 +346,8 @@ impl EdgePairingAuthority {
                 .remove(&session.sessionId);
             return Err(format!("persist Edge session: {error}"));
         }
+        // The one-time code is no longer valid once the session is persisted.
+        (self.onPairingCode)(String::new());
         channel
             .send(LinkFrame {
                 messageId: "pair-finish-response".to_string(),
@@ -348,6 +364,20 @@ impl EdgePairingAuthority {
             })
             .await?;
         Ok(session)
+    }
+    /// Removes all persisted pairing sessions and pending transactions.
+    ///
+    /// This does not erase the device token, Wi-Fi settings, or identity key.
+    pub fn clearPairings(&self) -> Result<(), String> {
+        self.pending
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clear();
+        self.sessions
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clear();
+        self.persistSessions()
     }
 
     /// Validates the first authenticated frame of a reconnecting Core and

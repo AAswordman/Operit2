@@ -4654,6 +4654,30 @@ abstract class AppLocalizations {
   /// **'Connect another device'**
   String get settingsRuntimePairRemote;
 
+  /// No description provided for @settingsRuntimeDiscoveredEdges.
+  ///
+  /// In en, this message translates to:
+  /// **'ESP32 devices'**
+  String get settingsRuntimeDiscoveredEdges;
+
+  /// No description provided for @settingsRuntimeEdgeEndpointTokenRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Edge endpoint and token are required'**
+  String get settingsRuntimeEdgeEndpointTokenRequired;
+
+  /// No description provided for @settingsRuntimeEdgeEndpointRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Edge endpoint is required'**
+  String get settingsRuntimeEdgeEndpointRequired;
+
+  /// No description provided for @settingsRuntimePairingCodeRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing code is required'**
+  String get settingsRuntimePairingCodeRequired;
+
   /// No description provided for @settingsRuntimeNoPairedRemote.
   ///
   /// In en, this message translates to:

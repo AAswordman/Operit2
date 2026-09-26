@@ -4,7 +4,7 @@ target = "xtensa-esp32-espidf"
 [target.xtensa-esp32-espidf]
 linker = "ldproxy"
 runner = "espflash flash --monitor --chip esp32 --port COM27"
-rustflags = ["--cfg", "espidf_time64"]
+rustflags = ["--cfg", "espidf_time64", "--cfg", "mio_unsupported_force_poll_poll"]
 
 [unstable]
 build-std = ["std", "panic_abort"]
@@ -14,6 +14,6 @@ CARGO_WORKSPACE_DIR = { value = ".", relative = true, force = true }
 MCU = "esp32"
 ESP_IDF_VERSION = "v5.3.2"
 ESP_IDF_SDKCONFIG_DEFAULTS = { value = "sdkconfig.defaults", relative = true }
-ESP_IDF_COMPONENTS = "main;app_update;bootloader;driver;fatfs;spiffs;wear_levelling;nvs_flash;esp_event;esp_netif;esp_wifi;esp_http_server;lvgl_port;lvgl__lvgl"
+ESP_IDF_COMPONENTS = "main;app_update;bootloader;driver;fatfs;spiffs;wear_levelling;nvs_flash;esp_event;esp_netif;esp_wifi;esp_http_server;espressif__mdns;lvgl_port;lvgl__lvgl"
 ESP_IDF_GLOB_PARTITIONS_BASE = { value = ".", relative = true, force = true }
 ESP_IDF_GLOB_PARTITIONS_0 = "partitions.csv"

@@ -34,8 +34,7 @@ impl Esp32Wifi {
         unsafe {
             tzset();
         }
-        EspSntp::new_default()
-            .map_err(|error| HostError::new(format!("SNTP init: {error}")))
+        EspSntp::new_default().map_err(|error| HostError::new(format!("SNTP init: {error}")))
     }
 
     /// Connects to the compile-time station network and waits for IPv4.

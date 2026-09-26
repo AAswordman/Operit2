@@ -1,4 +1,14 @@
 dependencies:
+  espressif/mdns:
+    component_hash: 53b22a3b01d0b61180369a5dab00e271f1e725164b6affbc73af85e80b043658
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.0
   idf:
     source:
       type: idf
@@ -11,7 +21,8 @@ dependencies:
       type: service
     version: 9.3.0
 direct_dependencies:
+- espressif/mdns
 - lvgl/lvgl
-manifest_hash: 3c2c742acb3e8c04449af2e4205d7c4f839e2aa6d28a4045d25d83ff65a70b86
+manifest_hash: 0052d77448969e3e4fce96ba5a6d4f5e310e2fa52408f68c47e97e9c5069cfe0
 target: esp32
 version: 2.0.0

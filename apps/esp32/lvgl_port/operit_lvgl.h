@@ -32,6 +32,12 @@ void operit_lvgl_set_expression(const char *expression);
 void operit_lvgl_set_pairing_code(const char *code);
 void operit_lvgl_set_space_state(const char *state);
 void operit_lvgl_set_chat_preview(const char *preview);
+void operit_lvgl_set_chat_screen(const char *text);
+void operit_lvgl_set_chat_task(const char *text);
+const char *operit_lvgl_chat_draft(void);
+void operit_lvgl_set_chat_draft(const char *text);
+void operit_lvgl_submit_chat(void);
+void operit_lvgl_chat_send_result(bool ok, const char *error);
 
 void operit_lvgl_set_theme(unsigned index, bool circular);
 void operit_lvgl_navigate_apps(void);
@@ -39,6 +45,14 @@ unsigned operit_lvgl_theme_index(void);
 bool operit_lvgl_round_icons(void);
 
 const char *operit_lvgl_current_page(void);
+
+/* Structured screen inspection used by the ESP32 editor and CLI test tools.
+ * The returned strings are owned by the LVGL runtime and remain valid until
+ * the next call into one of the debug JSON functions. */
+const char *operit_lvgl_debug_tree(void);
+const char *operit_lvgl_debug_snapshot(void);
+bool operit_lvgl_debug_tap(const char *id);
+bool operit_lvgl_debug_swipe(const char *direction);
 
 void operit_lvgl_layout_clear(uint32_t background);
 int operit_lvgl_layout_add(int type, int parent, int x, int y, int w, int h,
