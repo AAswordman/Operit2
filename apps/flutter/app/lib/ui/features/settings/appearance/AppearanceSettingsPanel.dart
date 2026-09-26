@@ -12,26 +12,26 @@ import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../chat/components/style/bubble/BubbleSurface.dart';
 import '../../../common/CharacterAvatar.dart';
+import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
 import '../../../theme/OperitThemeAssets.dart';
 import '../components/SettingsControlStyles.dart';
 
-enum _AppearanceSettingsTab { theme, background, chat, input, interface }
+enum _AppearanceSettingsTab { theme, background, bubbles, interaction }
 
 const List<_AppearanceSettingsTab> _appearanceSettingsTabs =
     <_AppearanceSettingsTab>[
       _AppearanceSettingsTab.theme,
       _AppearanceSettingsTab.background,
-      _AppearanceSettingsTab.chat,
-      _AppearanceSettingsTab.input,
-      _AppearanceSettingsTab.interface,
+      _AppearanceSettingsTab.bubbles,
+      _AppearanceSettingsTab.interaction,
     ];
 
 class AppearanceSettingsPanel extends StatelessWidget {
   const AppearanceSettingsPanel({super.key});
 
-  /// Builds the tabbed appearance settings editor.
+  /// Builds the tabbed appearance settings editor with responsive layouts.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -41,834 +41,1841 @@ class AppearanceSettingsPanel extends StatelessWidget {
       length: _appearanceSettingsTabs.length,
       child: Column(
         children: <Widget>[
-          _ThemeTargetSelector(themeController: themeController),
-          Material(
-            color: Colors.transparent,
-            child: TabBar(
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              tabs: <Widget>[
-                for (final tab in _appearanceSettingsTabs)
-                  Tab(text: _appearanceSettingsTabLabel(l10n, tab)),
-              ],
-            ),
-          ),
+          _AppearanceHeaderBar(themeController: themeController),
           Expanded(
             child: TabBarView(
               children: <Widget>[
-                _AppearanceSettingsTabList(
-                  children: <Widget>[
-                    _SectionCard(
-                      title: l10n.settingsAppearanceThemeSection,
-                      children: <Widget>[
-                        _InfoLine(
-                          label: l10n.settingsAppearanceThemeMode,
-                          value: _themeModeLabel(
-                            l10n,
-                            themeController.themeMode,
-                          ),
-                        ),
-                        _ThemeModeSelector(
-                          value: themeController.themeMode,
-                          onChanged: (themeMode) {
-                            unawaited(themeController.setThemeMode(themeMode));
-                          },
-                        ),
-                      ],
-                    ),
-                    _SectionCard(
-                      title: l10n.settingsAppearanceColorSection,
-                      children: <Widget>[
-                        _BodyText(l10n.settingsAppearanceColorDescription),
-                        _ThemeColorPresetSelector(
-                          selectedId: _selectedColorPresetId(snapshot),
-                          snapshot: snapshot,
-                          onChanged: (preset) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                useCustomColors: preset.useCustomColors,
-                                customPrimaryColor: preset.primaryColor,
-                                customSecondaryColor: preset.secondaryColor,
-                              ),
-                            );
-                          },
-                          onCustomTap: () {
-                            unawaited(
-                              _showThemeColorDialog(
-                                context,
-                                themeController,
-                                snapshot,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    _SectionCard(
-                      title: l10n.settingsAppearanceTextSection,
-                      children: <Widget>[
-                        _InfoLine(
-                          label: l10n.settingsAppearanceFontFamily,
-                          value: _fontFamilyLabel(l10n, snapshot),
-                        ),
-                        _FontFamilySelector(
-                          value: _fontFamilyPresetFromSnapshot(snapshot),
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                fontType:
-                                    UserPreferencesManager.FONT_TYPE_SYSTEM,
-                                systemFontName: _systemFontNameFromPreset(
-                                  value,
-                                ),
-                                useCustomFont: false,
-                                customFontPath: '',
-                              ),
-                            );
-                          },
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceCustomFont,
-                          value: _customFontLabel(
-                            l10n,
-                            snapshot.customFontPath,
-                          ),
-                        ),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: <Widget>[
-                            FilledButton.tonalIcon(
-                              onPressed: () {
-                                unawaited(_pickCustomFont(themeController));
-                              },
-                              icon: const Icon(Icons.text_fields_outlined),
-                              label: Text(
-                                l10n.settingsAppearanceChooseCustomFont,
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed:
-                                  snapshot.customFontPath != null &&
-                                      snapshot.customFontPath!.isNotEmpty
-                                  ? () {
-                                      unawaited(
-                                        themeController.saveThemeSettings(
-                                          useCustomFont: false,
-                                          fontType: UserPreferencesManager
-                                              .FONT_TYPE_SYSTEM,
-                                          customFontPath: '',
-                                        ),
-                                      );
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.format_clear_outlined),
-                              label: Text(
-                                l10n.settingsAppearanceClearCustomFont,
-                              ),
-                            ),
-                          ],
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceFontScale,
-                          value: '${(snapshot.fontScale * 100).round()}%',
-                        ),
-                        Slider(
-                          value: snapshot.fontScale.clamp(0.85, 1.3),
-                          min: 0.85,
-                          max: 1.3,
-                          divisions: 45,
-                          label: '${(snapshot.fontScale * 100).round()}%',
-                          onChanged: (value) {
-                            themeController.previewThemeSettings(
-                              fontScale: value,
-                            );
-                          },
-                          onChangeEnd: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                fontScale: value,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                _AppearanceSettingsTabList(
-                  children: <Widget>[
-                    _SectionCard(
-                      title: l10n.settingsAppearanceBackgroundSection,
-                      children: <Widget>[
-                        _BodyText(l10n.settingsAppearanceBackgroundDescription),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceBackgroundImage,
-                          value: _backgroundImageLabel(
-                            l10n,
-                            snapshot.backgroundImageUri,
-                          ),
-                        ),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: <Widget>[
-                            FilledButton.tonalIcon(
-                              onPressed: () {
-                                unawaited(
-                                  _pickBackgroundImage(
-                                    context,
-                                    themeController,
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.image_outlined),
-                              label: Text(
-                                l10n.settingsAppearanceBackgroundChooseImage,
-                              ),
-                            ),
-                            FilledButton.tonalIcon(
-                              onPressed: () {
-                                unawaited(
-                                  _pickBackgroundVideo(themeController),
-                                );
-                              },
-                              icon: const Icon(Icons.movie_creation_outlined),
-                              label: Text(
-                                l10n.settingsAppearanceBackgroundChooseVideo,
-                              ),
-                            ),
-                          ],
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceBackgroundEnabled,
-                          value: snapshot.useBackgroundImage,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                useBackgroundImage: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceBackgroundOpacity,
-                          value:
-                              '${(snapshot.backgroundImageOpacity * 100).round()}%',
-                        ),
-                        Slider(
-                          value: snapshot.backgroundImageOpacity.clamp(
-                            0.1,
-                            0.8,
-                          ),
-                          min: 0.1,
-                          max: 0.8,
-                          divisions: 70,
-                          label:
-                              '${(snapshot.backgroundImageOpacity * 100).round()}%',
-                          onChanged: (value) {
-                            themeController.previewThemeSettings(
-                              backgroundImageOpacity: value,
-                            );
-                          },
-                          onChangeEnd: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                backgroundImageOpacity: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceBackgroundBlur,
-                          value: snapshot.useBackgroundBlur,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                useBackgroundBlur: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceBackgroundBlurRadius,
-                          value: snapshot.backgroundBlurRadius
-                              .round()
-                              .toString(),
-                        ),
-                        Slider(
-                          value: snapshot.backgroundBlurRadius.clamp(0, 40),
-                          min: 0,
-                          max: 40,
-                          divisions: 40,
-                          label: snapshot.backgroundBlurRadius
-                              .round()
-                              .toString(),
-                          onChanged: (value) {
-                            themeController.previewThemeSettings(
-                              backgroundBlurRadius: value,
-                            );
-                          },
-                          onChangeEnd: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                backgroundBlurRadius: value,
-                              ),
-                            );
-                          },
-                        ),
-                        if (snapshot.backgroundMediaType ==
-                            UserPreferencesManager
-                                .MEDIA_TYPE_VIDEO) ...<Widget>[
-                          _SettingSwitch(
-                            title: l10n.settingsAppearanceBackgroundVideoMuted,
-                            value: snapshot.videoBackgroundMuted,
-                            onChanged: (value) {
-                              unawaited(
-                                themeController.saveThemeSettings(
-                                  videoBackgroundMuted: value,
-                                ),
-                              );
-                            },
-                          ),
-                          _SettingSwitch(
-                            title: l10n.settingsAppearanceBackgroundVideoLoop,
-                            value: snapshot.videoBackgroundLoop,
-                            onChanged: (value) {
-                              unawaited(
-                                themeController.saveThemeSettings(
-                                  videoBackgroundLoop: value,
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-                _AppearanceSettingsTabList(
-                  children: <Widget>[
-                    _SectionCard(
-                      title: l10n.settingsAppearanceChatDisplaySection,
-                      children: <Widget>[
-                        _InfoLine(
-                          label: l10n.settingsAppearanceMessageStyle,
-                          value: _messageStyleLabel(l10n, snapshot.chatStyle),
-                        ),
-                        _MessageStyleSelector(
-                          value: snapshot.chatStyle,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                chatStyle: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceMessageColors,
-                          value: _messageColorPresetLabel(l10n, snapshot),
-                        ),
-                        _MessageColorPresetSelector(
-                          value: _messageColorPresetFromSnapshot(snapshot),
-                          onChanged: (value) {
-                            unawaited(
-                              _applyMessageColorPreset(themeController, value),
-                            );
-                          },
-                          onCustomTap: () {
-                            unawaited(
-                              _showMessageColorDialog(
-                                context,
-                                themeController,
-                                snapshot,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    _SectionCard(
-                      title: l10n.settingsAppearanceAvatarSection,
-                      children: <Widget>[
-                        _InfoLine(
-                          label: l10n.settingsAppearanceAvatarShape,
-                          value: _avatarShapeLabel(l10n, snapshot.avatarShape),
-                        ),
-                        _AvatarShapeSelector(
-                          value: _avatarShapeFromSnapshot(snapshot.avatarShape),
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                avatarShape: _avatarShapeValue(value),
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowAvatars,
-                          value: snapshot.bubbleShowAvatar,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                bubbleShowAvatar: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceUserBubbleFont,
-                          value: _bubbleFontLabel(l10n, snapshot, isUser: true),
-                        ),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              unawaited(
-                                _showBubbleFontDialog(
-                                  context,
-                                  themeController,
-                                  snapshot,
-                                  isUser: true,
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.text_fields_outlined),
-                            label: Text(
-                              l10n.settingsAppearanceAdjustUserBubbleFont,
-                            ),
-                          ),
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceAiBubbleFont,
-                          value: _bubbleFontLabel(
-                            l10n,
-                            snapshot,
-                            isUser: false,
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              unawaited(
-                                _showBubbleFontDialog(
-                                  context,
-                                  themeController,
-                                  snapshot,
-                                  isUser: false,
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.text_fields_outlined),
-                            label: Text(
-                              l10n.settingsAppearanceAdjustAiBubbleFont,
-                            ),
-                          ),
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceUserBubbleImage,
-                          value: _fileNameOrNoneLabel(
-                            l10n,
-                            snapshot.bubbleUserImageUri,
-                            snapshot.bubbleUserUseImage,
-                          ),
-                        ),
-                        _AvatarActionRow(
-                          chooseLabel:
-                              l10n.settingsAppearanceChooseUserBubbleImage,
-                          clearLabel:
-                              l10n.settingsAppearanceClearUserBubbleImage,
-                          clearEnabled:
-                              snapshot.bubbleUserUseImage &&
-                              snapshot.bubbleUserImageUri != null &&
-                              snapshot.bubbleUserImageUri!.isNotEmpty,
-                          onChoose: () {
-                            unawaited(
-                              _pickBubbleImage(
-                                themeController,
-                                snapshot: snapshot,
-                                isUser: true,
-                              ),
-                            );
-                          },
-                          onClear: () {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                bubbleUserUseImage: false,
-                                bubbleUserImageUri: '',
-                              ),
-                            );
-                          },
-                        ),
-                        if (snapshot.bubbleUserUseImage &&
-                            snapshot.bubbleUserImageUri != null &&
-                            snapshot
-                                .bubbleUserImageUri!
-                                .isNotEmpty) ...<Widget>[
-                          _InfoLine(
-                            label: l10n.settingsAppearanceBubbleImageRenderMode,
-                            value: _bubbleImageRenderModeLabel(
-                              l10n,
-                              snapshot.bubbleUserImageRenderMode,
-                            ),
-                          ),
-                          _BubbleImageRenderModeSelector(
-                            value: snapshot.bubbleUserImageRenderMode,
-                            onChanged: (value) {
-                              unawaited(
-                                themeController.saveThemeSettings(
-                                  bubbleUserImageRenderMode: value,
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                snapshot.bubbleUserUseImage &&
-                                    snapshot.bubbleUserImageUri != null &&
-                                    snapshot.bubbleUserImageUri!.isNotEmpty
-                                ? () {
-                                    unawaited(
-                                      _showBubbleImageAdjustDialog(
-                                        context,
-                                        themeController,
-                                        snapshot,
-                                        isUser: true,
-                                      ),
-                                    );
-                                  }
-                                : null,
-                            icon: const Icon(Icons.tune_outlined),
-                            label: Text(
-                              l10n.settingsAppearanceBubbleImageAdjustUser,
-                            ),
-                          ),
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceAiBubbleImage,
-                          value: _fileNameOrNoneLabel(
-                            l10n,
-                            snapshot.bubbleAiImageUri,
-                            snapshot.bubbleAiUseImage,
-                          ),
-                        ),
-                        _AvatarActionRow(
-                          chooseLabel:
-                              l10n.settingsAppearanceChooseAiBubbleImage,
-                          clearLabel: l10n.settingsAppearanceClearAiBubbleImage,
-                          clearEnabled:
-                              snapshot.bubbleAiUseImage &&
-                              snapshot.bubbleAiImageUri != null &&
-                              snapshot.bubbleAiImageUri!.isNotEmpty,
-                          onChoose: () {
-                            unawaited(
-                              _pickBubbleImage(
-                                themeController,
-                                snapshot: snapshot,
-                                isUser: false,
-                              ),
-                            );
-                          },
-                          onClear: () {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                bubbleAiUseImage: false,
-                                bubbleAiImageUri: '',
-                              ),
-                            );
-                          },
-                        ),
-                        if (snapshot.bubbleAiUseImage &&
-                            snapshot.bubbleAiImageUri != null &&
-                            snapshot.bubbleAiImageUri!.isNotEmpty) ...<Widget>[
-                          _InfoLine(
-                            label: l10n.settingsAppearanceBubbleImageRenderMode,
-                            value: _bubbleImageRenderModeLabel(
-                              l10n,
-                              snapshot.bubbleAiImageRenderMode,
-                            ),
-                          ),
-                          _BubbleImageRenderModeSelector(
-                            value: snapshot.bubbleAiImageRenderMode,
-                            onChanged: (value) {
-                              unawaited(
-                                themeController.saveThemeSettings(
-                                  bubbleAiImageRenderMode: value,
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                snapshot.bubbleAiUseImage &&
-                                    snapshot.bubbleAiImageUri != null &&
-                                    snapshot.bubbleAiImageUri!.isNotEmpty
-                                ? () {
-                                    unawaited(
-                                      _showBubbleImageAdjustDialog(
-                                        context,
-                                        themeController,
-                                        snapshot,
-                                        isUser: false,
-                                      ),
-                                    );
-                                  }
-                                : null,
-                            icon: const Icon(Icons.tune_outlined),
-                            label: Text(
-                              l10n.settingsAppearanceBubbleImageAdjustAi,
-                            ),
-                          ),
-                        ),
-                        _InfoLine(
-                          label: l10n.settingsAppearanceMessageDensity,
-                          value: _messageDensityLabel(
-                            l10n,
-                            _densityFromSnapshot(snapshot),
-                          ),
-                        ),
-                        _MessageDensitySelector(
-                          value: _densityFromSnapshot(snapshot),
-                          onChanged: (value) {
-                            final padding = value == _MessageDensity.compact
-                                ? 8.0
-                                : 12.0;
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                bubbleUserContentPaddingLeft: padding,
-                                bubbleUserContentPaddingRight: padding,
-                                bubbleAiContentPaddingLeft: padding,
-                                bubbleAiContentPaddingRight: padding,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceWideLayout,
-                          value: snapshot.bubbleWideLayoutEnabled,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                bubbleWideLayoutEnabled: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceRoundedMessages,
-                          value:
-                              snapshot.bubbleUserRoundedCornersEnabled &&
-                              snapshot.bubbleAiRoundedCornersEnabled,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                bubbleUserRoundedCornersEnabled: value,
-                                bubbleAiRoundedCornersEnabled: value,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    _SectionCard(
-                      title: l10n.settingsAppearanceMessageDisplaySection,
-                      children: <Widget>[
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowThinkingProcess,
-                          value: snapshot.showThinkingProcess,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showThinkingProcess: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowRoleName,
-                          value: snapshot.showRoleName,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showRoleName: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowUserName,
-                          value: snapshot.showUserName,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showUserName: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowModelName,
-                          value: snapshot.showModelName,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showModelName: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowModelProvider,
-                          value: snapshot.showModelProvider,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showModelProvider: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowMessageTokenStats,
-                          value: snapshot.showMessageTokenStats,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showMessageTokenStats: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowMessageTimingStats,
-                          value: snapshot.showMessageTimingStats,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showMessageTimingStats: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceShowMessageTimestamp,
-                          value: snapshot.showMessageTimestamp,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showMessageTimestamp: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title:
-                              l10n.settingsAppearanceShowInputProcessingStatus,
-                          value: snapshot.showInputProcessingStatus,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                showInputProcessingStatus: value,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                _AppearanceSettingsTabList(
-                  children: <Widget>[
-                    _SectionCard(
-                      title: l10n.settingsAppearanceInputSection,
-                      children: <Widget>[
-                        _InfoLine(
-                          label: l10n.settingsAppearanceInputStyle,
-                          value: _inputStyleLabel(l10n, snapshot.inputStyle),
-                        ),
-                        _InputStyleSelector(
-                          value: _inputStyleValue(snapshot.inputStyle),
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                inputStyle: value,
-                              ),
-                            );
-                          },
-                        ),
-                        _SettingSwitch(
-                          title: l10n.settingsAppearanceInputFloating,
-                          value: snapshot.chatInputFloating,
-                          onChanged: (value) {
-                            unawaited(
-                              themeController.saveThemeSettings(
-                                chatInputFloating: value,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                _AppearanceSettingsTabList(
-                  children: <Widget>[
-                    _SectionCard(
-                      title: l10n.settingsAppearanceMessageSurface,
-                      children: <Widget>[
-                        _InfoLine(
-                          label: l10n.settingsAppearanceMessageSurface,
-                          value: _messageSurfaceLabel(
-                            l10n,
-                            _surfaceFromSnapshot(snapshot),
-                          ),
-                        ),
-                        _MessageSurfaceSelector(
-                          value: _surfaceFromSnapshot(snapshot),
-                          onChanged: (value) {
-                            unawaited(
-                              _applyMessageSurface(themeController, value),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          unawaited(themeController.resetThemeSettings());
-                        },
-                        icon: const Icon(Icons.restart_alt),
-                        label: Text(l10n.settingsAppearanceResetTheme),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    _SectionCard(
-                      title: l10n.settingsAppearanceLanguageSection,
-                      children: <Widget>[
-                        _InfoLine(
-                          label: l10n.settingsAppearanceLanguage,
-                          value: l10n.localeName,
-                        ),
-                        _BodyText(l10n.settingsAppearanceLanguageDescription),
-                      ],
-                    ),
-                  ],
-                ),
+                _buildThemeTab(context, l10n, themeController, snapshot),
+                _buildBackgroundTab(context, l10n, themeController, snapshot),
+                _buildBubblesTab(context, l10n, themeController, snapshot),
+                _buildInteractionTab(context, l10n, themeController, snapshot),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildThemeTab(
+    BuildContext context,
+    AppLocalizations l10n,
+    OperitThemeController themeController,
+    ThemePreferenceSnapshot snapshot,
+  ) {
+    final hasCustomFont =
+        snapshot.customFontPath != null && snapshot.customFontPath!.isNotEmpty;
+    return _ResponsivePreviewSplitTabView(
+      previewCard: _ChatAppearanceLivePreviewCard(
+        snapshot: snapshot,
+        showInputPreview: false,
+      ),
+      children: <Widget>[
+        _SectionCard(
+          title: l10n.settingsAppearanceThemeSection,
+          icon: Icons.palette_outlined,
+          children: <Widget>[
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceThemeMode,
+              badge: _themeModeLabel(l10n, themeController.themeMode),
+              child: _ThemeModeSelector(
+                value: themeController.themeMode,
+                onChanged: (themeMode) {
+                  unawaited(themeController.setThemeMode(themeMode));
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceMessageSurface,
+              badge: _messageSurfaceLabel(
+                l10n,
+                _surfaceFromSnapshot(snapshot),
+              ),
+              child: _MessageSurfaceSelector(
+                value: _surfaceFromSnapshot(snapshot),
+                onChanged: (value) {
+                  unawaited(_applyMessageSurface(themeController, value));
+                },
+              ),
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceColorSection,
+          icon: Icons.color_lens_outlined,
+          children: <Widget>[
+            _BodyText(l10n.settingsAppearanceColorDescription),
+            const SizedBox(height: 4),
+            _ThemeColorPresetSelector(
+              selectedId: _selectedColorPresetId(snapshot),
+              snapshot: snapshot,
+              onChanged: (preset) {
+                unawaited(
+                  themeController.saveThemeSettings(
+                    useCustomColors: preset.useCustomColors,
+                    customPrimaryColor: preset.primaryColor,
+                    customSecondaryColor: preset.secondaryColor,
+                  ),
+                );
+              },
+              onCustomTap: () {
+                unawaited(
+                  _showThemeColorDialog(
+                    context,
+                    themeController,
+                    snapshot,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceTextSection,
+          icon: Icons.text_fields_outlined,
+          children: <Widget>[
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceFontFamily,
+              badge: _fontFamilyLabel(l10n, snapshot),
+              child: _FontFamilySelector(
+                value: _fontFamilyPresetFromSnapshot(snapshot),
+                onChanged: (value) {
+                  unawaited(
+                    themeController.saveThemeSettings(
+                      fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
+                      systemFontName: _systemFontNameFromPreset(value),
+                      useCustomFont: false,
+                      customFontPath: '',
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            _CompactAssetTile(
+              icon: Icons.font_download_outlined,
+              title: l10n.settingsAppearanceCustomFont,
+              subtitle: _customFontLabel(l10n, snapshot.customFontPath),
+              actions: <Widget>[
+                FilledButton.tonalIcon(
+                  style: SettingsControlStyles.sectionTextButton(),
+                  onPressed: () {
+                    unawaited(_pickCustomFont(themeController));
+                  },
+                  icon: const Icon(Icons.folder_open_outlined, size: 16),
+                  label: Text(l10n.settingsAppearanceChooseCustomFont),
+                ),
+                if (hasCustomFont)
+                  SettingsEntityIconButton(
+                    tooltip: l10n.settingsAppearanceClearCustomFont,
+                    icon: Icons.close,
+                    onPressed: () {
+                      unawaited(
+                        themeController.saveThemeSettings(
+                          useCustomFont: false,
+                          fontType: UserPreferencesManager.FONT_TYPE_SYSTEM,
+                          customFontPath: '',
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SettingsSliderRow(
+              icon: Icons.format_size_outlined,
+              label: l10n.settingsAppearanceFontScale,
+              value: snapshot.fontScale.clamp(0.85, 1.3),
+              min: 0.85,
+              max: 1.3,
+              divisions: 45,
+              valueText: '${(snapshot.fontScale * 100).round()}%',
+              onChanged: (value) {
+                themeController.previewThemeSettings(fontScale: value);
+              },
+              onChangeEnd: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(fontScale: value),
+                );
+              },
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceLanguageSection,
+          icon: Icons.language_outlined,
+          action: SettingsInfoBadge(label: l10n.localeName),
+          children: <Widget>[
+            _BodyText(l10n.settingsAppearanceLanguageDescription),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                style: SettingsControlStyles.sectionTextButton(),
+                onPressed: () {
+                  unawaited(themeController.resetThemeSettings());
+                },
+                icon: const Icon(Icons.restart_alt, size: 16),
+                label: Text(l10n.settingsAppearanceResetTheme),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBackgroundTab(
+    BuildContext context,
+    AppLocalizations l10n,
+    OperitThemeController themeController,
+    ThemePreferenceSnapshot snapshot,
+  ) {
+    final hasBackgroundMedia =
+        snapshot.backgroundImageUri != null &&
+        snapshot.backgroundImageUri!.isNotEmpty;
+    final isVideo =
+        snapshot.backgroundMediaType == UserPreferencesManager.MEDIA_TYPE_VIDEO;
+    return _ResponsivePreviewSplitTabView(
+      previewCard: _ChatAppearanceLivePreviewCard(
+        snapshot: snapshot,
+        showInputPreview: false,
+      ),
+      children: <Widget>[
+        _SectionCard(
+          title: l10n.settingsAppearanceBackgroundSection,
+          icon: Icons.wallpaper_outlined,
+          children: <Widget>[
+            _BodyText(l10n.settingsAppearanceBackgroundDescription),
+            const SizedBox(height: 4),
+            SettingsSwitchRow(
+              icon: Icons.visibility_outlined,
+              title: l10n.settingsAppearanceBackgroundEnabled,
+              value: snapshot.useBackgroundImage,
+              onChanged: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(useBackgroundImage: value),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+            _CompactAssetTile(
+              icon: isVideo
+                  ? Icons.movie_creation_outlined
+                  : Icons.image_outlined,
+              title: l10n.settingsAppearanceBackgroundImage,
+              subtitle: _backgroundImageLabel(l10n, snapshot.backgroundImageUri),
+              actions: <Widget>[
+                FilledButton.tonalIcon(
+                  style: SettingsControlStyles.sectionTextButton(),
+                  onPressed: () {
+                    unawaited(_pickBackgroundImage(context, themeController));
+                  },
+                  icon: const Icon(Icons.image_outlined, size: 16),
+                  label: Text(l10n.settingsAppearanceBackgroundChooseImage),
+                ),
+                FilledButton.tonalIcon(
+                  style: SettingsControlStyles.sectionTextButton(),
+                  onPressed: () {
+                    unawaited(_pickBackgroundVideo(themeController));
+                  },
+                  icon: const Icon(Icons.movie_creation_outlined, size: 16),
+                  label: Text(l10n.settingsAppearanceBackgroundChooseVideo),
+                ),
+                if (hasBackgroundMedia && snapshot.useBackgroundImage)
+                  SettingsEntityIconButton(
+                    tooltip: l10n.settingsAppearanceBackgroundDisable,
+                    icon: Icons.hide_image_outlined,
+                    onPressed: () {
+                      unawaited(
+                        themeController.saveThemeSettings(
+                          useBackgroundImage: false,
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ],
+        ),
+        if (isVideo)
+          _SectionCard(
+            title: l10n.settingsAppearanceBackgroundVideoSection,
+            icon: Icons.smart_display_outlined,
+            children: <Widget>[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  SettingsToggleChip(
+                    icon: Icons.volume_off_outlined,
+                    label: l10n.settingsAppearanceBackgroundVideoMuted,
+                    selected: snapshot.videoBackgroundMuted,
+                    onSelected: (value) {
+                      unawaited(
+                        themeController.saveThemeSettings(
+                          videoBackgroundMuted: value,
+                        ),
+                      );
+                    },
+                  ),
+                  SettingsToggleChip(
+                    icon: Icons.repeat_outlined,
+                    label: l10n.settingsAppearanceBackgroundVideoLoop,
+                    selected: snapshot.videoBackgroundLoop,
+                    onSelected: (value) {
+                      unawaited(
+                        themeController.saveThemeSettings(
+                          videoBackgroundLoop: value,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        _SectionCard(
+          title: l10n.settingsAppearanceBackgroundEffectsSection,
+          icon: Icons.auto_fix_high_outlined,
+          children: <Widget>[
+            SettingsSliderRow(
+              icon: Icons.opacity_outlined,
+              label: l10n.settingsAppearanceBackgroundOpacity,
+              value: snapshot.backgroundImageOpacity.clamp(0.1, 0.8),
+              min: 0.1,
+              max: 0.8,
+              divisions: 70,
+              valueText: '${(snapshot.backgroundImageOpacity * 100).round()}%',
+              onChanged: (value) {
+                themeController.previewThemeSettings(
+                  backgroundImageOpacity: value,
+                );
+              },
+              onChangeEnd: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(
+                    backgroundImageOpacity: value,
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 14),
+            SettingsSwitchRow(
+              icon: Icons.blur_on_outlined,
+              title: l10n.settingsAppearanceBackgroundBlur,
+              value: snapshot.useBackgroundBlur,
+              onChanged: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(useBackgroundBlur: value),
+                );
+              },
+            ),
+            if (snapshot.useBackgroundBlur) ...<Widget>[
+              const SizedBox(height: 4),
+              SettingsSliderRow(
+                icon: Icons.tune_outlined,
+                label: l10n.settingsAppearanceBackgroundBlurRadius,
+                value: snapshot.backgroundBlurRadius.clamp(0, 40),
+                min: 0,
+                max: 40,
+                divisions: 40,
+                valueText: '${snapshot.backgroundBlurRadius.round()} px',
+                onChanged: (value) {
+                  themeController.previewThemeSettings(
+                    backgroundBlurRadius: value,
+                  );
+                },
+                onChangeEnd: (value) {
+                  unawaited(
+                    themeController.saveThemeSettings(
+                      backgroundBlurRadius: value,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBubblesTab(
+    BuildContext context,
+    AppLocalizations l10n,
+    OperitThemeController themeController,
+    ThemePreferenceSnapshot snapshot,
+  ) {
+    final userImageActive =
+        snapshot.bubbleUserUseImage &&
+        snapshot.bubbleUserImageUri != null &&
+        snapshot.bubbleUserImageUri!.isNotEmpty;
+    final aiImageActive =
+        snapshot.bubbleAiUseImage &&
+        snapshot.bubbleAiImageUri != null &&
+        snapshot.bubbleAiImageUri!.isNotEmpty;
+
+    return _ResponsivePreviewSplitTabView(
+      previewCard: _ChatAppearanceLivePreviewCard(
+        snapshot: snapshot,
+        showInputPreview: false,
+      ),
+      children: <Widget>[
+        _SectionCard(
+          title: l10n.settingsAppearanceBubbleStyleSection,
+          icon: Icons.chat_bubble_outline,
+          children: <Widget>[
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceMessageStyle,
+              badge: _messageStyleLabel(l10n, snapshot.chatStyle),
+              child: _MessageStyleSelector(
+                value: snapshot.chatStyle,
+                onChanged: (value) {
+                  unawaited(
+                    themeController.saveThemeSettings(chatStyle: value),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceMessageDensity,
+              badge: _messageDensityLabel(
+                l10n,
+                _densityFromSnapshot(snapshot),
+              ),
+              child: _MessageDensitySelector(
+                value: _densityFromSnapshot(snapshot),
+                onChanged: (value) {
+                  final padding = value == _MessageDensity.compact ? 8.0 : 12.0;
+                  unawaited(
+                    themeController.saveThemeSettings(
+                      bubbleUserContentPaddingLeft: padding,
+                      bubbleUserContentPaddingRight: padding,
+                      bubbleAiContentPaddingLeft: padding,
+                      bubbleAiContentPaddingRight: padding,
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                SettingsToggleChip(
+                  icon: Icons.aspect_ratio_outlined,
+                  label: l10n.settingsAppearanceWideLayout,
+                  selected: snapshot.bubbleWideLayoutEnabled,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        bubbleWideLayoutEnabled: value,
+                      ),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.rounded_corner_outlined,
+                  label: l10n.settingsAppearanceRoundedMessages,
+                  selected:
+                      snapshot.bubbleUserRoundedCornersEnabled &&
+                      snapshot.bubbleAiRoundedCornersEnabled,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        bubbleUserRoundedCornersEnabled: value,
+                        bubbleAiRoundedCornersEnabled: value,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceMessageColors,
+          icon: Icons.format_color_fill_outlined,
+          action: SettingsInfoBadge(
+            label: _messageColorPresetLabel(l10n, snapshot),
+          ),
+          children: <Widget>[
+            _MessageColorPresetSelector(
+              value: _messageColorPresetFromSnapshot(snapshot),
+              onChanged: (value) {
+                unawaited(_applyMessageColorPreset(themeController, value));
+              },
+              onCustomTap: () {
+                unawaited(
+                  _showMessageColorDialog(
+                    context,
+                    themeController,
+                    snapshot,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceBubbleFontSection,
+          icon: Icons.font_download_outlined,
+          children: <Widget>[
+            _CompactAssetTile(
+              icon: Icons.person_outline,
+              title: l10n.settingsAppearanceUserBubbleFont,
+              subtitle: _bubbleFontLabel(l10n, snapshot, isUser: true),
+              actions: <Widget>[
+                FilledButton.tonalIcon(
+                  style: SettingsControlStyles.sectionTextButton(),
+                  onPressed: () {
+                    unawaited(
+                      _showBubbleFontDialog(
+                        context,
+                        themeController,
+                        snapshot,
+                        isUser: true,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.tune_outlined, size: 16),
+                  label: Text(l10n.settingsAppearanceAdjustUserBubbleFont),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _CompactAssetTile(
+              icon: Icons.smart_toy_outlined,
+              title: l10n.settingsAppearanceAiBubbleFont,
+              subtitle: _bubbleFontLabel(l10n, snapshot, isUser: false),
+              actions: <Widget>[
+                FilledButton.tonalIcon(
+                  style: SettingsControlStyles.sectionTextButton(),
+                  onPressed: () {
+                    unawaited(
+                      _showBubbleFontDialog(
+                        context,
+                        themeController,
+                        snapshot,
+                        isUser: false,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.tune_outlined, size: 16),
+                  label: Text(l10n.settingsAppearanceAdjustAiBubbleFont),
+                ),
+              ],
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceBubbleImageSection,
+          icon: Icons.layers_outlined,
+          children: <Widget>[
+            _CompactAssetTile(
+              icon: Icons.person_outline,
+              title: l10n.settingsAppearanceUserBubbleImage,
+              subtitle: _fileNameOrNoneLabel(
+                l10n,
+                snapshot.bubbleUserImageUri,
+                snapshot.bubbleUserUseImage,
+              ),
+              actions: <Widget>[
+                FilledButton.tonalIcon(
+                  style: SettingsControlStyles.sectionTextButton(),
+                  onPressed: () {
+                    unawaited(
+                      _pickBubbleImage(
+                        themeController,
+                        snapshot: snapshot,
+                        isUser: true,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.image_outlined, size: 16),
+                  label: Text(l10n.settingsAppearanceChooseUserBubbleImage),
+                ),
+                if (userImageActive) ...<Widget>[
+                  OutlinedButton.icon(
+                    style: SettingsControlStyles.sectionTextButton(),
+                    onPressed: () {
+                      unawaited(
+                        _showBubbleImageAdjustDialog(
+                          context,
+                          themeController,
+                          snapshot,
+                          isUser: true,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.tune_outlined, size: 16),
+                    label: Text(l10n.settingsAppearanceBubbleImageAdjustUser),
+                  ),
+                  SettingsEntityIconButton(
+                    tooltip: l10n.settingsAppearanceClearUserBubbleImage,
+                    icon: Icons.layers_clear_outlined,
+                    onPressed: () {
+                      unawaited(
+                        themeController.saveThemeSettings(
+                          bubbleUserUseImage: false,
+                          bubbleUserImageUri: '',
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ],
+              bottom: userImageActive
+                  ? _BubbleImageRenderModeSelector(
+                      value: snapshot.bubbleUserImageRenderMode,
+                      onChanged: (value) {
+                        unawaited(
+                          themeController.saveThemeSettings(
+                            bubbleUserImageRenderMode: value,
+                          ),
+                        );
+                      },
+                    )
+                  : null,
+            ),
+            const SizedBox(height: 8),
+            _CompactAssetTile(
+              icon: Icons.smart_toy_outlined,
+              title: l10n.settingsAppearanceAiBubbleImage,
+              subtitle: _fileNameOrNoneLabel(
+                l10n,
+                snapshot.bubbleAiImageUri,
+                snapshot.bubbleAiUseImage,
+              ),
+              actions: <Widget>[
+                FilledButton.tonalIcon(
+                  style: SettingsControlStyles.sectionTextButton(),
+                  onPressed: () {
+                    unawaited(
+                      _pickBubbleImage(
+                        themeController,
+                        snapshot: snapshot,
+                        isUser: false,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.image_outlined, size: 16),
+                  label: Text(l10n.settingsAppearanceChooseAiBubbleImage),
+                ),
+                if (aiImageActive) ...<Widget>[
+                  OutlinedButton.icon(
+                    style: SettingsControlStyles.sectionTextButton(),
+                    onPressed: () {
+                      unawaited(
+                        _showBubbleImageAdjustDialog(
+                          context,
+                          themeController,
+                          snapshot,
+                          isUser: false,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.tune_outlined, size: 16),
+                    label: Text(l10n.settingsAppearanceBubbleImageAdjustAi),
+                  ),
+                  SettingsEntityIconButton(
+                    tooltip: l10n.settingsAppearanceClearAiBubbleImage,
+                    icon: Icons.layers_clear_outlined,
+                    onPressed: () {
+                      unawaited(
+                        themeController.saveThemeSettings(
+                          bubbleAiUseImage: false,
+                          bubbleAiImageUri: '',
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ],
+              bottom: aiImageActive
+                  ? _BubbleImageRenderModeSelector(
+                      value: snapshot.bubbleAiImageRenderMode,
+                      onChanged: (value) {
+                        unawaited(
+                          themeController.saveThemeSettings(
+                            bubbleAiImageRenderMode: value,
+                          ),
+                        );
+                      },
+                    )
+                  : null,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInteractionTab(
+    BuildContext context,
+    AppLocalizations l10n,
+    OperitThemeController themeController,
+    ThemePreferenceSnapshot snapshot,
+  ) {
+    return _ResponsivePreviewSplitTabView(
+      previewCard: _ChatAppearanceLivePreviewCard(
+        snapshot: snapshot,
+        showInputPreview: true,
+      ),
+      children: <Widget>[
+        _SectionCard(
+          title: l10n.settingsAppearanceAvatarSection,
+          icon: Icons.account_circle_outlined,
+          children: <Widget>[
+            SettingsSwitchRow(
+              icon: Icons.visibility_outlined,
+              title: l10n.settingsAppearanceShowAvatars,
+              value: snapshot.bubbleShowAvatar,
+              onChanged: (value) {
+                unawaited(
+                  themeController.saveThemeSettings(bubbleShowAvatar: value),
+                );
+              },
+            ),
+            if (snapshot.bubbleShowAvatar) ...<Widget>[
+              const SizedBox(height: 8),
+              _AppearanceFieldBlock(
+                label: l10n.settingsAppearanceAvatarShape,
+                badge: _avatarShapeLabel(l10n, snapshot.avatarShape),
+                child: _AvatarShapeSelector(
+                  value: _avatarShapeFromSnapshot(snapshot.avatarShape),
+                  onChanged: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        avatarShape: _avatarShapeValue(value),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceInputSection,
+          icon: Icons.keyboard_outlined,
+          children: <Widget>[
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceInputStyle,
+              badge: _inputStyleLabel(l10n, snapshot.inputStyle),
+              child: _InputStyleSelector(
+                value: _inputStyleValue(snapshot.inputStyle),
+                onChanged: (value) {
+                  unawaited(
+                    themeController.saveThemeSettings(inputStyle: value),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                SettingsToggleChip(
+                  icon: Icons.vertical_align_bottom_outlined,
+                  label: l10n.settingsAppearanceInputFloating,
+                  selected: snapshot.chatInputFloating,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        chatInputFloating: value,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceInteractionStatusSection,
+          icon: Icons.psychology_outlined,
+          children: <Widget>[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                SettingsToggleChip(
+                  icon: Icons.psychology_outlined,
+                  label: l10n.settingsAppearanceShowThinkingProcess,
+                  selected: snapshot.showThinkingProcess,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        showThinkingProcess: value,
+                      ),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.hourglass_top_outlined,
+                  label: l10n.settingsAppearanceShowInputProcessingStatus,
+                  selected: snapshot.showInputProcessingStatus,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        showInputProcessingStatus: value,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+        _SectionCard(
+          title: l10n.settingsAppearanceMessageDisplaySection,
+          icon: Icons.tune_outlined,
+          children: <Widget>[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                SettingsToggleChip(
+                  icon: Icons.badge_outlined,
+                  label: l10n.settingsAppearanceShowRoleName,
+                  selected: snapshot.showRoleName,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(showRoleName: value),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.person_outline,
+                  label: l10n.settingsAppearanceShowUserName,
+                  selected: snapshot.showUserName,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(showUserName: value),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.memory_outlined,
+                  label: l10n.settingsAppearanceShowModelName,
+                  selected: snapshot.showModelName,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(showModelName: value),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.cloud_outlined,
+                  label: l10n.settingsAppearanceShowModelProvider,
+                  selected: snapshot.showModelProvider,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        showModelProvider: value,
+                      ),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.data_usage_outlined,
+                  label: l10n.settingsAppearanceShowMessageTokenStats,
+                  selected: snapshot.showMessageTokenStats,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        showMessageTokenStats: value,
+                      ),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.timer_outlined,
+                  label: l10n.settingsAppearanceShowMessageTimingStats,
+                  selected: snapshot.showMessageTimingStats,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        showMessageTimingStats: value,
+                      ),
+                    );
+                  },
+                ),
+                SettingsToggleChip(
+                  icon: Icons.schedule_outlined,
+                  label: l10n.settingsAppearanceShowMessageTimestamp,
+                  selected: snapshot.showMessageTimestamp,
+                  onSelected: (value) {
+                    unawaited(
+                      themeController.saveThemeSettings(
+                        showMessageTimestamp: value,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AppearanceHeaderBar extends StatelessWidget {
+  const _AppearanceHeaderBar({required this.themeController});
+
+  final OperitThemeController themeController;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useHorizontalHeader = constraints.maxWidth >= 680;
+        if (useHorizontalHeader) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: TabBar(
+                          isScrollable: true,
+                          tabAlignment: TabAlignment.start,
+                          dividerColor: Colors.transparent,
+                          tabs: <Widget>[
+                            for (final tab in _appearanceSettingsTabs)
+                              Tab(text: _appearanceSettingsTabLabel(l10n, tab)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 240,
+                      child: _ThemeTargetSelector(
+                        themeController: themeController,
+                        padding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(
+                height: 1,
+                color: colorScheme.outlineVariant.withValues(alpha: 0.22),
+              ),
+            ],
+          );
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            _ThemeTargetSelector(themeController: themeController),
+            Material(
+              color: Colors.transparent,
+              child: TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: <Widget>[
+                  for (final tab in _appearanceSettingsTabs)
+                    Tab(text: _appearanceSettingsTabLabel(l10n, tab)),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ResponsiveTwoColumnTabView extends StatelessWidget {
+  const _ResponsiveTwoColumnTabView({
+    required this.leftChildren,
+    required this.rightChildren,
+  });
+
+  final List<Widget> leftChildren;
+  final List<Widget> rightChildren;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 720) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1120),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: leftChildren,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: rightChildren,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          children: <Widget>[
+            ...leftChildren,
+            ...rightChildren,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ResponsivePreviewSplitTabView extends StatefulWidget {
+  const _ResponsivePreviewSplitTabView({
+    super.key,
+    required this.previewCard,
+    required this.children,
+  });
+
+  final Widget previewCard;
+  final List<Widget> children;
+
+  @override
+  State<_ResponsivePreviewSplitTabView> createState() =>
+      _ResponsivePreviewSplitTabViewState();
+}
+
+class _ResponsivePreviewSplitTabViewState
+    extends State<_ResponsivePreviewSplitTabView> {
+  bool _mobilePreviewExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 820) {
+          final previewWidth =
+              (constraints.maxWidth * 0.40).clamp(340.0, 420.0);
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 24),
+                      children: widget.children,
+                    ),
+                  ),
+                  SizedBox(
+                    width: previewWidth,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(8, 12, 16, 24),
+                      child: widget.previewCard,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final l10n = AppLocalizations.of(context)!;
+        final colorScheme = Theme.of(context).colorScheme;
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color:
+                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.22),
+                  ),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () {
+                    setState(() {
+                      _mobilePreviewExpanded = !_mobilePreviewExpanded;
+                    });
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(
+                          Icons.visibility_outlined,
+                          size: 18,
+                          color: colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            l10n.settingsAppearanceLivePreviewTitle,
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        SettingsInfoBadge(
+                          label: _mobilePreviewExpanded ? '折叠' : '展开',
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          _mobilePreviewExpanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: 18,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            if (_mobilePreviewExpanded) ...<Widget>[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: widget.previewCard,
+              ),
+            ],
+            ...widget.children,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ChatAppearanceLivePreviewCard extends StatelessWidget {
+  const _ChatAppearanceLivePreviewCard({
+    required this.snapshot,
+    required this.showInputPreview,
+  });
+
+  final ThemePreferenceSnapshot snapshot;
+  final bool showInputPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    final isBubbleStyle =
+        snapshot.chatStyle == UserPreferencesManager.CHAT_STYLE_BUBBLE;
+    final isWide = snapshot.bubbleWideLayoutEnabled;
+    final showAvatar = snapshot.bubbleShowAvatar;
+
+    final userBgColor = isBubbleStyle
+        ? Color(
+            snapshot.bubbleUserBubbleColor ??
+                colorScheme.primaryContainer.toARGB32(),
+          )
+        : Color(
+            snapshot.cursorUserBubbleColor ??
+                colorScheme.primaryContainer.toARGB32(),
+          );
+    final userTextColor = Color(
+      snapshot.bubbleUserTextColor ?? colorScheme.onPrimaryContainer.toARGB32(),
+    );
+    final aiBgColor = Color(
+      snapshot.bubbleAiBubbleColor ??
+          colorScheme.surfaceContainerHighest.toARGB32(),
+    );
+    final aiTextColor = Color(
+      snapshot.bubbleAiTextColor ?? colorScheme.onSurface.toARGB32(),
+    );
+
+    final userFontFamily = operitMessageFontFamily(snapshot, isUser: true);
+    final userFontFallback = operitMessageFontFamilyFallback(
+      snapshot,
+      isUser: true,
+    );
+    final aiFontFamily = operitMessageFontFamily(snapshot, isUser: false);
+    final aiFontFallback = operitMessageFontFamilyFallback(
+      snapshot,
+      isUser: false,
+    );
+
+    final userImageStyle =
+        !snapshot.transparentSurfaceEnabled &&
+            snapshot.bubbleUserUseImage &&
+            snapshot.bubbleUserImageUri != null &&
+            snapshot.bubbleUserImageUri!.isNotEmpty
+        ? BubbleImageStyle(
+            imagePath: snapshot.bubbleUserImageUri!,
+            cropLeftRatio: snapshot.bubbleUserImageCropLeft,
+            cropTopRatio: snapshot.bubbleUserImageCropTop,
+            cropRightRatio: snapshot.bubbleUserImageCropRight,
+            cropBottomRatio: snapshot.bubbleUserImageCropBottom,
+            repeatXStartRatio: snapshot.bubbleUserImageRepeatStart,
+            repeatXEndRatio: snapshot.bubbleUserImageRepeatEnd,
+            repeatYStartRatio: snapshot.bubbleUserImageRepeatYStart,
+            repeatYEndRatio: snapshot.bubbleUserImageRepeatYEnd,
+            imageScale: snapshot.bubbleUserImageScale,
+            renderMode: snapshot.bubbleUserImageRenderMode,
+          )
+        : null;
+
+    final aiImageStyle =
+        !snapshot.transparentSurfaceEnabled &&
+            snapshot.bubbleAiUseImage &&
+            snapshot.bubbleAiImageUri != null &&
+            snapshot.bubbleAiImageUri!.isNotEmpty
+        ? BubbleImageStyle(
+            imagePath: snapshot.bubbleAiImageUri!,
+            cropLeftRatio: snapshot.bubbleAiImageCropLeft,
+            cropTopRatio: snapshot.bubbleAiImageCropTop,
+            cropRightRatio: snapshot.bubbleAiImageCropRight,
+            cropBottomRatio: snapshot.bubbleAiImageCropBottom,
+            repeatXStartRatio: snapshot.bubbleAiImageRepeatStart,
+            repeatXEndRatio: snapshot.bubbleAiImageRepeatEnd,
+            repeatYStartRatio: snapshot.bubbleAiImageRepeatYStart,
+            repeatYEndRatio: snapshot.bubbleAiImageRepeatYEnd,
+            imageScale: snapshot.bubbleAiImageScale,
+            renderMode: snapshot.bubbleAiImageRenderMode,
+          )
+        : null;
+
+    final hasBgImage =
+        snapshot.useBackgroundImage &&
+        snapshot.backgroundImageUri != null &&
+        snapshot.backgroundImageUri!.isNotEmpty;
+
+    final userContentPadding = EdgeInsets.fromLTRB(
+      snapshot.bubbleUserContentPaddingLeft.clamp(6.0, 24.0),
+      8,
+      snapshot.bubbleUserContentPaddingRight.clamp(6.0, 24.0),
+      8,
+    );
+    final aiContentPadding = EdgeInsets.fromLTRB(
+      snapshot.bubbleAiContentPaddingLeft.clamp(6.0, 24.0),
+      8,
+      snapshot.bubbleAiContentPaddingRight.clamp(6.0, 24.0),
+      8,
+    );
+
+    final userRadius = BorderRadius.circular(
+      snapshot.bubbleUserRoundedCornersEnabled ? 14 : 3,
+    );
+    final aiRadius = BorderRadius.circular(
+      snapshot.bubbleAiRoundedCornersEnabled ? 14 : 3,
+    );
+
+    final aiMetaLabels = <String>[
+      if (snapshot.showRoleName) 'Operit',
+      if (snapshot.showModelName) 'GPT-5',
+      if (snapshot.showModelProvider) 'OpenAI',
+      if (snapshot.showMessageTimestamp) '14:20',
+    ];
+
+    final aiStatsLabels = <String>[
+      if (snapshot.showMessageTokenStats) '2610 tokens',
+      if (snapshot.showMessageTimingStats) '1.2s',
+    ];
+
+    final cursorMetaParts = <String>[
+      if (snapshot.showRoleName) 'Operit',
+      if (snapshot.showModelName) 'GPT-5',
+      if (snapshot.showModelProvider) 'OpenAI',
+      if (snapshot.showMessageTokenStats) '2610 tokens',
+      if (snapshot.showMessageTimingStats) '1.2s',
+      if (snapshot.showMessageTimestamp) '14:20',
+    ];
+
+    return _SectionCard(
+      title: l10n.settingsAppearanceLivePreviewTitle,
+      icon: Icons.preview_outlined,
+      action: SettingsInfoBadge(
+        label: isBubbleStyle ? '气泡模式' : '极简模式',
+      ),
+      children: <Widget>[
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: Container(
+                  color: colorScheme.surface,
+                ),
+              ),
+              if (hasBgImage)
+                Positioned.fill(
+                  child: Opacity(
+                    opacity: snapshot.backgroundImageOpacity.clamp(0.1, 1.0),
+                    child: snapshot.useBackgroundBlur
+                        ? ImageFiltered(
+                            imageFilter: ui.ImageFilter.blur(
+                              sigmaX: snapshot.backgroundBlurRadius.clamp(0.0, 40.0),
+                              sigmaY: snapshot.backgroundBlurRadius.clamp(0.0, 40.0),
+                            ),
+                            child: ThemeAssetImage(
+                              storagePath: snapshot.backgroundImageUri!,
+                              fit: BoxFit.cover,
+                            ),
+                          )
+                        : ThemeAssetImage(
+                            storagePath: snapshot.backgroundImageUri!,
+                            fit: BoxFit.cover,
+                          ),
+                  ),
+                ),
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface.withValues(
+                      alpha: snapshot.transparentSurfaceEnabled
+                          ? (hasBgImage ? 0.20 : 0.05)
+                          : (hasBgImage ? 0.72 : 0.96),
+                    ),
+                    border: Border.all(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.28),
+                      width: 0.8,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+                child: MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    textScaler: TextScaler.linear(
+                      snapshot.fontScale.clamp(0.85, 1.3),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (isBubbleStyle) ...<Widget>[
+                        if (isWide) ...<Widget>[
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4, right: 2),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: <Widget>[
+                                if (snapshot.showUserName || snapshot.showMessageTimestamp)
+                                  Text(
+                                    <String>[
+                                      if (snapshot.showUserName) 'User',
+                                      if (snapshot.showMessageTimestamp) '14:19',
+                                    ].join(' · '),
+                                    style: textTheme.labelSmall?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          BubbleSurface(
+                            color: userBgColor,
+                            transparentSurface: snapshot.transparentSurfaceEnabled,
+                            imageStyle: userImageStyle,
+                            borderRadius: userRadius,
+                            child: Padding(
+                              padding: userContentPadding,
+                              child: Text(
+                                l10n.settingsAppearanceLivePreviewUserSample,
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: userTextColor,
+                                  fontFamily: userFontFamily,
+                                  fontFamilyFallback: userFontFallback,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ] else ...<Widget>[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Flexible(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: <Widget>[
+                                    if (snapshot.showUserName || snapshot.showMessageTimestamp)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 3, right: 2),
+                                        child: Text(
+                                          <String>[
+                                            if (snapshot.showUserName) 'User',
+                                            if (snapshot.showMessageTimestamp) '14:19',
+                                          ].join(' · '),
+                                          style: textTheme.labelSmall?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ),
+                                    BubbleSurface(
+                                      color: userBgColor,
+                                      transparentSurface: snapshot.transparentSurfaceEnabled,
+                                      imageStyle: userImageStyle,
+                                      borderRadius: userRadius,
+                                      child: Padding(
+                                        padding: userContentPadding,
+                                        child: Text(
+                                          l10n.settingsAppearanceLivePreviewUserSample,
+                                          style: textTheme.bodyMedium?.copyWith(
+                                            color: userTextColor,
+                                            fontFamily: userFontFamily,
+                                            fontFamilyFallback: userFontFallback,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (showAvatar) ...<Widget>[
+                                const SizedBox(width: 8),
+                                _PreviewAvatar(
+                                  isUser: true,
+                                  snapshot: snapshot,
+                                  fallbackColor: colorScheme.primaryContainer,
+                                  fallbackIconColor: colorScheme.onPrimaryContainer,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ] else ...<Widget>[
+                        BubbleSurface(
+                          color: userBgColor,
+                          transparentSurface: snapshot.transparentSurfaceEnabled,
+                          imageStyle: userImageStyle,
+                          borderRadius: userRadius,
+                          child: Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Row(
+                                  children: <Widget>[
+                                    Text(
+                                      snapshot.showUserName ? 'Prompt by User' : 'Prompt',
+                                      style: textTheme.labelSmall?.copyWith(
+                                        color: userTextColor.withValues(alpha: 0.8),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    if (snapshot.showMessageTimestamp)
+                                      Text(
+                                        '14:19',
+                                        style: textTheme.labelSmall?.copyWith(
+                                          color: userTextColor.withValues(alpha: 0.6),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  l10n.settingsAppearanceLivePreviewUserSample,
+                                  style: textTheme.bodyMedium?.copyWith(
+                                    color: userTextColor,
+                                    fontFamily: userFontFamily,
+                                    fontFamilyFallback: userFontFallback,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      if (snapshot.showThinkingProcess) ...<Widget>[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: colorScheme.outlineVariant.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(
+                                Icons.psychology_outlined,
+                                size: 14,
+                                color: colorScheme.primary,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '深度思考 (3.8s)',
+                                style: textTheme.labelSmall?.copyWith(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 10.5,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  l10n.settingsAppearanceLivePreviewThinkingSample,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: textTheme.labelSmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 10.5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                      if (isBubbleStyle) ...<Widget>[
+                        if (isWide) ...<Widget>[
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4, left: 2),
+                            child: Row(
+                              children: <Widget>[
+                                if (showAvatar) ...<Widget>[
+                                  _PreviewAvatar(
+                                    isUser: false,
+                                    snapshot: snapshot,
+                                    fallbackColor: colorScheme.surfaceContainerHighest,
+                                    fallbackIconColor: colorScheme.onSurface,
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
+                                if (aiMetaLabels.isNotEmpty)
+                                  Expanded(
+                                    child: Text(
+                                      aiMetaLabels.join(' · '),
+                                      style: textTheme.labelSmall?.copyWith(
+                                        color: colorScheme.onSurfaceVariant,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          BubbleSurface(
+                            color: aiBgColor,
+                            transparentSurface: snapshot.transparentSurfaceEnabled,
+                            imageStyle: aiImageStyle,
+                            borderRadius: aiRadius,
+                            child: Padding(
+                              padding: aiContentPadding,
+                              child: Text(
+                                l10n.settingsAppearanceLivePreviewAiSample,
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: aiTextColor,
+                                  fontFamily: aiFontFamily,
+                                  fontFamilyFallback: aiFontFallback,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (aiStatsLabels.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4, left: 2),
+                              child: Text(
+                                aiStatsLabels.join(' · '),
+                                style: textTheme.labelSmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                  fontSize: 10.5,
+                                ),
+                              ),
+                            ),
+                        ] else ...<Widget>[
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              if (showAvatar) ...<Widget>[
+                                _PreviewAvatar(
+                                  isUser: false,
+                                  snapshot: snapshot,
+                                  fallbackColor: colorScheme.surfaceContainerHighest,
+                                  fallbackIconColor: colorScheme.onSurface,
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Flexible(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    if (aiMetaLabels.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 3, left: 2),
+                                        child: Text(
+                                          aiMetaLabels.join(' · '),
+                                          style: textTheme.labelSmall?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ),
+                                    BubbleSurface(
+                                      color: aiBgColor,
+                                      transparentSurface: snapshot.transparentSurfaceEnabled,
+                                      imageStyle: aiImageStyle,
+                                      borderRadius: aiRadius,
+                                      child: Padding(
+                                        padding: aiContentPadding,
+                                        child: Text(
+                                          l10n.settingsAppearanceLivePreviewAiSample,
+                                          style: textTheme.bodyMedium?.copyWith(
+                                            color: aiTextColor,
+                                            fontFamily: aiFontFamily,
+                                            fontFamilyFallback: aiFontFallback,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    if (aiStatsLabels.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4, left: 2),
+                                        child: Text(
+                                          aiStatsLabels.join(' · '),
+                                          style: textTheme.labelSmall?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                            fontSize: 10.5,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ] else ...<Widget>[
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Row(
+                                children: <Widget>[
+                                  Text(
+                                    'Response',
+                                    style: textTheme.labelSmall?.copyWith(
+                                      color: colorScheme.onSurface.withValues(alpha: 0.7),
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  if (cursorMetaParts.isNotEmpty) ...<Widget>[
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        cursorMetaParts.join(' · '),
+                                        textAlign: TextAlign.end,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: textTheme.labelSmall?.copyWith(
+                                          color: colorScheme.onSurface.withValues(alpha: 0.5),
+                                          fontSize: 10.5,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              child: Text(
+                                l10n.settingsAppearanceLivePreviewAiSample,
+                                style: textTheme.bodyMedium?.copyWith(
+                                  color: aiTextColor,
+                                  fontFamily: aiFontFamily,
+                                  fontFamilyFallback: aiFontFallback,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (showInputPreview) ...<Widget>[
+                        const SizedBox(height: 10),
+                        if (snapshot.showInputProcessingStatus)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Row(
+                              children: <Widget>[
+                                SizedBox(
+                                  width: 10,
+                                  height: 10,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.8,
+                                    color: colorScheme.primary,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    l10n.settingsAppearanceShowInputProcessingStatus,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: textTheme.labelSmall?.copyWith(
+                                      color: colorScheme.primary,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        Container(
+                          margin: EdgeInsets.symmetric(
+                            horizontal: snapshot.chatInputFloating ? 4 : 0,
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(
+                              snapshot.chatInputFloating ? 20 : 8,
+                            ),
+                            border: Border.all(
+                              color: colorScheme.outlineVariant.withValues(alpha: 0.28),
+                            ),
+                          ),
+                          child: Row(
+                            children: <Widget>[
+                              Icon(
+                                snapshot.inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT
+                                    ? Icons.add_circle_outline
+                                    : Icons.chat_bubble_outline,
+                                size: 15,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 8),
+                              if (snapshot.inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT) ...<Widget>[
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: ShapeDecoration(
+                                    color: colorScheme.primary.withValues(alpha: 0.12),
+                                    shape: const StadiumBorder(),
+                                  ),
+                                  child: Text(
+                                    'GPT-5',
+                                    style: textTheme.labelSmall?.copyWith(
+                                      color: colorScheme.primary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  _inputStyleLabel(l10n, snapshot.inputStyle),
+                                  style: textTheme.labelSmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                snapshot.inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT
+                                    ? Icons.arrow_upward_rounded
+                                    : Icons.send_rounded,
+                                size: 15,
+                                color: colorScheme.primary,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PreviewAvatar extends StatelessWidget {
+  const _PreviewAvatar({
+    required this.isUser,
+    required this.snapshot,
+    required this.fallbackColor,
+    required this.fallbackIconColor,
+  });
+
+  final bool isUser;
+  final ThemePreferenceSnapshot snapshot;
+  final Color fallbackColor;
+  final Color fallbackIconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final isSquare = snapshot.avatarShape == UserPreferencesManager.AVATAR_SHAPE_SQUARE;
+    final radius = isSquare
+        ? BorderRadius.circular(snapshot.avatarCornerRadius.clamp(2.0, 14.0))
+        : BorderRadius.circular(999);
+    final uri = isUser ? snapshot.customUserAvatarUri : null;
+
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: fallbackColor,
+        borderRadius: radius,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: uri != null && uri.isNotEmpty
+          ? CharacterAvatarImage(avatarUri: uri, fit: BoxFit.cover)
+          : Center(
+              child: Icon(
+                isUser ? Icons.person : Icons.smart_toy_rounded,
+                size: 16,
+                color: fallbackIconColor,
+              ),
+            ),
     );
   }
 }
@@ -927,9 +1934,13 @@ class _ThemeTargetOption {
 
 class _ThemeTargetSelector extends StatefulWidget {
   /// Creates the top-level theme target selector.
-  const _ThemeTargetSelector({required this.themeController});
+  const _ThemeTargetSelector({
+    required this.themeController,
+    this.padding = const EdgeInsets.fromLTRB(16, 10, 16, 6),
+  });
 
   final OperitThemeController themeController;
+  final EdgeInsetsGeometry padding;
 
   /// Creates the selector state that owns the target catalog request.
   @override
@@ -969,9 +1980,12 @@ class _ThemeTargetSelectorState extends State<_ThemeTargetSelector> {
         }
         final catalog = snapshot.data;
         if (catalog == null) {
-          return const Padding(
-            padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: LinearProgressIndicator(),
+          return Padding(
+            padding: widget.padding,
+            child: const SizedBox(
+              height: 36,
+              child: Center(child: LinearProgressIndicator(minHeight: 2)),
+            ),
           );
         }
         final l10n = AppLocalizations.of(context)!;
@@ -982,20 +1996,46 @@ class _ThemeTargetSelectorState extends State<_ThemeTargetSelector> {
           l10n,
         );
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: PopupMenuButton<_ThemeTargetOption>(
-            tooltip: l10n.settingsAppearanceThemeTarget,
-            onSelected: (option) {
-              unawaited(
-                widget.themeController.setActiveThemeTarget(option.target),
+          padding: widget.padding,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final menuWidth = constraints.maxWidth.isFinite
+                  ? constraints.maxWidth.clamp(200.0, 320.0)
+                  : 240.0;
+              final colorScheme = Theme.of(context).colorScheme;
+              return PopupMenuButton<_ThemeTargetOption>(
+                tooltip: l10n.settingsAppearanceThemeTarget,
+                position: PopupMenuPosition.under,
+                offset: const Offset(0, 6),
+                elevation: 8,
+                color: colorScheme.surfaceContainerHigh,
+                surfaceTintColor: Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.28),
+                    width: 0.8,
+                  ),
+                ),
+                menuPadding: const EdgeInsets.symmetric(vertical: 6),
+                constraints: BoxConstraints(
+                  minWidth: menuWidth,
+                  maxWidth: menuWidth,
+                  maxHeight: 340,
+                ),
+                onSelected: (option) {
+                  unawaited(
+                    widget.themeController.setActiveThemeTarget(option.target),
+                  );
+                },
+                itemBuilder: (context) =>
+                    _themeTargetMenuEntries(catalog, activeTarget, l10n),
+                child: _ThemeTargetSelectorCard(
+                  option: selected,
+                  title: l10n.settingsAppearanceThemeTarget,
+                ),
               );
             },
-            itemBuilder: (context) =>
-                _themeTargetMenuEntries(catalog, activeTarget, l10n),
-            child: _ThemeTargetSelectorCard(
-              option: selected,
-              title: l10n.settingsAppearanceThemeTarget,
-            ),
           ),
         );
       },
@@ -1021,45 +2061,45 @@ class _ThemeTargetSelectorCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return OperitGlassSurface(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
-      borderRadius: BorderRadius.circular(12),
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.38),
+      borderRadius: BorderRadius.circular(10),
       border: Border.all(
-        color: colorScheme.outlineVariant.withValues(alpha: 0.18),
+        color: colorScheme.outlineVariant.withValues(alpha: 0.24),
+        width: 0.8,
       ),
       layer: OperitGlassSurfaceLayer.control,
       material: true,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         child: Row(
           children: <Widget>[
-            _ThemeTargetAvatar(option: option, size: 32),
-            const SizedBox(width: 10),
+            _ThemeTargetAvatar(option: option, size: 24),
+            const SizedBox(width: 8),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: <Widget>[
-                  Text(
-                    option.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
+                  Flexible(
+                    child: Text(
+                      option.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '$title · ${option.typeLabel}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+                  const SizedBox(width: 6),
+                  SettingsInfoBadge(label: option.typeLabel),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            Icon(Icons.arrow_drop_down, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.unfold_more_rounded,
+              size: 16,
+              color: colorScheme.onSurfaceVariant,
+            ),
           ],
         ),
       ),
@@ -1110,11 +2150,16 @@ class _ThemeTargetMenuHeader extends StatelessWidget {
   /// Builds the menu section label.
   @override
   Widget build(BuildContext context) {
-    return Text(
-      label,
-      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-        fontWeight: FontWeight.w800,
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: colorScheme.primary,
+          fontWeight: FontWeight.w700,
+          fontSize: 11,
+        ),
       ),
     );
   }
@@ -1127,56 +2172,45 @@ class _ThemeTargetMenuRow extends StatelessWidget {
   final _ThemeTargetOption option;
   final bool selected;
 
-  /// Builds one target row with avatar, label, type, and selected mark.
+  /// Builds one target row with avatar, label, and selected mark.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return Row(
-      children: <Widget>[
-        _ThemeTargetAvatar(option: option, size: 32),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                option.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodyMedium?.copyWith(
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: selected
+            ? colorScheme.primary.withValues(alpha: 0.12)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: <Widget>[
+          _ThemeTargetAvatar(option: option, size: 22),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              option.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodyMedium?.copyWith(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? colorScheme.primary : colorScheme.onSurface,
               ),
-              Text(
-                option.typeLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-        if (selected) Icon(Icons.check, color: colorScheme.primary, size: 18),
-      ],
-    );
-  }
-}
-
-class _AppearanceSettingsTabList extends StatelessWidget {
-  /// Creates a scrollable settings column for one appearance tab.
-  const _AppearanceSettingsTabList({required this.children});
-
-  final List<Widget> children;
-
-  /// Builds the tab page with consistent settings padding.
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-      children: children,
+          if (selected) ...<Widget>[
+            const SizedBox(width: 8),
+            Icon(
+              Icons.check_rounded,
+              color: colorScheme.primary,
+              size: 16,
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1199,7 +2233,8 @@ List<PopupMenuEntry<_ThemeTargetOption>> _themeTargetMenuEntries(
   final entries = <PopupMenuEntry<_ThemeTargetOption>>[
     PopupMenuItem<_ThemeTargetOption>(
       enabled: false,
-      height: 30,
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       child: _ThemeTargetMenuHeader(l10n.settingsCharactersCardsSection),
     ),
     for (final card in catalog.cards)
@@ -1209,11 +2244,12 @@ List<PopupMenuEntry<_ThemeTargetOption>> _themeTargetMenuEntries(
       ),
   ];
   if (catalog.groups.isNotEmpty) {
-    entries.add(const PopupMenuDivider());
+    entries.add(const PopupMenuDivider(height: 8));
     entries.add(
       PopupMenuItem<_ThemeTargetOption>(
         enabled: false,
-        height: 30,
+        height: 24,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         child: _ThemeTargetMenuHeader(l10n.settingsCharactersGroupsSection),
       ),
     );
@@ -1236,6 +2272,8 @@ PopupMenuEntry<_ThemeTargetOption> _themeTargetMenuItem(
   final selected = _themeTargetEquals(option.target, activeTarget);
   return PopupMenuItem<_ThemeTargetOption>(
     value: option,
+    height: 36,
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
     child: _ThemeTargetMenuRow(option: option, selected: selected),
   );
 }
@@ -1284,9 +2322,8 @@ String _appearanceSettingsTabLabel(
     _AppearanceSettingsTab.theme => l10n.settingsAppearanceThemeSection,
     _AppearanceSettingsTab.background =>
       l10n.settingsAppearanceBackgroundSection,
-    _AppearanceSettingsTab.chat => l10n.settingsAppearanceChatDisplaySection,
-    _AppearanceSettingsTab.input => l10n.settingsAppearanceInputSection,
-    _AppearanceSettingsTab.interface => l10n.settingsAppearanceMessageSurface,
+    _AppearanceSettingsTab.bubbles => l10n.settingsAppearanceBubblesTab,
+    _AppearanceSettingsTab.interaction => l10n.settingsAppearanceInteractionTab,
   };
 }
 
@@ -1449,57 +2486,10 @@ class _ThemeImageCropDialogState extends State<_ThemeImageCropDialog> {
       offsetX: _offsetX,
       offsetY: _offsetY,
     );
-    return AlertDialog(
-      title: Text(l10n.settingsAppearanceBubbleImageCrop),
-      content: SingleChildScrollView(
-        child: SizedBox(
-          width: 440,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              AspectRatio(
-                aspectRatio: widget.aspectRatio,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: CustomPaint(
-                    painter: _ThemeImageCropPreviewPainter(
-                      image: widget.sourceImage,
-                      aspectRatio: widget.aspectRatio,
-                      settings: settings,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              _ValueSlider(
-                label: l10n.zoom,
-                value: _zoom,
-                min: 1,
-                max: 4,
-                divisions: 30,
-                onChanged: (value) => setState(() => _zoom = value),
-              ),
-              _ValueSlider(
-                label: 'X',
-                value: _offsetX,
-                min: -1,
-                max: 1,
-                divisions: 40,
-                onChanged: (value) => setState(() => _offsetX = value),
-              ),
-              _ValueSlider(
-                label: 'Y',
-                value: _offsetY,
-                min: -1,
-                max: 1,
-                divisions: 40,
-                onChanged: (value) => setState(() => _offsetY = value),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return OperitDialogScaffold(
+      title: l10n.settingsAppearanceBubbleImageCrop,
+      maxWidth: 460,
+      showCloseButton: true,
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -1512,6 +2502,58 @@ class _ThemeImageCropDialogState extends State<_ThemeImageCropDialog> {
           child: Text(l10n.save),
         ),
       ],
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            AspectRatio(
+              aspectRatio: widget.aspectRatio,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CustomPaint(
+                  painter: _ThemeImageCropPreviewPainter(
+                    image: widget.sourceImage,
+                    aspectRatio: widget.aspectRatio,
+                    settings: settings,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SettingsSliderRow(
+              icon: Icons.zoom_in_outlined,
+              label: l10n.zoom,
+              value: _zoom,
+              min: 1,
+              max: 4,
+              divisions: 30,
+              valueText: '${_zoom.toStringAsFixed(1)}x',
+              onChanged: (value) => setState(() => _zoom = value),
+            ),
+            SettingsSliderRow(
+              icon: Icons.swap_horiz_outlined,
+              label: 'X',
+              value: _offsetX,
+              min: -1,
+              max: 1,
+              divisions: 40,
+              valueText: _offsetX.toStringAsFixed(2),
+              onChanged: (value) => setState(() => _offsetX = value),
+            ),
+            SettingsSliderRow(
+              icon: Icons.swap_vert_outlined,
+              label: 'Y',
+              value: _offsetY,
+              min: -1,
+              max: 1,
+              divisions: 40,
+              valueText: _offsetY.toStringAsFixed(2),
+              onChanged: (value) => setState(() => _offsetY = value),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1670,7 +2712,6 @@ Future<void> _showBubbleFontDialog(
     builder: (dialogContext) {
       return StatefulBuilder(
         builder: (context, setDialogState) {
-          /// Imports a selected file font for this bubble side.
           Future<void> pickFontFile() async {
             const fontGroup = XTypeGroup(
               label: 'font',
@@ -1690,73 +2731,12 @@ Future<void> _showBubbleFontDialog(
             });
           }
 
-          return AlertDialog(
-            title: Text(
-              isUser
-                  ? l10n.settingsAppearanceAdjustUserBubbleFont
-                  : l10n.settingsAppearanceAdjustAiBubbleFont,
-            ),
-            content: SizedBox(
-              width: 420,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    visualDensity: VisualDensity.compact,
-                    title: Text(l10n.settingsAppearanceEnableBubbleFont),
-                    value: useCustomFont,
-                    onChanged: (value) {
-                      setDialogState(() {
-                        useCustomFont = value;
-                      });
-                    },
-                  ),
-                  _FontFamilySelector(
-                    value: _fontFamilyPresetFromSystemName(systemFontName),
-                    onChanged: (value) {
-                      setDialogState(() {
-                        useCustomFont = true;
-                        fontType = UserPreferencesManager.FONT_TYPE_SYSTEM;
-                        systemFontName = _systemFontNameFromPreset(value);
-                      });
-                    },
-                  ),
-                  _InfoLine(
-                    label: l10n.settingsAppearanceCustomFont,
-                    value: _customFontLabel(l10n, customFontPath),
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: <Widget>[
-                      FilledButton.tonalIcon(
-                        onPressed: () {
-                          unawaited(pickFontFile());
-                        },
-                        icon: const Icon(Icons.text_fields_outlined),
-                        label: Text(l10n.settingsAppearanceChooseCustomFont),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed:
-                            customFontPath != null && customFontPath!.isNotEmpty
-                            ? () {
-                                setDialogState(() {
-                                  customFontPath = '';
-                                  fontType =
-                                      UserPreferencesManager.FONT_TYPE_SYSTEM;
-                                });
-                              }
-                            : null,
-                        icon: const Icon(Icons.format_clear_outlined),
-                        label: Text(l10n.settingsAppearanceClearCustomFont),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+          return OperitDialogScaffold(
+            title: isUser
+                ? l10n.settingsAppearanceAdjustUserBubbleFont
+                : l10n.settingsAppearanceAdjustAiBubbleFont,
+            maxWidth: 460,
+            showCloseButton: true,
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
@@ -1784,6 +2764,67 @@ Future<void> _showBubbleFontDialog(
                 child: Text(l10n.save),
               ),
             ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                SettingsSwitchRow(
+                  icon: Icons.font_download_outlined,
+                  title: l10n.settingsAppearanceEnableBubbleFont,
+                  value: useCustomFont,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      useCustomFont = value;
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                _AppearanceFieldBlock(
+                  label: l10n.settingsAppearanceFontFamily,
+                  badge: _fontFamilyPresetLabel(
+                    l10n,
+                    _fontFamilyPresetFromSystemName(systemFontName),
+                  ),
+                  child: _FontFamilySelector(
+                    value: _fontFamilyPresetFromSystemName(systemFontName),
+                    onChanged: (value) {
+                      setDialogState(() {
+                        useCustomFont = true;
+                        fontType = UserPreferencesManager.FONT_TYPE_SYSTEM;
+                        systemFontName = _systemFontNameFromPreset(value);
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _CompactAssetTile(
+                  icon: Icons.folder_open_outlined,
+                  title: l10n.settingsAppearanceCustomFont,
+                  subtitle: _customFontLabel(l10n, customFontPath),
+                  actions: <Widget>[
+                    FilledButton.tonalIcon(
+                      style: SettingsControlStyles.sectionTextButton(),
+                      onPressed: () {
+                        unawaited(pickFontFile());
+                      },
+                      icon: const Icon(Icons.file_upload_outlined, size: 16),
+                      label: Text(l10n.settingsAppearanceChooseCustomFont),
+                    ),
+                    if (customFontPath != null && customFontPath!.isNotEmpty)
+                      SettingsEntityIconButton(
+                        tooltip: l10n.settingsAppearanceClearCustomFont,
+                        icon: Icons.close,
+                        onPressed: () {
+                          setDialogState(() {
+                            customFontPath = '';
+                            fontType = UserPreferencesManager.FONT_TYPE_SYSTEM;
+                          });
+                        },
+                      ),
+                  ],
+                ),
+              ],
+            ),
           );
         },
       );
@@ -1958,12 +2999,10 @@ Future<void> _showBubbleImageAdjustDialog(
   required bool isUser,
 }) async {
   final l10n = AppLocalizations.of(context)!;
+  final colorScheme = Theme.of(context).colorScheme;
   final imagePath = isUser
-      ? snapshot.bubbleUserImageUri
-      : snapshot.bubbleAiImageUri;
-  if (imagePath == null || imagePath.isEmpty) {
-    throw StateError('bubble image path is required for adjustment');
-  }
+      ? snapshot.bubbleUserImageUri ?? ''
+      : snapshot.bubbleAiImageUri ?? '';
   var cropLeft = isUser
       ? snapshot.bubbleUserImageCropLeft
       : snapshot.bubbleAiImageCropLeft;
@@ -1997,14 +3036,13 @@ Future<void> _showBubbleImageAdjustDialog(
     builder: (dialogContext) {
       return StatefulBuilder(
         builder: (context, setDialogState) {
-          void update(VoidCallback change) {
-            setDialogState(change);
+          void update(VoidCallback callback) {
+            setDialogState(callback);
           }
 
-          final colorScheme = Theme.of(context).colorScheme;
           final previewColor = isUser
               ? snapshot.bubbleUserBubbleColor == null
-                    ? colorScheme.primaryContainer
+                    ? colorScheme.primary
                     : Color(snapshot.bubbleUserBubbleColor!)
               : snapshot.bubbleAiBubbleColor == null
               ? colorScheme.surfaceContainerHighest
@@ -2033,144 +3071,13 @@ Future<void> _showBubbleImageAdjustDialog(
             showSliceGuides: true,
           );
 
-          return AlertDialog(
-            title: Text(
-              isUser
-                  ? l10n.settingsAppearanceBubbleImageAdjustUser
-                  : l10n.settingsAppearanceBubbleImageAdjustAi,
-            ),
-            content: SingleChildScrollView(
-              child: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    _DialogSectionTitle(
-                      l10n.settingsAppearanceBubbleImagePreview,
-                    ),
-                    SizedBox(
-                      height: 112,
-                      width: double.infinity,
-                      child: BubbleSurface(
-                        color: previewColor,
-                        borderRadius: BorderRadius.circular(
-                          isUser
-                              ? snapshot.bubbleUserRoundedCornersEnabled
-                                    ? 12
-                                    : 4
-                              : snapshot.bubbleAiRoundedCornersEnabled
-                              ? 12
-                              : 4,
-                        ),
-                        imageStyle: previewStyle,
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            isUser
-                                ? snapshot.bubbleUserContentPaddingLeft
-                                : snapshot.bubbleAiContentPaddingLeft,
-                            12,
-                            isUser
-                                ? snapshot.bubbleUserContentPaddingRight
-                                : snapshot.bubbleAiContentPaddingRight,
-                            12,
-                          ),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              l10n.settingsAppearanceBubbleImagePreviewText,
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(color: previewTextColor),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    _DialogSectionTitle(l10n.settingsAppearanceBubbleImageCrop),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageCropLeft,
-                      value: cropLeft,
-                      min: 0,
-                      max: 0.45,
-                      onChanged: (value) => update(() => cropLeft = value),
-                    ),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageCropTop,
-                      value: cropTop,
-                      min: 0,
-                      max: 0.45,
-                      onChanged: (value) => update(() => cropTop = value),
-                    ),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageCropRight,
-                      value: cropRight,
-                      min: 0,
-                      max: 0.45,
-                      onChanged: (value) => update(() => cropRight = value),
-                    ),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageCropBottom,
-                      value: cropBottom,
-                      min: 0,
-                      max: 0.45,
-                      onChanged: (value) => update(() => cropBottom = value),
-                    ),
-                    _DialogSectionTitle(
-                      l10n.settingsAppearanceBubbleImageRepeat,
-                    ),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageRepeatStart,
-                      value: repeatStart,
-                      min: 0.05,
-                      max: 0.9,
-                      onChanged: (value) => update(() {
-                        repeatStart = value;
-                        if (repeatEnd <= repeatStart + 0.01) {
-                          repeatEnd = (repeatStart + 0.01).clamp(0.06, 0.95);
-                        }
-                      }),
-                    ),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageRepeatEnd,
-                      value: repeatEnd,
-                      min: repeatStart + 0.01,
-                      max: 0.95,
-                      onChanged: (value) => update(() => repeatEnd = value),
-                    ),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageRepeatYStart,
-                      value: repeatYStart,
-                      min: 0.05,
-                      max: 0.9,
-                      onChanged: (value) => update(() {
-                        repeatYStart = value;
-                        if (repeatYEnd <= repeatYStart + 0.01) {
-                          repeatYEnd = (repeatYStart + 0.01).clamp(0.06, 0.95);
-                        }
-                      }),
-                    ),
-                    _PercentSlider(
-                      label: l10n.settingsAppearanceBubbleImageRepeatYEnd,
-                      value: repeatYEnd,
-                      min: repeatYStart + 0.01,
-                      max: 0.95,
-                      onChanged: (value) => update(() => repeatYEnd = value),
-                    ),
-                    _DialogSectionTitle(
-                      l10n.settingsAppearanceBubbleImageScale,
-                    ),
-                    _ValueSlider(
-                      label: l10n.settingsAppearanceBubbleImageScale,
-                      value: imageScale,
-                      min: 0.2,
-                      max: 3,
-                      divisions: 28,
-                      onChanged: (value) => update(() => imageScale = value),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          return OperitDialogScaffold(
+            title: isUser
+                ? l10n.settingsAppearanceBubbleImageAdjustUser
+                : l10n.settingsAppearanceBubbleImageAdjustAi,
+            maxWidth: 520,
+            maxHeight: 660,
+            showCloseButton: true,
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
@@ -2208,6 +3115,161 @@ Future<void> _showBubbleImageAdjustDialog(
                 child: Text(l10n.save),
               ),
             ],
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  SizedBox(
+                    height: 104,
+                    width: double.infinity,
+                    child: BubbleSurface(
+                      color: previewColor,
+                      borderRadius: BorderRadius.circular(
+                        isUser
+                            ? snapshot.bubbleUserRoundedCornersEnabled ? 12 : 4
+                            : snapshot.bubbleAiRoundedCornersEnabled ? 12 : 4,
+                      ),
+                      imageStyle: previewStyle,
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          isUser
+                              ? snapshot.bubbleUserContentPaddingLeft
+                              : snapshot.bubbleAiContentPaddingLeft,
+                          12,
+                          isUser
+                              ? snapshot.bubbleUserContentPaddingRight
+                              : snapshot.bubbleAiContentPaddingRight,
+                          12,
+                        ),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            l10n.settingsAppearanceBubbleImagePreviewText,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: previewTextColor),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _DialogSectionTitle(l10n.settingsAppearanceBubbleImageCrop),
+                  _TwoColumnSliderGrid(
+                    children: <Widget>[
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageCropLeft,
+                        value: cropLeft,
+                        min: 0,
+                        max: 0.45,
+                        divisions: 45,
+                        valueText: '${(cropLeft * 100).round()}%',
+                        onChanged: (value) => update(() => cropLeft = value),
+                      ),
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageCropTop,
+                        value: cropTop,
+                        min: 0,
+                        max: 0.45,
+                        divisions: 45,
+                        valueText: '${(cropTop * 100).round()}%',
+                        onChanged: (value) => update(() => cropTop = value),
+                      ),
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageCropRight,
+                        value: cropRight,
+                        min: 0,
+                        max: 0.45,
+                        divisions: 45,
+                        valueText: '${(cropRight * 100).round()}%',
+                        onChanged: (value) => update(() => cropRight = value),
+                      ),
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageCropBottom,
+                        value: cropBottom,
+                        min: 0,
+                        max: 0.45,
+                        divisions: 45,
+                        valueText: '${(cropBottom * 100).round()}%',
+                        onChanged: (value) => update(() => cropBottom = value),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _DialogSectionTitle(l10n.settingsAppearanceBubbleImageRepeat),
+                  _TwoColumnSliderGrid(
+                    children: <Widget>[
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageRepeatStart,
+                        value: repeatStart,
+                        min: 0.05,
+                        max: 0.9,
+                        divisions: 85,
+                        valueText: '${(repeatStart * 100).round()}%',
+                        onChanged: (value) => update(() {
+                          repeatStart = value;
+                          if (repeatEnd <= repeatStart + 0.01) {
+                            repeatEnd = (repeatStart + 0.01).clamp(0.06, 0.95);
+                          }
+                        }),
+                      ),
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageRepeatEnd,
+                        value: repeatEnd,
+                        min: repeatStart + 0.01,
+                        max: 0.95,
+                        divisions: ((0.95 - (repeatStart + 0.01)) * 100).round().clamp(1, 100),
+                        valueText: '${(repeatEnd * 100).round()}%',
+                        onChanged: (value) => update(() => repeatEnd = value),
+                      ),
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageRepeatYStart,
+                        value: repeatYStart,
+                        min: 0.05,
+                        max: 0.9,
+                        divisions: 85,
+                        valueText: '${(repeatYStart * 100).round()}%',
+                        onChanged: (value) => update(() {
+                          repeatYStart = value;
+                          if (repeatYEnd <= repeatYStart + 0.01) {
+                            repeatYEnd = (repeatYStart + 0.01).clamp(0.06, 0.95);
+                          }
+                        }),
+                      ),
+                      SettingsSliderRow(
+                        compact: true,
+                        label: l10n.settingsAppearanceBubbleImageRepeatYEnd,
+                        value: repeatYEnd,
+                        min: repeatYStart + 0.01,
+                        max: 0.95,
+                        divisions: ((0.95 - (repeatYStart + 0.01)) * 100).round().clamp(1, 100),
+                        valueText: '${(repeatYEnd * 100).round()}%',
+                        onChanged: (value) => update(() => repeatYEnd = value),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _DialogSectionTitle(l10n.settingsAppearanceBubbleImageScale),
+                  SettingsSliderRow(
+                    compact: true,
+                    label: l10n.settingsAppearanceBubbleImageScale,
+                    value: imageScale,
+                    min: 0.2,
+                    max: 3,
+                    divisions: 28,
+                    valueText: '${imageScale.toStringAsFixed(1)}x',
+                    onChanged: (value) => update(() => imageScale = value),
+                  ),
+                ],
+              ),
+            ),
           );
         },
       );
@@ -2566,23 +3628,21 @@ class _AvatarShapeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<_AvatarShapePreset>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<_AvatarShapePreset>>[
-          ButtonSegment<_AvatarShapePreset>(
-            value: _AvatarShapePreset.circle,
-            label: Text(l10n.settingsAppearanceAvatarShapeCircle),
-          ),
-          ButtonSegment<_AvatarShapePreset>(
-            value: _AvatarShapePreset.square,
-            label: Text(l10n.settingsAppearanceAvatarShapeSquare),
-          ),
-        ],
-        selected: <_AvatarShapePreset>{value},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<_AvatarShapePreset>(
+      value: value,
+      onChanged: onChanged,
+      segments: <ButtonSegment<_AvatarShapePreset>>[
+        ButtonSegment<_AvatarShapePreset>(
+          value: _AvatarShapePreset.circle,
+          icon: const Icon(Icons.circle_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceAvatarShapeCircle),
+        ),
+        ButtonSegment<_AvatarShapePreset>(
+          value: _AvatarShapePreset.square,
+          icon: const Icon(Icons.crop_square_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceAvatarShapeSquare),
+        ),
+      ],
     );
   }
 }
@@ -2616,23 +3676,21 @@ class _MessageStyleSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<String>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<String>>[
-          ButtonSegment<String>(
-            value: UserPreferencesManager.CHAT_STYLE_CURSOR,
-            label: Text(l10n.settingsAppearanceMessageStyleClean),
-          ),
-          ButtonSegment<String>(
-            value: UserPreferencesManager.CHAT_STYLE_BUBBLE,
-            label: Text(l10n.settingsAppearanceMessageStyleCard),
-          ),
-        ],
-        selected: <String>{value},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<String>(
+      value: value,
+      onChanged: onChanged,
+      segments: <ButtonSegment<String>>[
+        ButtonSegment<String>(
+          value: UserPreferencesManager.CHAT_STYLE_CURSOR,
+          icon: const Icon(Icons.terminal_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceMessageStyleClean),
+        ),
+        ButtonSegment<String>(
+          value: UserPreferencesManager.CHAT_STYLE_BUBBLE,
+          icon: const Icon(Icons.chat_bubble_outline, size: 16),
+          label: Text(l10n.settingsAppearanceMessageStyleCard),
+        ),
+      ],
     );
   }
 }
@@ -2647,23 +3705,21 @@ class _InputStyleSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<String>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<String>>[
-          ButtonSegment<String>(
-            value: UserPreferencesManager.INPUT_STYLE_CLASSIC,
-            label: Text(l10n.settingsAppearanceInputStyleClassic),
-          ),
-          ButtonSegment<String>(
-            value: UserPreferencesManager.INPUT_STYLE_AGENT,
-            label: Text(l10n.settingsAppearanceInputStyleAgent),
-          ),
-        ],
-        selected: <String>{value},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<String>(
+      value: value,
+      onChanged: onChanged,
+      segments: <ButtonSegment<String>>[
+        ButtonSegment<String>(
+          value: UserPreferencesManager.INPUT_STYLE_CLASSIC,
+          icon: const Icon(Icons.chat_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceInputStyleClassic),
+        ),
+        ButtonSegment<String>(
+          value: UserPreferencesManager.INPUT_STYLE_AGENT,
+          icon: const Icon(Icons.hub_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceInputStyleAgent),
+        ),
+      ],
     );
   }
 }
@@ -2843,48 +3899,10 @@ Future<void> _showThemeColorDialog(
     builder: (dialogContext) {
       return StatefulBuilder(
         builder: (context, setDialogState) {
-          return AlertDialog(
-            title: Text(l10n.settingsAppearanceCustomColorsTitle),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                _EditableColorRow(
-                  label: l10n.settingsAppearancePrimaryColor,
-                  color: primaryColor,
-                  onTap: () async {
-                    final picked = await _showSingleColorPickerDialog(
-                      context,
-                      title: l10n.settingsAppearancePrimaryColor,
-                      initialColor: primaryColor,
-                    );
-                    if (picked == null || !dialogContext.mounted) {
-                      return;
-                    }
-                    setDialogState(() {
-                      primaryColor = picked;
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                _EditableColorRow(
-                  label: l10n.settingsAppearanceSecondaryColor,
-                  color: secondaryColor,
-                  onTap: () async {
-                    final picked = await _showSingleColorPickerDialog(
-                      context,
-                      title: l10n.settingsAppearanceSecondaryColor,
-                      initialColor: secondaryColor,
-                    );
-                    if (picked == null || !dialogContext.mounted) {
-                      return;
-                    }
-                    setDialogState(() {
-                      secondaryColor = picked;
-                    });
-                  },
-                ),
-              ],
-            ),
+          return OperitDialogScaffold(
+            title: l10n.settingsAppearanceCustomColorsTitle,
+            maxWidth: 420,
+            showCloseButton: true,
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
@@ -2904,6 +3922,46 @@ Future<void> _showThemeColorDialog(
                 child: Text(l10n.save),
               ),
             ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                _EditableColorRow(
+                  label: l10n.settingsAppearancePrimaryColor,
+                  color: primaryColor,
+                  onTap: () async {
+                    final picked = await _showSingleColorPickerDialog(
+                      context,
+                      title: l10n.settingsAppearancePrimaryColor,
+                      initialColor: primaryColor,
+                    );
+                    if (picked == null || !dialogContext.mounted) {
+                      return;
+                    }
+                    setDialogState(() {
+                      primaryColor = picked;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                _EditableColorRow(
+                  label: l10n.settingsAppearanceSecondaryColor,
+                  color: secondaryColor,
+                  onTap: () async {
+                    final picked = await _showSingleColorPickerDialog(
+                      context,
+                      title: l10n.settingsAppearanceSecondaryColor,
+                      initialColor: secondaryColor,
+                    );
+                    if (picked == null || !dialogContext.mounted) {
+                      return;
+                    }
+                    setDialogState(() {
+                      secondaryColor = picked;
+                    });
+                  },
+                ),
+              ],
+            ),
           );
         },
       );
@@ -2939,104 +3997,10 @@ Future<void> _showMessageColorDialog(
     builder: (dialogContext) {
       return StatefulBuilder(
         builder: (context, setDialogState) {
-          return AlertDialog(
-            title: Text(l10n.settingsAppearanceCustomMessageColorsTitle),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  _EditableColorRow(
-                    label: l10n.settingsAppearanceCursorUserBubbleColor,
-                    color: cursorUserColor,
-                    onTap: () async {
-                      final picked = await _showSingleColorPickerDialog(
-                        context,
-                        title: l10n.settingsAppearanceCursorUserBubbleColor,
-                        initialColor: cursorUserColor,
-                      );
-                      if (picked == null || !dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {
-                        cursorUserColor = picked;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  _EditableColorRow(
-                    label: l10n.settingsAppearanceUserBubbleColor,
-                    color: userBubbleColor,
-                    onTap: () async {
-                      final picked = await _showSingleColorPickerDialog(
-                        context,
-                        title: l10n.settingsAppearanceUserBubbleColor,
-                        initialColor: userBubbleColor,
-                      );
-                      if (picked == null || !dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {
-                        userBubbleColor = picked;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  _EditableColorRow(
-                    label: l10n.settingsAppearanceAiBubbleColor,
-                    color: aiBubbleColor,
-                    onTap: () async {
-                      final picked = await _showSingleColorPickerDialog(
-                        context,
-                        title: l10n.settingsAppearanceAiBubbleColor,
-                        initialColor: aiBubbleColor,
-                      );
-                      if (picked == null || !dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {
-                        aiBubbleColor = picked;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  _EditableColorRow(
-                    label: l10n.settingsAppearanceUserTextColor,
-                    color: userTextColor,
-                    onTap: () async {
-                      final picked = await _showSingleColorPickerDialog(
-                        context,
-                        title: l10n.settingsAppearanceUserTextColor,
-                        initialColor: userTextColor,
-                      );
-                      if (picked == null || !dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {
-                        userTextColor = picked;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  _EditableColorRow(
-                    label: l10n.settingsAppearanceAiTextColor,
-                    color: aiTextColor,
-                    onTap: () async {
-                      final picked = await _showSingleColorPickerDialog(
-                        context,
-                        title: l10n.settingsAppearanceAiTextColor,
-                        initialColor: aiTextColor,
-                      );
-                      if (picked == null || !dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {
-                        aiTextColor = picked;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
+          return OperitDialogScaffold(
+            title: l10n.settingsAppearanceCustomMessageColorsTitle,
+            maxWidth: 460,
+            showCloseButton: true,
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
@@ -3058,6 +4022,102 @@ Future<void> _showMessageColorDialog(
                 child: Text(l10n.save),
               ),
             ],
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _EditableColorRow(
+                    label: l10n.settingsAppearanceCursorUserBubbleColor,
+                    color: cursorUserColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceCursorUserBubbleColor,
+                        initialColor: cursorUserColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        cursorUserColor = picked;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _EditableColorRow(
+                    label: l10n.settingsAppearanceUserBubbleColor,
+                    color: userBubbleColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceUserBubbleColor,
+                        initialColor: userBubbleColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        userBubbleColor = picked;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _EditableColorRow(
+                    label: l10n.settingsAppearanceAiBubbleColor,
+                    color: aiBubbleColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceAiBubbleColor,
+                        initialColor: aiBubbleColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        aiBubbleColor = picked;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _EditableColorRow(
+                    label: l10n.settingsAppearanceUserTextColor,
+                    color: userTextColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceUserTextColor,
+                        initialColor: userTextColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        userTextColor = picked;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _EditableColorRow(
+                    label: l10n.settingsAppearanceAiTextColor,
+                    color: aiTextColor,
+                    onTap: () async {
+                      final picked = await _showSingleColorPickerDialog(
+                        context,
+                        title: l10n.settingsAppearanceAiTextColor,
+                        initialColor: aiTextColor,
+                      );
+                      if (picked == null || !dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {
+                        aiTextColor = picked;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
           );
         },
       );
@@ -3077,107 +4137,107 @@ Future<Color?> _showSingleColorPickerDialog(
       return StatefulBuilder(
         builder: (context, setDialogState) {
           final color = hsvColor.toColor();
-          return AlertDialog(
-            title: Text(title),
-            content: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    _ColorPickerPreview(color: color),
-                    const SizedBox(height: 16),
-                    _ColorPickerSlider(
-                      label: '色相',
-                      value: hsvColor.hue,
-                      min: 0,
-                      max: 360,
-                      divisions: 360,
-                      activeColor: color,
-                      valueLabel: hsvColor.hue.round().toString(),
-                      onChanged: (value) {
-                        setDialogState(() {
-                          hsvColor = HSVColor.fromAHSV(
-                            hsvColor.alpha,
-                            value,
-                            hsvColor.saturation,
-                            hsvColor.value,
-                          );
-                        });
-                      },
-                    ),
-                    _ColorPickerSlider(
-                      label: '饱和度',
-                      value: hsvColor.saturation,
-                      min: 0,
-                      max: 1,
-                      divisions: 100,
-                      activeColor: color,
-                      valueLabel: '${(hsvColor.saturation * 100).round()}%',
-                      onChanged: (value) {
-                        setDialogState(() {
-                          hsvColor = HSVColor.fromAHSV(
-                            hsvColor.alpha,
-                            hsvColor.hue,
-                            value,
-                            hsvColor.value,
-                          );
-                        });
-                      },
-                    ),
-                    _ColorPickerSlider(
-                      label: '明度',
-                      value: hsvColor.value,
-                      min: 0,
-                      max: 1,
-                      divisions: 100,
-                      activeColor: color,
-                      valueLabel: '${(hsvColor.value * 100).round()}%',
-                      onChanged: (value) {
-                        setDialogState(() {
-                          hsvColor = HSVColor.fromAHSV(
-                            hsvColor.alpha,
-                            hsvColor.hue,
-                            hsvColor.saturation,
-                            value,
-                          );
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Text('预设', style: Theme.of(context).textTheme.labelLarge),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: <Widget>[
-                        for (final preset in _pickerPresetColors)
-                          _ColorSwatchButton(
-                            color: preset,
-                            selected: preset.toARGB32() == color.toARGB32(),
-                            onTap: () {
-                              setDialogState(() {
-                                hsvColor = HSVColor.fromColor(preset);
-                              });
-                            },
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          final l10n = AppLocalizations.of(context)!;
+          return OperitDialogScaffold(
+            title: title,
+            maxWidth: 420,
+            showCloseButton: true,
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
-                child: Text(AppLocalizations.of(context)!.cancel),
+                child: Text(l10n.cancel),
               ),
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(color),
-                child: Text(AppLocalizations.of(context)!.save),
+                child: Text(l10n.save),
               ),
             ],
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  _ColorPickerPreview(color: color),
+                  const SizedBox(height: 14),
+                  _ColorPickerSlider(
+                    label: '色相',
+                    value: hsvColor.hue,
+                    min: 0,
+                    max: 360,
+                    divisions: 360,
+                    activeColor: color,
+                    valueLabel: '${hsvColor.hue.round()}',
+                    onChanged: (value) {
+                      setDialogState(() {
+                        hsvColor = HSVColor.fromAHSV(
+                          hsvColor.alpha,
+                          value,
+                          hsvColor.saturation,
+                          hsvColor.value,
+                        );
+                      });
+                    },
+                  ),
+                  _ColorPickerSlider(
+                    label: '饱和度',
+                    value: hsvColor.saturation,
+                    min: 0,
+                    max: 1,
+                    divisions: 100,
+                    activeColor: color,
+                    valueLabel: '${(hsvColor.saturation * 100).round()}%',
+                    onChanged: (value) {
+                      setDialogState(() {
+                        hsvColor = HSVColor.fromAHSV(
+                          hsvColor.alpha,
+                          hsvColor.hue,
+                          value,
+                          hsvColor.value,
+                        );
+                      });
+                    },
+                  ),
+                  _ColorPickerSlider(
+                    label: '明度',
+                    value: hsvColor.value,
+                    min: 0,
+                    max: 1,
+                    divisions: 100,
+                    activeColor: color,
+                    valueLabel: '${(hsvColor.value * 100).round()}%',
+                    onChanged: (value) {
+                      setDialogState(() {
+                        hsvColor = HSVColor.fromAHSV(
+                          hsvColor.alpha,
+                          hsvColor.hue,
+                          hsvColor.saturation,
+                          value,
+                        );
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Text('预设', style: Theme.of(context).textTheme.labelLarge),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      for (final preset in _pickerPresetColors)
+                        _ColorSwatchButton(
+                          color: preset,
+                          selected: preset.toARGB32() == color.toARGB32(),
+                          onTap: () {
+                            setDialogState(() {
+                              hsvColor = HSVColor.fromColor(preset);
+                            });
+                          },
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           );
         },
       );
@@ -3272,26 +4332,16 @@ class _ColorPickerSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(label, style: Theme.of(context).textTheme.labelLarge),
-            ),
-            Text(valueLabel, style: Theme.of(context).textTheme.labelMedium),
-          ],
-        ),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          divisions: divisions,
-          activeColor: activeColor,
-          onChanged: onChanged,
-        ),
-      ],
+    return SettingsSliderRow(
+      compact: true,
+      label: label,
+      value: value,
+      min: min,
+      max: max,
+      divisions: divisions,
+      activeColor: activeColor,
+      valueText: valueLabel,
+      onChanged: onChanged,
     );
   }
 }
@@ -3459,23 +4509,21 @@ class _MessageSurfaceSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<_MessageSurface>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<_MessageSurface>>[
-          ButtonSegment<_MessageSurface>(
-            value: _MessageSurface.normal,
-            label: Text(l10n.settingsAppearanceMessageSurfaceNormal),
-          ),
-          ButtonSegment<_MessageSurface>(
-            value: _MessageSurface.transparent,
-            label: Text(l10n.settingsAppearanceMessageSurfaceTransparent),
-          ),
-        ],
-        selected: <_MessageSurface>{value},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<_MessageSurface>(
+      value: value,
+      onChanged: onChanged,
+      segments: <ButtonSegment<_MessageSurface>>[
+        ButtonSegment<_MessageSurface>(
+          value: _MessageSurface.normal,
+          icon: const Icon(Icons.layers_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceMessageSurfaceNormal),
+        ),
+        ButtonSegment<_MessageSurface>(
+          value: _MessageSurface.transparent,
+          icon: const Icon(Icons.blur_on_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceMessageSurfaceTransparent),
+        ),
+      ],
     );
   }
 }
@@ -3516,24 +4564,22 @@ class _BubbleImageRenderModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<String>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<String>>[
-          ButtonSegment<String>(
-            value: UserPreferencesManager
-                .BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
-            label: Text(l10n.settingsAppearanceBubbleImageTiledNineSlice),
-          ),
-          ButtonSegment<String>(
-            value: UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH,
-            label: Text(l10n.settingsAppearanceBubbleImageNinePatch),
-          ),
-        ],
-        selected: <String>{_bubbleImageRenderModeValue(value)},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<String>(
+      value: _bubbleImageRenderModeValue(value),
+      onChanged: onChanged,
+      segments: <ButtonSegment<String>>[
+        ButtonSegment<String>(
+          value: UserPreferencesManager
+              .BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
+          icon: const Icon(Icons.grid_view_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceBubbleImageTiledNineSlice),
+        ),
+        ButtonSegment<String>(
+          value: UserPreferencesManager.BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH,
+          icon: const Icon(Icons.crop_free_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceBubbleImageNinePatch),
+        ),
+      ],
     );
   }
 }
@@ -3562,27 +4608,23 @@ class _FontFamilySelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<_FontFamilyPreset>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<_FontFamilyPreset>>[
-          ButtonSegment<_FontFamilyPreset>(
-            value: _FontFamilyPreset.defaultFont,
-            label: Text(l10n.settingsAppearanceFontDefault),
-          ),
-          ButtonSegment<_FontFamilyPreset>(
-            value: _FontFamilyPreset.serif,
-            label: Text(l10n.settingsAppearanceFontSerif),
-          ),
-          ButtonSegment<_FontFamilyPreset>(
-            value: _FontFamilyPreset.monospace,
-            label: Text(l10n.settingsAppearanceFontMonospace),
-          ),
-        ],
-        selected: <_FontFamilyPreset>{value},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<_FontFamilyPreset>(
+      value: value,
+      onChanged: onChanged,
+      segments: <ButtonSegment<_FontFamilyPreset>>[
+        ButtonSegment<_FontFamilyPreset>(
+          value: _FontFamilyPreset.defaultFont,
+          label: Text(l10n.settingsAppearanceFontDefault),
+        ),
+        ButtonSegment<_FontFamilyPreset>(
+          value: _FontFamilyPreset.serif,
+          label: Text(l10n.settingsAppearanceFontSerif),
+        ),
+        ButtonSegment<_FontFamilyPreset>(
+          value: _FontFamilyPreset.monospace,
+          label: Text(l10n.settingsAppearanceFontMonospace),
+        ),
+      ],
     );
   }
 }
@@ -3636,23 +4678,21 @@ class _MessageDensitySelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<_MessageDensity>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<_MessageDensity>>[
-          ButtonSegment<_MessageDensity>(
-            value: _MessageDensity.comfortable,
-            label: Text(l10n.settingsAppearanceMessageDensityComfortable),
-          ),
-          ButtonSegment<_MessageDensity>(
-            value: _MessageDensity.compact,
-            label: Text(l10n.settingsAppearanceMessageDensityCompact),
-          ),
-        ],
-        selected: <_MessageDensity>{value},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<_MessageDensity>(
+      value: value,
+      onChanged: onChanged,
+      segments: <ButtonSegment<_MessageDensity>>[
+        ButtonSegment<_MessageDensity>(
+          value: _MessageDensity.comfortable,
+          icon: const Icon(Icons.view_agenda_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceMessageDensityComfortable),
+        ),
+        ButtonSegment<_MessageDensity>(
+          value: _MessageDensity.compact,
+          icon: const Icon(Icons.density_small_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceMessageDensityCompact),
+        ),
+      ],
     );
   }
 }
@@ -3692,30 +4732,26 @@ class _ThemeModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SegmentedButton<ThemeMode>(
-        showSelectedIcon: false,
-        segments: <ButtonSegment<ThemeMode>>[
-          ButtonSegment<ThemeMode>(
-            value: ThemeMode.system,
-            icon: const Icon(Icons.brightness_auto_outlined),
-            label: Text(l10n.settingsAppearanceThemeSystem),
-          ),
-          ButtonSegment<ThemeMode>(
-            value: ThemeMode.light,
-            icon: const Icon(Icons.light_mode_outlined),
-            label: Text(l10n.settingsAppearanceThemeLight),
-          ),
-          ButtonSegment<ThemeMode>(
-            value: ThemeMode.dark,
-            icon: const Icon(Icons.dark_mode_outlined),
-            label: Text(l10n.settingsAppearanceThemeDark),
-          ),
-        ],
-        selected: <ThemeMode>{value},
-        onSelectionChanged: (selection) => onChanged(selection.single),
-      ),
+    return SettingsSegmentedSelector<ThemeMode>(
+      value: value,
+      onChanged: onChanged,
+      segments: <ButtonSegment<ThemeMode>>[
+        ButtonSegment<ThemeMode>(
+          value: ThemeMode.system,
+          icon: const Icon(Icons.brightness_auto_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceThemeSystem),
+        ),
+        ButtonSegment<ThemeMode>(
+          value: ThemeMode.light,
+          icon: const Icon(Icons.light_mode_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceThemeLight),
+        ),
+        ButtonSegment<ThemeMode>(
+          value: ThemeMode.dark,
+          icon: const Icon(Icons.dark_mode_outlined, size: 16),
+          label: Text(l10n.settingsAppearanceThemeDark),
+        ),
+      ],
     );
   }
 }
@@ -3729,9 +4765,16 @@ String _themeModeLabel(AppLocalizations l10n, ThemeMode mode) {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.children});
+  const _SectionCard({
+    required this.title,
+    this.icon,
+    this.action,
+    required this.children,
+  });
 
   final String title;
+  final IconData? icon;
+  final Widget? action;
   final List<Widget> children;
 
   @override
@@ -3748,20 +4791,200 @@ class _SectionCard extends StatelessWidget {
         ),
         material: true,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Text(
-                title,
-                style: SettingsControlStyles.sectionTitleTextStyle(context),
+              Row(
+                children: <Widget>[
+                  if (icon != null) ...<Widget>[
+                    Icon(icon, size: 18, color: colorScheme.primary),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: SettingsControlStyles.sectionTitleTextStyle(context),
+                    ),
+                  ),
+                  if (action != null) ...<Widget>[
+                    action!,
+                    const SizedBox(width: 2),
+                  ],
+                ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               ...children,
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AppearanceFieldBlock extends StatelessWidget {
+  const _AppearanceFieldBlock({
+    required this.label,
+    this.badge,
+    required this.child,
+  });
+
+  final String label;
+  final String? badge;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                label,
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+            ),
+            if (badge != null && badge!.isNotEmpty)
+              SettingsInfoBadge(label: badge!),
+          ],
+        ),
+        const SizedBox(height: 6),
+        child,
+      ],
+    );
+  }
+}
+
+class _CompactAssetTile extends StatelessWidget {
+  const _CompactAssetTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.actions,
+    this.bottom,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final List<Widget> actions;
+  final Widget? bottom;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.24),
+          width: 0.8,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(icon, size: 20, color: colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      subtitle,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: actions,
+              ),
+            ],
+          ),
+          if (bottom != null) ...<Widget>[
+            const SizedBox(height: 6),
+            bottom!,
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TwoColumnSliderGrid extends StatelessWidget {
+  const _TwoColumnSliderGrid({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 380) {
+          final rows = <Widget>[];
+          for (var i = 0; i < children.length; i += 2) {
+            rows.add(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(child: children[i]),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: i + 1 < children.length
+                        ? children[i + 1]
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            );
+          }
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: rows,
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: children,
+        );
+      },
     );
   }
 }
@@ -3774,20 +4997,13 @@ class _InfoLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 9),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: <Widget>[
           Expanded(child: Text(label)),
           const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          ),
+          SettingsInfoBadge(label: value),
         ],
       ),
     );
@@ -3802,10 +5018,12 @@ class _BodyText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Text(
         text,
-        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -3824,13 +5042,11 @@ class _SettingSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      title: Text(title),
+    return SettingsSwitchRow(
+      title: title,
       value: value,
       onChanged: onChanged,
+      dense: true,
     );
   }
 }
@@ -3843,12 +5059,13 @@ class _DialogSectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 10, bottom: 4),
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
       child: Text(
         text,
-        style: Theme.of(
-          context,
-        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).colorScheme.primary,
+        ),
       ),
     );
   }
@@ -3871,12 +5088,13 @@ class _PercentSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _ValueSlider(
+    return SettingsSliderRow(
+      compact: true,
       label: label,
       value: value,
       min: min,
       max: max,
-      divisions: ((max - min) * 100).round(),
+      divisions: ((max - min) * 100).round().clamp(1, 100),
       valueText: '${(value * 100).round()}%',
       onChanged: onChanged,
     );
@@ -3902,35 +5120,17 @@ class _ValueSlider extends StatelessWidget {
   final String? valueText;
   final ValueChanged<double> onChanged;
 
-  /// Builds a labeled slider for an appearance preference.
   @override
   Widget build(BuildContext context) {
-    final text = valueText ?? value.toStringAsFixed(2);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(child: Text(label)),
-              Text(
-                text,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-          Slider(
-            value: value.clamp(min, max),
-            min: min,
-            max: max,
-            divisions: divisions,
-            label: text,
-            onChanged: onChanged,
-          ),
-        ],
-      ),
+    return SettingsSliderRow(
+      compact: true,
+      label: label,
+      value: value,
+      min: min,
+      max: max,
+      divisions: divisions,
+      valueText: valueText ?? value.toStringAsFixed(2),
+      onChanged: onChanged,
     );
   }
 }
@@ -3953,23 +5153,33 @@ class _AvatarActionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+        spacing: 6,
+        runSpacing: 4,
         children: <Widget>[
           FilledButton.tonalIcon(
+            style: SettingsControlStyles.sectionTextButton(),
             onPressed: onChoose,
-            icon: const Icon(Icons.image_outlined),
+            icon: const Icon(Icons.image_outlined, size: 16),
             label: Text(chooseLabel),
           ),
           OutlinedButton.icon(
+            style: SettingsControlStyles.sectionTextButton(),
             onPressed: clearEnabled ? onClear : null,
-            icon: const Icon(Icons.person_off_outlined),
+            icon: const Icon(Icons.layers_clear_outlined, size: 16),
             label: Text(clearLabel),
           ),
         ],
       ),
     );
   }
+}
+
+String _fontFamilyPresetLabel(AppLocalizations l10n, _FontFamilyPreset preset) {
+  return switch (preset) {
+    _FontFamilyPreset.defaultFont => l10n.settingsAppearanceFontDefault,
+    _FontFamilyPreset.serif => l10n.settingsAppearanceFontSerif,
+    _FontFamilyPreset.monospace => l10n.settingsAppearanceFontMonospace,
+  };
 }

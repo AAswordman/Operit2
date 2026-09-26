@@ -178,11 +178,16 @@ class _AiMessageComposableState extends State<AiMessageComposable> {
                         ),
                       ),
                       if (detailText.isNotEmpty) ...<Widget>[
-                        const Spacer(),
-                        Text(
-                          detailText,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: colorScheme.onSurface.withValues(alpha: 0.5),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            detailText,
+                            textAlign: TextAlign.end,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colorScheme.onSurface.withValues(alpha: 0.5),
+                            ),
                           ),
                         ),
                       ],

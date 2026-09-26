@@ -1823,13 +1823,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryAppearanceSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Theme and language'**
+  /// **'Theme, bubbles, and interaction'**
   String get settingsCategoryAppearanceSubtitle;
 
   /// No description provided for @settingsCategoryAppearanceDescription.
   ///
   /// In en, this message translates to:
-  /// **'Adjust the client theme and current localization display.'**
+  /// **'Customize global theme, background media, message bubbles, and chat interaction.'**
   String get settingsCategoryAppearanceDescription;
 
   /// No description provided for @settingsCategoryDataTitle.
@@ -5886,6 +5886,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Language follows the localization configuration loaded at app startup.'**
   String get settingsAppearanceLanguageDescription;
+
+  /// No description provided for @settingsAppearanceBubblesTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages & Bubbles'**
+  String get settingsAppearanceBubblesTab;
+
+  /// No description provided for @settingsAppearanceInteractionTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Interaction & Feed'**
+  String get settingsAppearanceInteractionTab;
+
+  /// No description provided for @settingsAppearanceBubbleStyleSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Layout & Style'**
+  String get settingsAppearanceBubbleStyleSection;
+
+  /// No description provided for @settingsAppearanceBubbleFontSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Bubble Fonts'**
+  String get settingsAppearanceBubbleFontSection;
+
+  /// No description provided for @settingsAppearanceBubbleImageSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Bubble Images'**
+  String get settingsAppearanceBubbleImageSection;
+
+  /// No description provided for @settingsAppearanceInteractionStatusSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Process & Status'**
+  String get settingsAppearanceInteractionStatusSection;
+
+  /// No description provided for @settingsAppearanceBackgroundEffectsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Visual Effects'**
+  String get settingsAppearanceBackgroundEffectsSection;
+
+  /// No description provided for @settingsAppearanceBackgroundVideoSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Video Playback'**
+  String get settingsAppearanceBackgroundVideoSection;
+
+  /// No description provided for @settingsAppearanceLivePreviewTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Live Preview'**
+  String get settingsAppearanceLivePreviewTitle;
+
+  /// No description provided for @settingsAppearanceLivePreviewUserSample.
+  ///
+  /// In en, this message translates to:
+  /// **'Help me organize today\'s work plan.'**
+  String get settingsAppearanceLivePreviewUserSample;
+
+  /// No description provided for @settingsAppearanceLivePreviewAiSample.
+  ///
+  /// In en, this message translates to:
+  /// **'Sure! I\'ve organized your core task list and we\'re ready to start.'**
+  String get settingsAppearanceLivePreviewAiSample;
+
+  /// No description provided for @settingsAppearanceLivePreviewThinkingSample.
+  ///
+  /// In en, this message translates to:
+  /// **'Analyzing context and schedule priorities...'**
+  String get settingsAppearanceLivePreviewThinkingSample;
 
   /// No description provided for @settingsDataRuntimeSection.
   ///
