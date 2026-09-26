@@ -27,7 +27,17 @@ Future<void> initialize() async {
 /// Requests the runtime-storage logger sink for future writes.
 void attachPersistentStorage() {
   _requireInitialized();
+  final wasRequested = _persistentStorageRequested;
   _persistentStorageRequested = true;
+
+  // `attachPersistentStorage` may be called once during startup and again after
+  // first-run storage onboarding. If the first attempt happened before the
+  // native roots were configured, the queued write has already completed with
+  // an error and will not retry by itself. Queue a fresh pass so the buffered
+  // lines are flushed as soon as the host is ready.
+  if (!wasRequested || _pendingLines.isNotEmpty || _logPath == null) {
+    _schedulePersistentWrite();
+  }
 }
 
 /// Returns whether the logger backend is ready to accept writes.
