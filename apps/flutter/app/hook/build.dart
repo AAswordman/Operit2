@@ -702,6 +702,8 @@ Future<void> _downloadVerifiedWebRuntimeAsset(
   String expectedSha256,
 ) async {
   final client = HttpClient();
+  client.findProxy = HttpClient.findProxyFromEnvironment;
+  client.connectionTimeout = const Duration(seconds: 30);
   try {
     final request = await client.getUrl(url);
     final response = await request.close();

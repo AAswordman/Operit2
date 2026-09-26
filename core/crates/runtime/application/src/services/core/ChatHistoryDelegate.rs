@@ -12,6 +12,7 @@ use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
+use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_store::SyncOperationStore::SyncClock;
@@ -1641,7 +1642,7 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Switches the selected chat and refreshes in-memory message state.
     pub fn switchChat(&mut self, chatId: String, syncToGlobal: bool) {
-        let switchStartedAt = std::time::Instant::now();
+        let switchStartedAt = currentTimeMillis();
         let previousChatId = self.currentChatIdFlow.value();
         AppLogger::trace(
             "ChatFlowTrace",
@@ -1683,7 +1684,10 @@ impl ChatHistoryDelegate {
         self.allowAddMessage = true;
         AppLogger::i(
             "ChatSwitchTrace",
-            &format!("chat_switch.core_loaded elapsedMs={}", switchStartedAt.elapsed().as_millis()),
+            &format!(
+                "chat_switch.core_loaded elapsedMs={}",
+                currentTimeMillis().saturating_sub(switchStartedAt)
+            ),
         );
         AppLogger::v_with_level(
             "ChatFlowTrace",
