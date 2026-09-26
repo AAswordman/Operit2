@@ -188,6 +188,13 @@ pub const RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS: RuntimeStoragePathDefin
     );
 pub const RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH: &str =
     RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS.path;
+pub const RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::exact(
+        "runtime/link_access/pending_edge_pairings.preferences.json",
+        RuntimeStorageOwnership::CoreNode,
+    );
+pub const RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS_PATH: &str =
+    RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS.path;
 pub const RUNTIME_LINK_ACCESS_EDGE_SESSIONS: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::exact(
         "runtime/link_access/edge_sessions.preferences.json",
@@ -388,6 +395,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS,
     RUNTIME_LINK_ACCESS_PENDING_PAIRINGS,
     RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS,
+    RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS,
     RUNTIME_LINK_ACCESS_EDGE_SESSIONS,
     RUNTIME_LINK_ACCESS_HOST_CONFIG,
     CLIENT_RUNTIME_BOOTSTRAP,

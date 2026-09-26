@@ -2481,6 +2481,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimePairRemote => '连接另一台设备';
 
   @override
+  String get settingsRuntimeDiscoveredEdges => 'ESP32 设备';
+
+  @override
+  String get settingsRuntimeEdgeEndpointTokenRequired => 'Edge 地址和 Token 不能为空';
+
+  @override
+  String get settingsRuntimeEdgeEndpointRequired => 'Edge 地址不能为空';
+
+  @override
+  String get settingsRuntimePairingCodeRequired => '请输入配对码';
+
+  @override
   String get settingsRuntimeNoPairedRemote => '还没有已连接的设备。';
 
   @override

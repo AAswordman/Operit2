@@ -86,6 +86,14 @@ impl Esp32ScreenMirror {
         (self.width, self.height)
     }
 
+    /// Releases the optional 320x240 pixel copy when no preview server uses it.
+    /// Physical TFT writes continue independently of this diagnostic mirror.
+    pub fn disablePixelMirror(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pixels = Vec::new();
+        }
+    }
+
     /// Makes LVGL the sole owner of physical display updates.
     pub fn activateLvgl(&self) {
         self.lvgl_active.store(true, Ordering::Release);
@@ -122,6 +130,7 @@ impl Esp32ScreenMirror {
         output.fill(0);
         if y >= self.height { return; }
         if let Ok(state) = self.state.lock() {
+            if state.pixels.is_empty() { return; }
             let width = usize::from(self.width);
             let count = output.len().min(width);
             let start = usize::from(y) * width;
@@ -140,6 +149,7 @@ impl Esp32ScreenMirror {
     fn fillRect(&self, rect: FaceRect, color: u16) {
         if let Ok(mut state) = self.state.lock() {
             state.rects.push(Esp32ScreenMirrorRect { rect, color });
+            if state.pixels.is_empty() { return; }
             let right = rect.x.saturating_add(rect.width).min(self.width);
             let bottom = rect.y.saturating_add(rect.height).min(self.height);
             for y in rect.y.min(self.height)..bottom {
@@ -154,6 +164,7 @@ impl Esp32ScreenMirror {
     /// Copies one little-endian RGB565 LVGL region into the framebuffer mirror.
     fn writeRgb565(&self, rect: FaceRect, bytes: &[u8]) {
         if let Ok(mut state) = self.state.lock() {
+            if state.pixels.is_empty() { return; }
             let right = rect.x.saturating_add(rect.width).min(self.width);
             let bottom = rect.y.saturating_add(rect.height).min(self.height);
             for y in rect.y.min(self.height)..bottom {

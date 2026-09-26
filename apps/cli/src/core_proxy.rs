@@ -65,6 +65,9 @@ impl CliCore {
             .as_ref()
             .ok_or_else(|| "this CLI command requires an in-process runtime".to_string())
     }
+
+
+
 }
 
 impl Deref for CliCore {

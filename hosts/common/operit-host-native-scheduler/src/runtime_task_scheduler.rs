@@ -4,30 +4,106 @@ use operit_host_api::{
 };
 use std::sync::OnceLock;
 
-static TIMER_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+static ASYNC_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
 
-/// Returns the asynchronous timer runtime used only to trigger delayed named tasks.
-fn timerRuntime() -> HostResult<&'static tokio::runtime::Runtime> {
-    let runtime = TIMER_RUNTIME.get_or_init(|| {
+/// Owns I/O drivers, timers and spawned tasks for the native process lifetime.
+/// Connections returned by one request may be reused by later requests.
+fn asyncRuntime() -> HostResult<&'static tokio::runtime::Runtime> {
+    let runtime = ASYNC_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
-            .enable_time()
-            .worker_threads(1)
-            .thread_name("operit-runtime-timer")
+            .enable_all()
+            .worker_threads(2)
+            .thread_name("operit-runtime-worker")
             .build()
             .map_err(|error| error.to_string())
     });
     runtime
         .as_ref()
-        .map_err(|error| HostError::new(format!("create runtime timer executor failed: {error}")))
+        .map_err(|error| HostError::new(format!("create runtime async executor failed: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{rc::Rc, sync::mpsc, time::Duration};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Joining the native thread ensures its request executor has returned before
+    // a subsequent request touches the saved connection or spawned receiver.
+    fn runRequest(task: HostRuntimeAsyncTask) {
+        std::thread::spawn(move || runAsyncRuntimeTask(task))
+            .join()
+            .expect("request thread panicked");
+    }
+
+    #[test]
+    fn connectionSurvivesBetweenRequests() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        runRequest(Box::new(move || {
+            Box::pin(async move {
+                let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+                sender.send(stream).unwrap();
+            })
+        }));
+        let mut stream = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        runRequest(Box::new(move || {
+            Box::pin(async move {
+                // Start/finish pairing must be able to use the very same socket.
+                std::io::Write::write_all(&mut peer, b"code").unwrap();
+                let mut received = [0; 4];
+                tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut received))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(&received, b"code");
+                stream.write_all(b"done").await.unwrap();
+            })
+        }));
+    }
+
+    #[test]
+    fn spawnedReceiverSurvivesRequestCompletion() {
+        let (release, released) = tokio::sync::oneshot::channel();
+        let (done, completion) = mpsc::channel();
+        runRequest(Box::new(move || {
+            Box::pin(async move {
+                tokio::spawn(async move {
+                    released.await.unwrap();
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    done.send(()).unwrap();
+                });
+            })
+        }));
+        release
+            .send(())
+            .expect("receiver was aborted when request ended");
+        completion.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
+    #[test]
+    fn requestFutureCanRemainNonSend() {
+        runRequest(Box::new(|| {
+            Box::pin(async {
+                let local = Rc::new(42);
+                let thread = std::thread::current().id();
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                assert_eq!(*local, 42);
+                assert_eq!(std::thread::current().id(), thread);
+            })
+        }));
+    }
 }
 
 /// Runs one asynchronous runtime task on its dedicated named native thread.
 fn runAsyncRuntimeTask(task: HostRuntimeAsyncTask) {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("create runtime task executor failed");
-    runtime.block_on(task());
+    // block_on keeps the possibly !Send request future on its named thread;
+    // the shared runtime keeps its sockets and tokio::spawn children alive.
+    asyncRuntime()
+        .expect("create runtime task executor failed")
+        .block_on(async move { task().await });
 }
 
 /// Schedules one-shot runtime tasks on named native threads.
@@ -61,6 +137,8 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
         taskName: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
+        // Report initialization errors to the caller, not just a detached thread.
+        asyncRuntime()?;
         std::thread::Builder::new()
             .name(taskName.to_string())
             .spawn(move || runAsyncRuntimeTask(task))
@@ -80,7 +158,7 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
         task: HostRuntimeTask,
     ) -> HostResult<()> {
         let taskName = taskName.to_string();
-        timerRuntime()?.spawn(async move {
+        asyncRuntime()?.spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(delayMs)).await;
             std::thread::Builder::new()
                 .name(taskName)

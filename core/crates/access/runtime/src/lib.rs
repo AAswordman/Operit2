@@ -71,7 +71,8 @@ use operit_store::PreferencesDataStore::{
 use operit_util::RuntimeStorageLayout::{
     RUNTIME_LINK_ACCESS_EDGE_SESSIONS_PATH, RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH,
     RUNTIME_LINK_ACCESS_IDENTITY_PATH, RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH,
-    RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
+    RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS_PATH,
+    RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
     RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH,
 };
 
@@ -432,6 +433,35 @@ impl LinkAccessStore {
             RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
             pairingId,
         )
+    }
+
+    /// Returns every pending lightweight Edge pairing initiated by this Core.
+    #[allow(non_snake_case)]
+    pub fn pendingOutboundEdgePairings(
+        &self,
+    ) -> Result<BTreeMap<String, PendingOutboundEdgePairingRecord>, String> {
+        self.readRecordMap(RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS_PATH)
+    }
+
+    /// Persists one pending lightweight Edge pairing so a separate CLI process
+    /// can finish it after the user reads the code from the Edge UI.
+    #[allow(non_snake_case)]
+    pub fn savePendingOutboundEdgePairing(
+        &self,
+        pairingId: String,
+        record: PendingOutboundEdgePairingRecord,
+    ) -> Result<(), String> {
+        self.writeMapRecord(
+            RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS_PATH,
+            &pairingId,
+            &record,
+        )
+    }
+
+    /// Removes one pending lightweight Edge pairing after completion.
+    #[allow(non_snake_case)]
+    pub fn removePendingOutboundEdgePairing(&self, pairingId: &str) -> Result<(), String> {
+        self.removeMapRecord(RUNTIME_LINK_ACCESS_PENDING_EDGE_PAIRINGS_PATH, pairingId)
     }
 
     /// Returns every completed lightweight Edge session owned by this Core.
@@ -1430,6 +1460,15 @@ pub struct PairStartState {
 pub struct PendingOutboundPairingRecord {
     pub baseUrl: String,
     pub state: PairStartState,
+}
+
+/// Stores the serializable half of a pending Core-to-Edge pairing.
+/// The pairing state is deliberately kept as JSON here so the access store
+/// does not depend on the Edge transport crate.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PendingOutboundEdgePairingRecord {
+    pub endpoint: String,
+    pub pairingState: serde_json::Value,
 }
 
 /// Stores one completed Core-to-Edge pairing. Its carrier credentials differ

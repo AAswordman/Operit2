@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::collections::VecDeque;
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::Mutex;
 
 use operit_board_esp32::{logicalDisplaySize, FaceRect, DISPLAY_ROTATION_DEGREES};
@@ -37,11 +37,16 @@ unsafe extern "C" {
     fn operit_lvgl_set_pairing_code(code: *const c_char);
     fn operit_lvgl_set_space_state(state: *const c_char);
     fn operit_lvgl_set_chat_preview(preview: *const c_char);
+    fn operit_lvgl_set_chat_screen(text: *const c_char);
+    fn operit_lvgl_set_chat_task(text: *const c_char);
+    fn operit_lvgl_chat_send_result(ok: bool, error: *const c_char);
+    fn operit_lvgl_chat_draft() -> *const c_char;
 }
 
 /// Owns the LVGL runtime and the small action queue emitted by app buttons.
 pub struct Esp32Lvgl {
     context: Box<LvglContext>,
+    lastTouch: Option<(u16, u16)>,
 }
 
 struct LvglContext {
@@ -59,6 +64,7 @@ impl Esp32Lvgl {
                 board,
                 actions: Mutex::new(VecDeque::new()),
             }),
+            lastTouch: None,
         };
         let userData = runtime.context.as_ref() as *const LvglContext as *mut c_void;
         let (width, height) = logicalDisplaySize(DISPLAY_ROTATION_DEGREES);
@@ -81,8 +87,16 @@ impl Esp32Lvgl {
     /// Feeds one sampled touch point to LVGL's pointer input device.
     pub fn setTouch(&mut self, point: Option<(u16, u16)>) {
         let (x, y, pressed) = match point {
-            Some((x, y)) => (x, y, true),
-            None => (0, 0, false),
+            Some((x, y)) => {
+                self.lastTouch = Some((x, y));
+                (x, y, true)
+            }
+            // Keep the final sample on release so horizontal swipe recognition sees
+            // the actual finger-up coordinate instead of (0, 0).
+            None => self
+                .lastTouch
+                .map(|(x, y)| (x, y, false))
+                .unwrap_or((0, 0, false)),
         };
         unsafe { operit_lvgl_set_touch(x, y, pressed) };
     }
@@ -110,9 +124,45 @@ impl Esp32Lvgl {
         unsafe { operit_lvgl_set_expression(bytes.as_ptr() as *const c_char) };
     }
 
-    pub fn setPairingCode(&mut self, code: &str) { setText(code, operit_lvgl_set_pairing_code); }
-    pub fn setSpaceState(&mut self, state: &str) { setText(state, operit_lvgl_set_space_state); }
-    pub fn setChatPreview(&mut self, preview: &str) { setText(preview, operit_lvgl_set_chat_preview); }
+    pub fn setPairingCode(&mut self, code: &str) {
+        setText(code, operit_lvgl_set_pairing_code);
+    }
+    pub fn setSpaceState(&mut self, state: &str) {
+        setText(state, operit_lvgl_set_space_state);
+    }
+    pub fn setChatPreview(&mut self, preview: &str) {
+        setText(preview, operit_lvgl_set_chat_preview);
+    }
+    pub fn setChatScreen(&mut self, text: &str) {
+        setText(text, operit_lvgl_set_chat_screen);
+    }
+    pub fn setChatTask(&mut self, text: &str) {
+        setText(text, operit_lvgl_set_chat_task);
+    }
+
+    /// Returns the bounded draft captured by the LVGL text area.
+    pub fn chatSendResult(&mut self, result: Result<(), String>) {
+        let error = CString::new(
+            result
+                .as_ref()
+                .err()
+                .map(String::as_str)
+                .unwrap_or("")
+                .replace('\0', ""),
+        )
+        .unwrap();
+        unsafe {
+            operit_lvgl_chat_send_result(result.is_ok(), error.as_ptr());
+        }
+    }
+
+    pub fn chatDraft(&self) -> String {
+        unsafe {
+            CStr::from_ptr(operit_lvgl_chat_draft())
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
 
     /// Drains actions requested by LVGL app buttons.
     pub fn drainActions(&self) -> Vec<String> {
@@ -125,7 +175,9 @@ impl Esp32Lvgl {
 }
 
 fn setText(value: &str, setter: unsafe extern "C" fn(*const c_char)) {
-    let mut bytes = value.as_bytes().to_vec(); bytes.retain(|byte| *byte != 0); bytes.push(0);
+    let mut bytes = value.as_bytes().to_vec();
+    bytes.retain(|byte| *byte != 0);
+    bytes.push(0);
     unsafe { setter(bytes.as_ptr() as *const c_char) };
 }
 
@@ -169,8 +221,14 @@ unsafe extern "C" fn actionCallback(action: *const c_char, userData: *mut c_void
 /// Keeps status-to-LVGL updates in one place for the firmware loop.
 pub fn updateStatus(runtime: &mut Esp32Lvgl, status: &FirmwareStatus, edgeReady: bool) {
     let snapshot = status.snapshot();
+    // `edgeReady` is the live authenticated Space route state. It must not be
+    // derived from the TCP listener, which is enabled even before pairing.
     runtime.setConnection(!snapshot.ipv4.is_empty(), edgeReady);
     runtime.setExpression(&snapshot.expression);
     runtime.setPairingCode(&snapshot.pairingCode);
-    runtime.setSpaceState(if edgeReady { "Connected to Space" } else { "Waiting for Space" });
+    runtime.setSpaceState(if edgeReady {
+        "Connected to Space"
+    } else {
+        "Waiting for Space"
+    });
 }

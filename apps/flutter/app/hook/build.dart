@@ -827,10 +827,12 @@ Future<void> _run(
 }
 
 String _command(String executable) {
-  if (Platform.isWindows) {
-    return '$executable.cmd';
+  if (!Platform.isWindows) {
+    return executable;
   }
-  return executable;
+  // Cargo is installed as a native executable on Windows, while npm is a
+  // cmd shim. Process.run cannot resolve a nonexistent cargo.cmd.
+  return executable == 'cargo' ? 'cargo.exe' : '$executable.cmd';
 }
 
 bool _isCargoExecutable(String executable) {

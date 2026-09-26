@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
 const OPERIT_SERVICE_TYPE: &str = "_operit._tcp.local.";
+pub(crate) const OPERIT_EDGE_SERVICE_TYPE: &str = "_operit-edge._tcp.local.";
 type MdnsIpv4Rank = (u8, [u8; 4]);
 
 /// Describes one transport endpoint resolved from an Operit mDNS service record.
@@ -58,6 +59,104 @@ pub(crate) fn discoverRemoteDevices(
     }
 
     Ok(devices.into_values().map(|(_, device)| device).collect())
+}
+
+
+/// Describes one raw TCP Edge endpoint advertised on the local network.
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeEdgeDiscoveryEndpoint {
+    pub deviceId: String,
+    pub displayName: String,
+    pub platform: String,
+    pub model: String,
+    pub hostname: String,
+    pub address: Ipv4Addr,
+    pub port: u16,
+    pub tokenHash: String,
+    pub version: String,
+}
+
+/// Discovers lightweight Edge devices. Edge uses a separate service type from
+/// HTTP Core so a raw TCP listener is never mistaken for a Core HTTP endpoint.
+#[allow(non_snake_case)]
+pub(crate) fn discoverEdgeDevices(
+    timeoutMs: u64,
+) -> Result<Vec<RuntimeEdgeDiscoveryEndpoint>, String> {
+    let daemon = ServiceDaemon::new().map_err(|error| error.to_string())?;
+    let receiver = daemon
+        .browse(OPERIT_EDGE_SERVICE_TYPE)
+        .map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let mut devices = BTreeMap::<String, (MdnsIpv4Rank, RuntimeEdgeDiscoveryEndpoint)>::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { break; }
+        match receiver.recv_timeout(remaining) {
+            Ok(ServiceEvent::ServiceResolved(info)) => {
+                let Some((rank, device)) = edgeDiscoveryFromServiceInfo(&info)? else { continue; };
+                let fullName = info.get_fullname().to_string();
+                match devices.get_mut(&fullName) {
+                    Some((currentRank, current)) if rank < *currentRank => {
+                        *currentRank = rank;
+                        *current = device;
+                    }
+                    Some(_) => {}
+                    None => { devices.insert(fullName, (rank, device)); }
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    Ok(devices.into_values().map(|(_, device)| device).collect())
+}
+
+#[allow(non_snake_case)]
+fn requiredMdnsProperty(
+    properties: &mdns_sd::TxtProperties,
+    name: &str,
+    fullName: &str,
+) -> Result<String, String> {
+    properties
+        .get_property_val_str(name)
+        .map(str::to_owned)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("mDNS service {fullName} is missing TXT property {name}"))
+}
+
+#[allow(non_snake_case)]
+fn edgeDiscoveryFromServiceInfo(
+
+    info: &ServiceInfo,
+) -> Result<Option<(MdnsIpv4Rank, RuntimeEdgeDiscoveryEndpoint)>, String> {
+    let fullName = info.get_fullname().to_string();
+    let mut addresses = info.get_addresses().iter().filter_map(|address| match address {
+        std::net::IpAddr::V4(address) => Some(*address),
+        std::net::IpAddr::V6(_) => None,
+    }).collect::<Vec<_>>();
+    if addresses.is_empty() { return Ok(None); }
+    addresses.sort_by_key(mdnsIpv4Rank);
+    let address = addresses[0];
+    let rank = mdnsIpv4Rank(&address);
+    let properties = info.get_properties();
+    let required = |name: &str| requiredMdnsProperty(properties, name, &fullName);
+    let deviceId = required("deviceId")?;
+    let tokenHash = required("tokenHash")?;
+    let version = required("version")?;
+    if deviceId.trim().is_empty() || tokenHash.trim().is_empty() || info.get_port() == 0 {
+        return Ok(None);
+    }
+    Ok(Some((rank, RuntimeEdgeDiscoveryEndpoint {
+        deviceId,
+        displayName: required("displayName")?,
+        platform: required("platform")?,
+        model: required("model")?,
+        hostname: info.get_hostname().to_string(),
+        address,
+        port: info.get_port(),
+        tokenHash,
+        version,
+    })))
 }
 
 /// Subscribes to Link-enabled runtime announcements from the native mDNS transport.

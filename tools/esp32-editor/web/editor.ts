@@ -1111,7 +1111,7 @@ export async function setupEditor(ui: EditorRuntime, log: (message: string) => v
     if (!(input instanceof HTMLInputElement)) throw new Error('编辑模式控件类型错误');
     editing = input.checked;
     editLayer.hidden = !editing;
-    preview();
+    if (editing) preview(); else ui._operit_lvgl_navigate_home();
     notify(editing ? '编辑模式 · 拖动组件，四角调整尺寸' : '运行模式 · 点击或滑动体验 LVGL 控件');
   });
   query<HTMLInputElement>('#layout-enabled').addEventListener('change', (event: Event) => {
@@ -1139,7 +1139,7 @@ export async function setupEditor(ui: EditorRuntime, log: (message: string) => v
 
   editLayer.hidden = !editing;
   query<HTMLInputElement>('#edit-mode').checked = editing;
-  preview();
+  ui._operit_lvgl_navigate_home();
   render();
   notify('运行实际首页 · 开启编辑布局可修改草稿');
 }

@@ -2582,6 +2582,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsRuntimePairRemote => 'Connect another device';
 
   @override
+  String get settingsRuntimeDiscoveredEdges => 'ESP32 devices';
+
+  @override
+  String get settingsRuntimeEdgeEndpointTokenRequired =>
+      'Edge endpoint and token are required';
+
+  @override
+  String get settingsRuntimeEdgeEndpointRequired => 'Edge endpoint is required';
+
+  @override
+  String get settingsRuntimePairingCodeRequired => 'Pairing code is required';
+
+  @override
   String get settingsRuntimeNoPairedRemote => 'No connected devices yet.';
 
   @override

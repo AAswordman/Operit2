@@ -27,6 +27,12 @@ impl Esp32WebHome {
     ) -> HostResult<Self> {
         let mut server = EspHttpServer::new(&HttpConfig {
             http_port: httpPort,
+            // Keep the browser status service within the memory budget shared
+            // with the resident Edge Tokio thread.
+            stack_size: 4096,
+            max_open_sockets: 2,
+            max_uri_handlers: 8,
+            max_resp_headers: 4,
             ..Default::default()
         })
         .map_err(|error| HostError::new(format!("http server: {error}")))?;

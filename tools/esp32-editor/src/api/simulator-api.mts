@@ -28,12 +28,29 @@ function advertisedAddress(address: string): string {
   if (host !== '0.0.0.0' && host !== '::') return address;
   const preferred = process.env.OPERIT_SIM_ADVERTISE?.trim();
   if (preferred) return `${preferred}:${port}`;
+
+  // Windows commonly exposes Hyper-V/WSL/VPN and benchmark interfaces before
+  // the actual LAN adapter. Never advertise the RFC 2544 test range or a
+  // link-local address: those addresses are not reachable by the other device
+  // and used to make the pairing page show e.g. 198.18.0.1:18765.
+  const candidates: Array<{address: string; rank: number}> = [];
   for (const entries of Object.values(networkInterfaces())) {
     for (const entry of entries ?? []) {
-      if (entry.family === 'IPv4' && !entry.internal) return `${entry.address}:${port}`;
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      const octets = entry.address.split('.').map(Number);
+      if (octets.length !== 4 || octets.some(value => !Number.isInteger(value) || value < 0 || value > 255)) continue;
+      const [first, second] = octets;
+      if (first === 127 || first === 0 || (first === 169 && second === 254)) continue;
+      if (first === 198 && second >= 18 && second <= 19) continue;
+      const isPrivate = first === 10 || (first === 192 && second === 168) ||
+        (first === 172 && second >= 16 && second <= 31);
+      // Prefer ordinary RFC1918 LAN addresses, then other non-test IPv4
+      // addresses. The lexical tie-break keeps the result deterministic.
+      candidates.push({address: entry.address, rank: isPrivate ? 0 : 1});
     }
   }
-  return address;
+  candidates.sort((left, right) => left.rank - right.rank || left.address.localeCompare(right.address));
+  return candidates[0] ? `${candidates[0].address}:${port}` : address;
 }
 
 function failPending(): void {
@@ -148,13 +165,36 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, token: ready ? token : '', device});
-    } else if (url.pathname === '/api/simulator/action' && req.method === 'POST') {
+    } else if (url.pathname === '/api/simulator/debug/tree' && req.method === 'GET') {
+      reply(200, await rpc('debug_tree'));
+    } else if (url.pathname === '/api/simulator/debug/snapshot' && req.method === 'GET') {
+      reply(200, await rpc('debug_snapshot'));
+    } else if (['/api/simulator/debug/tap', '/api/simulator/debug/swipe'].includes(url.pathname) && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) {
+        body += String(chunk);
+        if (Buffer.byteLength(body) > 8192) throw new Error('请求过长');
+      }
+      const input = JSON.parse(body) as {id?: unknown; direction?: unknown};
+      if (url.pathname.endsWith('/tap')) {
+        if (typeof input.id !== 'string' || !input.id) throw new Error('缺少控件 id');
+        reply(200, await rpc('debug_tap', {nodeId: input.id}));
+      } else {
+        if (typeof input.direction !== 'string' || !input.direction) throw new Error('缺少滑动方向');
+        reply(200, await rpc('debug_swipe', {direction: input.direction}));
+      }
+    } else if (['/api/simulator/action', '/api/simulator/send'].includes(url.pathname) && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) {
         body += String(chunk);
         if (Buffer.byteLength(body) > 8192) throw new Error('消息过长');
       }
-      const input = JSON.parse(body) as {action?: unknown};
+      const input = JSON.parse(body) as {action?: unknown; text?: unknown};
+      if (url.pathname.endsWith('/send')) {
+        if (typeof input.text !== 'string') throw new Error('缺少消息内容');
+        reply(200, await rpc('send', {text: input.text}));
+        return true;
+      }
       if (typeof input.action !== 'string') throw new Error('缺少设备 action');
       reply(200, await rpc('action', {action: input.action}));
     } else reply(404, {error: 'Unknown simulator endpoint'});

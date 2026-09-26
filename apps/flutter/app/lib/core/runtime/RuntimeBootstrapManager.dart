@@ -279,6 +279,10 @@ class RuntimeBootstrapManager extends ChangeNotifier {
     );
     await LocalRuntimeStorageBridge.apply(localStorage);
     await _apply(localStorage, persist: true);
+    // Startup logs were kept in memory while onboarding was unconfigured.
+    // Attach only after the native bridge has accepted the confirmed roots so
+    // the queued entries can be flushed safely.
+    ClientLogger.attachPersistentStorage();
     ClientLogger.i(
       'confirm local runtime storage done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
@@ -304,6 +308,7 @@ class RuntimeBootstrapManager extends ChangeNotifier {
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     await _apply(localStorage, persist: true);
+    ClientLogger.attachPersistentStorage();
     ClientLogger.i(
       'persist migrated local runtime storage done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
