@@ -951,11 +951,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCategoryAppearanceTitle => 'Appearance & Interaction';
 
   @override
-  String get settingsCategoryAppearanceSubtitle => 'Theme and language';
+  String get settingsCategoryAppearanceSubtitle =>
+      'Theme, bubbles, and interaction';
 
   @override
   String get settingsCategoryAppearanceDescription =>
-      'Adjust the client theme and current localization display.';
+      'Customize global theme, background media, message bubbles, and chat interaction.';
 
   @override
   String get settingsCategoryDataTitle => 'Data & Backup';
@@ -3240,6 +3241,45 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsAppearanceLanguageDescription =>
       'Language follows the localization configuration loaded at app startup.';
+
+  @override
+  String get settingsAppearanceBubblesTab => 'Messages & Bubbles';
+
+  @override
+  String get settingsAppearanceInteractionTab => 'Interaction & Feed';
+
+  @override
+  String get settingsAppearanceBubbleStyleSection => 'Layout & Style';
+
+  @override
+  String get settingsAppearanceBubbleFontSection => 'Bubble Fonts';
+
+  @override
+  String get settingsAppearanceBubbleImageSection => 'Bubble Images';
+
+  @override
+  String get settingsAppearanceInteractionStatusSection => 'Process & Status';
+
+  @override
+  String get settingsAppearanceBackgroundEffectsSection => 'Visual Effects';
+
+  @override
+  String get settingsAppearanceBackgroundVideoSection => 'Video Playback';
+
+  @override
+  String get settingsAppearanceLivePreviewTitle => 'Live Preview';
+
+  @override
+  String get settingsAppearanceLivePreviewUserSample =>
+      'Help me organize today\'s work plan.';
+
+  @override
+  String get settingsAppearanceLivePreviewAiSample =>
+      'Sure! I\'ve organized your core task list and we\'re ready to start.';
+
+  @override
+  String get settingsAppearanceLivePreviewThinkingSample =>
+      'Analyzing context and schedule priorities...';
 
   @override
   String get settingsDataRuntimeSection => 'Data overview';

@@ -927,10 +927,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryAppearanceTitle => '外观与交互';
 
   @override
-  String get settingsCategoryAppearanceSubtitle => '主题、语言';
+  String get settingsCategoryAppearanceSubtitle => '主题、气泡与交互';
 
   @override
-  String get settingsCategoryAppearanceDescription => '调整客户端主题和当前本地化显示。';
+  String get settingsCategoryAppearanceDescription =>
+      '调整全局主题、背景壁纸、聊天气泡样式与信息流交互。';
 
   @override
   String get settingsCategoryDataTitle => '数据与备份';
@@ -3118,6 +3119,43 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAppearanceLanguageDescription => '语言跟随应用启动时的本地化配置。';
+
+  @override
+  String get settingsAppearanceBubblesTab => '消息与气泡';
+
+  @override
+  String get settingsAppearanceInteractionTab => '交互与信息';
+
+  @override
+  String get settingsAppearanceBubbleStyleSection => '版式与风格';
+
+  @override
+  String get settingsAppearanceBubbleFontSection => '气泡字体';
+
+  @override
+  String get settingsAppearanceBubbleImageSection => '气泡贴图';
+
+  @override
+  String get settingsAppearanceInteractionStatusSection => '过程与状态';
+
+  @override
+  String get settingsAppearanceBackgroundEffectsSection => '视觉效果';
+
+  @override
+  String get settingsAppearanceBackgroundVideoSection => '视频播放';
+
+  @override
+  String get settingsAppearanceLivePreviewTitle => '实时预览';
+
+  @override
+  String get settingsAppearanceLivePreviewUserSample => '帮我梳理一下今天的工作计划。';
+
+  @override
+  String get settingsAppearanceLivePreviewAiSample =>
+      '好的！我已经为你整理好核心任务清单，随时可以开始执行。';
+
+  @override
+  String get settingsAppearanceLivePreviewThinkingSample => '正在分析上下文与日程优先级...';
 
   @override
   String get settingsDataRuntimeSection => '数据概览';

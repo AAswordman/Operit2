@@ -312,3 +312,298 @@ class SettingsInfoBadge extends StatelessWidget {
     );
   }
 }
+
+
+class SettingsSwitchRow extends StatelessWidget {
+  const SettingsSwitchRow({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.icon,
+    required this.value,
+    required this.onChanged,
+    this.dense = false,
+  });
+
+  final String title;
+  final String? subtitle;
+  final IconData? icon;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: 4,
+          vertical: dense ? 4 : 6,
+        ),
+        child: Row(
+          children: <Widget>[
+            if (icon != null) ...<Widget>[
+              Icon(icon, size: 18, color: colorScheme.onSurfaceVariant),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    title,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (subtitle != null && subtitle!.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle!,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Transform.scale(
+              scale: 0.82,
+              child: Switch(
+                value: value,
+                onChanged: onChanged,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SettingsSliderRow extends StatelessWidget {
+  const SettingsSliderRow({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    this.divisions,
+    required this.valueText,
+    required this.onChanged,
+    this.onChangeEnd,
+    this.icon,
+    this.compact = false,
+    this.activeColor,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final int? divisions;
+  final String valueText;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double>? onChangeEnd;
+  final IconData? icon;
+  final bool compact;
+  final Color? activeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: compact ? 2 : 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              if (icon != null) ...<Widget>[
+                Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+              ],
+              Expanded(
+                child: Text(
+                  label,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w500,
+                    fontSize: compact ? 13 : 14,
+                  ),
+                ),
+              ),
+              SettingsInfoBadge(label: valueText),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3.5,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: activeColor ?? colorScheme.primary,
+              thumbColor: activeColor ?? colorScheme.primary,
+              inactiveTrackColor:
+                  colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            ),
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChanged: onChanged,
+              onChangeEnd: onChangeEnd,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsToggleChip extends StatelessWidget {
+  const SettingsToggleChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+    this.icon,
+    this.tooltip,
+  });
+
+  final String label;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+  final IconData? icon;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final child = Material(
+      color: selected
+          ? (isDark
+              ? colorScheme.primary.withValues(alpha: 0.22)
+              : colorScheme.primaryContainer.withValues(alpha: 0.7))
+          : (isDark
+              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.45)
+              : colorScheme.surfaceContainerHigh.withValues(alpha: 0.55)),
+      shape: StadiumBorder(
+        side: BorderSide(
+          color: selected
+              ? colorScheme.primary.withValues(alpha: isDark ? 0.6 : 0.7)
+              : colorScheme.outlineVariant.withValues(alpha: isDark ? 0.3 : 0.4),
+          width: selected ? 1.2 : 0.8,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => onSelected(!selected),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (selected)
+                Icon(
+                  Icons.check,
+                  size: 14,
+                  color: isDark ? colorScheme.primary : colorScheme.onPrimaryContainer,
+                )
+              else if (icon != null)
+                Icon(
+                  icon,
+                  size: 14,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              if (selected || icon != null) const SizedBox(width: 5),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: selected
+                      ? (isDark ? colorScheme.onSurface : colorScheme.onPrimaryContainer)
+                      : colorScheme.onSurfaceVariant,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (tooltip != null && tooltip!.isNotEmpty) {
+      return Tooltip(message: tooltip!, child: child);
+    }
+    return child;
+  }
+}
+
+
+class SettingsSegmentedSelector<T> extends StatelessWidget {
+  const SettingsSegmentedSelector({
+    super.key,
+    required this.value,
+    required this.segments,
+    required this.onChanged,
+  });
+
+  final T value;
+  final List<ButtonSegment<T>> segments;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return SegmentedButton<T>(
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        selectedBackgroundColor: isDark
+            ? colorScheme.primary.withValues(alpha: 0.22)
+            : colorScheme.primaryContainer.withValues(alpha: 0.70),
+        selectedForegroundColor: isDark
+            ? colorScheme.primary
+            : colorScheme.onPrimaryContainer,
+        foregroundColor: colorScheme.onSurfaceVariant,
+        backgroundColor: isDark
+            ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.40)
+            : colorScheme.surfaceContainerHigh.withValues(alpha: 0.50),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(
+            alpha: isDark ? 0.30 : 0.45,
+          ),
+          width: 0.8,
+        ),
+        textStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontWeight: FontWeight.w600,
+          fontSize: 12.5,
+        ),
+      ),
+      segments: segments,
+      selected: <T>{value},
+      onSelectionChanged: (selection) => onChanged(selection.single),
+    );
+  }
+}
