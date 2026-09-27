@@ -342,6 +342,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
       onSelectModel: _selectChatModel,
       onAddModel: _addProviderModel,
       onEditProvider: _editOpenedProvider,
+      onDeleteProvider: _deleteProvider,
       clients: widget.clients,
       onDeleteModel: _deleteModel,
       onTestModelConnection: _testModelConnection,
@@ -4065,6 +4066,7 @@ class _ProviderDetailScreen extends StatefulWidget {
     required this.onSelectModel,
     required this.onAddModel,
     required this.onEditProvider,
+    required this.onDeleteProvider,
     required this.clients,
     required this.onDeleteModel,
     required this.onTestModelConnection,
@@ -4077,6 +4079,8 @@ class _ProviderDetailScreen extends StatefulWidget {
   final Future<void> Function(core_proxy.ProviderProfile provider) onAddModel;
   final Future<void> Function(core_proxy.ProviderProfile provider)
   onEditProvider;
+  final Future<void> Function(core_proxy.ProviderProfile provider)
+  onDeleteProvider;
   final GeneratedCoreProxyClients clients;
   final Future<void> Function(
     core_proxy.ProviderProfile provider,
@@ -4101,6 +4105,8 @@ class _ProviderDetailScreen extends StatefulWidget {
     onAddModel,
     required Future<void> Function(core_proxy.ProviderProfile provider)
     onEditProvider,
+    required Future<void> Function(core_proxy.ProviderProfile provider)
+    onDeleteProvider,
     required GeneratedCoreProxyClients clients,
     required Future<void> Function(
       core_proxy.ProviderProfile provider,
@@ -4123,6 +4129,7 @@ class _ProviderDetailScreen extends StatefulWidget {
         onSelectModel: onSelectModel,
         onAddModel: onAddModel,
         onEditProvider: onEditProvider,
+        onDeleteProvider: onDeleteProvider,
         clients: clients,
         onDeleteModel: onDeleteModel,
         onTestModelConnection: onTestModelConnection,
@@ -4283,6 +4290,12 @@ class _ProviderDetailScreenState extends State<_ProviderDetailScreen> {
                     label: l10n.edit,
                     tooltip: l10n.settingsModelEditProvider,
                     onTap: () => _run(() => widget.onEditProvider(provider)),
+                  ),
+                  const SizedBox(width: 8),
+                  _CapsuleActionButton(
+                    label: l10n.delete,
+                    tooltip: l10n.settingsModelDeleteProviderConfirmAction,
+                    onTap: () => _run(() => widget.onDeleteProvider(provider)),
                   ),
                   const SizedBox(width: 4),
                   IconButton(
