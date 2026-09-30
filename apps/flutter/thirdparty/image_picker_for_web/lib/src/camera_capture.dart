@@ -127,7 +127,7 @@ class BrowserCameraCapture {
               'video/mp4',
             ];
             final type = types.firstWhere(
-              web.MediaRecorder.isTypeSupported,
+              (t) => web.MediaRecorder.isTypeSupported(t),
               orElse: () => '',
             );
             final recording = type.isEmpty
