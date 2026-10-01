@@ -272,6 +272,17 @@ impl OperitFlutterBridge {
                 .build()
                 .map_err(|error| error.to_string())?
         };
+        // Registers a bridge-owned fallback task scheduler. Platforms that install
+        // their own scheduler keep theirs (the global registration is first-win);
+        // platforms that never register one (the Android Flutter bridge historically
+        // did not) would otherwise have every `runHostRuntimeAsyncTask` silently
+        // dropped, surfacing as "runtime task result channel closed" on the Dart side.
+        #[cfg(not(target_arch = "wasm32"))]
+        operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
+            BridgeFallbackTaskScheduler {
+                runtime: runtime.handle().clone(),
+            },
+        ));
         let browserAutomationBridge = FlutterBrowserAutomationBridge::new();
         let browserSessionBridge = FlutterBrowserSessionBridge::new();
         let webVisitBridge = FlutterWebVisitBridge::new();
@@ -639,6 +650,64 @@ fn set_last_create_error(value: String) {
     *last_create_error()
         .lock()
         .expect("create error lock must not be poisoned") = value;
+}
+
+/// Bridge-owned fallback for `HostRuntimeTaskSchedulerHost`. Used on platforms
+/// that never register a platform scheduler (the Android Flutter bridge did not):
+/// tasks run on the bridge's own tokio runtime instead of being silently dropped,
+/// which surfaced to Dart as "runtime task result channel closed".
+struct BridgeFallbackTaskScheduler {
+    runtime: tokio::runtime::Handle,
+}
+
+impl operit_host_api::HostRuntimeTaskSchedulerHost for BridgeFallbackTaskScheduler {
+    fn scheduleHostRuntimeTask(
+        &self,
+        _taskName: &str,
+        task: operit_host_api::HostRuntimeTask,
+    ) -> operit_host_api::HostResult<()> {
+        self.runtime.spawn_blocking(move || task());
+        Ok(())
+    }
+
+    fn scheduleHostRuntimeAsyncTask(
+        &self,
+        _taskName: &str,
+        task: operit_host_api::HostRuntimeAsyncTask,
+    ) -> operit_host_api::HostResult<()> {
+        // The scheduled future is deliberately not `Send` (it stays local to the
+        // executor that created it), so it cannot be spawned cross-runtime; drive
+        // it to completion on a dedicated thread owned by this runtime's handle.
+        let runtime = self.runtime.clone();
+        std::thread::spawn(move || {
+            runtime.block_on(async move { task().await });
+        });
+        Ok(())
+    }
+
+    fn scheduleDelayedHostRuntimeTask(
+        &self,
+        _taskName: &str,
+        delayMs: u64,
+        task: operit_host_api::HostRuntimeTask,
+    ) -> operit_host_api::HostResult<()> {
+        self.runtime.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(delayMs)).await;
+            task();
+        });
+        Ok(())
+    }
+
+    fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn waitForHostRuntimeDelay(&self, delayMs: u64) -> operit_host_api::HostRuntimeTurnFuture {
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(delayMs)).await;
+            Ok(())
+        })
+    }
 }
 
 #[cfg(target_os = "android")]
