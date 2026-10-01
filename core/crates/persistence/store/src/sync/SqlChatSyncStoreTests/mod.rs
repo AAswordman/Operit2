@@ -1,5 +1,7 @@
 use super::*;
 
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,330 +10,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::AppDatabase::DATABASE_VERSION;
 use crate::sqliteParams;
-use crate::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
 use operit_host_api::{
     HostError, HostResult, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction,
     RuntimeStorageEntry, RuntimeStorageHost, SqliteRow as HostSqliteRow, SqliteValue,
 };
 use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
-use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
-use rusqlite::types::Value as RusqliteValue;
-
-static HOSTS: OnceLock<()> = OnceLock::new();
-static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-static DATABASE_MUTEX: Mutex<()> = Mutex::new(());
-
-#[derive(Clone, Debug)]
-struct TestRuntimeHost {
-    root: PathBuf,
-}
-
-impl TestRuntimeHost {
-    fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-
-    fn resolve(&self, path: &str) -> HostResult<PathBuf> {
-        let path = Path::new(path);
-        if path.is_absolute() {
-            return Err(HostError::new(format!(
-                "Runtime storage path must be relative: {}",
-                path.display()
-            )));
-        }
-        let mut resolved = self.root.clone();
-        for component in path.components() {
-            match component {
-                Component::Normal(segment) => resolved.push(segment),
-                Component::CurDir => {}
-                _ => {
-                    return Err(HostError::new(format!(
-                        "Invalid runtime storage path: {}",
-                        path.display()
-                    )))
-                }
-            }
-        }
-        Ok(resolved)
-    }
-}
-
-impl RuntimeStorageHost for TestRuntimeHost {
-    fn runtimeRootDir(&self) -> Option<PathBuf> {
-        Some(self.root.clone())
-    }
-
-    fn workspaceRootDir(&self) -> Option<PathBuf> {
-        Some(self.root.join(WORKSPACE_DIR_PATH))
-    }
-
-    fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        Ok(fs::read(self.resolve(path)?)?)
-    }
-
-    /// Reads one bounded byte range from the filesystem-backed test host.
-    fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        let content = self.readBytes(path)?;
-        let start = usize::try_from(offset)
-            .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
-        if start >= content.len() {
-            return Ok(Vec::new());
-        }
-        let end = start
-            .checked_add(length)
-            .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
-            .min(content.len());
-        Ok(content[start..end].to_vec())
-    }
-
-    fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        let path = self.resolve(path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    /// Appends bytes to the SQL chat sync test runtime root.
-    fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        let path = self.resolve(path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
-        std::io::Write::write_all(&mut file, content)?;
-        Ok(())
-    }
-
-    fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        let path = self.resolve(path)?;
-        if !path.exists() {
-            return Ok(());
-        }
-        if path.is_dir() {
-            if recursive {
-                fs::remove_dir_all(path)?;
-            } else {
-                fs::remove_dir(path)?;
-            }
-        } else {
-            fs::remove_file(path)?;
-        }
-        Ok(())
-    }
-
-    fn exists(&self, path: &str) -> HostResult<bool> {
-        Ok(self.resolve(path)?.exists())
-    }
-
-    fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-        let directory = self.resolve(prefix)?;
-        let mut entries = Vec::new();
-        if !directory.exists() {
-            return Ok(entries);
-        }
-        for entry in fs::read_dir(directory)? {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            let path = entry
-                .path()
-                .strip_prefix(&self.root)
-                .map_err(|error| HostError::new(error.to_string()))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            entries.push(RuntimeStorageEntry {
-                path,
-                isDirectory: metadata.is_dir(),
-                size: metadata.len() as i64,
-            });
-        }
-        Ok(entries)
-    }
-}
-
-impl RuntimeSqliteHost for TestRuntimeHost {
-    fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
-        let path = self.resolve(path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let connection =
-            rusqlite::Connection::open(path).map_err(|error| HostError::new(error.to_string()))?;
-        connection
-            .execute_batch(
-                r#"
-                    PRAGMA journal_mode = MEMORY;
-                    PRAGMA synchronous = OFF;
-                    PRAGMA temp_store = MEMORY;
-                    "#,
-            )
-            .map_err(|error| HostError::new(error.to_string()))?;
-        Ok(Box::new(TestRuntimeSqliteConnection { connection }))
-    }
-}
-
-struct TestRuntimeSqliteConnection {
-    connection: rusqlite::Connection,
-}
-
-impl RuntimeSqliteConnection for TestRuntimeSqliteConnection {
-    fn executeBatch(&mut self, sql: &str) -> HostResult<()> {
-        self.connection
-            .execute_batch(sql)
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-
-    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize> {
-        let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
-        self.connection
-            .execute(sql, rusqlite::params_from_iter(params))
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-
-    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<HostSqliteRow>> {
-        queryRows(&self.connection, sql, params)
-    }
-
-    fn lastInsertRowId(&self) -> HostResult<i64> {
-        Ok(self.connection.last_insert_rowid())
-    }
-
-    fn beginTransaction(&mut self) -> HostResult<Box<dyn RuntimeSqliteTransaction + '_>> {
-        let transaction = self
-            .connection
-            .transaction()
-            .map_err(|error| HostError::new(error.to_string()))?;
-        Ok(Box::new(TestRuntimeSqliteTransaction { transaction }))
-    }
-}
-
-struct TestRuntimeSqliteTransaction<'a> {
-    transaction: rusqlite::Transaction<'a>,
-}
-
-impl RuntimeSqliteTransaction for TestRuntimeSqliteTransaction<'_> {
-    fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize> {
-        let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
-        self.transaction
-            .execute(sql, rusqlite::params_from_iter(params))
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-
-    fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<HostSqliteRow>> {
-        queryRows(&self.transaction, sql, params)
-    }
-
-    fn lastInsertRowId(&self) -> HostResult<i64> {
-        Ok(self.transaction.last_insert_rowid())
-    }
-
-    fn commit(self: Box<Self>) -> HostResult<()> {
-        self.transaction
-            .commit()
-            .map_err(|error| HostError::new(error.to_string()))
-    }
-}
-
-trait TestRusqliteConnection {
-    fn prepareStatement<'a>(&'a self, sql: &str) -> rusqlite::Result<rusqlite::Statement<'a>>;
-}
-
-impl TestRusqliteConnection for rusqlite::Connection {
-    fn prepareStatement<'a>(&'a self, sql: &str) -> rusqlite::Result<rusqlite::Statement<'a>> {
-        self.prepare(sql)
-    }
-}
-
-impl TestRusqliteConnection for rusqlite::Transaction<'_> {
-    fn prepareStatement<'a>(&'a self, sql: &str) -> rusqlite::Result<rusqlite::Statement<'a>> {
-        self.prepare(sql)
-    }
-}
-
-fn queryRows(
-    connection: &impl TestRusqliteConnection,
-    sql: &str,
-    params: Vec<SqliteValue>,
-) -> HostResult<Vec<HostSqliteRow>> {
-    let params = params.into_iter().map(toRusqliteValue).collect::<Vec<_>>();
-    let mut statement = connection
-        .prepareStatement(sql)
-        .map_err(|error| HostError::new(error.to_string()))?;
-    let columns = statement
-        .column_names()
-        .into_iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let mut rows = statement
-        .query(rusqlite::params_from_iter(params))
-        .map_err(|error| HostError::new(error.to_string()))?;
-    let mut out = Vec::new();
-    while let Some(row) = rows
-        .next()
-        .map_err(|error| HostError::new(error.to_string()))?
-    {
-        let mut values = Vec::new();
-        for index in 0..columns.len() {
-            let value = row
-                .get::<_, RusqliteValue>(index)
-                .map_err(|error| HostError::new(error.to_string()))?;
-            values.push(fromRusqliteValue(value));
-        }
-        out.push(HostSqliteRow {
-            columns: columns.clone(),
-            values,
-        });
-    }
-    Ok(out)
-}
-
-fn toRusqliteValue(value: SqliteValue) -> RusqliteValue {
-    match value {
-        SqliteValue::Null => RusqliteValue::Null,
-        SqliteValue::Integer(value) => RusqliteValue::Integer(value),
-        SqliteValue::Real(value) => RusqliteValue::Real(value),
-        SqliteValue::Text(value) => RusqliteValue::Text(value),
-        SqliteValue::Blob(value) => RusqliteValue::Blob(value),
-    }
-}
-
-fn fromRusqliteValue(value: RusqliteValue) -> SqliteValue {
-    match value {
-        RusqliteValue::Null => SqliteValue::Null,
-        RusqliteValue::Integer(value) => SqliteValue::Integer(value),
-        RusqliteValue::Real(value) => SqliteValue::Real(value),
-        RusqliteValue::Text(value) => SqliteValue::Text(value),
-        RusqliteValue::Blob(value) => SqliteValue::Blob(value),
-    }
-}
-
-fn installTestHosts() {
-    HOSTS.get_or_init(|| {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("test clock must be after UNIX_EPOCH")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "operit2-sql-sync-tests-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).expect("test runtime host root must be created");
-        let host = Arc::new(TestRuntimeHost::new(root));
-        setDefaultRuntimeStoreRootConfig(RuntimeStoreRootConfig::new(
-            host.root.clone(),
-            host.root.join(WORKSPACE_DIR_PATH),
-        ));
-        setDefaultRuntimeStorageHost(host.clone());
-        setDefaultRuntimeSqliteHost(host);
-    });
-}
 
 fn testPaths(name: &str) -> RuntimeStorePaths {
-    installTestHosts();
+    crate::test_host_support::installSharedTestHost();
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let runtimeDir = RuntimeStorePaths::default()
         .runtime_dir()
@@ -471,7 +157,9 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
 /// Verifies that applying a remote chat operation updates observers of the chats table.
 #[test]
 fn remote_chat_operation_invalidates_chat_history_flow() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("history-flow-source");
     sourceDatabase
         .chatDao()
@@ -519,7 +207,9 @@ fn remote_chat_operation_invalidates_chat_history_flow() {
 /// Verifies assistant completion, chat metadata, and sync rows commit as one generation.
 #[test]
 fn assistant_segment_commit_is_atomic_and_synchronizable() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("assistant-commit-source");
     let chatId = "chat-assistant-commit";
     let timestamp = 7_000;
@@ -613,7 +303,9 @@ fn assistant_segment_commit_is_atomic_and_synchronizable() {
 
 #[test]
 fn chat_dao_update_chats_preserves_child_messages() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_paths, database, _syncStore) = openTestStore("chat-dao-update");
     let chatId = "chat-update";
     insertChatMessage(&database, chatId, 9_000, "kept");
@@ -651,7 +343,9 @@ fn chat_dao_update_chats_preserves_child_messages() {
 /// Verifies the logical message identity replaces repeated writes instead of duplicating rows.
 #[test]
 fn repeated_message_entity_insert_replaces_the_existing_row() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_paths, database, _syncStore) = openTestStore("message-entity-identity");
     let chatId = "chat-message-entity-identity";
     let timestamp = 9_200;
@@ -673,7 +367,9 @@ fn repeated_message_entity_insert_replaces_the_existing_row() {
 
 #[test]
 fn message_dao_locator_previews_match_kotlin_projection() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_paths, database, _syncStore) = openTestStore("message-dao-locator");
     let chatId = "chat-locator";
     insertChatMessage(&database, chatId, 10_000, "alpha content");
@@ -700,7 +396,9 @@ fn message_dao_locator_previews_match_kotlin_projection() {
 /// Verifies version-22 migration creates canonical structured message parts.
 #[test]
 fn migrates_version_22_messages_to_final_structured_parts() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     AppDatabase::closeDatabase();
     let paths = testPaths("structured-message-migration");
     {
@@ -853,7 +551,9 @@ fn migrates_version_22_messages_to_final_structured_parts() {
 /// Verifies version-24 migration restores parts required by locator previews and hydration.
 #[test]
 fn migrates_version_23_message_revisions_to_canonical_visible_parts() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     AppDatabase::closeDatabase();
     let paths = testPaths("canonical-visible-parts-migration");
     let chatId = "chat-23";
@@ -990,7 +690,9 @@ fn migrates_version_23_message_revisions_to_canonical_visible_parts() {
 /// Verifies version-25 migration deterministically renames execution generation columns.
 #[test]
 fn migrates_version_25_execution_generation_columns() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     AppDatabase::closeDatabase();
     let paths = testPaths("execution-generation-migration");
     {
@@ -1043,7 +745,9 @@ fn migrates_version_25_execution_generation_columns() {
 
 #[test]
 fn record_message_snapshots_are_merged_into_final_stream_state() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_paths, database, syncStore) = openTestStore("stream-merge");
     let chatId = "chat-stream";
     let timestamp = 10_000;
@@ -1069,7 +773,9 @@ fn record_message_snapshots_are_merged_into_final_stream_state() {
 
 #[test]
 fn compacted_stream_snapshot_applies_to_new_receiver() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("source-stream");
     let chatId = "chat-apply";
     let timestamp = 11_000;
@@ -1116,7 +822,9 @@ fn compacted_stream_snapshot_applies_to_new_receiver() {
 
 #[test]
 fn older_merged_upsert_does_not_revert_newer_state() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_paths, database, syncStore) = openTestStore("older-upsert");
     let newer = upsertOperation(2, "new");
     let older = upsertOperation(1, "old");
@@ -1143,7 +851,9 @@ fn older_merged_upsert_does_not_revert_newer_state() {
 
 #[test]
 fn delete_transaction_survives_compaction_and_applies() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("source-delete");
     let chatId = "chat-delete";
     let timestamp = 12_000;
@@ -1190,7 +900,9 @@ fn delete_transaction_survives_compaction_and_applies() {
 
 #[test]
 fn stress_stream_snapshots_export_single_final_operation() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_paths, database, syncStore) = openTestStore("stress-stream");
     let chatId = "chat-stress";
     let timestamp = 13_000;
@@ -1218,7 +930,9 @@ fn stress_stream_snapshots_export_single_final_operation() {
 
 #[test]
 fn stress_many_messages_roundtrip_with_stream_compaction() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("stress-roundtrip-source");
     let chatId = "chat-stress-roundtrip";
     let messageCount = 60;
@@ -1301,7 +1015,9 @@ fn stress_many_messages_roundtrip_with_stream_compaction() {
 #[test]
 #[ignore]
 fn stress_ultra_many_messages_roundtrip_with_stream_compaction() {
-    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let _guard = crate::test_host_support::SHARED_TEST_HOST_MUTEX
+        .lock()
+        .unwrap();
     let (_sourcePaths, sourceDatabase, sourceSyncStore) = openTestStore("stress-ultra-source");
     let chatId = "chat-stress-ultra";
     let messageCount = 600;

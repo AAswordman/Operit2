@@ -34,3 +34,6 @@ pub mod dao;
 pub mod db;
 pub mod repository;
 pub mod sync;
+#[cfg(test)]
+#[path = "tests/TestHostSupport.rs"]
+pub mod test_host_support;

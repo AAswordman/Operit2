@@ -10,7 +10,9 @@ use uuid::Uuid;
 
 use crate::RuntimeStorageHost::runtimeStoragePath;
 use crate::RuntimeStorePaths::RuntimeStorePaths;
-use crate::SqliteStore::{toSqliteValue, SqliteRowGet, SqliteStore, SqliteStoreError};
+use crate::SqliteStore::{
+    toSqliteValue, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteTransaction,
+};
 use crate::SyncOperationStore::{
     NewSyncOperation, SyncOperationSemantics, SyncOperationStore, SyncOperationStoreError,
 };
@@ -253,21 +255,38 @@ where
                         "ObjectBox sync payload missing entity".to_string(),
                     )
                 })?;
-                let mut entity: T = serde_json::from_value(entityPayload)?;
-                entity.setObjectBoxId(id);
-                let encoded = serde_json::to_string(&entity)?;
-                sqliteStore.execute(
-                    "INSERT INTO objectbox_entities(entity_type, id, payload, updated_at)
-                     VALUES(?1, ?2, ?3, ?4)
-                     ON CONFLICT(entity_type, id)
-                     DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at",
-                    vec![
-                        toSqliteValue(&entityType),
-                        toSqliteValue(&id),
-                        toSqliteValue(&encoded),
-                        toSqliteValue(&nowMillis()),
-                    ],
-                )?;
+                // The staleness check and the write share one transaction so a
+                // concurrent local write cannot slip between the read of the
+                // stored state and the overwrite decision.
+                sqliteStore.transaction(|transaction| {
+                    let mut apply = || -> Result<(), ObjectBoxStoreError> {
+                        if !remoteStateIsNewer(
+                            transaction,
+                            &entityType,
+                            id,
+                            entityPayload.get("updatedAt"),
+                        )? {
+                            return Ok(());
+                        }
+                        let mut entity: T = serde_json::from_value(entityPayload.clone())?;
+                        entity.setObjectBoxId(id);
+                        let encoded = serde_json::to_string(&entity)?;
+                        transaction.execute(
+                            "INSERT INTO objectbox_entities(entity_type, id, payload, updated_at)
+                             VALUES(?1, ?2, ?3, ?4)
+                             ON CONFLICT(entity_type, id)
+                             DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at",
+                            vec![
+                                toSqliteValue(&entityType),
+                                toSqliteValue(&id),
+                                toSqliteValue(&encoded),
+                                toSqliteValue(&nowMillis()),
+                            ],
+                        )?;
+                        Ok(())
+                    };
+                    apply().map_err(|error| SqliteStoreError::Message(error.to_string()))
+                })?;
             }
             "delete" => {
                 sqliteStore.execute(
@@ -518,6 +537,41 @@ fn parseSyncedEntityId(entityId: &str) -> Result<(String, i64), ObjectBoxStoreEr
 }
 
 #[allow(non_snake_case)]
+/// Decides whether an incoming synced entity state should overwrite the stored
+/// one, comparing the business-level `updatedAt` carried in the entity JSON.
+///
+/// Entities without an `updatedAt` field (or a stored row that lacks one) keep
+/// the previous unconditional-overwrite behavior, and a missing local row is
+/// always filled. Ties lose on purpose: access-only replays (for example a
+/// `Memory::lastAccessedAt` bump recorded while the content fields stayed
+/// unchanged) must not clobber newer peer edits of the same entity.
+fn remoteStateIsNewer(
+    transaction: &mut SqliteTransaction<'_>,
+    entityType: &str,
+    id: i64,
+    remoteUpdatedAt: Option<&serde_json::Value>,
+) -> Result<bool, ObjectBoxStoreError> {
+    let Some(remoteUpdatedAt) = remoteUpdatedAt.and_then(serde_json::Value::as_i64) else {
+        return Ok(true);
+    };
+    let localUpdatedAt: Option<i64> = transaction
+        .queryRows(
+            "SELECT payload FROM objectbox_entities WHERE entity_type = ?1 AND id = ?2",
+            vec![toSqliteValue(entityType), toSqliteValue(&id)],
+        )?
+        .first()
+        .and_then(|row| {
+            let payload: String = row.get("payload").ok()?;
+            let value: serde_json::Value = serde_json::from_str(&payload).ok()?;
+            value.get("updatedAt").and_then(serde_json::Value::as_i64)
+        });
+    Ok(match localUpdatedAt {
+        Some(localUpdatedAt) => remoteUpdatedAt > localUpdatedAt,
+        None => true,
+    })
+}
+
+#[allow(non_snake_case)]
 fn nowMillis() -> i64 {
     currentTimeMillis()
 }
@@ -540,3 +594,7 @@ fn objectBoxChangeSignal(path: &Path) -> Arc<ObjectBoxChangeSignal> {
     signals.insert(path.to_path_buf(), Arc::downgrade(&signal));
     signal
 }
+
+#[cfg(test)]
+#[path = "tests/ObjectBoxStoreSyncTests.rs"]
+mod ObjectBoxStoreSyncTests;
