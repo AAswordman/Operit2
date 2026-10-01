@@ -91,9 +91,29 @@ impl XmlBlockMetadata {
     /// Converts the accumulated XML metadata into a transport event.
     fn event(&self) -> MarkdownXmlStreamEvent {
         if self.isClosed {
-            let node = NativeXmlSplitter::parse_complete_node(&self.raw)
-                .expect("StreamXmlPlugin closed an invalid XML block");
-            return xmlEventFromNode(node);
+            match NativeXmlSplitter::parse_complete_node(&self.raw) {
+                Some(node) => return xmlEventFromNode(node),
+                // The streaming plugin judged the block closed, but the raw text
+                // does not parse back into a complete node (e.g. a closing tag
+                // with embedded whitespace was mistaken for an opening tag).
+                // Degrade to the raw text instead of panicking: renderer input
+                // is user content and must never be fatal.
+                None => {
+                    return MarkdownXmlStreamEvent {
+                        tagName: self
+                            .opening
+                            .as_ref()
+                            .map(|opening| opening.tag_name.clone()),
+                        attributes: self
+                            .opening
+                            .as_ref()
+                            .map(|opening| opening.attributes.clone()),
+                        bodyChunk: Some(self.raw.clone()),
+                        children: Vec::new(),
+                        isClosed: Some(true),
+                    };
+                }
+            }
         }
         MarkdownXmlStreamEvent {
             tagName: self
@@ -609,6 +629,36 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A closing tag mistaken for an opening one (embedded whitespace inside
+    /// `</think\n>`) closes an XmlBlock whose raw text cannot parse back into
+    /// a complete node. Rendering must degrade to the raw text, not panic —
+    /// renderer input is user content and must never be fatal.
+    #[test]
+    fn degrades_instead_of_panicking_when_a_closed_block_fails_to_parse() {
+        let events = MarkdownRenderEventStream::fromContent(
+            "y~</think\n><tool name='y'></tool><br>".to_string(),
+        );
+        let end = events
+            .iter()
+            .find(|event| event.eventType == "markdownBlockEnd")
+            .expect("degraded block must still emit its end event");
+        let xml = end
+            .xml
+            .as_ref()
+            .expect("block end must still carry xml metadata");
+        assert_eq!(xml.isClosed, Some(true));
+        assert_eq!(
+            xml.tagName, None,
+            "degraded event must not carry the streaming matcher's misread tag name"
+        );
+        assert!(
+            xml.bodyChunk
+                .as_deref()
+                .is_some_and(|body| body.contains("think")),
+            "degraded body must carry the raw block text"
+        );
+    }
 
     #[test]
     fn emits_tool_events_immediately_after_think_closes() {
