@@ -63,7 +63,19 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel> {
 
   Future<void> _requestHostAuthorization(_HostRequirement requirement) async {
     final data = await _future!;
-    await _HostAuthorizationBridge.request(data.host.id, requirement.id);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _HostAuthorizationBridge.request(data.host.id, requirement.id);
+    } on PlatformException catch (error) {
+      // Unrooted devices have no `su` binary; the platform channel surfaces that
+      // as ROOT_PERMISSION_REQUEST_ERROR. Show it inline instead of crashing.
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('授权请求失败：${error.message ?? error.code}'),
+        ),
+      );
+      return;
+    }
     _reload();
   }
 
