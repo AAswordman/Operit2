@@ -372,9 +372,34 @@ impl OperitFlutterBridge {
     /// Calls the local Core runtime without entering the server-side node router.
     fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
+        let requestIdForPanic = request.requestId.clone();
         let localCore = self.localCore.clone();
         match self.runHostRuntimeAsyncTask("operit-flutter-call", move || async move {
-            CoreLinkSharedClient::call(localCore.as_ref(), request).await
+            // A panic inside a Core call kills the dedicated scheduler thread and
+            // drops the result sender unevaluated, which surfaces to Dart as a
+            // bare "runtime task result channel closed" — on Android the panic
+            // message itself never reaches logcat (stderr is discarded), making
+            // the failure undiagnosable. Catch it at this layer (the only layer
+            // that knows the concrete response type) and deliver it as a
+            // structured error response instead.
+            let callFuture =
+                std::panic::AssertUnwindSafe(CoreLinkSharedClient::call(localCore.as_ref(), request));
+            match futures_util::FutureExt::catch_unwind(callFuture).await {
+                Ok(response) => response,
+                Err(payload) => {
+                    let detail = payload
+                        .downcast_ref::<&str>()
+                        .map(|message| message.to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "non-string panic payload".to_string());
+                    CoreCallResponse::err(
+                        requestIdForPanic,
+                        CoreLinkError::internal(format!(
+                            "runtime task panicked: {detail}"
+                        )),
+                    )
+                }
+            }
         }) {
             Ok(response) => response,
             Err(error) => CoreCallResponse::err(requestId, CoreLinkError::internal(error)),
