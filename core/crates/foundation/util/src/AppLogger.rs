@@ -400,7 +400,27 @@ fn write_entry(
 
 /// Appends one formatted log line through the configured file-system host.
 fn append_line(file_system_host: &Arc<dyn FileSystemHost>, path: &str, line: &str) {
+    rotate_if_oversized(file_system_host, path);
     let _ = file_system_host.writeFile(path, line, true);
+}
+
+/// Size cap before a log file rotates (bytes).
+const LOG_ROTATE_BYTES: i64 = 8 * 1024 * 1024;
+
+/// Rotates one log file once it exceeds the size cap, keeping a single `.1` archive.
+fn rotate_if_oversized(file_system_host: &Arc<dyn FileSystemHost>, path: &str) {
+    let Ok(metadata) = file_system_host.fileInfo(path) else {
+        return;
+    };
+    if metadata.size <= LOG_ROTATE_BYTES {
+        return;
+    }
+    let archive = format!("{path}.1");
+    let _ = file_system_host.deleteFile(&archive, false);
+    if file_system_host.moveFile(path, &archive).is_err() {
+        return;
+    }
+    let _ = file_system_host.writeFile(path, "", false);
 }
 
 /// Creates an empty log file through the host when the path is absent.
