@@ -10,6 +10,8 @@ use operit_link::{
 };
 
 use crate::BridgeCodec::native_watch_event_vec;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::BridgeExports::panic_payload_message;
 use crate::OperitFlutterBridge;
 
 /// Owns transport resources selected at the host boundary.
@@ -148,11 +150,33 @@ impl OperitFlutterBridge {
     }
 
     /// Adapts the local Core async API to the blocking C and JNI ABI.
+    ///
+    /// A panic inside the scheduled Core call would drop the result sender
+    /// unevaluated and surface as a bare "Runtime task result channel closed";
+    /// it is caught here — the only layer that knows the concrete response
+    /// type — and delivered as a structured error instead.
     pub(crate) fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
         let task = self.prepareCall(request);
-        match self.runHostRuntimeAsyncTask("operit-flutter-call", move || task.execute()) {
-            Ok(response) => response,
+        match self.runHostRuntimeAsyncTask(
+            "operit-flutter-call",
+            move || {
+                futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
+                    task.execute(),
+                ))
+            },
+        ) {
+            Ok(Ok(response)) => response,
+            Ok(Err(payload)) => CoreCallResponse::err(
+                requestId,
+                CoreLinkError::new(
+                    "FATAL_CORE_PANIC",
+                    &format!(
+                        "Core runtime panic: {}",
+                        panic_payload_message(payload.as_ref())
+                    ),
+                ),
+            ),
             Err(error) => CoreCallResponse::err(requestId, CoreLinkError::internal(error)),
         }
     }
