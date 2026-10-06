@@ -2268,6 +2268,7 @@
   "spaceJoinRetry": "Submit again",
   "spaceJoinKeepWaiting": "Keep waiting in background",
   "spaceJoinCancel": "Cancel request",
+  "spaceJoinCancelFailed": "Could not confirm cancellation. Check the connection or try again later.",
   "spaceJoinRefreshingFailed": "Cannot reach the device right now. The request is saved and will retry.",
   "spaceJoinAssignmentChanged": "This request has been transferred or already processed.",
   "spaceJoinProgressTitle": "Space join request",

@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../core/logging/ClientLogger.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../l10n/generated/app_localizations.dart';
 
@@ -106,16 +107,26 @@ class _SpaceJoinProgressDialogState extends State<SpaceJoinProgressDialog> {
     final l10n = AppLocalizations.of(context)!;
     try {
       final request = await widget.clients.server.runtimeRemoteLinkService
-          .requestDeviceSpaceJoin(deviceId: widget.deviceId!);
+          .requestDeviceSpaceJoin(deviceId: widget.deviceId!)
+          .timeout(const Duration(seconds: 15));
       if (!mounted) return;
       setState(() => _request = request);
       await _completeIfJoined(request);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      if (ClientLogger.isInitialized) {
+        ClientLogger.w(
+          'Space join submission failed target=${widget.deviceId}',
+          tag: 'SpaceJoin',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       // Submission may have been persisted before the reply was lost. Recover
       // that request instead of creating another one or displaying COMMAND_ERROR.
       try {
         final saved = await widget.clients.server.runtimeRemoteLinkService
-            .outgoingDeviceSpaceJoins();
+            .outgoingDeviceSpaceJoins()
+            .timeout(const Duration(seconds: 5));
         final matches = saved.where(
           (r) =>
               r.targetDeviceId == widget.deviceId &&
@@ -124,7 +135,9 @@ class _SpaceJoinProgressDialogState extends State<SpaceJoinProgressDialog> {
         if (mounted) {
           setState(() {
             if (matches.isNotEmpty) _request = matches.last;
-            _error = '${l10n.spaceJoinSubmitFailed}\n$error';
+            _error = matches.isEmpty || matches.last.reviewerDeviceId == null
+                ? l10n.spaceJoinSubmitFailed
+                : null;
           });
         }
       } catch (_) {
@@ -136,49 +149,107 @@ class _SpaceJoinProgressDialogState extends State<SpaceJoinProgressDialog> {
   }
 
   Future<void> _completeIfJoined(generated.SpaceJoinRequest request) async {
+    if (!spaceJoinIsActive(request.status)) _timer?.cancel();
     if (request.status != generated.SpaceJoinStatus.joined) return;
     final space = await widget.clients.server.runtimeRemoteLinkService
         .deviceSpace();
     if (mounted) Navigator.pop(context, space);
   }
 
-  /// Keeps cancellation independent of polling and discards responses superseded by user action.
-  Future<void> _refresh({bool cancel = false}) async {
+  Future<generated.SpaceJoinRequest?> _readSavedRequest(
+    String requestId,
+  ) async {
+    final saved = await widget.clients.server.runtimeRemoteLinkService
+        .outgoingDeviceSpaceJoins()
+        .timeout(const Duration(seconds: 5));
+    for (final request in saved) {
+      if (request.requestId == requestId) return request;
+    }
+    return null;
+  }
+
+  Future<void> _refresh() async {
     final previous = _request;
     if (_busy ||
+        _polling ||
         _cancelling ||
         previous == null ||
-        (!cancel && (_polling || !spaceJoinIsActive(previous.status)))) {
+        !spaceJoinIsActive(previous.status)) {
       return;
     }
-    if (cancel) {
-      _responseEpoch++;
-      setState(() => _cancelling = true);
-    } else {
-      _polling = true;
-    }
+    _polling = true;
     final epoch = _responseEpoch;
     try {
-      final service = widget.clients.server.runtimeRemoteLinkService;
-      final request = cancel
-          ? await service.cancelDeviceSpaceJoin(requestId: previous.requestId)
-          : await service.refreshDeviceSpaceJoin(requestId: previous.requestId);
+      final request = await widget.clients.server.runtimeRemoteLinkService
+          .refreshDeviceSpaceJoin(requestId: previous.requestId)
+          .timeout(const Duration(seconds: 15));
       if (!mounted || epoch != _responseEpoch) return;
       setState(() {
         _request = request;
         _error = null;
       });
       await _completeIfJoined(request);
-    } catch (error) {
+    } catch (_) {
       if (mounted && epoch == _responseEpoch) {
-        setState(() => _error = error.toString());
+        setState(
+          () =>
+              _error = AppLocalizations.of(context)!.spaceJoinRefreshingFailed,
+        );
       }
     } finally {
-      if (cancel) {
-        if (mounted) setState(() => _cancelling = false);
-      } else {
-        _polling = false;
+      _polling = false;
+    }
+  }
+
+  Future<void> _cancelRequest() async {
+    final previous = _request;
+    if (_busy ||
+        _cancelling ||
+        previous == null ||
+        !spaceJoinIsActive(previous.status)) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    _responseEpoch++;
+    setState(() {
+      _cancelling = true;
+      _error = null;
+    });
+    try {
+      final request = await widget.clients.server.runtimeRemoteLinkService
+          .cancelDeviceSpaceJoin(requestId: previous.requestId)
+          .timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      setState(() => _request = request);
+      await _completeIfJoined(request);
+    } catch (error, stackTrace) {
+      if (ClientLogger.isInitialized) {
+        ClientLogger.w(
+          'Space join cancellation not confirmed request=${previous.requestId}',
+          tag: 'SpaceJoin',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
+      if (!mounted) return;
+      setState(() => _error = l10n.spaceJoinCancelFailed);
+      // A lost reply does not tell us whether Core persisted cancellation or
+      // completed approval. Read the same durable request, including terminal
+      // states, instead of manufacturing a domain transition in the UI.
+      try {
+        final request = await _readSavedRequest(previous.requestId);
+        if (!mounted || request == null) return;
+        setState(() {
+          _request = request;
+          if (!spaceJoinIsActive(request.status)) _error = null;
+        });
+        await _completeIfJoined(request);
+      } catch (_) {
+        // Keep the last confirmed state and the cancellation error. Active
+        // requests remain refreshable and cancellation can be retried.
+      }
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
     }
   }
 
@@ -187,10 +258,11 @@ class _SpaceJoinProgressDialogState extends State<SpaceJoinProgressDialog> {
     final l10n = AppLocalizations.of(context)!;
     final request = _request;
     final colors = Theme.of(context).colorScheme;
-    final waiting = request == null || spaceJoinIsActive(request.status);
+    final waiting = request != null && spaceJoinIsActive(request.status);
+    final progressing = waiting || (request == null && _busy);
     return AlertDialog(
       icon: Icon(
-        waiting ? Icons.hourglass_top_rounded : Icons.fact_check_outlined,
+        progressing ? Icons.hourglass_top_rounded : Icons.fact_check_outlined,
       ),
       title: Text(l10n.spaceJoinProgressTitle),
       content: SizedBox(
@@ -235,7 +307,7 @@ class _SpaceJoinProgressDialogState extends State<SpaceJoinProgressDialog> {
                   Row(
                     children: [
                       Icon(
-                        waiting ? Icons.schedule : Icons.info_outline,
+                        progressing ? Icons.schedule : Icons.info_outline,
                         size: 20,
                         color: colors.primary,
                       ),
@@ -270,7 +342,9 @@ class _SpaceJoinProgressDialogState extends State<SpaceJoinProgressDialog> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-            if (_error != null) ...[
+            if (_error != null &&
+                !(_error == l10n.spaceJoinSubmitFailed &&
+                    (request == null || request.reviewerDeviceId == null))) ...[
               const SizedBox(height: 12),
               Text(_error!, style: Theme.of(context).textTheme.bodySmall),
             ],
@@ -280,9 +354,9 @@ class _SpaceJoinProgressDialogState extends State<SpaceJoinProgressDialog> {
       actions: [
         if (request == null && !_busy)
           FilledButton(onPressed: _submit, child: Text(l10n.spaceJoinSubmit)),
-        if (request?.status == generated.SpaceJoinStatus.pending)
+        if (request != null && spaceJoinIsActive(request.status))
           TextButton(
-            onPressed: _cancelling ? null : () => _refresh(cancel: true),
+            onPressed: _cancelling ? null : _cancelRequest,
             child: Text(l10n.spaceJoinCancel),
           ),
         TextButton(
