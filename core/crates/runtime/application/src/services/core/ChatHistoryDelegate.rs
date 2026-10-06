@@ -1,6 +1,7 @@
 use crate::data::preferences::ActivePromptManager::ActivePromptManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
+use crate::data::preferences::ThinkingPersistencePreferences::ThinkingPersistencePreferences;
 use crate::plugins::toolpkg::ToolPkgChatMessageHookBridge::ToolPkgChatMessageHookBridge;
 use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
 use crate::plugins::toolpkg::ToolPkgChatViewHookBridge::{
@@ -13,6 +14,7 @@ use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
+use operit_model::MessagePart::MessagePartKind;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
@@ -534,8 +536,17 @@ impl ChatHistoryDelegate {
     }
 
     /// Returns a storage-safe copy of a chat message without a live stream handle.
+    ///
+    /// Honors the thinking-persistence switch (#179): with the switch off,
+    /// thinking parts stay in memory for the live UI but are not written to
+    /// message_parts, snapshots, or the sync mirror built from them.
     fn persistentChatMessage(mut message: ChatMessage) -> ChatMessage {
         message.contentStream = None;
+        if !ThinkingPersistencePreferences::getInstance().persistThinkingParts() {
+            message
+                .parts
+                .retain(|part| part.kind != MessagePartKind::Thinking);
+        }
         message
     }
 
@@ -2073,7 +2084,7 @@ impl ChatHistoryDelegate {
             .expect("No active chat");
         let selectedVariantIndex = self
             .chatHistoryManager
-            .addMessageVariant(chatId.clone(), timestamp, message)
+            .addMessageVariant(chatId.clone(), timestamp, Self::persistentChatMessage(message))
             .expect("ChatHistoryManager.addMessageVariant must succeed");
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.reloadCurrentChatDisplayHistory(chatId.clone());
@@ -2595,11 +2606,12 @@ impl ChatHistoryDelegate {
                 chat_message_trace_summary(&message)
             ),
         );
+        let persistedMessage = Self::persistentChatMessage(message.clone());
         let clock = self
             .chatHistoryManager
-            .commitAssistantMessageSegment(chatId.clone(), message.clone(), chatMetrics)
+            .commitAssistantMessageSegment(chatId.clone(), persistedMessage.clone(), chatMetrics)
             .map_err(|error| error.to_string())?;
-        ToolPkgChatMessageHookBridge::dispatchMessagePersisted(&chatId, &message);
+        ToolPkgChatMessageHookBridge::dispatchMessagePersisted(&chatId, &persistedMessage);
         if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
             self.upsertCurrentChatMessageInMemory(message.clone());
         } else {

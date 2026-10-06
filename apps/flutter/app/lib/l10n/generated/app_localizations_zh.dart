@@ -3241,6 +3241,14 @@ class AppLocalizationsZh extends AppLocalizations {
   String settingsDataOverviewLoadError(String error) {
     return '数据概览加载失败：$error。仍可导出诊断日志。';
   }
+  String get settingsDataPrivacySection => '隐私';
+
+  @override
+  String get settingsDataThinkingPersistenceTitle => '保存 AI 推理内容';
+
+  @override
+  String get settingsDataThinkingPersistenceDescription =>
+      '将模型的思考（推理）部件保留在会话历史、快照与设备同步中。关闭后，新的回复将不写入其推理过程，后续提问也不再携带此前的思考。';
 
   @override
   String get settingsDataRuntimeSection => '数据概览';

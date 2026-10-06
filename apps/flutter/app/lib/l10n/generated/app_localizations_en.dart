@@ -3372,6 +3372,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String settingsDataOverviewLoadError(String error) {
     return 'The data overview could not be loaded: $error. You can still export diagnostic logs.';
   }
+  String get settingsDataPrivacySection => 'Privacy';
+
+  @override
+  String get settingsDataThinkingPersistenceTitle =>
+      'Persist AI reasoning content';
+
+  @override
+  String get settingsDataThinkingPersistenceDescription =>
+      'Keep the model\'s thinking (reasoning) parts in chat history, snapshots, and device sync. Turn off to store new replies without their reasoning trail; later prompts will also no longer include earlier reasoning.';
 
   @override
   String get settingsDataRuntimeSection => 'Data overview';
