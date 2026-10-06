@@ -11,7 +11,7 @@ export interface EventBinding {
   label: string;
 }
 
-/** Shared capability list for the editor, validation and Agents. Every route must have a matching implementation in operit_lvgl.c. */
+/** Shared capability list for the editor, validation and Agents. Every route must have a matching implementation in operit_mini_ui.c. */
 export const routes: Route[] = [
   {id: '', label: '无动作', kind: 'none'},
   {id: 'home', label: '跳转 · 首页', kind: 'navigate', target: 'Home'},

@@ -44,7 +44,7 @@ const ILI9341_NEGGAMMA: u8 = 0xE1;
 pub struct Esp32ScreenMirror {
     width: u16,
     height: u16,
-    lvgl_active: AtomicBool,
+    ui_active: AtomicBool,
     state: Mutex<Esp32ScreenMirrorState>,
 }
 
@@ -72,7 +72,7 @@ impl Esp32ScreenMirror {
         Ok(Self {
             width,
             height,
-            lvgl_active: AtomicBool::new(false),
+            ui_active: AtomicBool::new(false),
             state: Mutex::new(Esp32ScreenMirrorState {
                 background: 0,
                 rects: Vec::new(),
@@ -94,13 +94,13 @@ impl Esp32ScreenMirror {
         }
     }
 
-    /// Makes LVGL the sole owner of physical display updates.
-    pub fn activateLvgl(&self) {
-        self.lvgl_active.store(true, Ordering::Release);
+    /// Makes self-drawn UI the sole owner of physical display updates.
+    pub fn activateUi(&self) {
+        self.ui_active.store(true, Ordering::Release);
     }
 
-    fn isLvglActive(&self) -> bool {
-        self.lvgl_active.load(Ordering::Acquire)
+    fn isUiActive(&self) -> bool {
+        self.ui_active.load(Ordering::Acquire)
     }
 
     /// Reads the compact drawing state while holding its lock for the duration of the read.
@@ -161,7 +161,7 @@ impl Esp32ScreenMirror {
         }
     }
 
-    /// Copies one little-endian RGB565 LVGL region into the framebuffer mirror.
+    /// Copies one little-endian RGB565 self-drawn UI region into the framebuffer mirror.
     fn writeRgb565(&self, rect: FaceRect, bytes: &[u8]) {
         if let Ok(mut state) = self.state.lock() {
             if state.pixels.is_empty() { return; }
@@ -373,7 +373,7 @@ impl FaceCanvas for Esp32Ili9341 {
         if self.width == 0 || self.height == 0 {
             return Ok(());
         }
-        if self.mirror.isLvglActive() {
+        if self.mirror.isUiActive() {
             return Ok(());
         }
         self.fillWindow(0, 0, self.width - 1, self.height - 1, color)?;
@@ -385,7 +385,7 @@ impl FaceCanvas for Esp32Ili9341 {
         if rect.width == 0 || rect.height == 0 {
             return Ok(());
         }
-        if self.mirror.isLvglActive() {
+        if self.mirror.isUiActive() {
             return Ok(());
         }
         let x1 = rect

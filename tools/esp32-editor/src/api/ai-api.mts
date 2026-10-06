@@ -9,23 +9,22 @@ import type {LayoutDocument} from '../layout/project-model.mts';
 const root = new URL('../../../../', import.meta.url);
 
 export const editableSources = [
-  'apps/esp32/lvgl_port/operit_lvgl.c',
-  'apps/esp32/lvgl_port/operit_lvgl.h',
+  'apps/esp32/ui_port/operit_mini_ui.c',
+  'apps/esp32/ui_port/operit_ui.h',
+  'apps/esp32/ui_port/operit_mini_ui.h',
+  'apps/esp32/src/ui.rs',
   'apps/esp32/src/main.rs',
   'tools/esp32-editor/src/layout/routes.mts',
   'tools/esp32-editor/src/layout/layout-model.mts',
   'tools/esp32-editor/src/layout/project-model.mts',
-  'tools/esp32-editor/src/compile-layout.mts',
-  'tools/esp32-editor/web/editor.js',
+  'tools/esp32-editor/web/editor.ts',
   'tools/esp32-editor/web/index.html',
   'tools/esp32-editor/web/style.css',
-  'tools/esp32-editor/web/app.js',
-  'tools/esp32-editor/web/pages.js',
-  'apps/esp32/lvgl_port/layout_store.c',
-  'apps/esp32/lvgl_port/layout_store.h',
-  'apps/esp32/src/ui_deploy.rs',
+  'tools/esp32-editor/web/app.ts',
+  'tools/esp32-editor/web/pages.ts',
+  'apps/esp32/src/ui_capabilities.rs',
   'tools/esp32-editor/src/layout/package-layout.mts',
-  'tools/esp32-editor/web/deploy.js',
+  'tools/esp32-editor/web/deploy.ts',
 ] as const;
 
 export type EditableSource = (typeof editableSources)[number];

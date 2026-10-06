@@ -1,4 +1,3 @@
-import {setupEditor} from './editor.js';
 import {request} from './transport.js';
 import {point, pixel} from './model.js';
 import {errorMessage, query} from './types.js';
@@ -41,10 +40,12 @@ let generation = -1;
 let lastFrame = 0;
 let pressed = false;
 let sourceHash = '';
+let miniStaticBytes = 0;
 interface DeviceState {
   running?: boolean; connected?: boolean; paired?: boolean; pairingCode?: string; spaceState?: string;
+  spaceJoinPrompt?: string; spaceJoinBusy?: boolean;
   chatPreview?: string; chatScreen?: string; chatTask?: string;
-  chat?: {chatId?: string; messages?: {sender: string; text: string; images?: string[]}[];
+  chat?: {chatId?: string; messages?: {sender: string; text: string}[];
     conversations?: {id: string; title: string; characterCardName?: string}[]; error?: string};
   chatSendResult?: {ok: boolean; error?: string} | null;
 }
@@ -78,8 +79,8 @@ composer.addEventListener('submit', event => {
   event.preventDefault();
   if (!runtime || window.operitEditor?.isEditing()) return;
   submittedHostText = hostInput.value;
-  runtime.ccall('operit_lvgl_set_chat_draft', null, ['string'], [hostInput.value]);
-  runtime.ccall('operit_lvgl_submit_chat', null, [], []);
+  runtime.ccall('operit_ui_set_chat_draft', null, ['string'], [hostInput.value]);
+  runtime.ccall('operit_ui_submit_chat', null, [], []);
 });
 window.addEventListener('operit-simulator-state', event => {
   const state = (event as CustomEvent<DeviceState>).detail;
@@ -115,7 +116,7 @@ function log(message: string): void {
 
 /** Returns the initialized WebAssembly runtime. */
 function activeRuntime(): RuntimeModule {
-  if (!runtime) throw new Error('LVGL WebAssembly 尚未初始化');
+  if (!runtime) throw new Error('自绘 UI WebAssembly 尚未初始化');
   return runtime;
 }
 
@@ -133,57 +134,57 @@ function validManifest(manifest: BuildManifest): Required<Pick<BuildManifest, 's
   return manifest as Required<Pick<BuildManifest, 'sourceHash'>> & BuildManifest;
 }
 
-/** Updates the visible board theme and color swatches from LVGL state. */
+/** Updates the visible board theme and color swatches from 自绘 UI state. */
 function syncTheme(): void {
   const currentRuntime = activeRuntime();
   const currentBoard = activeBoard();
-  const index = currentRuntime._operit_lvgl_theme_index();
+  const index = currentRuntime._operit_ui_theme_index();
   const theme = currentBoard.themes[index];
-  if (!theme) throw new Error('LVGL 返回了不存在的主题索引');
+  if (!theme) throw new Error('自绘 UI 返回了不存在的主题索引');
   themeSelect.value = String(index);
-  shapeSelect.value = currentRuntime._operit_lvgl_round_icons() ? 'circle' : 'square';
+  shapeSelect.value = currentRuntime._operit_ui_round_icons() ? 'circle' : 'square';
   for (const key of ['bg', 'surface', 'accent', 'muted'] as const) {
     const swatch = query<HTMLElement>('#swatches').querySelector<HTMLElement>(`[data-color="${key}"]`);
     if (swatch) swatch.style.backgroundColor = theme[key];
   }
 }
 
-/** Applies the debug panel state to the shared LVGL runtime. */
+/** Applies the debug panel state to the shared 自绘 UI runtime. */
 function applyControls(): void {
   const currentRuntime = activeRuntime();
-  currentRuntime._operit_lvgl_set_connection(wifiInput.checked, edgeInput.checked);
-  currentRuntime.ccall('operit_lvgl_set_expression', null, ['string'], [expressionSelect.value]);
+  currentRuntime._operit_ui_set_connection(wifiInput.checked, edgeInput.checked);
+  currentRuntime.ccall('operit_ui_set_expression', null, ['string'], [expressionSelect.value]);
 }
 
 function setDeviceState(state: DeviceState): void {
   if (!runtime) return;
-  if (state.paired !== undefined) runtime._operit_lvgl_set_paired(state.paired);
-  runtime.ccall('operit_lvgl_set_pairing_code', null, ['string'], [state.pairingCode ?? '']);
-  runtime.ccall('operit_lvgl_set_space_state', null, ['string'], [state.spaceState ?? '等待连接 Operit']);
+  if (state.paired !== undefined) runtime._operit_ui_set_paired(state.paired);
+  runtime.ccall('operit_ui_set_pairing_code', null, ['string'], [state.pairingCode ?? '']);
+  runtime.ccall('operit_ui_set_space_state', null, ['string'], [state.spaceState ?? '等待连接 Operit']);
+  runtime.ccall('operit_ui_set_space_join_prompt', null, ['string', 'number'],
+    [state.spaceJoinPrompt ?? '', state.spaceJoinBusy ? 1 : 0]);
   const chat = state.chat;
   if (chat) {
-    runtime.ccall('operit_lvgl_set_chat_identity', null, ['string', 'string'], [chat.chatId ?? '', state.chatPreview ?? 'Operit']);
-    const messages = (chat.messages ?? []).filter(message => message.text?.trim() || message.images?.length).slice(-12);
+    runtime.ccall('operit_ui_set_chat_identity', null, ['string', 'string'], [chat.chatId ?? '', state.chatPreview ?? 'Operit']);
+    const messages = (chat.messages ?? []).filter(message => message.text?.trim()).slice(-12);
     messages.forEach((message, index) => {
-      runtime!.ccall('operit_lvgl_set_message', null,
+      runtime!.ccall('operit_ui_set_message', null,
         ['number', 'number', 'string'], [index, message.sender === 'user' ? 1 : 0, message.text]);
-      for (let image = 0; image < 4; image++) runtime!.ccall('operit_lvgl_set_message_image', null,
-        ['number', 'number', 'string'], [index, image, message.images?.[image] ?? '']);
     });
-    runtime.ccall('operit_lvgl_finish_messages', null, ['number'], [messages.length]);
+    runtime.ccall('operit_ui_finish_messages', null, ['number'], [messages.length]);
     const conversations = (chat.conversations ?? []).slice(0, 24);
-    conversations.forEach((item, index) => runtime!.ccall('operit_lvgl_set_conversation', null,
+    conversations.forEach((item, index) => runtime!.ccall('operit_ui_set_conversation', null,
       ['number', 'string', 'string', 'string', 'number'],
       [index, item.id, item.title, item.characterCardName ?? '', item.id === chat.chatId ? 1 : 0]));
-    runtime.ccall('operit_lvgl_finish_conversations', null, ['number'], [conversations.length]);
+    runtime.ccall('operit_ui_finish_conversations', null, ['number'], [conversations.length]);
   }
-  runtime.ccall('operit_lvgl_set_chat_screen', null, ['string'], [state.chatScreen ?? '连接 Operit 后开始聊天']);
-  runtime.ccall('operit_lvgl_set_chat_task', null, ['string'], [state.chatTask ?? '离线']);
+  runtime.ccall('operit_ui_set_chat_screen', null, ['string'], [state.chatScreen ?? '连接 Operit 后开始聊天']);
+  runtime.ccall('operit_ui_set_chat_task', null, ['string'], [state.chatTask ?? '离线']);
   if (state.chatSendResult) finishSend(state.chatSendResult.ok, state.chatSendResult.error);
 }
 
 function finishSend(ok: boolean, error = ''): void {
-  runtime?.ccall('operit_lvgl_chat_send_result', null, ['number', 'string'], [ok ? 1 : 0, error]);
+  runtime?.ccall('operit_ui_chat_send_result', null, ['number', 'string'], [ok ? 1 : 0, error]);
   hostStatus.textContent = ok ? '已发送' : error;
   if (ok && hostInput.value === submittedHostText) hostInput.value = '';
 }
@@ -195,7 +196,7 @@ function renderFrame(now: number): void {
   if (currentRuntime && now - lastFrame >= interval) {
     lastFrame = now;
     const started = performance.now();
-    currentRuntime._operit_lvgl_pump(0);
+    currentRuntime._operit_ui_pump(0);
     const nextGeneration = currentRuntime._simulator_generation();
     if (nextGeneration !== generation) {
       generation = nextGeneration;
@@ -213,14 +214,17 @@ function renderFrame(now: number): void {
       renderContext.putImageData(image, 0, 0);
     }
     syncTheme();
-    pageLabel.textContent = currentRuntime.ccall('operit_lvgl_current_page', 'string', [], []);
-    renderTimeLabel.textContent =
-      `${(performance.now() - started).toFixed(1)} ms · LVGL ${Math.round(currentRuntime._simulator_heap_used() / 1024)} KiB`;
+    pageLabel.textContent = currentRuntime.ccall('operit_ui_current_page', 'string', [], []);
+    const kib = (bytes: number): string => (bytes / 1024).toFixed(1);
+    let resources = `自绘静态 RAM ${kib(miniStaticBytes)} KiB · UI 堆 0`;
+    if (currentRuntime._simulator_stack_size && currentRuntime._simulator_stack_free)
+      resources += ` · C 栈剩余 ${kib(currentRuntime._simulator_stack_free())} / ${kib(currentRuntime._simulator_stack_size())} KiB`;
+    renderTimeLabel.textContent = `${(performance.now() - started).toFixed(1)} ms · ${resources}`;
   }
   requestAnimationFrame(renderFrame);
 }
 
-/** Sends a logical touch event to the shared LVGL runtime. */
+/** Sends a logical touch event to the shared 自绘 UI runtime. */
 function touch(clientX: number, clientY: number, down: boolean): void {
   if (!runtime) return;
   const position = point(clientX, clientY, canvas.getBoundingClientRect());
@@ -233,11 +237,11 @@ function navigate(page: 'home' | 'apps'): void {
   window.dispatchEvent(new Event('operit-runtime-navigation'));
   const currentRuntime = activeRuntime();
   if (page === 'home') {
-    currentRuntime._operit_lvgl_navigate_home();
+    currentRuntime._operit_ui_navigate_home();
     pageLabel.textContent = 'Home';
     return;
   }
-  currentRuntime._operit_lvgl_navigate_apps();
+  currentRuntime._operit_ui_navigate_apps();
   pageLabel.textContent = 'Apps';
 }
 
@@ -249,7 +253,7 @@ function handleCanvasKeydown(event: KeyboardEvent): void {
   navigate(event.key === 'ArrowRight' ? 'apps' : 'home');
 }
 
-/** Handles action callbacks emitted by the shared LVGL runtime. */
+/** Handles action callbacks emitted by the shared 自绘 UI runtime. */
 function handleRuntimeAction(value: string): void {
   if (value.startsWith('navigate:')) {
     window.setTimeout(() => {
@@ -257,9 +261,9 @@ function handleRuntimeAction(value: string): void {
     }, 0);
     return;
   }
-  log('LVGL action: ' + value);
+  log('自绘 UI action: ' + value);
   if (value === 'edge_send') {
-    const text = activeRuntime().ccall('operit_lvgl_chat_draft', 'string', [], []);
+    const text = activeRuntime().ccall('operit_ui_chat_draft', 'string', [], []);
     hostStatus.textContent = '发送中';
     void fetch('/api/simulator/send', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text}),
@@ -273,10 +277,8 @@ function handleRuntimeAction(value: string): void {
     return;
   }
   if (value.startsWith('edge_')) {
-    if (value.startsWith('edge_image:')) activeImageRequest = Number(value.split(':')[1]);
-    else if (value === 'edge_image_cancel') activeImageRequest = null;
     void fetch('/api/simulator/action', {
-      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Operit-Client': imageClient},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action: value}),
     }).then(async response => { if (!response.ok) {
       const detail = await response.json() as {error?: string};
@@ -284,11 +286,7 @@ function handleRuntimeAction(value: string): void {
     } })
       .catch(error => {
         log('设备 action 错误: ' + errorMessage(error));
-        if (value.startsWith('edge_image:')) {
-          if (activeImageRequest === Number(value.split(':')[1])) activeImageRequest = null;
-          runtime?.ccall('operit_lvgl_image_error', null, ['number', 'string'],
-            [Number(value.split(':')[1]), errorMessage(error)]);
-        } else runtime?.ccall('operit_lvgl_action_error', null, ['string'], [errorMessage(error)]);
+        runtime?.ccall('operit_ui_action_error', null, ['string'], [errorMessage(error)]);
       });
   }
   pageLabel.textContent = value;
@@ -342,7 +340,7 @@ async function updateBuildStatus(): Promise<void> {
   }
 }
 
-/** Connects the editor panel to the generated shared LVGL runtime. */
+/** Connects the editor panel to the generated shared 自绘 UI runtime. */
 async function initialize(): Promise<void> {
   board = await request<BoardInfo>('/api/board');
   const currentBoard = activeBoard();
@@ -350,17 +348,24 @@ async function initialize(): Promise<void> {
 
   const manifest = await loadManifest();
   sourceHash = manifest.sourceHash;
+  if (manifest.renderer !== 'mini') throw new Error('旧 UI 产物已失效，请重新构建自绘 UI');
   const module = await import('./generated/ui.mjs?v=' + encodeURIComponent(sourceHash)) as {default: RuntimeFactory};
   if (typeof module.default !== 'function') throw new Error('构建产物缺少 Wasm 工厂函数');
   runtime = await module.default();
   runtime.onAction = handleRuntimeAction;
-  if (!runtime._simulator_init()) throw new Error('LVGL 初始化失败');
+  if (!runtime._simulator_init()) throw new Error('自绘 UI 初始化失败');
   applyControls();
   setDeviceState(latestDeviceState ?? {});
   syncTheme();
-  sourceLabel.textContent = `共用源码：${manifest.source ?? 'apps/esp32/lvgl_port/operit_lvgl.c'} / LVGL ${manifest.lvgl ?? '未知'}`;
-  log('真实 LVGL WebAssembly 已启动');
-  await setupEditor(runtime, log);
+  sourceLabel.textContent = `共用源码：${manifest.source ?? 'apps/esp32/ui_port/operit_mini_ui.c'} / 自绘 UI`;
+  miniStaticBytes = (JSON.parse(runtime.ccall('operit_ui_debug_snapshot', 'string', [], []) as string) as {staticBytes: number}).staticBytes;
+  log('自绘 UI WebAssembly 已启动；触摸/状态检查可用，布局编辑暂不可用');
+  editorStatus.textContent = '自绘 UI：固定页面，布局编辑已停用';
+  const toggle = document.querySelector<HTMLInputElement>('#edit-mode');
+  if (toggle) { toggle.checked = false; toggle.disabled = true; }
+  themeSelect.disabled = true;
+  shapeSelect.disabled = true;
+  expressionSelect.disabled = true;
   requestAnimationFrame(renderFrame);
 }
 
@@ -390,7 +395,7 @@ function bindControls(): void {
   query<HTMLButtonElement>('#apps').addEventListener('click', () => navigate('apps'));
   const changeTheme = (): void => {
     window.dispatchEvent(new Event('operit-runtime-navigation'));
-    activeRuntime()._operit_lvgl_set_theme(Number(themeSelect.value), shapeSelect.value === 'circle');
+    activeRuntime()._operit_ui_set_theme(Number(themeSelect.value), shapeSelect.value === 'circle');
   };
   themeSelect.addEventListener('change', changeTheme);
   shapeSelect.addEventListener('change', changeTheme);
@@ -409,7 +414,7 @@ function bindControls(): void {
   query<HTMLButtonElement>('#reset').addEventListener('click', () => location.reload());
   query<HTMLButtonElement>('#capture').addEventListener('click', () => {
     const link = document.createElement('a');
-    link.download = 'operit-lvgl-320x240.png';
+    link.download = 'operit-ui-320x240.png';
     link.href = canvas.toDataURL();
     link.click();
   });
@@ -440,11 +445,11 @@ window.setInterval(async () => {
       try {
         if (command.command === 'tap' || command.command === 'swipe') {
           const argument = command.command === 'tap' ? command.input.id : command.input.direction;
-          const accepted = runtime.ccall('operit_lvgl_debug_' + command.command, 'number', ['string'], [argument ?? '']);
+          const accepted = runtime.ccall('operit_ui_debug_' + command.command, 'number', ['string'], [argument ?? '']);
           if (!accepted) throw new Error('控件不可操作或手势无效');
           await new Promise(resolve => window.setTimeout(resolve, 160));
         }
-        value = JSON.parse(runtime.ccall('operit_lvgl_debug_' + (command.command === 'tree' ? 'tree' : 'snapshot'), 'string', [], []) as string);
+        value = JSON.parse(runtime.ccall('operit_ui_debug_' + (command.command === 'tree' ? 'tree' : 'snapshot'), 'string', [], []) as string);
       } catch (cause) { error = errorMessage(cause); }
       await fetch('/api/simulator/debug/result', {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: command.id, value, error})});
@@ -452,45 +457,3 @@ window.setInterval(async () => {
   } catch { /* The editor server can restart while this page stays open. */ }
   finally { debugPolling = false; }
 }, 1000);
-
-// Drain one chunk per poll. The firmware has the same one-chunk backpressure.
-let imagePolling = false;
-const imageClient = crypto.randomUUID();
-let activeImageRequest: number | null = null;
-window.setInterval(async () => {
-  if (!runtime || imagePolling || activeImageRequest === null) return;
-  const request = activeImageRequest;
-  imagePolling = true;
-  try {
-    const response = await fetch('/api/simulator/image', {headers: {'X-Operit-Client': imageClient}});
-    if (request !== activeImageRequest) return;
-    if (response.status === 409) {
-      activeImageRequest = null;
-      runtime.ccall('operit_lvgl_image_error', null, ['number', 'string'],
-        [request, '预览已在其他页面打开，请返回后重试']);
-      return;
-    }
-    if (!response.ok) return;
-    const chunk = await response.json() as {request: number; width: number; height: number;
-      offset: number; bytes: number[]; error?: string} | null;
-    if (!chunk || request !== activeImageRequest || chunk.request !== runtime.ccall('operit_lvgl_image_request', 'number', [], [])) return;
-    if (chunk.error) {
-      activeImageRequest = null;
-      runtime.ccall('operit_lvgl_image_error', null, ['number', 'string'], [chunk.request, chunk.error]);
-    } else {
-      const accepted = runtime.ccall('operit_lvgl_image_chunk', 'number',
-        ['number', 'number', 'number', 'number', 'array', 'number'],
-        [chunk.request, chunk.width, chunk.height, chunk.offset, new Uint8Array(chunk.bytes), chunk.bytes.length]);
-      if (!accepted) {
-        activeImageRequest = null;
-        await fetch('/api/simulator/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Operit-Client': imageClient},
-          body:JSON.stringify({action:'edge_image_cancel'})});
-      } else if (chunk.offset + chunk.bytes.length === chunk.width * chunk.height * 2) {
-        activeImageRequest = null;
-        void fetch('/api/simulator/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Operit-Client': imageClient},
-          body:JSON.stringify({action:'edge_image_cancel'})});
-      }
-    }
-  } catch (error) { log('图片传输失败: ' + errorMessage(error)); }
-  finally { imagePolling = false; }
-}, 100);

@@ -26,14 +26,14 @@ function download(blob: Blob, name: string): void {
 }
 
 /** Installs layout export, device deployment and firmware flashing actions. */
-export function setupDeploy({snapshot, notify}: DeploySetupOptions): void {
+export function setupDeploy({snapshot}: DeploySetupOptions): void {
   const dialog = query<HTMLDialogElement>('#deploy-dialog');
   const feedback = query<HTMLElement>('#deploy-feedback');
   const packageSize = query<HTMLElement>('#package-size');
   const addressInput = query<HTMLInputElement>('#device-address');
-  const tokenInput = query<HTMLInputElement>('#device-token');
   const portSelect = query<HTMLSelectElement>('#flash-port');
   const flashOutput = query<HTMLElement>('#flash-output');
+  const resetDataInput = query<HTMLInputElement>('#flash-reset-data');
   const flashRuntimeButton = query<HTMLButtonElement>('#flash-runtime');
   const usbLayoutButton = query<HTMLButtonElement>('#usb-layout');
   let pollingTimer: number | null = null;
@@ -55,7 +55,7 @@ export function setupDeploy({snapshot, notify}: DeploySetupOptions): void {
     try {
       const state = await request<FlashState>('/api/deploy/flash');
       flashRuntimeButton.disabled = state.running;
-      usbLayoutButton.disabled = state.running;
+      usbLayoutButton.disabled = true;
       flashOutput.textContent = state.error ?? state.output;
       if (!state.running) stopPolling();
     } catch (error) {
@@ -73,8 +73,8 @@ export function setupDeploy({snapshot, notify}: DeploySetupOptions): void {
   function openDialog(): void {
     try {
       const bytes = packLayout(snapshot().document).byteLength;
-      packageSize.textContent = `当前项目 ${bytes.toLocaleString()} 字节 · 上限 28 KiB · 页面修改无需编译`;
-      info('下发的是当前草稿；保存项目用于保留可继续编辑的源文件。');
+      packageSize.textContent = `当前项目 ${bytes.toLocaleString()} 字节 · 上限 28 KiB · 当前固件不支持动态布局部署`;
+      info('可导出当前草稿；当前固定自绘 UI 仅支持固件更新，不会应用布局包。');
     } catch (error) {
       info(errorMessage(error));
     }
@@ -106,47 +106,10 @@ export function setupDeploy({snapshot, notify}: DeploySetupOptions): void {
         '/api/deploy/device?address=' + encodeURIComponent(address),
       );
       info(
-        `已连接 ${capabilities.board} · 布局版本 ${String(capabilities.revision)} · 协议 ${capabilities.protocol}`,
+        `已连接 ${capabilities.board} · ${capabilities.dynamicLayout ? "支持动态布局" : "固定自绘 UI，不支持布局部署"} · 协议 ${capabilities.protocol}`,
       );
     } catch (error) {
       info(errorMessage(error));
-    }
-  }
-
-  /** Deploys the current draft package over the device HTTP API. */
-  async function deployLayout(): Promise<void> {
-    const button = query<HTMLButtonElement>('#deploy-layout');
-    button.disabled = true;
-    try {
-      const document = snapshot().document;
-      packLayout(document);
-      info('正在下发并写入设备布局分区…');
-      const result = await request<DeviceCapabilities>('/api/deploy/layout', {
-        method: 'POST',
-        body: {
-          address: addressInput.value,
-          token: tokenInput.value,
-          document,
-        },
-      });
-      if (result.accepted !== true) throw new Error('设备未接受布局');
-      info(`设备已接收 ${result.bytes} 字节，等待屏幕切换确认…`);
-      for (let attempt = 0; attempt < 15; attempt += 1) {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
-        const capabilities = await request<DeviceCapabilities>(
-          '/api/deploy/device?address=' + encodeURIComponent(addressInput.value),
-        );
-        if (capabilities.revision !== result.previousRevision) {
-          info(`部署完成 · 设备布局版本 ${String(capabilities.revision)} · 重启后保留`);
-          notify('布局已部署到设备');
-          return;
-        }
-      }
-      throw new Error('数据已接收，但未确认屏幕采用新布局，请检查设备状态');
-    } catch (error) {
-      info(errorMessage(error));
-    } finally {
-      button.disabled = false;
     }
   }
 
@@ -161,31 +124,16 @@ export function setupDeploy({snapshot, notify}: DeploySetupOptions): void {
     }
   }
 
-  /** Writes the current draft layout to the device over USB. */
-  async function deployUsbLayout(): Promise<void> {
-    try {
-      if (!portSelect.value) throw new Error('请刷新并选择 ESP32 串口');
-      usbLayoutButton.disabled = true;
-      await request('/api/deploy/usb-layout', {
-        method: 'POST',
-        body: {port: portSelect.value, document: snapshot().document},
-      });
-      await pollFlash();
-      startPolling();
-    } catch (error) {
-      info(errorMessage(error));
-      usbLayoutButton.disabled = false;
-    }
-  }
-
   /** Installs or updates the base ESP32 firmware over USB. */
   async function flashRuntime(): Promise<void> {
     try {
       if (!portSelect.value) throw new Error('请刷新并选择 ESP32 串口');
+      const resetData = resetDataInput.checked;
+      if (resetData && !window.confirm('将清空设备全部 Flash，删除 Wi-Fi、配对身份、空间状态和布局。需要重新配置和配对，确定继续？')) return;
       flashRuntimeButton.disabled = true;
       await request('/api/deploy/flash', {
         method: 'POST',
-        body: {port: portSelect.value},
+        body: {port: portSelect.value, resetData, confirmReset: resetData},
       });
       await pollFlash();
       startPolling();
@@ -201,8 +149,8 @@ export function setupDeploy({snapshot, notify}: DeploySetupOptions): void {
   query<HTMLButtonElement>('#export-layout').addEventListener('click', exportLayout);
   query<HTMLButtonElement>('#export-package').addEventListener('click', exportPackage);
   query<HTMLButtonElement>('#connect-device').addEventListener('click', () => void connectDevice());
-  query<HTMLButtonElement>('#deploy-layout').addEventListener('click', () => void deployLayout());
+  query<HTMLButtonElement>('#deploy-layout').disabled = true;
+  usbLayoutButton.disabled = true;
   query<HTMLButtonElement>('#refresh-ports').addEventListener('click', () => void refreshPorts());
-  usbLayoutButton.addEventListener('click', () => void deployUsbLayout());
   flashRuntimeButton.addEventListener('click', () => void flashRuntime());
 }

@@ -68,7 +68,7 @@ export function componentContext(
     requirement,
     codeReference,
     instructions:
-      '这是用户选中的硬件组件代码引用。根据需求直接定位并修改布局、事件绑定和功能路由实现。用 componentId 核对组件；文件行号仅对应给定 revision，修改前重新读取源码。既有路由可修改 action / longAction；新增跳转页面或设备功能须同时实现共用 C/Rust 代码、路由目录与必要校验，并验证预览和固件构建。无需仅返回固定格式 JSON。dirty=true 时保留草稿，先协调草稿再改写布局；新组件未保存时没有磁盘行号。不要编辑生成的 layout.generated.h。',
+      '这是用户选中的硬件组件代码引用。根据需求直接定位并修改布局、事件绑定和功能路由实现。用 componentId 核对组件；文件行号仅对应给定 revision，修改前重新读取源码。既有路由可修改 action / longAction；新增跳转页面或设备功能须同时实现共用 C/Rust 代码、路由目录与必要校验，并验证预览和固件构建。无需仅返回固定格式 JSON。dirty=true 时保留草稿，先协调草稿再改写布局；新组件未保存时没有磁盘行号。不要编辑 generated/ 构建产物。',
   });
 }
 

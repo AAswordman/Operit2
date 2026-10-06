@@ -22,9 +22,9 @@ pub trait FaceCanvas: Send {
     /// Fills one rectangle with one RGB565 color.
     fn fillRect(&mut self, rect: FaceRect, color: u16) -> HostResult<()>;
 
-    /// Flushes an LVGL RGB565 region to the physical display.
+    /// Flushes a self-drawn UI RGB565 region to the physical display.
     fn flushRgb565(&mut self, _rect: FaceRect, _pixels: &[u8]) -> HostResult<()> {
-        Err(HostError::new("canvas does not support LVGL flush"))
+        Err(HostError::new("canvas does not support self-drawn UI flush"))
     }
 }
 
@@ -89,7 +89,7 @@ impl FaceCanvas for MemoryFaceCanvas {
 pub struct Esp32RobotFaceHost<C: FaceCanvas> {
     canvas: Mutex<C>,
     state: Mutex<RobotFaceState>,
-    lvglActive: AtomicBool,
+    uiActive: AtomicBool,
 }
 
 impl<C: FaceCanvas> Esp32RobotFaceHost<C> {
@@ -100,15 +100,15 @@ impl<C: FaceCanvas> Esp32RobotFaceHost<C> {
             state: Mutex::new(RobotFaceState {
                 expression: INITIAL_EXPRESSION.to_string(),
             }),
-            lvglActive: AtomicBool::new(false),
+            uiActive: AtomicBool::new(false),
         };
         host.paint(INITIAL_EXPRESSION)?;
         Ok(host)
     }
 
-    /// Transfers physical screen ownership from the legacy face renderer to LVGL.
-    pub fn activateLvgl(&self) {
-        self.lvglActive.store(true, Ordering::Release);
+    /// Transfers physical screen ownership from the legacy face renderer to self-drawn UI.
+    pub fn activateUi(&self) {
+        self.uiActive.store(true, Ordering::Release);
     }
 
     /// Paints the empty plugin shelf over the face canvas.
@@ -147,7 +147,7 @@ impl<C: FaceCanvas> Esp32RobotFaceHost<C> {
         crate::shell::paintTerminal(&mut *canvas)
     }
 
-    /// Sends one LVGL partial framebuffer region through the board canvas.
+    /// Sends one self-drawn UI partial framebuffer region through the board canvas.
     pub fn flushRgb565(&self, rect: FaceRect, pixels: &[u8]) -> HostResult<()> {
         let mut canvas = self
             .canvas
@@ -163,7 +163,7 @@ impl<C: FaceCanvas> Esp32RobotFaceHost<C> {
             .lock()
             .map_err(|error| HostError::new(format!("robot face canvas lock poisoned: {error}")))?;
         let layout = faceLayout(expression, canvas.width(), canvas.height())?;
-        if self.lvglActive.load(Ordering::Acquire) {
+        if self.uiActive.load(Ordering::Acquire) {
             return Ok(layout);
         }
         canvas.fill(layout.background)?;

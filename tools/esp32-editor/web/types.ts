@@ -65,30 +65,36 @@ export type Log = (message: string) => void;
 
 export interface RuntimeModule {
   HEAPU8: Uint8Array<ArrayBufferLike>;
-  _operit_lvgl_pump(milliseconds: number): void;
-  _operit_lvgl_layout_clear(color: number): void;
-  _operit_lvgl_layout_geometry(index: number, x: number, y: number, w: number, h: number): void;
-  _operit_lvgl_navigate_home(): void;
-  _operit_lvgl_navigate_apps(): void;
-  _operit_lvgl_round_icons(): boolean;
-  _operit_lvgl_set_connection(connected: boolean, configured: boolean): void;
-  _operit_lvgl_set_paired(paired: boolean): void;
-  _operit_lvgl_set_theme(index: number, circle: boolean): void;
-  _operit_lvgl_set_emoji_style(style: number): boolean;
-  _operit_lvgl_emoji_style(): number;
-  _operit_lvgl_theme_index(): number;
-  _operit_lvgl_debug_tree?(): number;
-  _operit_lvgl_debug_snapshot?(): number;
-  _operit_lvgl_debug_tap?(id: number): boolean;
-  _operit_lvgl_debug_swipe?(direction: number): boolean;
+  _operit_ui_pump(milliseconds: number): void;
+  _operit_ui_layout_clear(color: number): void;
+  _operit_ui_layout_geometry(index: number, x: number, y: number, w: number, h: number): void;
+  _operit_ui_navigate_home(): void;
+  _operit_ui_navigate_apps(): void;
+  _operit_ui_round_icons(): boolean;
+  _operit_ui_set_connection(connected: boolean, configured: boolean): void;
+  _operit_ui_set_paired(paired: boolean): void;
+  _operit_ui_set_theme(index: number, circle: boolean): void;
+  _operit_ui_set_emoji_style(style: number): boolean;
+  _operit_ui_emoji_style(): number;
+  _operit_ui_theme_index(): number;
+  _operit_ui_debug_tree?(): number;
+  _operit_ui_debug_snapshot?(): number;
+  _operit_ui_debug_tap?(id: number): boolean;
+  _operit_ui_debug_swipe?(direction: number): boolean;
   _simulator_frame(): number;
   _simulator_generation(): number;
   _simulator_heap_used(): number;
+  _simulator_heap_total?(): number;
+  _simulator_heap_free?(): number;
+  _simulator_heap_largest?(): number;
+  _simulator_heap_peak?(): number;
+  _simulator_stack_size?(): number;
+  _simulator_stack_free?(): number;
   _simulator_init(): boolean;
   _simulator_touch(x: number, y: number, pressed: number): void;
-  _operit_lvgl_layout_bind?: () => void;
-  _operit_lvgl_layout_page_meta?: () => void;
-  _operit_lvgl_layout_style?: () => void;
+  _operit_ui_layout_bind?: () => void;
+  _operit_ui_layout_page_meta?: () => void;
+  _operit_ui_layout_style?: () => void;
   ccall(
     identifier: string,
     returnType: 'number',
@@ -137,7 +143,7 @@ export interface BuildManifest {
   firmwareBuilt?: boolean;
   firmwareElf?: string;
   firmwareSha256?: string;
-  lvgl?: string;
+  renderer?: 'mini';
   source?: string;
 }
 
@@ -221,11 +227,8 @@ export interface LayoutResponse {
 export interface DeviceCapabilities {
   protocol: number;
   board: string;
-  maxPackageBytes: number;
-  revision: unknown;
-  accepted?: boolean;
-  bytes?: number;
-  previousRevision?: unknown;
+  dynamicLayout: boolean;
+  imagePreview: boolean;
 }
 
 export interface SerialPortInfo {

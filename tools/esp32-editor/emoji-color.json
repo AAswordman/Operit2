@@ -1,8 +1,0 @@
-{
-  "source": "https://raw.githubusercontent.com/googlefonts/noto-emoji/e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e/2D/fonts/NotoColorEmoji.ttf",
-  "sha256": "15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44",
-  "license": "SIL OFL 1.1; apps/esp32/lvgl_port/OFL-emoji.txt",
-  "size": 16,
-  "ranges": ["2600-2604", "2614-2615", "2639-263A", "2764", "1F389-1F38A", "1F400-1F43F", "1F44A-1F450", "1F493-1F49F", "1F4A9", "1F525", "1F600-1F64F", "1F910-1F92F", "1F970-1F97F", "1F980-1F9AF", "1F9D0", "1FAE0-1FAE8"],
-  "max_asset_bytes": 80000
-}

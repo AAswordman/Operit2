@@ -1,5 +1,12 @@
 # Screen Studio 前端与软件内嵌约定
 
+> 当前后端说明（2026-10-06）：UI 已删除，唯一渲染器是
+> `apps/esp32/ui_port/operit_mini_ui.c`，C ABI 为 `operit_ui_*`。
+> 以下布局/组件协议保留为草稿与存储工具；当前固定自绘 UI 不应用布局包，
+> 不提供拖拽控件、旧侧栏、软键盘或图片预览。实现新屏幕需修改自绘 C 源码并重建。
+> 历史控件布局能力不能视为当前设备能力；以 `/api/board` capabilities 为准。
+
+
 目标是让用户在 Operit 对话中要求 AI 修改硬件界面，并在同一个编辑器里看到结果。
 当前提供独立 Web 编辑器、HTTP/MCP 布局接口、独立模型 API，以及 Flutter 工作区浏览器到当前对话的桥接源码。
 不需要把编译工具链复制到手机，也不需要额外前端框架。
@@ -13,13 +20,13 @@
 | 面板切换、自适应缩放 | `shell.js` |
 | 拖拽、组件属性、撤销/重做、草稿状态 | `editor.js` |
 | 数据访问及软件宿主适配 | `transport.js` |
-| LVGL 加载、触摸、像素输出、构建状态 | `app.js` |
+| UI 加载、触摸、像素输出、构建状态 | `app.js` |
 | 可用组件和内存预算校验 | `src/layout/layout-model.mts` |
 | 用户硬件界面的持久化设计 | `../../apps/esp32/ui/layout.json` |
-| 控件实际绘制、字体、动作 | `../../apps/esp32/lvgl_port/operit_lvgl.c` |
+| 控件实际绘制、字体、动作 | `../../apps/esp32/ui_port/operit_mini_ui.c` |
 
 修改网页 CSS 只改变编辑器，不改变设备画面。修改设备布局请通过布局 API 或编辑 JSON；扩展控件行为则修改共用 C 实现。
-不要手改 `layout.generated.h` 或 `generated/` 产物。新增前端模块必须同时注册 `src/server.mts` 的静态路由。
+不要手改 `generated/` 产物；当前固件不生成或应用布局描述头文件。新增前端模块必须同时注册 `src/server.mts` 的静态路由。
 
 ## 对话 → 布局 → 固件
 
@@ -65,9 +72,9 @@ WebView 还需用 HTTP/应用资源服务提供前端文件及 `generated/manife
 
 ## 组件上下文与功能路由
 
-编辑模式下右键或触摸长按组件（550 ms）打开“组件功能”；键盘可用 Shift+F10，或点工具栏“功能 / AI”。移动超过 8 px 会取消长按，继续拖动。运行模式的长按由 LVGL 处理。
+编辑模式下右键或触摸长按组件（550 ms）打开“组件功能”；键盘可用 Shift+F10，或点工具栏“功能 / AI”。移动超过 8 px 会取消长按，继续拖动。运行模式的长按由 UI 处理。
 
-`src/layout/routes.mts` 描述可执行路由，`/api/components` 同时提供 `routes` 和 `eventBindings`。节点的 `action` 绑定点击，兼容原有文档；可选 `longAction` 绑定长按。长按有动作时使用 LVGL SHORT_CLICKED / LONG_PRESSED 分流，长按释放不会重复执行点击。当前支持内置页面跳转与既有设备命令。新增页面使用 v2 pages 和 go:ID，无需扩展 C；新增底层命令仍需实现运行时能力。
+`src/layout/routes.mts` 描述可执行路由，`/api/components` 同时提供 `routes` 和 `eventBindings`。节点的 `action` 绑定点击，兼容原有文档；可选 `longAction` 绑定长按。长按有动作时使用 UI SHORT_CLICKED / LONG_PRESSED 分流，长按释放不会重复执行点击。当前支持内置页面跳转与既有设备命令。新增页面使用 v2 pages 和 go:ID，无需扩展 C；新增底层命令仍需实现运行时能力。
 
 `interactions.js` 管理组件源码引用面板；`src/source/component-context.mts` 构造上下文。主要流程是发送组件文件位置和需求，让 AI 直接修改布局、事件与路由源码。手动配置和粘贴结构化路由提案保留在折叠的辅助面板中，不是 AI 必须遵循的回复格式。
 

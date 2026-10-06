@@ -21,9 +21,8 @@ let output = '';
 let token = '';
 let sequence = 0;
 let lifecycle = 0;
-// Each browser has its own LVGL request counter. Only the page that opened
+// Each browser has its own self-drawn UI request counter. Only the page that opened
 // the preview may drain the simulator's destructive, single-chunk queue.
-let imageOwner: string | null = null;
 let previousExit: Promise<void> = Promise.resolve();
 const pending = new Map<number, {resolve: (value: unknown) => void; reject: (error: Error) => void}>();
 
@@ -80,7 +79,7 @@ async function start(): Promise<void> {
     output = '';
     ready = false;
     // Spawn the binary directly so stop and editor shutdown own the real process.
-    const build = spawn('cargo', ['build', '--manifest-path', 'tools/esp32-editor/simulator/Cargo.toml',
+    const build = spawn('cargo', ['build', '--release', '--manifest-path', 'tools/esp32-editor/simulator/Cargo.toml',
       '--target-dir', fileURLToPath(new URL('../../simulator/target/', import.meta.url))], {
       cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -93,13 +92,14 @@ async function start(): Promise<void> {
       build.once('close', code => code === 0 ? resolve() : reject(new Error('模拟器编译失败，请查看日志')));
     });
     if (child !== build) return;
-    const executable = fileURLToPath(new URL('../../simulator/target/debug/operit-esp32-simulator' +
+    const executable = fileURLToPath(new URL('../../simulator/target/release/operit-esp32-simulator' +
       (process.platform === 'win32' ? '.exe' : ''), import.meta.url));
     const runPath = fileURLToPath(new URL('runtime' + (process.platform === 'win32' ? '.exe' : ''), stateDir));
     await copyFile(executable, runPath);
     if (generation !== lifecycle) return;
     const runtime = spawn(runPath, [], {cwd: root, windowsHide: true,
       env: {...process.env, OPERIT_SIM_TOKEN: token,
+        OPERIT_SIM_STATE_DIR: fileURLToPath(stateDir),
         OPERIT_SIM_STATE: fileURLToPath(new URL('pairing.json', stateDir))},
     });
     child = runtime;
@@ -127,7 +127,6 @@ async function start(): Promise<void> {
 }
 
 export function stopSimulator(): void {
-  imageOwner = null;
   lifecycle += 1;
   const processToStop = child;
   child = null;
@@ -170,10 +169,8 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, token: ready ? token : '', device});
-    } else if (url.pathname === '/api/simulator/image' && req.method === 'GET') {
-      const client = req.headers['x-operit-client'];
-      if (!imageOwner || client !== imageOwner) reply(409, {error: '图片预览已关闭或已在其他页面打开'});
-      else reply(200, ready ? await rpc('image') : null);
+    } else if (url.pathname === '/api/simulator/memory' && req.method === 'GET') {
+      reply(200, ready ? await rpc('memory') : null);
     } else if (url.pathname === '/api/simulator/send-image' && req.method === 'POST') {
       const mimeType = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
       if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') throw new Error('只支持 PNG/JPEG 图片');
@@ -227,15 +224,6 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         return true;
       }
       if (typeof input.action !== 'string') throw new Error('缺少设备 action');
-      if (input.action.startsWith('edge_image:') || input.action === 'edge_image_cancel') {
-        const client = req.headers['x-operit-client'];
-        if (typeof client !== 'string' || !/^[a-zA-Z0-9-]{16,64}$/.test(client))
-          throw new Error('缺少图片预览页面标识，请刷新页面');
-        if (input.action === 'edge_image_cancel') {
-          if (client !== imageOwner) { reply(200, {ok: true}); return true; }
-          imageOwner = null;
-        } else imageOwner = client;
-      }
       reply(200, await rpc('action', {action: input.action}));
     } else reply(404, {error: 'Unknown simulator endpoint'});
   } catch (e) { reply(400, {error: String(e)}); }

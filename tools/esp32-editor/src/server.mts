@@ -14,8 +14,7 @@ import {errorMessage, errorCode} from './layout/project-model.mts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const editorRoot = path.resolve(root, 'tools/esp32-editor');
-const uiRoot = path.resolve(root, 'apps/esp32/lvgl_port');
-const source = path.join(uiRoot, 'operit_lvgl.c');
+const uiRoot = path.resolve(root, 'apps/esp32/ui_port');
 const argument = process.argv.indexOf('--port');
 const port = Number(argument >= 0 ? process.argv[argument + 1] : process.env.PORT || 8766);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -81,7 +80,7 @@ async function hash(): Promise<string> {
   const names = await readdir(uiRoot);
   const hashed = [
     ...names.filter((n: string) => n.endsWith('.c')).sort(),
-    ...names.filter((n: string) => n.endsWith('.h') && n !== 'layout.generated.h').sort(),
+    ...names.filter((n: string) => n.endsWith('.h')).sort(),
     ...names.filter((n: string) => n.endsWith('.inc')).sort(),
   ];
   const digest = createHash('sha256');
@@ -197,23 +196,9 @@ const server = http.createServer(async (req: IncomingMessage, res: ServerRespons
     }
 
     if (url.pathname === '/api/board') {
-      const text = await readFile(source, 'utf8');
-      const fields = text.match(/typedef struct\s*\{([^}]+)\}\s*theme_t;/)?.[1] ?? '';
-      const colorNames = [...fields.matchAll(/uint32_t\s+([^;]+);/g)]
-        .flatMap(field => field[1].split(',').map(name => name.trim()));
-      const themeSource = text.match(/static const theme_t themes\[\] = \{([\s\S]*?)\n\};/i)?.[1] ?? '';
-      const themes = [...themeSource.matchAll(/\{([\s\S]*?),\s*"([^"]+)"\}/g)].flatMap((match) => {
-        const colors = [...match[1].matchAll(/0x([\da-f]+)/gi)].map((color) => color[1]);
-        if (colors.length !== colorNames.length) return [];
-        const tokens = Object.fromEntries(colorNames.map((name, index) => [name, '#' + colors[index]]));
-        return [{
-          name: match[2],
-          bg: tokens.background,
-          surface: tokens.surface,
-          accent: tokens.accent,
-          muted: tokens.text_secondary,
-        }];
-      });
+      // Fixed renderer palette; no retired widget-theme parser or runtime dependency.
+      const themes = [{name: 'Mini', bg: '#101820', surface: '#263849',
+        accent: '#e6edf3', muted: '#73818d'}];
       res.writeHead(200, {'Content-Type': 'application/json', 'Cache-Control': 'no-store'});
       res.end(
         JSON.stringify({
@@ -222,7 +207,8 @@ const server = http.createServer(async (req: IncomingMessage, res: ServerRespons
           height: 240,
           controller: 'ST7789',
           themes,
-          mode: 'shared-lvgl-wasm',
+          mode: 'shared-mini-wasm',
+          capabilities: {layoutEditing: false, images: false, keyboard: false, themes: false},
         }),
       );
       return;

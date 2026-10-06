@@ -1,4 +1,4 @@
-/* Editor chrome only; the device pixels are rendered by shared LVGL. */
+/* Editor chrome only; the device pixels are rendered by the shared self-drawn UI. */
 :root {
   color-scheme:dark;
   --bg:#101319;

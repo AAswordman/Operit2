@@ -15,7 +15,7 @@ pub const PANEL_NATIVE_HEIGHT: u16 = 320;
 /// ILI9341 logical rotation used by the ESP32-2432S028 enclosure.
 ///
 /// This board is a 320x240 landscape panel. Keeping the rotation in one board
-/// constant makes the TFT, touch controller, LVGL, and web mirror agree on the
+/// constant makes the TFT, touch controller, self-drawn UI, and web mirror agree on the
 /// same coordinate system.
 pub const DISPLAY_ROTATION_DEGREES: u16 = 90;
 

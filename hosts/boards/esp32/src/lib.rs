@@ -12,6 +12,8 @@ use operit_host_api::{
 pub mod tcp;
 #[cfg(any(target_os = "espidf", test))]
 pub mod serial;
+#[cfg(any(target_os = "espidf", test))]
+pub mod serial_debug;
 
 pub mod face;
 pub mod mirror_color;

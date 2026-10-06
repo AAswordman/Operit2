@@ -215,7 +215,7 @@ function validatePage(doc: unknown, allowedActions: readonly string[] = actions)
     }
     if (typeof raw.id === 'string') seen.set(raw.id, raw);
   }
-  if (cost > 40) add('组件复杂度超出 64 KiB LVGL 池的编辑器预算 (40)');
+  if (cost > 40) add('组件复杂度超出布局文档的编辑器预算 (40)');
   return errors;
 }
 

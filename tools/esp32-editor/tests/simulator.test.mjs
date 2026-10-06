@@ -37,6 +37,14 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
   await new Promise(resolve => setTimeout(resolve, 100));
   const first = await ready();
   assert.equal(first.device.chat.connected, false);
+  assert.equal(first.device.memory.profile, 'esp32-2432s028');
+  assert.equal(first.device.memory.kind, 'configured-limits');
+  assert.equal(first.device.memory.maxPeerMessageBytes, 8192);
+  assert.equal(first.device.memory.liveTelemetry, false);
+  assert.equal(first.device.memory.freeHeap, undefined);
+  assert.equal(first.device.memory.largest8BitBlock, undefined);
+  const memory = await (await fetch(base + '/api/simulator/memory')).json();
+  assert.deepEqual(memory, first.device.memory);
   assert.match(first.token, /^[0-9a-f]{48}$/);
   const invalidImage = await fetch(base + '/api/simulator/send-image', {method:'POST',headers:{'Content-Type':'text/plain'},body:'not an image'});
   assert.equal(invalidImage.status,400);
@@ -46,10 +54,23 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
   });
   assert.equal(disconnectedImage.status,400);
   assert.match((await disconnectedImage.json()).error,/尚未连接/);
+  const oversizedImage = await fetch(base + '/api/simulator/send-image', {
+    method:'POST',headers:{'Content-Type':'image/png'},body:Buffer.alloc(512 * 1024 + 1),
+  });
+  assert.equal(oversizedImage.status,400);
+  assert.match((await oversizedImage.json()).error,/512 KiB/);
+  const leave = await fetch(base + '/api/simulator/action', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'edge_space_leave'})});
+  assert.equal(leave.status,200);
+  assert.equal((await state()).token, first.token);
+  const retired = await fetch(base + '/api/simulator/action', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'edge_image:1:a'})});
+  assert.equal(retired.status,400);
+  assert.match((await retired.json()).error,/Unknown simulator action/);
   const action = await fetch(base + '/api/simulator/action', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"action":"edge_unpair"}'});
   assert.equal(action.status, 200);
   assert.equal((await state()).device.paired, false);
-  // Debug queries are fulfilled by the visible LVGL host, not fabricated by Rust.
+  // Debug queries are fulfilled by the visible UI host, not fabricated by Rust.
   const debug = fetch(base + '/api/simulator/debug/tree');
   let commands = [];
   while (!commands.length) {
@@ -57,7 +78,7 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
     commands = await (await fetch(base + '/api/simulator/debug/commands')).json();
   }
   assert.equal(commands[0].command, 'tree');
-  const rendered = {page: 'Pairing', nodes: [{id: 'actual-lvgl-node'}]};
+  const rendered = {page: 'Pairing', nodes: [{id: 'actual-ui-node'}]};
   await fetch(base + '/api/simulator/debug/result', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({id: commands[0].id, value: rendered})});
   assert.deepEqual(await (await debug).json(), rendered);

@@ -7,7 +7,6 @@ import {
   readdir,
   readFile,
   rm,
-  stat,
   unlink,
   utimes,
   writeFile,
@@ -15,72 +14,79 @@ import {
 import {existsSync, rmSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import './compile-layout.mts';
+import {loadDeviceConfig, xtensaCompilerEnvironment} from './device-tools.mts';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const here = fileURLToPath(new URL('../', import.meta.url));
-const ui = path.join(root, 'apps/esp32/lvgl_port');
+const ui = path.join(root, 'apps/esp32/ui_port');
 const out = path.join(here, 'generated');
 const firmwareTarget = 'xtensa-esp32-espidf';
 const firmwareRoot = path.join(root, 'apps/esp32');
 const shortTargetDir = path.join(path.parse(root).root, 'esp32');
 const firmwareTargetDir = path.resolve(shortTargetDir);
 const firmware = process.argv.includes('--firmware');
-const lvglFlag = flagValue('--lvgl');
-const emsdkSetting = flagValue('--emsdk') ?? process.env.EMSDK;
-if (!emsdkSetting) throw new Error('EMSDK is required; set it to the installed Emscripten 4.0.14 directory or pass --emsdk');
+if (process.argv.includes('--lvgl') || process.argv.includes('--minimal-ui')) {
+  throw new Error('UI 后端切换参数已移除；默认使用唯一的自绘 UI');
+}
+const localConfig = await loadDeviceConfig();
+const idfSetting = flagValue('--idf') ?? process.env.IDF_PATH ?? localConfig.idf;
+const emsdkSetting = flagValue('--emsdk') ?? process.env.EMSDK ?? localConfig.emsdk;
+if (!emsdkSetting) throw new Error('未配置 Emscripten 4.0.14 SDK；运行 npm run device:setup -- --emsdk <路径>，或设置 EMSDK');
 const emsdk = path.resolve(emsdkSetting);
 
 const exports = [
-  '_operit_store_validate',
   '_simulator_init',
   '_simulator_frame',
   '_simulator_generation',
   '_simulator_heap_used',
+  '_simulator_heap_total',
+  '_simulator_heap_free',
+  '_simulator_heap_largest',
+  '_simulator_heap_peak',
+  '_simulator_stack_size',
+  '_simulator_stack_free',
   '_simulator_touch',
-  '_operit_lvgl_pump',
-  '_operit_lvgl_navigate_home',
-  '_operit_lvgl_navigate_apps',
-  '_operit_lvgl_set_connection',
-  '_operit_lvgl_set_paired',
-  '_operit_lvgl_set_expression',
-  '_operit_lvgl_set_pairing_code',
-  '_operit_lvgl_set_space_state',
-  '_operit_lvgl_set_chat_preview',
-  '_operit_lvgl_set_chat_screen',
-  '_operit_lvgl_set_chat_identity',
-  '_operit_lvgl_set_message',
-  '_operit_lvgl_set_message_image',
-  '_operit_lvgl_image_chunk',
-  '_operit_lvgl_image_error',
-  '_operit_lvgl_image_request',
+  '_operit_ui_pump',
+  '_operit_ui_navigate_home',
+  '_operit_ui_navigate_apps',
+  '_operit_ui_set_connection',
+  '_operit_ui_set_paired',
+  '_operit_ui_set_expression',
+  '_operit_ui_set_pairing_code',
+  '_operit_ui_set_space_state',
+  '_operit_ui_set_space_join_prompt',
+  '_operit_ui_set_chat_preview',
+  '_operit_ui_set_chat_screen',
+  '_operit_ui_set_chat_identity',
+  '_operit_ui_set_message',
   '_operit_emoji_color_available',
-  '_operit_lvgl_finish_messages',
-  '_operit_lvgl_set_conversation',
-  '_operit_lvgl_finish_conversations',
-  '_operit_lvgl_action_error',
+  '_operit_ui_set_chat_history',
+  '_operit_ui_finish_messages',
+  '_operit_ui_set_conversation',
+  '_operit_ui_finish_conversations',
+  '_operit_ui_action_error',
 
-  '_operit_lvgl_set_chat_task',
-  '_operit_lvgl_chat_draft',
-  '_operit_lvgl_set_chat_draft',
-  '_operit_lvgl_chat_send_result',
-  '_operit_lvgl_submit_chat',
-  '_operit_lvgl_set_theme',
-  '_operit_lvgl_set_emoji_style',
-  '_operit_lvgl_emoji_style',
-  '_operit_lvgl_theme_index',
-  '_operit_lvgl_round_icons',
-  '_operit_lvgl_current_page',
-  '_operit_lvgl_debug_tree',
-  '_operit_lvgl_debug_snapshot',
-  '_operit_lvgl_debug_tap',
-  '_operit_lvgl_debug_swipe',
-  '_operit_lvgl_layout_clear',
-  '_operit_lvgl_layout_add',
-  '_operit_lvgl_layout_geometry',
-  '_operit_lvgl_layout_bind',
-  '_operit_lvgl_layout_page_meta',
-  '_operit_lvgl_layout_style',
+  '_operit_ui_set_chat_task',
+  '_operit_ui_chat_draft',
+  '_operit_ui_set_chat_draft',
+  '_operit_ui_chat_send_result',
+  '_operit_ui_submit_chat',
+  '_operit_ui_set_theme',
+  '_operit_ui_set_emoji_style',
+  '_operit_ui_emoji_style',
+  '_operit_ui_theme_index',
+  '_operit_ui_round_icons',
+  '_operit_ui_current_page',
+  '_operit_ui_debug_tree',
+  '_operit_ui_debug_snapshot',
+  '_operit_ui_debug_tap',
+  '_operit_ui_debug_swipe',
+  '_operit_ui_layout_clear',
+  '_operit_ui_layout_add',
+  '_operit_ui_layout_geometry',
+  '_operit_ui_layout_bind',
+  '_operit_ui_layout_page_meta',
+  '_operit_ui_layout_style',
 ];
 
 /** Returns the value following a CLI flag. */
@@ -100,17 +106,6 @@ async function filesWithSuffix(dir: string, suffix: string): Promise<string[]> {
     .map((name) => path.join(dir, name));
 }
 
-/** Recursively lists C sources under a directory. */
-async function cSources(dir: string): Promise<string[]> {
-  const found: string[] = [];
-  for (const entry of await readdir(dir, {withFileTypes: true})) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) found.push(...await cSources(full));
-    else if (entry.name.endsWith('.c')) found.push(full);
-  }
-  return found;
-}
-
 /** SHA-256 hex digest of the concatenation of the given files. */
 async function hashFiles(files: string[]): Promise<string> {
   const digest = createHash('sha256');
@@ -123,26 +118,13 @@ function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-/** Hash of shared LVGL C sources plus the layout JSON. */
+/** Hash of shared self-drawn UI C sources plus the layout JSON. */
 async function sharedHash(): Promise<string> {
   return hashFiles([
     ...await filesWithSuffix(ui, '.c'),
     ...await filesWithSuffix(ui, '.h'),
     ...await filesWithSuffix(ui, '.inc'),
-    path.join(root, 'apps/esp32/ui/layout.json'),
   ]);
-}
-
-/** Locates the ESP-IDF managed LVGL tree used by the firmware build. */
-async function firmwareLvgl(): Promise<string> {
-  const buildRoot = path.join(firmwareTargetDir, firmwareTarget, 'release', 'build');
-  if (!existsSync(buildRoot)) throw new Error('LVGL source not found; build the ESP32 target once or pass --lvgl /path/to/lvgl (v9.3.0)');
-  for (const entry of await readdir(buildRoot, {withFileTypes: true})) {
-    if (!entry.isDirectory() || !entry.name.startsWith('esp-idf-sys-')) continue;
-    const candidate = path.join(buildRoot, entry.name, 'out', 'managed_components', 'lvgl__lvgl');
-    if (existsSync(candidate)) return candidate;
-  }
-  throw new Error('LVGL source not found; pass --lvgl /path/to/lvgl (v9.3.0)');
 }
 
 /** Resolves the Emscripten compiler command for this host. */
@@ -216,48 +198,69 @@ function builtAt(): string {
   );
 }
 
-const lvgl = lvglFlag ?? await firmwareLvgl();
-const sdkconfig = path.join(lvgl, '..', '..', 'build', 'config', 'sdkconfig.h');
-if (!existsSync(sdkconfig)) throw new Error('Build ESP32 once first: generated sdkconfig.h is required to share LVGL configuration');
+/** Bootstrap IDF/self-drawn UI on a clean machine before compiling the shared preview. */
+async function buildFirmware(): Promise<string> {
+  await mkdir(out, {recursive: true});
+  for (const library of ['tokio', 'ring']) {
+    const prepare = await run(['python', path.join(here, `prepare-${library}.py`)]);
+    if (prepare.code !== 0) throw new Error(`ESP32 ${library} preparation failed: ${prepare.stdout}${prepare.stderr}`);
+  }
+
+  console.log('Building ESP32 with the self-drawn UI...');
+  // Reconfigure IDF when native UI sources/configuration change, even on cached builds.
+  const stampPath = path.join(out, 'firmware-ui.sha');
+  const uiHash = await hashFiles([
+    ...await filesWithSuffix(ui, '.c'), ...await filesWithSuffix(ui, '.h'),
+    path.join(ui, 'CMakeLists.txt'), path.join(firmwareRoot, 'Cargo.toml'),
+    path.join(firmwareRoot, '.cargo/config.toml'),
+  ]);
+  const stamp = existsSync(stampPath) ? await readFile(stampPath, 'utf8') : '';
+  if (stamp !== uiHash) {
+    await utimes(path.join(firmwareRoot, 'sdkconfig.defaults'), new Date(), new Date());
+  }
+  const logPath = path.join(out, 'firmware-build.log');
+  const compilerEnv = await xtensaCompilerEnvironment(firmwareRoot);
+  const cargo = await run(['cargo', 'build', '--release'], {
+    cwd: firmwareRoot,
+    env: {...process.env, ...compilerEnv, ...(idfSetting ? {IDF_PATH: path.resolve(idfSetting)} : {}),
+      CARGO_TARGET_DIR: firmwareTargetDir, CARGO_WORKSPACE_DIR: firmwareRoot},
+    capture: true,
+  });
+  await writeFile(logPath, cargo.stdout + cargo.stderr);
+  const log = await readFile(logPath);
+  await writeFile(logPath, log.subarray(Math.max(0, log.length - 256 * 1024)));
+  if (cargo.code !== 0) throw new Error('Firmware failed; see generated/firmware-build.log');
+  const firmwareElf = path.join(firmwareTargetDir, firmwareTarget, 'release', 'operit-esp32');
+  const abiCheck = await run(['python', path.join(here, 'check-xtensa-tokio.py'), firmwareElf]);
+  if (abiCheck.code !== 0) throw new Error(`ESP32 ABI check failed: ${abiCheck.stdout}${abiCheck.stderr}`);
+  await writeFile(stampPath, uiHash);
+  console.log(abiCheck.stdout.trim());
+  return firmwareElf;
+}
+
 const emcc = emccCommand(emsdk);
+const builtFirmwareElf = firmware ? await buildFirmware() : undefined;
 await mkdir(out, {recursive: true});
 const staging = await mkdtemp(path.join(out, '.build-'));
 process.on('exit', () => {
   rmSync(staging, {recursive: true, force: true});
 });
 
-const config = (await readFile(sdkconfig, 'utf8'))
-  .split(/\r?\n/)
-  .filter((line) => line.startsWith('#define CONFIG_LV_'))
-  .join('\n');
-await writeFile(path.join(staging, 'sdkconfig.h'), config + '\n', 'utf8');
+// The standalone preview needs no ESP-IDF cache or third-party UI headers.
+// Read the checked-in board stack setting so a clean checkout works too.
+const firmwareConfig = await readFile(path.join(firmwareRoot, 'sdkconfig.defaults'), 'utf8');
+const mainStackMatch = /^CONFIG_ESP_MAIN_TASK_STACK_SIZE=(\d+)$/m.exec(firmwareConfig);
+if (!mainStackMatch) throw new Error('sdkconfig.defaults 缺少主任务栈配置');
+const mainStackSize = Number(mainStackMatch[1]);
 const env = {
   ...process.env,
   EMSDK: emsdk,
   EM_CONFIG: path.join(emsdk, '.emscripten'),
 };
-const cargoEnv = {
-  ...env,
-  CARGO_TARGET_DIR: firmwareTargetDir,
-  CARGO_WORKSPACE_DIR: firmwareRoot,
-};
-const flags = [
-  '-O2',
-  '-DLV_CONF_SKIP',
-  '-DLV_KCONFIG_PRESENT',
-  '-include',
-  path.join(staging, 'sdkconfig.h'),
-  '-I' + staging,
-  '-I' + path.join(here, 'wasm'),
-  '-I' + ui,
-  '-I' + lvgl,
-];
-const version = await readFile(path.join(lvgl, 'lv_version.h'), 'utf8');
-const configHash = sha256(config + version + flags.join(' ').replaceAll(staging, '<build>'));
+const flags = ['-O2', '-I' + path.join(here, 'wasm'), '-I' + ui];
+const configHash = sha256(flags.join(' '));
 const sources = [
-  ...await cSources(path.join(lvgl, 'src')),
-  ...await filesWithSuffix(ui, '.c'),
-  path.join(here, 'wasm/bridge.c'),
+  path.join(ui, 'operit_mini_ui.c'), path.join(here, 'wasm/bridge.c'),
 ];
 const objdir = path.join(out, 'objects');
 await mkdir(objdir, {recursive: true});
@@ -273,7 +276,7 @@ for (const name of await readdir(objdir)) {
   await unlink(path.join(objdir, name));
 }
 
-const headers = [...await filesWithSuffix(ui, '.h'), ...await filesWithSuffix(ui, '.inc')];
+const headers = [...await filesWithSuffix(ui, '.h')];
 const timerHeader = await readFile(path.join(here, 'wasm/esp_timer.h'));
 
 /** Compiles one C translation unit when its stamp no longer matches. */
@@ -282,7 +285,6 @@ async function compileOne(source: string): Promise<string> {
   const stamp = dest.replace(/\.o$/, '.sha');
   const headerBytes = await Promise.all(
     headers
-      .filter((header) => path.basename(header) !== 'layout.generated.h' || path.dirname(source) === ui)
       .map((header) => readFile(header)),
   );
   const signature = sha256(Buffer.concat([await readFile(source), Buffer.from(configHash), ...headerBytes, timerHeader]));
@@ -296,7 +298,7 @@ async function compileOne(source: string): Promise<string> {
 }
 
 const sourceHash = await sharedHash();
-console.log('Compiling shared LVGL UI to WebAssembly...');
+console.log('Compiling the shared self-drawn UI to WebAssembly...');
 const objects = await mapLimit(sources, 8, compileOne);
 const linkArgs = [
   ...objects,
@@ -305,7 +307,11 @@ const linkArgs = [
   '-sMODULARIZE=1',
   '-sEXPORT_ES6=1',
   '-sENVIRONMENT=web',
+  // Browser-only framebuffer is separate from native board DRAM.
   '-sALLOW_MEMORY_GROWTH=1',
+  '-sSTACK_SIZE=' + mainStackSize,
+  '-sSTACK_OVERFLOW_CHECK=2',
+  '-sASSERTIONS=1',
   '-sEXPORTED_FUNCTIONS=' + JSON.stringify(exports),
   '-sEXPORTED_RUNTIME_METHODS=["ccall","HEAPU8"]',
   '-o',
@@ -318,7 +324,7 @@ if (linked.code !== 0) throw new Error('emcc link failed');
 
 const runtimeFiles = [
   ...await filesWithSuffix(ui, '.c'),
-  ...(await filesWithSuffix(ui, '.h')).filter((file) => path.basename(file) !== 'layout.generated.h'),
+  ...await filesWithSuffix(ui, '.h'),
   ...await filesWithSuffix(ui, '.inc'),
   ...await filesWithSuffix(path.join(root, 'apps/esp32/src'), '.rs'),
   path.join(root, 'apps/esp32/partitions.csv'),
@@ -327,35 +333,15 @@ const manifest: Record<string, unknown> = {
   runtimeHash: await hashFiles(runtimeFiles),
   sourceHash,
   builtAt: builtAt(),
-  lvgl: '9.3.0',
+  renderer: 'mini',
+  simulatorResources: {mainTaskStack: mainStackSize, stackOverflowCheck: 2, uiAllocator: 'none'},
   firmwareBuilt: false,
-  source: 'apps/esp32/lvgl_port/operit_lvgl.c',
+  source: 'apps/esp32/ui_port/operit_mini_ui.c',
 };
 
 if (firmware) {
-  console.log('Building ESP32 from the same source...');
-  const archive = path.join(lvgl, '..', '..', 'build', 'esp-idf', 'lvgl_port', 'liblvgl_port.a');
-  const newest = Math.max(
-    ...(await Promise.all(
-      (await readdir(ui))
-        .filter((name) => ['.c', '.h', '.inc', '.txt'].includes(path.extname(name)))
-        .map(async (name) => (await stat(path.join(ui, name))).mtimeMs),
-    )),
-  );
-  if (!existsSync(archive) || (await stat(archive)).mtimeMs < newest) {
-    await utimes(path.join(root, 'apps/esp32/sdkconfig.defaults'), new Date(), new Date());
-  }
-  const logPath = path.join(out, 'firmware-build.log');
-  const cargo = await run(['cargo', 'build', '--release'], {
-    cwd: firmwareRoot,
-    env: cargoEnv,
-    capture: true,
-  });
-  await writeFile(logPath, cargo.stdout + cargo.stderr);
-  const log = await readFile(logPath);
-  await writeFile(logPath, log.subarray(Math.max(0, log.length - 256 * 1024)));
-  if (cargo.code !== 0) throw new Error('Firmware failed; see generated/firmware-build.log');
-  const firmwareElf = path.join(firmwareTargetDir, firmwareTarget, 'release', 'operit-esp32');
+  if (!builtFirmwareElf) throw new Error('Firmware was not built');
+  const firmwareElf = builtFirmwareElf;
   manifest.firmwareBuilt = true;
   manifest.firmwareElf = firmwareElf;
   manifest.firmwareSha256 = sha256(await readFile(firmwareElf));

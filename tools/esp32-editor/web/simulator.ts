@@ -33,10 +33,11 @@ async function refresh(): Promise<void> {
     summary.textContent = state.ready ? connection : state.running ? '正在启动' : '已停止';
     address.textContent = state.ready ? state.device.address : '-';
     panel.querySelector('#sim-log')!.textContent = state.output;
-    // Let the LVGL host reflect the real running session instead of debug toggles.
+    // Let the 自绘 UI host reflect the real running session instead of debug toggles.
     window.dispatchEvent(new CustomEvent('operit-simulator-state', {detail: {
       running: state.ready, connected: state.device?.chat.connected === true, paired: state.device?.paired === true,
       pairingCode: state.device?.pairingCode ?? '', spaceState: state.device?.chat.connected ? '已连接 Operit' : '等待连接 Operit',
+      spaceJoinPrompt: state.device?.spaceJoinPrompt ?? '', spaceJoinBusy: false,
       chatPreview: state.device?.chatPreview ?? '尚未连接对话',
       chat: state.device?.chat, chatScreen: state.device?.chatScreen, chatTask: state.device?.chatTask,
       chatSendResult: state.device?.chatSendResult,
