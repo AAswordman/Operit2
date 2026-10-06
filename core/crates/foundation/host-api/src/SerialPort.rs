@@ -17,5 +17,9 @@ pub trait SerialPortConnection: Send + Sync {
 /// Opens a platform serial device or accessory. Port identifiers are host-owned.
 #[async_trait]
 pub trait SerialPortHost: Send + Sync {
+    /// Returns the local endpoint used when this Host itself accepts a serial
+    /// Link connection. Native Hosts generally only connect to named ports;
+    /// board Hosts may expose one fixed UART without a user-facing name.
+    fn listenerPort(&self) -> Option<String> { None }
     async fn open(&self, port: &str, baud_rate: u32) -> HostResult<Arc<dyn SerialPortConnection>>;
 }

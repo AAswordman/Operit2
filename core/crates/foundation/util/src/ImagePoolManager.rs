@@ -1,5 +1,6 @@
+use operit_host_api::AtomicCounter::AtomicU64;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
