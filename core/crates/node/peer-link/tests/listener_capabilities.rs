@@ -164,11 +164,11 @@ fn bluetooth_classic_listening_requires_an_explicit_capability() {
     }
 }
 
-/// Does not expose connect-only serial ports as inbound peer listeners.
+/// Exposes a serial Host as the point-to-point inbound listener used by a device.
 #[test]
-fn installed_serial_host_does_not_declare_a_listener() {
+fn installed_serial_host_declares_a_listener() {
     let host = HostManager::new().withSerialPortHost(Arc::new(SerialFixture));
-    assert!(!HostPeerLink::listenerCapabilities(&host).transports.contains(&PeerTransport::Serial));
+    assert!(HostPeerLink::listenerCapabilities(&host).transports.contains(&PeerTransport::Serial));
 }
 
 /// Keeps advertisements separate from transport and service-browsing capabilities.
@@ -190,4 +190,19 @@ async fn unsupported_websocket_does_not_acquire_http_resources() {
     let result = HostPeerLink::default().listen(host, PeerEndpoint { nodeId: "fixture".into(), address: "127.0.0.1:0".into() }, PeerTransport::WebSocket).await;
     assert!(matches!(result, Err(message) if message == "Host does not support WebSocket peer listeners"));
     assert_eq!(server.binds.load(Ordering::SeqCst), 0);
+}
+
+
+#[test]
+fn connection_policy_only_serializes_the_same_exclusive_endpoint() {
+    let link = HostPeerLink::default();
+    let endpoint = |address: &str| PeerEndpoint { nodeId: "peer".into(), address: address.into() };
+    for transport in [PeerTransport::Tcp, PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Bluetooth] {
+        assert_eq!(link.exclusiveEndpointKey(&endpoint("address"), transport), None);
+    }
+    assert_ne!(link.exclusiveEndpointKey(&endpoint("COM1"), PeerTransport::Serial),
+        link.exclusiveEndpointKey(&endpoint("COM2"), PeerTransport::Serial));
+    #[cfg(windows)]
+    assert_eq!(link.exclusiveEndpointKey(&endpoint("COM1"), PeerTransport::Serial),
+        link.exclusiveEndpointKey(&endpoint(r"\\.\com1"), PeerTransport::Serial));
 }

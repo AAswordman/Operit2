@@ -84,7 +84,7 @@ impl HostRuntimePeerService {
     }
 
     /// Publishes a scoped callback offer over the original authenticated channel.
-    pub(super) async fn offerSpaceChannel(&self, peer: &str, pairingId: &str, channel: &Arc<LiveChannel>) -> Result<(), CoreLinkError> {
+    pub(super) async fn offerSpaceChannel(&self, peer: &str, pairingId: &str, channel: &Arc<Channel>) -> Result<(), CoreLinkError> {
         let Some(request) = self.spaceChannelOfferRequest(peer, pairingId).await? else { return Ok(()); };
         let requestId = request.requestId.0.clone();
         match channel.exchange(CoreLinkRequest::Call(request)).await? {

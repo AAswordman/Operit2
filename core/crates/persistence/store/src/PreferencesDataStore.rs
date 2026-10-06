@@ -1579,6 +1579,11 @@ impl Preferences {
         self.values.contains_key(&key.name)
     }
 
+    /// Borrows entries without copying every serialized record for read-only scans.
+    pub fn iterEntries(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.values.iter().map(|(key, value)| (key.as_str(), value.as_str()))
+    }
+
     /// Returns all preference entries as owned key-value pairs.
     pub fn entries(&self) -> Vec<(String, String)> {
         self.values
@@ -2516,6 +2521,31 @@ impl PreferencesDataStore {
         Ok(())
     }
 
+    /// Uses the common sync log as a write-ahead journal for a Space record.
+    /// Failed metadata writes leave the previous complete record/cache intact;
+    /// retry reuses matching durable entity-state operations before publication.
+    #[allow(non_snake_case)]
+    pub fn replaceRecoverably(&self, mut preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+        let _transaction = self.sharedState.transaction.lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        self.loadUnlocked()?;
+        self.migratePreferencesToCurrentSchema(&mut preferences)?;
+        let current = self.loadedPreferences().expect("PreferencesDataStore must be loaded before replacement");
+        // Recheck the complete snapshot, including after reboot with a partially
+        // persisted journal. Identical entries reuse their existing operation.
+        self.recordSyncOperationsInternal(&current, &preferences, true)?;
+        self.recordSyncOperationsInternal(&emptyPreferences(), &preferences, true)?;
+        if current == preferences { return Ok(()); }
+        self.writeStoredPreferencesUnlocked(&preferences)?;
+        let mut loaded = self.sharedState.preferences.lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        loaded.loaded = true;
+        loaded.preferences = preferences;
+        drop(loaded);
+        self.notifyChanged();
+        Ok(())
+    }
+
     /// Writes one preferences snapshot while the caller owns the shared transaction lock.
     fn writeStoredPreferencesUnlocked(
         &self,
@@ -2549,6 +2579,11 @@ impl PreferencesDataStore {
         previous: &Preferences,
         preferences: &Preferences,
     ) -> Result<(), PreferencesDataStoreError> {
+        self.recordSyncOperationsInternal(previous, preferences, false)
+    }
+
+    #[allow(non_snake_case)]
+    fn recordSyncOperationsInternal(&self, previous: &Preferences, preferences: &Preferences, recoverable: bool) -> Result<(), PreferencesDataStoreError> {
         let Some(syncOperationStore) = &self.syncOperationStore else {
             return Ok(());
         };
@@ -2593,6 +2628,7 @@ impl PreferencesDataStore {
                                 None,
                                 mutation.path,
                                 mutation.value,
+                                recoverable,
                             )?;
                         }
                         continue;
@@ -2607,6 +2643,7 @@ impl PreferencesDataStore {
                 nextValue.cloned(),
                 Vec::new(),
                 None,
+                recoverable,
             )?;
         }
         Ok(())
@@ -2623,6 +2660,7 @@ impl PreferencesDataStore {
         value: Option<String>,
         jsonPath: Vec<PreferencesSyncJsonPathSegment>,
         jsonValue: Option<Value>,
+        recoverable: bool,
     ) -> Result<(), PreferencesDataStoreError> {
         let structured = !jsonPath.is_empty();
         let jsonMutation = if structured {
@@ -2651,9 +2689,7 @@ impl PreferencesDataStore {
         } else {
             "delete"
         };
-        syncOperationStore.appendLocalOperation(
-            deviceId,
-            NewSyncOperation {
+        let mutation = NewSyncOperation {
                 domain: descriptor.domain.clone(),
                 entityType: descriptor.entityType.clone(),
                 entityId: preferenceMutationEntityId(&descriptor.storagePath, key, &jsonPath)?,
@@ -2667,8 +2703,9 @@ impl PreferencesDataStore {
                     jsonPath,
                     jsonMutation,
                 })?,
-            },
-        )?;
+            };
+        if recoverable { syncOperationStore.appendLocalStateIfChanged(deviceId, mutation)?; }
+        else { syncOperationStore.appendLocalOperation(deviceId, mutation)?; }
         Ok(())
     }
 

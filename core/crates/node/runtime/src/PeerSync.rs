@@ -19,6 +19,13 @@ pub(crate) enum PeerSyncMethod {
 }
 
 impl PeerSyncMethod {
+    /// Device-space inspection and immediate execution binding are control-plane
+    /// calls, not an invitation to replicate persistent business data.
+    pub(crate) fn requiresStorageProvider(self) -> bool {
+        matches!(self, Self::SyncClock | Self::SyncOperationsSince
+            | Self::SyncApplyOperations | Self::SyncBlobExists | Self::SyncReadBlobChunk)
+    }
+
     pub(crate) fn request(self, requestId: String, args: CoreValue) -> CoreCallRequest {
         // This unit enum always serializes to a string under its wire naming convention.
         let name = serde_json::to_value(self).expect("peer sync method must serialize");

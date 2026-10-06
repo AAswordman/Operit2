@@ -9,16 +9,22 @@ readme = "README.md"
 repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-store"
 
+[features]
+default = ["full"]
+# The same node identity, Preferences and network-policy records on embedded hosts.
+node-state = []
+full = ["node-state", "dep:operit-model", "dep:regex", "dep:jieba-rs"]
+
 [dependencies]
 base64.workspace = true
 chacha20poly1305 = "0.10"
 chrono.workspace = true
 getrandom = "0.2"
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
-operit-model = { version = "2.0.0-preview.14", path = "../../foundation/model" }
+operit-model = { version = "2.0.0-preview.14", path = "../../foundation/model", optional = true }
 operit-util = { version = "2.0.0-preview.14", path = "../../foundation/util" }
-regex.workspace = true
-jieba-rs = "=0.8.1"
+regex = { workspace = true, optional = true }
+jieba-rs = { version = "=0.8.1", optional = true }
 serde.workspace = true
 serde_bytes = "0.11"
 serde_json.workspace = true

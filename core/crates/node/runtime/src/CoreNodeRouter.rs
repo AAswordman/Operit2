@@ -22,8 +22,9 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::GeneratedCoreRoute;
-use crate::SpaceRuntime::SpaceRuntime;
-use crate::RuntimeRemoteLinkService::{RuntimeRemoteLinkService, NODE_SPACE_TARGET, NODE_SPACE_APPROVAL_TARGET};
+use crate::RuntimeRemoteLinkService::{
+    RuntimeRemoteLinkService, NODE_SPACE_APPROVAL_TARGET, NODE_SPACE_TARGET,
+};
 
 #[path = "peer/sync_dispatch.rs"]
 mod sync_dispatch;
@@ -78,7 +79,7 @@ pub struct CoreNodeLocalRuntime {
             + Send
             + Sync,
     >,
-    spaceRuntime: Arc<SpaceRuntime>,
+    spaceRuntime: Arc<dyn CoreLinkSharedClient + Send + Sync>,
 }
 
 impl CoreNodeLocalRuntime {
@@ -96,7 +97,7 @@ impl CoreNodeLocalRuntime {
                 + Send
                 + Sync,
         >,
-        spaceRuntime: Arc<SpaceRuntime>,
+        spaceRuntime: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     ) -> Self {
         Self {
             peerServices: Arc::new(std::sync::OnceLock::new()),
@@ -2067,7 +2068,13 @@ impl CoreNodeRouter {
         }
         if request.payload.target == NODE_SYNC_TARGET {
             match self.validatePeerSyncRoute(&previousNodeId, &request)
-                .and_then(|atTarget| PeerSyncMethod::fromRequest(&request.payload).map(|method| (atTarget, method)))
+                .and_then(|atTarget| {
+                    let method = PeerSyncMethod::fromRequest(&request.payload)?;
+                    if method.requiresStorageProvider() {
+                        self.requirePeerStorageProviders(&request.originNodeId, &request.targetNodeId)?;
+                    }
+                    Ok((atTarget, method))
+                })
             {
                 Err(error) => return CoreCallResponse::err(requestId, error),
                 Ok((true, method)) => return self.dispatchPeerSyncCall(method, request.payload).await,
@@ -2076,6 +2083,15 @@ impl CoreNodeRouter {
         }
         match self.validateIncomingRoute(&previousNodeId, &request) {
             Ok(true) => {
+                if request.payload.target == crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET {
+                    if request.routeKind != RoutedCoreRequestKind::Target {
+                        return CoreCallResponse::err(requestId, CoreLinkError::new("CONTROL_ROUTE_INVALID", "Control exchange requires an explicit same-Space target"));
+                    }
+                    let service = RuntimeRemoteLinkService::newWithRouter((*self.localCore).clone(), self.clone());
+                    let result = crate::NodeSpaceService::acceptSpaceControlCall(&service, &request.originNodeId, request.payload)
+                        .map_err(CoreLinkError::internal);
+                    return CoreCallResponse { requestId, result };
+                }
                 if request.payload.target == NODE_SPACE_APPROVAL_TARGET {
                     if request.routeKind != RoutedCoreRequestKind::Target {
                         return CoreCallResponse::err(requestId, CoreLinkError::new("APPROVAL_ROUTE_INVALID", "Approval requires explicit same-Space routing"));
@@ -2244,8 +2260,10 @@ impl CoreNodeRouter {
         if request.payload.target == NODE_SYNC_TARGET {
             let atTarget = self.validatePeerSyncRoute(&previousNodeId, &request)?;
             crate::PeerSync::PeerSyncPushMethod::fromRequest(&request.payload)?;
+            self.requirePeerStorageProviders(&request.originNodeId, &request.targetNodeId)?;
             if atTarget {
-                return self.dispatchPeerSyncPush(request.payload);
+                let inner = self.dispatchPeerSyncPush(request.payload)?;
+                return Ok(self.guardPeerSyncPush(request.originNodeId, request.targetNodeId, request.spaceId, inner));
             }
         }
         if self.validateIncomingRoute(&previousNodeId, &request)? {
@@ -2611,13 +2629,68 @@ impl CoreRouteRuntime for CoreNodeRouter {
     }
 }
 
+#[async_trait(?Send)]
+impl crate::PeerRouter::PeerRouter for CoreNodeRouter {
+    fn localNodeId(&self) -> String {
+        CoreNodeRouter::localNodeId(self)
+    }
+    async fn routedCall(
+        &self,
+        previousNodeId: String,
+        request: RoutedCoreRequest<CoreCallRequest>,
+    ) -> CoreCallResponse {
+        let mut router = self.clone();
+        CoreNodeRouter::routedCall(&mut router, previousNodeId, request).await
+    }
+    async fn routedWatchSnapshot(
+        &self,
+        previousNodeId: String,
+        request: RoutedCoreRequest<CoreWatchRequest>,
+    ) -> Result<CoreEvent, CoreLinkError> {
+        let mut router = self.clone();
+        CoreNodeRouter::routedWatchSnapshot(&mut router, previousNodeId, request).await
+    }
+    async fn routedWatch(
+        &self,
+        previousNodeId: String,
+        request: RoutedCoreRequest<CoreWatchRequest>,
+    ) -> Result<CoreEventStream, CoreLinkError> {
+        let mut router = self.clone();
+        CoreNodeRouter::routedWatch(&mut router, previousNodeId, request).await
+    }
+    async fn routedOpenPush(
+        &self,
+        previousNodeId: String,
+        request: RoutedCoreRequest<CorePushRequest>,
+    ) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        let mut router = self.clone();
+        CoreNodeRouter::routedOpenPush(&mut router, previousNodeId, request).await
+    }
+    fn spaceChannelScope(&self, peerNodeId: &str) -> Result<Option<String>, CoreLinkError> {
+        CoreNodeRouter::spaceChannelScope(self, peerNodeId)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NodeServices::{DiscoveredPeer, PendingPairing, PairedPeer, PairingPrompt, PeerEndpoint, PeerTransport};
-    use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, setDefaultHostRuntimeTaskSchedulerHost};
-    use operit_host_api::{FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost, HostSecretStore, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue};
-    use operit_link::{CoreEventKind, CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_TARGET};
+    use crate::NodeServices::{
+        DiscoveredPeer, PairedPeer, PairingPrompt, PeerEndpoint, PeerTransport, PendingPairing,
+    };
+    use crate::SpaceRuntime::SpaceRuntime;
+    use operit_host_api::HostManager::{
+        defaultHostRuntimeTaskSchedulerHost, setDefaultHostRuntimeTaskSchedulerHost,
+    };
+    use operit_host_api::{
+        FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
+        GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult, HostRuntimeAsyncTask,
+        HostRuntimeTask, HostRuntimeTaskSchedulerHost, HostSecretStore, RuntimeSqliteConnection,
+        RuntimeSqliteHost, RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost,
+        SqliteRow, SqliteValue,
+    };
+    use operit_link::{
+        CoreEventKind, CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_TARGET,
+    };
     use operit_model::ChatMessage::ChatMessage;
     use operit_model::ChatTurnOptions::ChatTurnOptions;
     use operit_model::InputProcessingState::InputProcessingState;
@@ -3177,7 +3250,7 @@ mod tests {
 
     /// Dispatches local Core requests through a real test SpaceRuntime.
     struct TestSpaceRuntimeSharedClient {
-        spaceRuntime: Arc<SpaceRuntime>,
+        spaceRuntime: Arc<dyn CoreLinkSharedClient + Send + Sync>,
         bindingStore: Option<CoreNodeBindingStore>,
     }
 
@@ -3397,6 +3470,66 @@ mod tests {
         )
     }
 
+    /// Node-local dispatch accepts a Link service without constructing chat/application state.
+    #[tokio::test]
+    async fn local_space_dispatch_uses_injected_link_service() {
+        struct DeviceService;
+        #[async_trait(?Send)]
+        impl CoreLinkSharedClient for DeviceService {
+            async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+                CoreCallResponse::ok(request.requestId, request.args)
+            }
+            async fn watchSnapshot(
+                &self,
+                request: CoreWatchRequest,
+            ) -> Result<CoreEvent, CoreLinkError> {
+                Ok(CoreEvent {
+                    requestId: Some(request.requestId),
+                    target: request.target,
+                    propertyName: request.propertyName,
+                    kind: CoreEventKind::Snapshot,
+                    value: request.args,
+                })
+            }
+            async fn watch(
+                &self,
+                request: CoreWatchRequest,
+            ) -> Result<CoreEventStream, CoreLinkError> {
+                let (sender, receiver) = CoreEventStream::channel();
+                sender.send(self.watchSnapshot(request).await?).unwrap();
+                Ok(receiver)
+            }
+        }
+        let client = Arc::new(DeviceService);
+        let runtime = CoreNodeLocalRuntime::new(
+            client.clone(),
+            client.clone(),
+            Arc::new(TestRuntimeStorageHost::default()),
+            Arc::new(|_| None),
+            Arc::new(|_| panic!("local dispatch must not install tool runtime")),
+            Arc::new(|_| panic!("Space dispatch must not use application push")),
+            client,
+        );
+        let value = CoreValue::String("device-state".into());
+        let response = runtime
+            .callSpace(CoreCallRequest::new(
+                "device-call",
+                "device",
+                "read",
+                value.clone(),
+            ))
+            .await;
+        assert_eq!(response.requestId.0, "device-call");
+        assert_eq!(response.result.unwrap(), value);
+        let request = CoreWatchRequest::new("device-watch", "device", "state", value.clone());
+        let snapshot = runtime.watchSpaceSnapshot(request.clone()).await.unwrap();
+        assert_eq!(snapshot.requestId.unwrap().0, "device-watch");
+        assert_eq!(snapshot.value, value);
+        let mut stream = runtime.watchSpace(request).await.unwrap();
+        assert_eq!(stream.recv().await.unwrap().value, value);
+        assert!(stream.recv().await.is_none());
+    }
+
     /// Selects local sources without rewriting the persisted remote owner while offline.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn offline_binding_uses_local_source_without_changing_owner() {
@@ -3496,6 +3629,145 @@ mod tests {
         service.installRouteBindingOnTarget(sourceId, commit.operation).await
             .expect("local binding installation must remain a no-op");
         peer.close();
+    }
+
+    #[tokio::test]
+    async fn non_storage_members_cannot_enter_replication_or_blob_receivers() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let mut router = testCoreNodeRouter("storage-local", "storage-peer", "storage-binding");
+        router.installNodeServices(NodeServices::new(TestPeerService::new(
+            "storage-local".into(), "storage-peer".into(), Arc::new(TestClientEndpoint),
+        ))).unwrap();
+        let request = RoutedCoreRequest {
+            spaceId: router.spaceStore.space().unwrap().spaceId,
+            originNodeId: "storage-peer".into(), targetNodeId: "storage-local".into(),
+            ttl: 0, routeKind: RoutedCoreRequestKind::Target,
+            payload: PeerSyncMethod::SyncClock.request("storage-denied".into(), CoreValue::Null),
+        };
+        let before = router.localCore.runtimeStorageHost().list("runtime/").unwrap();
+        for method in [PeerSyncMethod::SyncClock, PeerSyncMethod::SyncOperationsSince,
+            PeerSyncMethod::SyncApplyOperations, PeerSyncMethod::SyncBlobExists, PeerSyncMethod::SyncReadBlobChunk] {
+            let mut call = request.clone();
+            call.payload = method.request("storage-denied".into(),
+                operit_link::toCoreValue(serde_json::json!({"operations":[]})).unwrap());
+            assert_eq!(router.routedCall("storage-peer".into(), call).await.result.unwrap_err().code,
+                "SPACE_STORAGE_PERMISSION_DENIED");
+        }
+        let push = RoutedCoreRequest { spaceId: request.spaceId.clone(), originNodeId: request.originNodeId.clone(),
+            targetNodeId: request.targetNodeId.clone(), ttl: 0, routeKind: RoutedCoreRequestKind::Target,
+            payload: CorePushRequest::new("blob-denied", NODE_SYNC_TARGET, "syncReceiveBlob") };
+        let error = match router.routedOpenPush("storage-peer".into(), push).await {
+            Ok(_) => panic!("runner must not open a blob receiver"), Err(error) => error,
+        };
+        assert_eq!(error.code, "SPACE_STORAGE_PERMISSION_DENIED");
+        let after = router.localCore.runtimeStorageHost().list("runtime/").unwrap();
+        assert_eq!(before.iter().map(|entry| (&entry.path, entry.size)).collect::<Vec<_>>(),
+            after.iter().map(|entry| (&entry.path, entry.size)).collect::<Vec<_>>());
+        // Same-space authority exchange is independent of a storage identity.
+        let mut control = request.clone();
+        control.payload = CoreCallRequest::new("control-allowed", crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET,
+            "exchange", operit_link::toCoreValue(Vec::<operit_store::SyncOperationStore::SyncOperation>::new()).unwrap());
+        assert!(router.routedCall("storage-peer".into(), control).await.result.is_ok());
+        router.networkControlStore.setIdentity(operit_store::NetworkControlStore::NetworkControlIdentityAssignment {
+            nodeId: "storage-peer".into(), roleId: "storage".into(),
+        }).unwrap();
+        assert!(router.requirePeerStorageProviders("storage-peer", "storage-local").is_ok());
+        router.networkControlStore.clearIdentity("storage-peer".into()).unwrap();
+        assert_eq!(router.routedCall("storage-peer".into(), request).await.result.unwrap_err().code,
+            "SPACE_STORAGE_PERMISSION_DENIED");
+    }
+
+    struct CountingSyncPush(Arc<AtomicUsize>);
+    #[async_trait]
+    impl CoreLinkPushSession for CountingSyncPush {
+        async fn send(&mut self, _value: CoreValue) -> Result<(), CoreLinkError> {
+            self.0.fetch_add(1, Ordering::SeqCst); Ok(())
+        }
+        async fn close(self: Box<Self>) -> Result<(), CoreLinkError> {
+            self.0.fetch_add(1, Ordering::SeqCst); Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_revocation_stops_an_already_open_blob_stream_before_commit() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let router = testCoreNodeRouter("stream-local", "stream-peer", "stream-binding");
+        router.networkControlStore.setIdentity(operit_store::NetworkControlStore::NetworkControlIdentityAssignment {
+            nodeId: "stream-peer".into(), roleId: "storage".into(),
+        }).unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut stream = router.guardPeerSyncPush("stream-peer".into(), "stream-local".into(),
+            router.spaceStore.space().unwrap().spaceId, Box::new(CountingSyncPush(count.clone())));
+        stream.send(CoreValue::Null).await.unwrap();
+        router.networkControlStore.clearIdentity("stream-peer".into()).unwrap();
+        assert_eq!(stream.send(CoreValue::Null).await.unwrap_err().code, "SPACE_STORAGE_PERMISSION_DENIED");
+        assert_eq!(stream.close().await.unwrap_err().code, "SPACE_STORAGE_PERMISSION_DENIED");
+        assert_eq!(count.load(Ordering::SeqCst), 1, "no chunk or final commit reaches persistence after revocation");
+    }
+
+    #[tokio::test]
+    async fn persistence_worker_skips_non_storage_members_and_endpoint_engines() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let router = testCoreNodeRouter("worker-local", "worker-peer", "worker-binding");
+        let endpoint = TestRoutedCallEndpoint::newPolicyOnly();
+        let link = installTestPeer(&router, "worker-peer".into(), endpoint.clone()).unwrap();
+        let worker = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+            router.localCore.clone(), router.clone(), router.spaceStore.clone(),
+        );
+        let before = router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap();
+        assert!(!worker.replicaBootstrapRequired(&router.spaceStore.space().unwrap().spaceId).unwrap(),
+            "a creator must not discard its own Space's data");
+        assert!(!worker.storageReplicationAllowed("worker-peer").unwrap());
+        worker.synchronizeReachablePeer("worker-peer".into(), 512, true).await.unwrap();
+        assert_eq!(endpoint.callCount.load(Ordering::SeqCst), 1);
+        assert_eq!(router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap(), before);
+        router.networkControlStore.setIdentity(operit_store::NetworkControlStore::NetworkControlIdentityAssignment {
+            nodeId: "worker-peer".into(), roleId: "storage".into(),
+        }).unwrap();
+        assert!(router.requirePeerStorageProviders("worker-local", "worker-peer").is_ok());
+        let mut profile = router.spaceStore.deviceProfiles().unwrap().remove("worker-peer").unwrap();
+        profile.coreVersion = None; profile.updatedAt += 1;
+        router.spaceStore.importDeviceProfiles(vec![profile.clone()]).unwrap();
+        let before = router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap();
+        // A lightweight endpoint has no Core store even with a broad user role.
+        assert!(!worker.storageReplicationAllowed("worker-peer").unwrap());
+        worker.synchronizeReachablePeer("worker-peer".into(), 512, true).await.unwrap();
+        assert_eq!(endpoint.methodNames(), vec!["exchange", "exchange"]);
+        assert!(!router.localCore.runtimeStorageHost().exists("runtime/link_access/storage_replica.preferences.json").unwrap());
+        assert_eq!(router.localCore.runtimeStorageHost().readBytes("runtime/sync/clocks.json").unwrap(), before,
+            "skipped initial sync must not reset/advance replication clocks");
+        profile.coreVersion = Some("test-core-version".into()); profile.updatedAt += 1;
+        router.spaceStore.importDeviceProfiles(vec![profile]).unwrap();
+        assert!(worker.storageReplicationAllowed("worker-peer").unwrap());
+        link.close();
+    }
+
+    #[tokio::test]
+    async fn deferred_storage_grant_still_requires_a_first_replica_bootstrap() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let creator = testCoreNodeRouter("bootstrap-creator", "bootstrap-joined", "bootstrap-binding");
+        let joined = testCoreNodeRouter("bootstrap-joined", "bootstrap-creator", "bootstrap-binding");
+        let mut adopted = creator.spaceStore.space().unwrap();
+        adopted.spaceRevision = adopted.spaceRevision.max(joined.spaceStore.space().unwrap().spaceRevision) + 1;
+        creator.spaceStore.adopt(adopted.clone()).unwrap();
+        joined.spaceStore.adopt(adopted).unwrap();
+        joined.networkControlStore.projectControlOperations(&creator.networkControlStore.currentSpaceOperations().unwrap()).unwrap();
+        let worker = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+            joined.localCore.clone(), joined.clone(), joined.spaceStore.clone(),
+        );
+        let spaceId = joined.spaceStore.space().unwrap().spaceId;
+        assert!(worker.replicaBootstrapRequired(&spaceId).unwrap());
+        let marker = operit_store::PreferencesDataStore::CoreNodeStateStore::newWithStorage(
+            joined.localCore.runtimeStorageHost(), "runtime/link_access/storage_replica.preferences.json");
+        let mut preferences = operit_store::PreferencesDataStore::emptyPreferences();
+        preferences.set(&operit_store::PreferencesDataStore::stringPreferencesKey("spaceId"), spaceId.clone());
+        marker.replace(preferences).unwrap();
+        assert!(!worker.replicaBootstrapRequired(&spaceId).unwrap());
+        assert!(worker.replicaBootstrapRequired("new-space-without-a-replica").unwrap());
     }
 
     /// Creates one real router with synthetic local runtime and in-memory route state.
@@ -3875,6 +4147,7 @@ mod tests {
     struct TestRoutedCallEndpoint {
         callCount: AtomicUsize,
         methods: StdMutex<Vec<String>>,
+        policyOnly: bool,
     }
 
     impl TestRoutedCallEndpoint {
@@ -3883,7 +4156,12 @@ mod tests {
             Arc::new(Self {
                 callCount: AtomicUsize::new(0),
                 methods: StdMutex::new(Vec::new()),
+                policyOnly: false,
             })
+        }
+
+        fn newPolicyOnly() -> Arc<Self> {
+            Arc::new(Self { callCount: AtomicUsize::new(0), methods: StdMutex::new(Vec::new()), policyOnly: true })
         }
 
         /// Returns every routed method name received by this endpoint.
@@ -4112,6 +4390,15 @@ mod tests {
             _previousNodeId: String,
             request: RoutedCoreRequest<CoreCallRequest>,
         ) -> CoreCallResponse {
+            if self.policyOnly {
+                assert_eq!(request.routeKind, RoutedCoreRequestKind::Target);
+                assert_eq!(request.payload.target, crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET);
+                assert_eq!(request.payload.methodName, "exchange", "no business RPC is allowed");
+                self.callCount.fetch_add(1, Ordering::SeqCst);
+                self.methods.lock().unwrap().push(request.payload.methodName);
+                return CoreCallResponse::ok(request.payload.requestId,
+                    operit_link::toCoreValue(Vec::<operit_store::SyncOperationStore::SyncOperation>::new()).unwrap());
+            }
             assert_eq!(request.routeKind, RoutedCoreRequestKind::SpaceRoute);
             assert_eq!(
                 request.payload.target,

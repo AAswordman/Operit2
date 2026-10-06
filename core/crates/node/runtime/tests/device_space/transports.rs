@@ -200,6 +200,7 @@ async fn real_tcp_single_pairing_admission_enables_scoped_return_channel() {
         };
         let reverse = iosPeer.call("tcp-mac", returnRequest()).await;
         assert!(reverse.result.is_ok(), "{:?}", reverse.result);
+        assert!(iosPeer.spaceClient().is_some(), "TCP grants expose the shared Space client");
         assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 1);
         // Return credentials survive reconnect without any second confirmation.
         iosPeer.disconnectPeer("tcp-mac").await.unwrap();

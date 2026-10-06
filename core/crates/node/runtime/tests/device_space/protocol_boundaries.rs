@@ -232,5 +232,7 @@ async fn conflicting_reviewer_decisions_cannot_change_a_claimed_outcome() {
         pair.b.networkControlStore.currentSpaceOperations().unwrap(),
         operations
     );
-    assert_eq!(protocolRecords(&pair.b, RESULT_RECORDS).len(), 1);
+    // A local gateway recovers from its stable admission log; it must not
+    // duplicate that outcome into a second durable result record.
+    assert!(protocolRecords(&pair.b, RESULT_RECORDS).is_empty());
 }

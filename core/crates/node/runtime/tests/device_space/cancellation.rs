@@ -302,6 +302,8 @@ async fn cancellation_handles_submission_failure_before_and_after_receiver_commi
             usize::from(after)
         );
         let id = outgoing[0].requestId.clone();
+        // Replay the original submission, not the compact terminal receipt.
+        let originalSubmission = submissionArgs(&pair.a, &id);
         assert_eq!(
             pair.applicant
                 .cancelDeviceSpaceJoin(id.clone())
@@ -316,7 +318,7 @@ async fn cancellation_handles_submission_failure_before_and_after_receiver_commi
             &pair.a,
             &pair.b.localNodeId(),
             "requestJoin",
-            submissionArgs(&pair.a, &id),
+            originalSubmission,
         )
         .await;
         assert!(delayed.result.is_ok());
@@ -519,4 +521,79 @@ async fn repeated_cancel_reapply_cycles_preserve_files_and_keep_only_one_active_
     }
     assert_eq!(protocolRecords(&pair.a, OUTBOUND_RECORDS).len(), ids.len());
     assert_eq!(protocolRecords(&pair.b, INBOUND_RECORDS).len(), ids.len());
+}
+
+#[tokio::test]
+async fn offline_cancellation_intent_is_durable_and_stops_submission_retries_until_ack() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let pair = IndependentPair::new("cancel-offline-intent");
+    let before = pair.applicant.deviceSpace().unwrap();
+    let request = pair.request().await;
+    let submissions = pair.aPeer.calls.lock().unwrap().iter().filter(|(_, method)| method == "requestJoin").count();
+    pair.aPeer.disconnectPeer(&pair.b.localNodeId()).await.unwrap();
+    assert!(pair.applicant.cancelDeviceSpaceJoin(request.requestId.clone()).await.is_err());
+    let restored = pair.restartApplicant();
+    assert_eq!(restored.outgoingDeviceSpaceJoins().unwrap()[0].status, SpaceJoinStatus::Pending);
+    assert!(restored.refreshDeviceSpaceJoin(request.requestId.clone()).await.is_err());
+    assert!(restored.requestDeviceSpaceJoin(pair.b.localNodeId()).await.is_err());
+    assert_eq!(pair.aPeer.calls.lock().unwrap().iter().filter(|(_, method)| method == "requestJoin").count(), submissions);
+    let store = crate::PeerStateStore::PeerStateStore::new(pair.a.localCore.runtimeStorageHost());
+    let saved = store.records::<serde_json::Value>(OUTBOUND_RECORDS).unwrap();
+    assert_eq!(saved[&request.requestId]["cancelRequested"], true);
+    assert_eq!(restored.deviceSpace().unwrap(), before);
+    assert!(!pair.receiver.deviceSpace().unwrap().members.contains(&pair.a.localNodeId()));
+    pair.aPeer.link(&pair.b);
+    assert_eq!(restored.refreshDeviceSpaceJoin(request.requestId.clone()).await.unwrap().status, SpaceJoinStatus::Cancelled);
+    assert_eq!(store.records::<serde_json::Value>(OUTBOUND_RECORDS).unwrap()[&request.requestId]["cancelRequested"], false);
+}
+
+#[tokio::test]
+async fn committed_approval_wins_cancellation_and_returns_actual_joined_state() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (applicantRouter, applicant) = approvalService("cancel-approved-applicant");
+    let (gatewayRouter, gateway) = approvalService("cancel-approved-gateway");
+    let _link = installTestPeer(&applicantRouter, gatewayRouter.localNodeId(),
+        TestCoreNodeRouterEndpoint::new(gatewayRouter.clone())).unwrap();
+    let request = applicant.requestDeviceSpaceJoin(gatewayRouter.localNodeId()).await.unwrap();
+    gateway.incomingDeviceSpaceJoins().await.unwrap();
+    gateway.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+
+    let result = applicant.cancelDeviceSpaceJoin(request.requestId).await.unwrap();
+    assert_eq!(result.status, SpaceJoinStatus::Joined);
+    assert_eq!(applicant.outgoingDeviceSpaceJoins().unwrap()[0].status, SpaceJoinStatus::Joined);
+    assert_eq!(applicant.deviceSpace().unwrap(), gateway.deviceSpace().unwrap());
+}
+
+/// A delayed cancellation receipt must not roll Joined back or start another submission.
+#[tokio::test]
+async fn delayed_cancellation_response_preserves_joined_state_without_resubmission() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let pair = IndependentPair::new("cancel-late-approved-receipt");
+    let request = pair.request().await;
+    pair.receiver.incomingDeviceSpaceJoins().await.unwrap();
+    pair.receiver.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+    let id = request.requestId;
+    let (arrived, release) = pair.aPeer.pauseResponse("cancelJoin");
+    let (cancelled, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(pair.applicant.cancelDeviceSpaceJoin(id.clone()), async {
+            arrived.await.unwrap();
+            // Another caller acknowledges the decision and completes the same join.
+            for _ in 0..2 {
+                if pair.applicant.refreshDeviceSpaceJoin(id.clone()).await.unwrap().status == SpaceJoinStatus::Joined {
+                    break;
+                }
+            }
+            assertRecordStatus(&pair.a, OUTBOUND_RECORDS, &id, SpaceJoinStatus::Joined);
+            // Joined is authoritative even if a subsequent submission would fail.
+            pair.aPeer.failNext("requestJoin", false);
+            release.send(()).unwrap();
+        })
+    }).await.expect("controlled cancellation response race must terminate");
+    assert_eq!(cancelled.unwrap().status, SpaceJoinStatus::Joined);
+    assertRecordStatus(&pair.a, OUTBOUND_RECORDS, &id, SpaceJoinStatus::Joined);
+    assert_eq!(pair.applicant.deviceSpace().unwrap(), pair.receiver.deviceSpace().unwrap());
+    assert_eq!(protocolRecords(&pair.a, OUTBOUND_RECORDS)[&id]["cancelRequested"], false);
 }

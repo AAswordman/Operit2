@@ -1,7 +1,8 @@
+use operit_host_api::AtomicCounter::AtomicU64;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use operit_host_api::RuntimeStorageHost;
@@ -350,6 +351,41 @@ impl SyncOperationStore {
         self.recordAppliedOperation(&op)?;
         publishSyncMutation();
         Ok(op)
+    }
+
+    /// Reuses the last identical state for one local entity when recovering a
+    /// record publication. Transaction commands must never use this shortcut.
+    #[allow(non_snake_case)]
+    pub fn appendLocalStateIfChanged(&self, originDeviceId: &str, mutation: NewSyncOperation) -> Result<SyncOperation, SyncOperationStoreError> {
+        if mutation.semantics != SyncOperationSemantics::EntityState {
+            return Err(SyncOperationStoreError::Message("Idempotent state append requires EntityState semantics".into()));
+        }
+        let content = self.readOperationLog(originDeviceId)?;
+        let mut latest = None;
+        for line in content.lines().filter(|line| !line.trim().is_empty()) {
+            let operation: SyncOperation = serde_json::from_str(line)?;
+            if operation.domain == mutation.domain && operation.entityType == mutation.entityType && operation.entityId == mutation.entityId {
+                latest = Some(self.decodeOperationPayload(operation)?);
+            }
+        }
+        if let Some(operation) = latest {
+            if operation.operation == mutation.operation && operation.semantics == mutation.semantics && operation.payload == mutation.payload {
+                self.recoverAppendedOperation(&operation)?;
+                return Ok(operation);
+            }
+        }
+        self.appendLocalOperation(originDeviceId, mutation)
+    }
+
+    /// Completes metadata after an acknowledged log append but failed later
+    /// writes. Never allocates a second sequence or appends a duplicate line.
+    #[allow(non_snake_case)]
+    pub fn recoverAppendedOperation(&self, operation: &SyncOperation) -> Result<(), SyncOperationStoreError> {
+        self.appendOperation(operation)?;
+        self.registerDevice(&operation.originDeviceId)?;
+        self.recordAppliedOperation(operation)?;
+        publishSyncMutation();
+        Ok(())
     }
 
     /// Returns the stable local device identifier for this sync store.

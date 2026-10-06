@@ -5,7 +5,9 @@ use syn::{Expr, ImplItem, Item, Lit, Meta, MetaNameValue, ReturnType, Type};
 
 /// Scans every runtime source file for route annotations and writes server-owned route lookup code.
 fn main() {
-    if std::env::var_os("CARGO_FEATURE_FULL").is_none() { return; }
+    if std::env::var_os("CARGO_FEATURE_ROUTE_CATALOG").is_none() {
+        return;
+    }
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be available"),
     );
@@ -19,6 +21,13 @@ fn main() {
         render_route_catalog(&declarations),
     )
     .expect("write generated route catalog");
+    if std::env::var_os("CARGO_FEATURE_FULL").is_some() {
+        fs::write(
+            out_dir.join("generated_space_dispatch.rs"),
+            render_space_dispatch(&declarations),
+        )
+        .expect("write generated Space business dispatch");
+    }
 }
 
 /// Recursively scans runtime Rust files for route declarations.
@@ -296,6 +305,50 @@ fn render_route_catalog(
         "/// Resolves one annotation-generated Space route from a standard Link push request.\n",
     );
     output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(&request.target, &request.methodName) } }\n\n");
+    output
+        .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
+    output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");
+    output.push_str("    let bindingArgument = match methodName {\n");
+    for (method, binding, _, _, _, _, _, _) in declarations {
+        output.push_str(&format!("        {method:?} => Some({binding:?}),\n"));
+    }
+    output.push_str("        _ => None,\n    };\n");
+    output.push_str("    let Some(bindingArgument) = bindingArgument else { return Ok(GeneratedCoreRoute::Local); };\n");
+    output.push_str("    let operit_link::CoreValue::Map(arguments) = args else { return Err(operit_link::CoreLinkError::new(\"INVALID_ARGS\", \"Binding request arguments must be a map\")); };\n");
+    output.push_str("    let Some(value) = arguments.get(bindingArgument) else { return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_REQUIRED\", \"Binding request does not include its required key\")); };\n");
+    output.push_str("    let key = match value {\n        operit_link::CoreValue::String(key) => key,\n        operit_link::CoreValue::Null => return Ok(GeneratedCoreRoute::Local),\n        _ => return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_INVALID\", \"Binding key must be a string\")),\n    };\n");
+    output.push_str("    if key.trim().is_empty() { return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_REQUIRED\", \"Binding requires a non-empty key\")); }\n");
+    output.push_str("    Ok(GeneratedCoreRoute::Binding { scope: 0, key: key.clone() })\n}\n\n");
+    output.push_str(
+        "/// Resolves one call request using route declarations from runtime annotations.\n",
+    );
+    output.push_str("pub fn generated_core_call_route(request: &operit_link::CoreCallRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.methodName, &request.args) }\n\n");
+    output.push_str(
+        "/// Resolves one watch request using route declarations from runtime annotations.\n",
+    );
+    output.push_str("pub fn generated_core_watch_route(request: &operit_link::CoreWatchRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.propertyName, &request.args) }\n\n");
+    output.push_str(
+        "/// Resolves one push request using route declarations from runtime annotations.\n",
+    );
+    output.push_str("pub fn generated_core_push_route(request: &operit_link::CorePushRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.methodName, &request.args) }\n");
+    output
+}
+
+/// Business execution is separate from the shared wire/permission catalog.
+/// Both outputs use the same declarations; metadata-only nodes never link ChatServiceCore.
+fn render_space_dispatch(
+    declarations: &BTreeSet<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    )>,
+) -> String {
+    let mut output = String::new();
     output.push_str(
         "/// Dispatches one generated Space call on the runtime's main ChatServiceCore.\n",
     );
@@ -352,31 +405,5 @@ fn render_route_catalog(
             ));
         }
     }
-    output
-        .push_str("/// Resolves one request using route declarations from runtime annotations.\n");
-    output.push_str("fn generated_route_for_request(methodName: &str, args: &operit_link::CoreValue) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> {\n");
-    output.push_str("    let bindingArgument = match methodName {\n");
-    for (method, binding, _, _, _, _, _, _) in declarations {
-        output.push_str(&format!("        {method:?} => Some({binding:?}),\n"));
-    }
-    output.push_str("        _ => None,\n    };\n");
-    output.push_str("    let Some(bindingArgument) = bindingArgument else { return Ok(GeneratedCoreRoute::Local); };\n");
-    output.push_str("    let operit_link::CoreValue::Map(arguments) = args else { return Err(operit_link::CoreLinkError::new(\"INVALID_ARGS\", \"Binding request arguments must be a map\")); };\n");
-    output.push_str("    let Some(value) = arguments.get(bindingArgument) else { return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_REQUIRED\", \"Binding request does not include its required key\")); };\n");
-    output.push_str("    let key = match value {\n        operit_link::CoreValue::String(key) => key,\n        operit_link::CoreValue::Null => return Ok(GeneratedCoreRoute::Local),\n        _ => return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_INVALID\", \"Binding key must be a string\")),\n    };\n");
-    output.push_str("    if key.trim().is_empty() { return Err(operit_link::CoreLinkError::new(\"CORE_BINDING_KEY_REQUIRED\", \"Binding requires a non-empty key\")); }\n");
-    output.push_str("    Ok(GeneratedCoreRoute::Binding { scope: 0, key: key.clone() })\n}\n\n");
-    output.push_str(
-        "/// Resolves one call request using route declarations from runtime annotations.\n",
-    );
-    output.push_str("pub fn generated_core_call_route(request: &operit_link::CoreCallRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.methodName, &request.args) }\n\n");
-    output.push_str(
-        "/// Resolves one watch request using route declarations from runtime annotations.\n",
-    );
-    output.push_str("pub fn generated_core_watch_route(request: &operit_link::CoreWatchRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.propertyName, &request.args) }\n\n");
-    output.push_str(
-        "/// Resolves one push request using route declarations from runtime annotations.\n",
-    );
-    output.push_str("pub fn generated_core_push_route(request: &operit_link::CorePushRequest) -> Result<GeneratedCoreRoute, operit_link::CoreLinkError> { generated_route_for_request(&request.methodName, &request.args) }\n");
     output
 }

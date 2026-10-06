@@ -11,7 +11,7 @@ mod value_codec;
 pub const LINK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use client::{CoreLinkClient, CoreLinkPushSession, CoreLinkSharedClient};
-pub use codec::{decodeLink, encodeLink, CoreLinkCodecError};
+pub use codec::{decodeLink, encodeLink, encodeLinkInto, CoreLinkCodecError};
 pub use core_stream::{
     withCoreStreamCapture, withCoreStreamCaptureSync, withCoreStreamSourceResolverSync, CoreStream,
     CoreStreamAttachment, CoreStreamDescriptor, CoreStreamSource,
