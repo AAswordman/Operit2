@@ -52,6 +52,8 @@ pub mod SharedMemoryStoreManager;
 pub mod SkillVisibilityPreferences;
 #[path = "SttConfigManager.rs"]
 pub mod SttConfigManager;
+#[path = "ThinkingPersistencePreferences.rs"]
+pub mod ThinkingPersistencePreferences;
 #[path = "TtsConfigManager.rs"]
 pub mod TtsConfigManager;
 #[path = "UserPreferencesManager.rs"]
@@ -86,6 +88,7 @@ pub use RemoteAnnouncementPreferences::*;
 pub use SharedMemoryStoreManager::*;
 pub use SkillVisibilityPreferences::*;
 pub use SttConfigManager::*;
+pub use ThinkingPersistencePreferences::*;
 pub use TtsConfigManager::*;
 pub use UserPreferencesManager::*;
 pub use WaifuPreferences::*;

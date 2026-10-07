@@ -1631,6 +1631,9 @@
       }
     }
   },
+  "settingsDataPrivacySection": "Privacy",
+  "settingsDataThinkingPersistenceTitle": "Persist AI reasoning content",
+  "settingsDataThinkingPersistenceDescription": "Keep the model's thinking (reasoning) parts in chat history, snapshots, and device sync. Turn off to store new replies without their reasoning trail; later prompts will also no longer include earlier reasoning.",
   "settingsDataRuntimeSection": "Data overview",
   "settingsDataCoreVersion": "Current version",
   "settingsDataStorageSection": "Storage location",

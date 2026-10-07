@@ -6108,6 +6108,23 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The data overview could not be loaded: {error}. You can still export diagnostic logs.'**
   String settingsDataOverviewLoadError(String error);
+  /// No description provided for @settingsDataPrivacySection.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get settingsDataPrivacySection;
+
+  /// No description provided for @settingsDataThinkingPersistenceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Persist AI reasoning content'**
+  String get settingsDataThinkingPersistenceTitle;
+
+  /// No description provided for @settingsDataThinkingPersistenceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep the model\'s thinking (reasoning) parts in chat history, snapshots, and device sync. Turn off to store new replies without their reasoning trail; later prompts will also no longer include earlier reasoning.'**
+  String get settingsDataThinkingPersistenceDescription;
 
   /// No description provided for @settingsDataRuntimeSection.
   ///
