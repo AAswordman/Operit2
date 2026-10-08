@@ -61,6 +61,20 @@ function failPending(): void {
   pending.clear();
 }
 
+/** Windows may briefly retain an executable mapping after the old child closes.
+ * Retry only transient sharing/permission errors; never hide other copy failures. */
+export async function copySimulatorBinary(source: string, destination: string,
+  copy: (source: string, destination: string) => Promise<void> = copyFile): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try { await copy(source, destination); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 9 || !['EBUSY', 'EPERM', 'EACCES'].includes(code ?? '')) throw error;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+}
+
 async function start(): Promise<void> {
   if (child || starting) return;
   starting = true;
@@ -95,7 +109,7 @@ async function start(): Promise<void> {
     const executable = fileURLToPath(new URL('../../simulator/target/release/operit-esp32-simulator' +
       (process.platform === 'win32' ? '.exe' : ''), import.meta.url));
     const runPath = fileURLToPath(new URL('runtime' + (process.platform === 'win32' ? '.exe' : ''), stateDir));
-    await copyFile(executable, runPath);
+    await copySimulatorBinary(executable, runPath);
     if (generation !== lifecycle) return;
     const runtime = spawn(runPath, [], {cwd: root, windowsHide: true,
       env: {...process.env, OPERIT_SIM_TOKEN: token,
