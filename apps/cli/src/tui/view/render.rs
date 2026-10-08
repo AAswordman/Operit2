@@ -1314,8 +1314,13 @@ impl OperitTui {
             ]));
         }
         for pending in &self.pending_pairings {
+            let label = if pending.displayName.is_empty() {
+                pending.peerNodeId.clone()
+            } else {
+                pending.displayName.clone()
+            };
             todo_lines.push(Line::from(Span::raw(
-                text.network_hub_todo_outbound_pairing(&pending.displayName),
+                text.network_hub_todo_outbound_pairing(&label),
             )));
         }
         for request in &hub.outgoingJoins {
@@ -1571,7 +1576,13 @@ impl OperitTui {
                 let peer_name = wizard
                     .pairing
                     .as_ref()
-                    .map(|pending| pending.displayName.clone())
+                    .map(|pending| {
+                        if pending.displayName.is_empty() {
+                            wizard.address.clone()
+                        } else {
+                            pending.displayName.clone()
+                        }
+                    })
                     .unwrap_or_default();
                 let mut filled: Vec<Span<'static>> = Vec::new();
                 filled.push(Span::raw("[ "));
@@ -1610,7 +1621,13 @@ impl OperitTui {
                 let peer_name = wizard
                     .peer
                     .as_ref()
-                    .map(|peer| peer.displayName.clone())
+                    .map(|peer| {
+                        if peer.displayName.is_empty() {
+                            peer.nodeId.clone()
+                        } else {
+                            peer.displayName.clone()
+                        }
+                    })
                     .unwrap_or_default();
                 let body = Paragraph::new(vec![
                     Line::from(Span::styled(
@@ -1635,8 +1652,11 @@ impl OperitTui {
         }
 
         if let Some(error) = &wizard.error {
+            // An error takes over the footer row instead of squeezing the
+            // body, so long join errors stay readable.
             let error_area = Rect {
                 y: chunks[1].y,
+                height: chunks[1].height + chunks[2].height,
                 ..chunks[0]
             };
             frame.render_widget(

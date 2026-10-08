@@ -3334,7 +3334,12 @@ impl OperitTui {
         let Some(peer) = self.pair_wizard.as_ref().and_then(|wizard| wizard.peer.clone()) else {
             return;
         };
-        let result = self.network_join_target(&peer.nodeId, &peer.displayName).await;
+        let label = if peer.displayName.is_empty() {
+            peer.nodeId.clone()
+        } else {
+            peer.displayName.clone()
+        };
+        let result = self.network_join_target(&peer.nodeId, &label).await;
         self.pair_wizard = None;
         match result {
             Ok(message) => self.set_transient_status_message(message),
