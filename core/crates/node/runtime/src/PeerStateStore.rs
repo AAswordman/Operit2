@@ -406,6 +406,9 @@ impl PeerStateStore {
                 Ok((*path, keys))
             })
             .collect::<Result<Vec<_>, String>>()?;
+        // Pairing revocation ends the consent lifecycle authorized by these
+        // credentials, so a new pairing cannot replay a revoked review.
+        crate::NodeSpaceService::space_join::purgePeerRecords(self, nodeId)?;
         for (path, keys) in records {
             if keys.is_empty() {
                 continue;
@@ -1038,6 +1041,82 @@ mod tests {
                 .unwrap(),
             identity
         );
+    }
+
+    #[test]
+    fn device_revocation_retires_join_requests_and_outcomes_but_preserves_other_peers() {
+        use crate::NodeSpaceService::space_join::{INBOUND, INBOX, OUTBOUND, RESULTS};
+        let store = PeerStateStore::new(Arc::new(Storage::default()));
+        for path in [INBOUND, OUTBOUND, INBOX] {
+            for (id, applicant, target) in [
+                ("applicant", "board", "local"),
+                ("target", "local", "board"),
+                ("other", "other", "local"),
+            ] {
+                store
+                    .putRecord(
+                        path,
+                        id,
+                        &serde_json::json!({"request": {
+                            "applicantDeviceId": applicant, "targetDeviceId": target
+                        }}),
+                    )
+                    .unwrap();
+                store
+                    .putRecord(RESULTS, id, &serde_json::json!({"decision": id}))
+                    .unwrap();
+            }
+        }
+        store.removePairedPeer("board").unwrap();
+        store.removePairedPeer("board").unwrap();
+        for path in [INBOUND, OUTBOUND, INBOX, RESULTS] {
+            assert_eq!(
+                store
+                    .records::<Value>(path)
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["other"]
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_join_record_aborts_revocation_before_deleting_any_peer_state() {
+        use crate::NodeSpaceService::space_join::{INBOUND, OUTBOUND, RESULTS};
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        store
+            .putRecord(
+                RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH,
+                "credential",
+                &serde_json::json!({"deviceId": "board"}),
+            )
+            .unwrap();
+        store
+            .putRecord(
+                INBOUND,
+                "request",
+                &serde_json::json!({"request": {
+                    "applicantDeviceId": "board", "targetDeviceId": "local"
+                }}),
+            )
+            .unwrap();
+        store
+            .putRecord(RESULTS, "request", &serde_json::json!({"decision": true}))
+            .unwrap();
+        store
+            .putRecord(OUTBOUND, "broken", &serde_json::json!({"request": null}))
+            .unwrap();
+        // Initialize the credential schema before comparing persisted bytes;
+        // its ordinary first-read migration is independent of revocation.
+        store
+            .records::<Value>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH)
+            .unwrap();
+        let before = storage.0.lock().unwrap().clone();
+        assert!(store.removePairedPeer("board").is_err());
+        assert_eq!(*storage.0.lock().unwrap(), before);
     }
 
     /// Verifies invalid listener preferences fail without modifying stored records.

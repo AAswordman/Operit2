@@ -9,10 +9,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Mutex;
 
 // Group consent uses its own durable schema; single-device approval records are not group approvals.
-const INBOUND: &str = "runtime/link_access/space_merge_inbound.preferences.json";
-const OUTBOUND: &str = "runtime/link_access/space_merge_outbound.preferences.json";
-const INBOX: &str = "runtime/link_access/space_merge_review_inbox.preferences.json";
-const RESULTS: &str = "runtime/link_access/space_merge_review_results.preferences.json";
+pub(crate) const INBOUND: &str = "runtime/link_access/space_merge_inbound.preferences.json";
+pub(crate) const OUTBOUND: &str = "runtime/link_access/space_merge_outbound.preferences.json";
+pub(crate) const INBOX: &str = "runtime/link_access/space_merge_review_inbox.preferences.json";
+pub(crate) const RESULTS: &str = "runtime/link_access/space_merge_review_results.preferences.json";
 const LIFETIME_MS: i64 = 15 * 60 * 1000;
 const OFFLINE_GRACE_MS: i64 = 30_000;
 static MUTATION: Mutex<()> = Mutex::new(());
@@ -281,22 +281,55 @@ pub(crate) fn outgoing(service: &dyn NodeSpaceContext) -> Result<Vec<SpaceJoinRe
     Ok(records)
 }
 
-/// Forgets every join record that references one applicant device. Device
-/// removal must not leave an old Pending/Approved decision blocking the
-/// device's next application.
+/// Retires application/review state when the pairing that authorized it is
+/// explicitly forgotten. A re-paired peer must submit a new request, never
+/// reuse an old admission that may already have been revoked by Space policy.
 pub(crate) fn purgeDevice(service: &dyn NodeSpaceContext, deviceId: &str) -> Result<(), String> {
-    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
-    let mut requestIds = Vec::new();
-    for path in [INBOUND, INBOX] {
-        for (id, record) in store(service).records::<Record>(path)? {
-            if record.request.applicantDeviceId == deviceId {
-                requestIds.push(id.clone());
-                store(service).deleteRecord(path, &id).map_err(|e| e.to_string())?;
-            }
-        }
+    purgePeerRecords(&store(service), deviceId)
+}
+
+pub(crate) fn purgePeerRecords(store: &PeerStateStore, deviceId: &str) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct RequestPeers {
+        applicantDeviceId: String,
+        targetDeviceId: String,
     }
-    for id in requestIds {
-        store(service).deleteRecord(RESULTS, &id).map_err(|e| e.to_string())?;
+    #[derive(Deserialize)]
+    struct RecordPeers {
+        request: RequestPeers,
+    }
+
+    let _lock = MUTATION.lock().map_err(|e| e.to_string())?;
+    // Read only identities, not complete source snapshots. Validate every
+    // request file before deleting anything, preserving unrelated requests.
+    let records = [INBOUND, OUTBOUND, INBOX]
+        .into_iter()
+        .map(|path| {
+            let ids = store
+                .records::<RecordPeers>(path)?
+                .into_iter()
+                .filter(|(_, record)| {
+                    record.request.applicantDeviceId == deviceId
+                        || record.request.targetDeviceId == deviceId
+                })
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>();
+            Ok((path, ids))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    // Remove retry outcomes first: if a later write fails, the remaining
+    // request still identifies the work to finish on an idempotent retry.
+    for id in records
+        .iter()
+        .flat_map(|(_, ids)| ids)
+        .collect::<BTreeSet<_>>()
+    {
+        store.deleteRecord(RESULTS, id)?;
+    }
+    for (path, ids) in records {
+        for id in ids {
+            store.deleteRecord(path, &id)?;
+        }
     }
     Ok(())
 }
