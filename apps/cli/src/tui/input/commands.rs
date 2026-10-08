@@ -238,7 +238,7 @@ const COMMAND_SPECS: [TuiCommandSpec; 74] = [
     },
     TuiCommandSpec {
         name: "network discover",
-        usage: "/network discover [timeout-ms]",
+        usage: "/network discover",
         description_key: TuiTextKey::CommandNetworkDiscoverDescription,
         options: &[],
     },
