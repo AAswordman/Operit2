@@ -4,38 +4,23 @@ import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import 'ApplicationZoom.dart';
 
-/// Stores the user-selected application zoom through the shared Core host API.
+/// Stores interface zoom through Core's node-local runtime storage API.
 class ApplicationZoomPreferences {
-  /// Creates the interface zoom preference store.
+  /// Uses the same Core/Host storage chain on every platform.
   const ApplicationZoomPreferences({
     GeneratedCoreProxyClients clients = const GeneratedCoreProxyClients(
       ProxyCoreRuntimeBridge(),
     ),
   }) : _clients = clients;
 
-  static const String _fileName = 'application_zoom.preferences.json';
-  static const String _zoomKey = 'zoom';
-
   final GeneratedCoreProxyClients _clients;
 
-  /// Reads the saved zoom level or the initial setting for a new installation.
+  /// Reads this node's saved zoom, defaulting to 100% for a new local store.
   Future<double> load() async {
-    final values = await _clients.preferencesPreferenceStorageManager
-        .getPreferences(fileName: _fileName, keys: <String>[_zoomKey]);
-    return _decodeZoom(values);
-  }
-
-  /// Observes interface zoom changes committed locally or synchronized from peers.
-  Stream<double> watch() {
-    return _clients.preferencesPreferenceStorageManager
-        .preferencesFlow(fileName: _fileName)
-        .map(_decodeZoom)
-        .distinct();
-  }
-
-  /// Decodes one zoom snapshot with the same validation used for startup reads.
-  double _decodeZoom(Map<String, String> values) {
-    final encoded = values[_zoomKey];
+    final storage = _clients.repositoryRuntimeStorageRepository;
+    final encoded = await storage.readText(
+      path: await storage.applicationZoomPath(),
+    );
     if (encoded == null) {
       return 1.0;
     }
@@ -46,14 +31,15 @@ class ApplicationZoomPreferences {
     return zoom;
   }
 
-  /// Persists one of the supported interface zoom levels.
-  Future<void> save(double zoom) {
+  /// Core classifies this path as CoreNode-owned, so no sync operation is made.
+  Future<void> save(double zoom) async {
     if (!ApplicationZoom.levels.contains(zoom)) {
       throw ArgumentError.value(zoom, 'zoom', 'Unknown zoom level');
     }
-    return _clients.preferencesPreferenceStorageManager.setPreferences(
-      fileName: _fileName,
-      values: <String, String>{_zoomKey: zoom.toString()},
+    final storage = _clients.repositoryRuntimeStorageRepository;
+    await storage.writeText(
+      path: await storage.applicationZoomPath(),
+      content: zoom.toString(),
     );
   }
 }

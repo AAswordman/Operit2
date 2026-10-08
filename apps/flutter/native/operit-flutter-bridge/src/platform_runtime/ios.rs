@@ -6,16 +6,16 @@ use std::sync::Arc;
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::SystemOperationHost;
 use operit_host_ios_native::{
-    createRuntimeHostManager, IosBluetoothHost, IosManagedRuntimeHost, IosRuntimeStorageHost,
-    IosTerminalHost,
+    createRuntimeHostManager, IosBluetoothHost, IosFileSystemHost, IosManagedRuntimeHost,
+    IosRuntimeStorageHost, IosTerminalHost,
 };
 use operit_link::LinkDeviceInfo;
 
 use super::{install_owner_media, BridgeStartup, StartupMetadata};
 use crate::FlutterHostAdapters::FlutterWebVisitBridge;
 use crate::FlutterOwnerCapabilities::{
-    ownerBluetooth, ownerLocation, ownerRecognizeText, ownerScreenshot, ownerSendNotification,
-    FlutterSystemBindings, FlutterSystemOperationBridge,
+    ownerBluetooth, ownerFileOpen, ownerLocation, ownerRecognizeText, ownerScreenshot,
+    ownerSendNotification, FlutterSystemBindings, FlutterSystemOperationBridge,
 };
 
 /// Creates iOS hosts around one retained terminal and managed runtime instance.
@@ -29,6 +29,9 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
         managed,
     )
     .withTerminalHost(terminal);
+    context.fileSystemHost = Some(Arc::new(IosFileSystemHost::fromFileOpener(Arc::new(
+        ownerFileOpen,
+    ))));
     let system = context
         .systemOperationHost
         .clone()

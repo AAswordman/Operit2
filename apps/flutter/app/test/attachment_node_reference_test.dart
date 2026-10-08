@@ -26,7 +26,11 @@ void main() {
         reference,
         contains('path="/app/data/temp/clean_on_exit/report.pdf"'),
       );
-      expect(reference, contains('id="${attachment.filePath}"'));
+      expect(
+        reference,
+        contains('id="/app/data/temp/clean_on_exit/report.pdf"'),
+      );
+      expect(reference, isNot(contains('/device-b/')));
       expect(reference, contains('filename="报价单&quot;.pdf"'));
     },
   );
@@ -45,8 +49,9 @@ void main() {
     final cursorResult = cursor.parseMessageContent(reference);
     expect(bubbleResult.processedText, isEmpty);
     expect(cursorResult.processedText, isEmpty);
-    expect(bubbleResult.trailingAttachments.single.id, attachment.filePath);
-    expect(cursorResult.trailingAttachments.single.id, attachment.filePath);
+    const toolPath = '/app/data/temp/clean_on_exit/report&copy.pdf';
+    expect(bubbleResult.trailingAttachments.single.id, toolPath);
+    expect(cursorResult.trailingAttachments.single.id, toolPath);
     expect(
       bubbleResult.trailingAttachments.single.filename,
       attachment.fileName,
@@ -61,7 +66,7 @@ void main() {
     expect(cursorResult.trailingAttachments.single.size, 3);
 
     const paired =
-        '<attachment id="/source/file.pdf" filename="file.pdf" '
+        '<attachment id="/app/data/temp/clean_on_exit/file.pdf" filename="file.pdf" '
         'type="application/pdf" node_id="core-b" '
         'path="/app/data/temp/clean_on_exit/file.pdf" size="3">body</attachment>';
     expect(
@@ -87,20 +92,6 @@ void main() {
       viewModel.createAttachmentReference(attachment),
       contains('path="/app/data/temp/clean_on_exit/report.pdf"'),
     );
-  });
-
-  test('external host paths are not advertised as VFS paths', () {
-    const attachment = AttachmentInfo(
-      filePath: '/Users/source/report.pdf',
-      nodeId: 'core-b',
-      fileName: 'report.pdf',
-      mimeType: 'application/pdf',
-      fileSize: 3,
-      content: '',
-    );
-    final reference = viewModel.createAttachmentReference(attachment);
-    expect(reference, contains('node_id="core-b"'));
-    expect(reference, isNot(contains(' path=')));
   });
 
   test('legacy JSON has no invented source node', () {
@@ -154,6 +145,8 @@ void main() {
     );
     final reference = viewModel.createAttachmentReference(attachment);
     expect(reference, isNot(contains('node_id=')));
+    expect(reference, contains('id="pasted_text_1"'));
+    expect(reference, isNot(contains(' path=')));
     expect(reference, contains('content="&quot;&lt;&amp;"'));
   });
 }

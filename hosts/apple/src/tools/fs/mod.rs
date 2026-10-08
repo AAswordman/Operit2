@@ -2,6 +2,7 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use globset::GlobBuilder;
@@ -17,12 +18,32 @@ use operit_host_api::{
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-#[derive(Clone, Debug, Default)]
-pub struct AppleFileSystemHost;
+/// Platform-owned file presentation (UIKit on iOS; system open on macOS).
+pub type AppleFileOpener = Arc<dyn Fn(&str) -> HostResult<()> + Send + Sync>;
+
+#[derive(Clone, Default)]
+pub struct AppleFileSystemHost {
+    opener: Option<AppleFileOpener>,
+}
+
+impl std::fmt::Debug for AppleFileSystemHost {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AppleFileSystemHost")
+            .field("hasFileOpener", &self.opener.is_some())
+            .finish()
+    }
+}
 
 impl AppleFileSystemHost {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    pub fn fromFileOpener(opener: AppleFileOpener) -> Self {
+        Self {
+            opener: Some(opener),
+        }
     }
 }
 
@@ -420,17 +441,27 @@ impl FileSystemHost for AppleFileSystemHost {
 
     fn openFile(&self, path: &str) -> HostResult<()> {
         self.validateReadableFile(path)?;
-        let status = Command::new("open").arg(path).status().map_err(|error| {
-            HostError::new(format!(
-                "Failed to open Apple platform file request: {error}"
-            ))
-        })?;
-        if !status.success() {
-            return Err(HostError::new(format!(
-                "Apple platform open request exited with {status}"
-            )));
+        if let Some(opener) = &self.opener {
+            return opener(path);
         }
-        Ok(())
+        #[cfg(target_os = "macos")]
+        {
+            let status = Command::new("open").arg(path).status().map_err(|error| {
+                HostError::new(format!(
+                    "Failed to open Apple platform file request: {error}"
+                ))
+            })?;
+            if !status.success() {
+                return Err(HostError::new(format!(
+                    "Apple platform open request exited with {status}"
+                )));
+            }
+            Ok(())
+        }
+        #[cfg(not(target_os = "macos"))]
+        Err(HostError::new(
+            "Apple file opener is not registered by the application owner",
+        ))
     }
 
     fn shareFile(&self, path: &str, title: &str) -> HostResult<()> {
@@ -780,4 +811,40 @@ fn bytes_to_search_line(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .trim_end_matches(&['\r', '\n'][..])
         .to_string()
+}
+
+#[cfg(test)]
+mod file_open_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[test]
+    fn opensValidatedFileThroughOwnerAndPreservesErrors() {
+        let directory = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("中文 file & 100%.txt");
+        fs::write(&path, b"file open test").unwrap();
+        let called = Arc::new(Mutex::new(Vec::new()));
+        let calls = called.clone();
+        let host = AppleFileSystemHost::fromFileOpener(Arc::new(move |path| {
+            calls.lock().unwrap().push(path.to_string());
+            Ok(())
+        }));
+        host.openFile(path.to_str().unwrap()).unwrap();
+        assert_eq!(*called.lock().unwrap(), vec![path.to_str().unwrap()]);
+        assert!(host.openFile(directory.to_str().unwrap()).is_err());
+        assert!(host
+            .openFile(directory.join("missing").to_str().unwrap())
+            .is_err());
+        assert!(host.openFile("relative.txt").is_err());
+        assert_eq!(called.lock().unwrap().len(), 1);
+        let host =
+            AppleFileSystemHost::fromFileOpener(Arc::new(|_| Err(HostError::new("viewer denied"))));
+        assert!(host
+            .openFile(path.to_str().unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("viewer denied"));
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

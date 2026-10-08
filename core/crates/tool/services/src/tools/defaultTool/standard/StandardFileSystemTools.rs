@@ -1614,11 +1614,17 @@ impl ToolExecutor for FileSystemToolExecutor {
             | FileSystemToolOperation::DownloadFile
             | FileSystemToolOperation::CreateFile
             | FileSystemToolOperation::EditFile
-            | FileSystemToolOperation::OpenFile
             | FileSystemToolOperation::ShareFile => ToolAccessSpec {
                 effect: ToolEffect::WRITE,
                 boundary: ToolBoundary::FilePath {
                     effect: ToolEffect::WRITE,
+                },
+            },
+            // Presentation is an external side effect, but the source only needs read access.
+            FileSystemToolOperation::OpenFile => ToolAccessSpec {
+                effect: ToolEffect::WRITE,
+                boundary: ToolBoundary::FilePath {
+                    effect: ToolEffect::READ,
                 },
             },
             FileSystemToolOperation::ApplyFile => ToolAccessSpec {

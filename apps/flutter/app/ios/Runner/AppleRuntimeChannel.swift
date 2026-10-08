@@ -10,7 +10,7 @@ import UserNotifications
 import Vision
 import UIKit
 
-final class AppleRuntimeChannel: NSObject {
+final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelegate {
   private static var shared: AppleRuntimeChannel?
   private static var pendingNotificationActivations: [[String: Any]] = []
   private static var notificationActivationReceiverReady = false
@@ -24,6 +24,8 @@ final class AppleRuntimeChannel: NSObject {
   private var locationRequestStarted = false
   private var locationIncludeAddress = false
   private var locationTimeoutSeconds: Double = 0
+  private var fileController: UIDocumentInteractionController?
+  private var filePresenter: UIViewController?
   private var audioPlayers: [String: AVAudioPlayer] = [:]
   private var musicPlayer: AVPlayer?
   private var musicSource: String?
@@ -137,6 +139,8 @@ final class AppleRuntimeChannel: NSObject {
       ownerSystemRecognizeText(call: call, result: result)
     case "ownerSystemOperation":
       ownerSystemOperation(call: call, result: result)
+    case "ownerFileOpen":
+      ownerFileOpen(call: call, result: result)
     case "ownerAudioPlay":
       ownerAudioPlay(call: call, result: result)
     case "ownerMusicPlayback":
@@ -853,6 +857,73 @@ final class AppleRuntimeChannel: NSObject {
           result(["resultJson": "{\"success\":true}"])
         }
       }
+    }
+  }
+
+  /// Presents the real UIKit document preview, falling back to an Open In menu.
+  private func ownerFileOpen(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let args = call.arguments as? [String: Any],
+          let path = args["path"] as? String, path.hasPrefix("/"), !path.contains("\0") else {
+      result(["success": false, "error": "ownerFileOpen expects an absolute file path"])
+      return
+    }
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+          !isDirectory.boolValue, FileManager.default.isReadableFile(atPath: path) else {
+      result(["success": false, "error": "File is missing or unreadable: \(path)"])
+      return
+    }
+    guard let scene = UIApplication.shared.connectedScenes
+      .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+      var presenter = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+      result(["success": false, "error": "Opening a document requires an active application window"])
+      return
+    }
+    while let presented = presenter.presentedViewController { presenter = presented }
+    guard !presenter.isBeingDismissed, !presenter.isBeingPresented else {
+      result(["success": false, "error": "The document presenter is transitioning; try again"])
+      return
+    }
+    guard fileController == nil else {
+      result(["success": false, "error": "Close the current document preview or Open In menu first"])
+      return
+    }
+    // Retain the controller and its presenter until UIKit reports dismissal.
+    let controller = UIDocumentInteractionController(url: URL(fileURLWithPath: path))
+    controller.delegate = self
+    fileController = controller
+    filePresenter = presenter
+    let shown = controller.presentPreview(animated: true) || controller.presentOpenInMenu(
+      from: CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 1, height: 1),
+      in: presenter.view, animated: true
+    )
+    if shown {
+      result(["success": true])
+    } else {
+      fileController = nil
+      filePresenter = nil
+      result(["success": false, "error": "No installed application can open this document"])
+    }
+  }
+
+  func documentInteractionControllerViewControllerForPreview(
+    _ controller: UIDocumentInteractionController
+  ) -> UIViewController {
+    // Set immediately before presentPreview, while the foreground presenter is alive.
+    return filePresenter!
+  }
+
+  func documentInteractionControllerDidEndPreview(_ controller: UIDocumentInteractionController) {
+    if fileController === controller {
+      fileController = nil
+      filePresenter = nil
+    }
+  }
+
+  func documentInteractionControllerDidDismissOpenInMenu(_ controller: UIDocumentInteractionController) {
+    if fileController === controller {
+      fileController = nil
+      filePresenter = nil
     }
   }
 

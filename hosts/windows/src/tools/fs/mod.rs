@@ -416,15 +416,48 @@ impl FileSystemHost for WindowsFileSystemHost {
 
     fn openFile(&self, path: &str) -> HostResult<()> {
         self.validateReadableFile(path)?;
-        let status = Command::new("cmd")
-            .args(["/C", "start", "", path])
-            .status()?;
-        if !status.success() {
-            return Err(HostError::new(format!(
-                "Failed to open file with system default application: {path}"
-            )));
+        // The filename is data, not a cmd.exe command (spaces, %, &, and Unicode are valid).
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            use windows_sys::Win32::System::Com::{
+                CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+            };
+            use windows_sys::Win32::UI::Shell::ShellExecuteW;
+            use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+            let path = path.to_string();
+            // Shell extensions can require STA; do not change a runtime worker's COM apartment.
+            std::thread::spawn(move || {
+                let initialized = unsafe {
+                    CoInitializeEx(std::ptr::null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32)
+                };
+                if initialized < 0 {
+                    return Err(HostError::new(format!("Failed to initialize file opener COM apartment: {initialized}")));
+                }
+                struct Apartment;
+                impl Drop for Apartment {
+                    fn drop(&mut self) { unsafe { CoUninitialize() }; }
+                }
+                let _apartment = Apartment;
+                let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+                let filename: Vec<u16> = std::ffi::OsStr::new(&path)
+                    .encode_wide().chain(Some(0)).collect();
+                let result = unsafe {
+                    ShellExecuteW(std::ptr::null_mut(), operation.as_ptr(), filename.as_ptr(),
+                        std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL)
+                } as isize;
+                if result <= 32 {
+                    return Err(HostError::new(format!(
+                        "Failed to open file with system default application (ShellExecute error {result}): {path}"
+                    )));
+                }
+                Ok(())
+            }).join().map_err(|_| HostError::new("Windows file opener thread panicked"))?
         }
-        Ok(())
+        #[cfg(not(target_os = "windows"))]
+        Err(HostError::new(
+            "Windows file opening is only available on Windows",
+        ))
     }
 
     fn shareFile(&self, path: &str, _title: &str) -> HostResult<()> {

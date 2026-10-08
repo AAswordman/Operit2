@@ -81,7 +81,7 @@ void main() {
   });
 
   test(
-    'Android select returns metadata only and reads each token lazily',
+    'Android photo picker returns metadata only and reads each token lazily',
     () async {
       const channel = MethodChannel('operit/file_input');
       final calls = <MethodCall>[];
@@ -90,8 +90,8 @@ void main() {
           .setMockMethodCallHandler(channel, (call) async {
             calls.add(call);
             switch (call.method) {
-              case 'pickFiles':
-                expect(call.arguments['mimeTypes'], ['image/*']);
+              case 'pickImages':
+                expect(call.arguments, isNull);
                 return [
                   {
                     'token': 'first',
@@ -116,7 +116,7 @@ void main() {
           });
       try {
         final files = await SelectedFileInput.pick(imagesOnly: true);
-        expect(calls.map((call) => call.method), ['pickFiles']);
+        expect(calls.map((call) => call.method), ['pickImages']);
         expect(files.first.byteLength, 143388128);
         expect(files.last.byteLength, isNull);
         expect(await files.first.readChunk(), [0, 255]);
@@ -125,7 +125,7 @@ void main() {
           await file.close();
         }
         expect(calls.map((call) => call.method), [
-          'pickFiles',
+          'pickImages',
           'readChunk',
           'close',
           'close',
@@ -138,4 +138,94 @@ void main() {
       }
     },
   );
+
+  test('Android ordinary files still use the document picker', () async {
+    const channel = MethodChannel('operit/file_input');
+    final calls = <MethodCall>[];
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          if (call.method == 'pickFiles') {
+            expect(call.arguments['mimeTypes'], isEmpty);
+            return [
+              {
+                'token': 'document',
+                'name': 'notes.txt',
+                'byteLength': 12,
+                'mimeType': 'text/plain',
+              },
+            ];
+          }
+          if (call.method == 'close') return null;
+          throw StateError('Unexpected ${call.method}');
+        });
+    try {
+      final files = await SelectedFileInput.pick();
+      expect(calls.map((call) => call.method), ['pickFiles']);
+      expect(files.single.name, 'notes.txt');
+      expect(files.single.mimeType, 'text/plain');
+      await files.single.close();
+      expect(calls.map((call) => call.method), ['pickFiles', 'close']);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    }
+  });
+
+  for (final imagesOnly in [true, false]) {
+    final method = imagesOnly ? 'pickImages' : 'pickFiles';
+    test('Android $method cancellation returns no attachments', () async {
+      const channel = MethodChannel('operit/file_input');
+      final calls = <MethodCall>[];
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            expect(call.method, method);
+            return <Object?>[];
+          });
+      try {
+        expect(await SelectedFileInput.pick(imagesOnly: imagesOnly), isEmpty);
+        expect(calls, hasLength(1));
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      }
+    });
+
+    test('Android $method releases every token on invalid metadata', () async {
+      const channel = MethodChannel('operit/file_input');
+      final closedTokens = <String>[];
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == method) {
+              return [
+                {'token': 'valid', 'name': 'photo.png', 'byteLength': 12},
+                {'token': 'invalid', 'name': 'broken.png', 'byteLength': -1},
+                {'token': 'unvisited', 'name': 'later.png', 'byteLength': null},
+              ];
+            }
+            if (call.method == 'close') {
+              closedTokens.add(call.arguments['token'] as String);
+              return null;
+            }
+            throw StateError('Unexpected ${call.method}');
+          });
+      try {
+        await expectLater(
+          SelectedFileInput.pick(imagesOnly: imagesOnly),
+          throwsStateError,
+        );
+        expect(closedTokens, ['valid', 'invalid', 'unvisited']);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      }
+    });
+  }
 }

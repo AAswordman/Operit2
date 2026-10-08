@@ -184,6 +184,8 @@ flutter {
 }
 
 dependencies {
+    // Match image_picker_android; the metadata-only attachment picker uses these contracts directly.
+    implementation("androidx.activity:activity:1.12.4")
     implementation("com.google.mlkit:text-recognition:16.0.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
     implementation("com.google.mlkit:text-recognition-japanese:16.0.0")

@@ -20,7 +20,8 @@ use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiRes
 use operit_providers::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
-    EnhancedAIService, ResumeRequest, SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
+    EnhancedAIService, MessageCancellationToken, ResumeRequest, SendMessageCallbacks,
+    SendMessageOptions, SendMessageRuntime,
 };
 use operit_store::PreferencesDataStore::FlowLike;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
@@ -108,12 +109,72 @@ pub struct StableContextWindowRequest<'a> {
     pub runtime: SendMessageRuntime,
 }
 
-static ACTIVE_CHAT_KEYS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+/// Owns the cancellation handle and response stream for the same send operation.
+struct ActiveChatOperation {
+    cancellationToken: MessageCancellationToken,
+    enhancedAiService: EnhancedAIService,
+    responseStream: Option<SharedAiResponseStream>,
+}
+
+/// Prevents a completed or cancelled send from cleaning up a newer send for its chat.
+struct ChatOperationRegistry<T> {
+    nextOperationId: u64,
+    operations: HashMap<String, (u64, T)>,
+}
+
+impl<T> Default for ChatOperationRegistry<T> {
+    fn default() -> Self {
+        Self {
+            nextOperationId: 0,
+            operations: HashMap::new(),
+        }
+    }
+}
+
+impl<T> ChatOperationRegistry<T> {
+    fn register(&mut self, chatKey: String, operation: T) -> u64 {
+        self.nextOperationId = self
+            .nextOperationId
+            .checked_add(1)
+            .expect("chat operation id must not overflow");
+        let operationId = self.nextOperationId;
+        self.operations.insert(chatKey, (operationId, operation));
+        operationId
+    }
+
+    fn get_mut(&mut self, chatKey: &str, operationId: u64) -> Option<&mut T> {
+        self.operations
+            .get_mut(chatKey)
+            .filter(|(currentId, _)| *currentId == operationId)
+            .map(|(_, operation)| operation)
+    }
+
+    fn remove(&mut self, chatKey: &str, operationId: u64) -> Option<T> {
+        self.get_mut(chatKey, operationId)?;
+        self.operations
+            .remove(chatKey)
+            .map(|(_, operation)| operation)
+    }
+
+    fn take(&mut self, chatKey: &str) -> Option<(u64, T)> {
+        self.operations.remove(chatKey)
+    }
+
+    fn snapshot(&self) -> Vec<(String, u64)> {
+        self.operations
+            .iter()
+            .map(|(chatKey, (operationId, _))| (chatKey.clone(), *operationId))
+            .collect()
+    }
+}
+
+static ACTIVE_CHAT_OPERATIONS: OnceLock<Mutex<ChatOperationRegistry<ActiveChatOperation>>> =
+    OnceLock::new();
 static LAST_ACTIVE_CHAT_KEY: OnceLock<Mutex<String>> = OnceLock::new();
-static ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, EnhancedAIService>>> =
-    OnceLock::new();
-static ACTIVE_RESPONSE_STREAM_BY_CHAT_ID: OnceLock<Mutex<HashMap<String, SharedAiResponseStream>>> =
-    OnceLock::new();
+
+fn activeChatOperations() -> &'static Mutex<ChatOperationRegistry<ActiveChatOperation>> {
+    ACTIVE_CHAT_OPERATIONS.get_or_init(|| Mutex::new(ChatOperationRegistry::default()))
+}
 
 pub fn messageTimingNow() -> MessageTiming {
     let startedAtMs = operit_host_api::TimeUtils::currentTimeMillis() as u64;
@@ -135,10 +196,8 @@ pub fn logMessageTiming(stage: &str, startTimeMs: MessageTiming, details: Option
 
 impl AIMessageManager {
     pub fn initialize() {
-        let _ = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
+        let _ = activeChatOperations();
         let _ = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
-        let _ = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-        let _ = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
     }
 
     #[allow(non_snake_case)]
@@ -236,14 +295,25 @@ impl AIMessageManager {
             Some(chatId) => chatId.clone(),
             None => DEFAULT_CHAT_KEY.to_string(),
         };
-        Self::rememberActiveChatKey(chatKey.clone());
+        let cancellationToken = MessageCancellationToken::default();
+        let operationId = activeChatOperations()
+            .lock()
+            .expect("active chat operations mutex poisoned")
+            .register(
+                chatKey.clone(),
+                ActiveChatOperation {
+                    cancellationToken: cancellationToken.clone(),
+                    enhancedAiService: request.enhancedAiService.clone(),
+                    responseStream: None,
+                },
+            );
         Self::setLastActiveChatKey(chatKey.clone());
-        Self::rememberActiveEnhancedAiService(chatKey.clone(), request.enhancedAiService.clone());
         ChainLogger::info(
             SEND_CHAIN,
             "send.ai_manager.start",
             &[
                 ("chatKey", chatKey.clone()),
+                ("operationId", operationId.to_string()),
                 (
                     "messageChars",
                     ChainLogger::lenField(&request.messageContent),
@@ -299,8 +369,7 @@ impl AIMessageManager {
                     ),
                 ],
             );
-            Self::forgetActiveChatKey(&chatKey);
-            Self::forgetActiveEnhancedAiService(&chatKey);
+            Self::finishOperation(&chatKey, operationId);
             return Ok(SharedAiResponseStream::from(with_event_channel_shared(
                 pluginExecution.stream,
                 operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
@@ -314,6 +383,7 @@ impl AIMessageManager {
         let enableStream = !disableStreamOutput;
 
         let mut options = SendMessageOptions::new();
+        options.cancellationToken = Some(cancellationToken);
         options.message = request.messageContent;
         options.chatId = request.chatId;
         options.chatHistory = memoryForRequest;
@@ -360,6 +430,15 @@ impl AIMessageManager {
                 ("modelOverrideSet", ChainLogger::boolField(modelOverrideSet)),
             ],
         );
+        // A pre-send hook may have yielded while the user cancelled this operation.
+        if activeChatOperations()
+            .lock()
+            .expect("active chat operations mutex poisoned")
+            .get_mut(&chatKey, operationId)
+            .is_none()
+        {
+            return Err(AiServiceError::RequestCancelled);
+        }
         let providerResponse = if request.resume {
             request
                 .enhancedAiService
@@ -370,22 +449,39 @@ impl AIMessageManager {
         };
         match providerResponse {
             Ok(stream) => {
+                // Register before scheduling cleanup: an already-closed stream can be
+                // collected immediately, and a cancelled send must never re-register itself.
+                let registered = {
+                    let mut operations = activeChatOperations()
+                        .lock()
+                        .expect("active chat operations mutex poisoned");
+                    if let Some(operation) = operations.get_mut(&chatKey, operationId) {
+                        operation.responseStream = Some(stream.clone());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if !registered {
+                    stream.close();
+                    return Err(AiServiceError::RequestCancelled);
+                }
                 let cleanupChatKey = chatKey.clone();
                 let mut cleanupStream = stream.chunk_stream();
-                defaultHostRuntimeTaskSchedulerHost()
+                if let Err(error) = defaultHostRuntimeTaskSchedulerHost()
                     .scheduleHostRuntimeAsyncTask(
                         "ai-message-manager-response-cleanup",
                         Box::new(move || {
                             Box::pin(async move {
                                 cleanupStream.collect(&mut |_| {}).await;
-                                Self::forgetActiveChatKey(&cleanupChatKey);
-                                Self::forgetActiveEnhancedAiService(&cleanupChatKey);
-                                Self::forgetActiveResponseStream(&cleanupChatKey);
+                                Self::finishOperation(&cleanupChatKey, operationId);
                             })
                         }),
                     )
-                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-                Self::rememberActiveResponseStream(chatKey.clone(), stream.clone());
+                {
+                    Self::cancelOperationForId(&chatKey, Some(operationId)).await;
+                    return Err(AiServiceError::RequestFailed(error.to_string()));
+                }
                 ChainLogger::info(
                     RECEIVE_CHAIN,
                     "receive.provider.stream.ready",
@@ -399,9 +495,7 @@ impl AIMessageManager {
                     "send.provider.error",
                     &[("chatKey", chatKey.clone()), ("error", error.to_string())],
                 );
-                Self::forgetActiveChatKey(&chatKey);
-                Self::forgetActiveEnhancedAiService(&chatKey);
-                Self::forgetActiveResponseStream(&chatKey);
+                Self::finishOperation(&chatKey, operationId);
                 Err(error)
             }
         }
@@ -939,29 +1033,23 @@ impl AIMessageManager {
                 .replace('>', "&gt;")
                 .replace('\'', "&#39;")
         };
+        let toolPath = attachment.fileToolPath();
         let mut attributes = format!(
             "id=\"{}\" filename=\"{}\" type=\"{}\"",
-            escape(&attachment.filePath),
+            escape(&toolPath),
             escape(&attachment.fileName),
             escape(&attachment.mimeType)
         );
         if let Some(nodeId) = attachment.nodeId.as_deref().filter(|nodeId| !nodeId.is_empty()) {
             attributes.push_str(&format!(" node_id=\"{}\"", escape(nodeId)));
-            let toolPath = attachment.fileToolPath();
-            if toolPath.starts_with("/app/data/temp/clean_on_exit/") {
-                attributes.push_str(&format!(" path=\"{}\"", escape(&toolPath)));
-            }
+        }
+        if toolPath.starts_with("/app/data/temp/clean_on_exit/") {
+            attributes.push_str(&format!(" path=\"{}\"", escape(&toolPath)));
         }
         if attachment.fileSize > 0 {
             attributes.push_str(&format!(" size=\"{}\"", attachment.fileSize));
         }
         attributes
-    }
-
-    fn rememberActiveChatKey(chatKey: String) {
-        let map = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut guard = map.lock().expect("active chat key mutex poisoned");
-        guard.insert(chatKey.clone(), chatKey);
     }
 
     fn setLastActiveChatKey(chatKey: String) {
@@ -970,10 +1058,11 @@ impl AIMessageManager {
         *guard = chatKey;
     }
 
-    fn forgetActiveChatKey(chatKey: &str) {
-        let map = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut guard = map.lock().expect("active chat key mutex poisoned");
-        guard.remove(chatKey);
+    fn finishOperation(chatKey: &str, operationId: u64) {
+        activeChatOperations()
+            .lock()
+            .expect("active chat operations mutex poisoned")
+            .remove(chatKey, operationId);
     }
 
     #[allow(non_snake_case)]
@@ -1065,98 +1154,62 @@ impl AIMessageManager {
         } else {
             chatId
         };
-        if let Some(stream) = Self::takeActiveResponseStream(&chatKey) {
+        Self::cancelOperationForId(&chatKey, None).await;
+    }
+
+    /// Takes ownership of the service before anything can close the response stream.
+    async fn cancelOperationForId(chatKey: &str, expectedOperationId: Option<u64>) {
+        let operation = {
+            let mut operations = activeChatOperations()
+                .lock()
+                .expect("active chat operations mutex poisoned");
+            match expectedOperationId {
+                Some(operationId) => operations
+                    .remove(chatKey, operationId)
+                    .map(|operation| (operationId, operation)),
+                None => operations.take(chatKey),
+            }
+        };
+        let Some((operationId, mut operation)) = operation else {
+            return;
+        };
+        // Close the per-send gate immediately, including a send that has not yet
+        // entered the provider or registered its execution context.
+        operation.cancellationToken.cancel();
+        ChainLogger::info(
+            SEND_CHAIN,
+            "send.cancel.start",
+            &[
+                ("chatKey", chatKey.to_string()),
+                ("operationId", operationId.to_string()),
+            ],
+        );
+        // The token already stops response callbacks and new tool rounds. Close
+        // output promptly, without waiting for a busy provider mutex; cleanup cannot
+        // lose the service because this call has taken ownership of the whole operation.
+        if let Some(stream) = operation.responseStream {
             stream.close();
         }
-        if let Some(mut service) = Self::cloneActiveEnhancedAiService(&chatKey) {
-            service.cancelConversation().await;
-        }
+        operation.enhancedAiService.cancelConversation().await;
+        ChainLogger::info(
+            SEND_CHAIN,
+            "send.cancel.done",
+            &[
+                ("chatKey", chatKey.to_string()),
+                ("operationId", operationId.to_string()),
+            ],
+        );
     }
 
     #[allow(non_snake_case)]
     pub async fn cancelAllOperations() {
-        let keys = {
-            let map = ACTIVE_CHAT_KEYS.get_or_init(|| Mutex::new(HashMap::new()));
-            map.lock()
-                .expect("active chat key mutex poisoned")
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let service_keys = {
-            let map =
-                ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-            map.lock()
-                .expect("active enhanced ai service mutex poisoned")
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let stream_keys = {
-            let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-            map.lock()
-                .expect("active response stream mutex poisoned")
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let keys = keys
-            .into_iter()
-            .chain(service_keys)
-            .chain(stream_keys)
-            .collect::<std::collections::BTreeSet<_>>();
-        for key in keys {
-            Self::cancelOperation(key).await;
+        let operations = activeChatOperations()
+            .lock()
+            .expect("active chat operations mutex poisoned")
+            .snapshot();
+        for (chatKey, operationId) in operations {
+            Self::cancelOperationForId(&chatKey, Some(operationId)).await;
         }
-    }
-
-    #[allow(non_snake_case)]
-    fn rememberActiveEnhancedAiService(chatKey: String, enhancedAiService: EnhancedAIService) {
-        let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-        map.lock()
-            .expect("active enhanced ai service mutex poisoned")
-            .insert(chatKey, enhancedAiService);
-    }
-
-    #[allow(non_snake_case)]
-    fn forgetActiveEnhancedAiService(chatKey: &str) {
-        let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-        map.lock()
-            .expect("active enhanced ai service mutex poisoned")
-            .remove(chatKey);
-    }
-
-    #[allow(non_snake_case)]
-    fn cloneActiveEnhancedAiService(chatKey: &str) -> Option<EnhancedAIService> {
-        let map = ACTIVE_ENHANCED_AI_SERVICE_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-        map.lock()
-            .expect("active enhanced ai service mutex poisoned")
-            .get(chatKey)
-            .cloned()
-    }
-
-    #[allow(non_snake_case)]
-    fn rememberActiveResponseStream(chatKey: String, responseStream: SharedAiResponseStream) {
-        let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-        map.lock()
-            .expect("active response stream mutex poisoned")
-            .insert(chatKey, responseStream);
-    }
-
-    #[allow(non_snake_case)]
-    fn forgetActiveResponseStream(chatKey: &str) {
-        let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-        map.lock()
-            .expect("active response stream mutex poisoned")
-            .remove(chatKey);
-    }
-
-    #[allow(non_snake_case)]
-    fn takeActiveResponseStream(chatKey: &str) -> Option<SharedAiResponseStream> {
-        let map = ACTIVE_RESPONSE_STREAM_BY_CHAT_ID.get_or_init(|| Mutex::new(HashMap::new()));
-        map.lock()
-            .expect("active response stream mutex poisoned")
-            .remove(chatKey)
     }
 }
 
@@ -1435,7 +1488,8 @@ mod tests {
         assert!(tag.contains("node_id=\"core-b\""));
         assert!(tag.contains("path=\"/app/data/temp/clean_on_exit/report.pdf\""));
         assert!(tag.contains("filename=\"报价单&quot;.pdf\""));
-        assert!(tag.contains("id=\"/device-b/runtime/temp/clean_on_exit/report.pdf\""));
+        assert!(tag.contains("id=\"/app/data/temp/clean_on_exit/report.pdf\""));
+        assert!(!tag.contains("/device-b/"));
     }
 
     #[test]
@@ -1454,12 +1508,16 @@ mod tests {
     }
 
     #[test]
-    fn external_host_paths_are_not_mislabeled_as_vfs_paths() {
-        let mut attachment = AttachmentInfo::new("/Users/source/report.pdf".into(), "report.pdf".into(), "application/pdf".into(), 3);
-        attachment.nodeId = Some("core-b".into());
+    fn inline_attachment_markup_keeps_its_content_identifier() {
+        let mut attachment = AttachmentInfo::new(
+            "pasted_text_1".into(), "pasted_text.txt".into(), "text/plain".into(), 3,
+        );
+        attachment.content = "text".into();
         let tag = AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
-        assert!(tag.contains("node_id=\"core-b\""));
+        assert!(tag.contains("id=\"pasted_text_1\""));
         assert!(!tag.contains(" path="));
+        assert!(!tag.contains("node_id="));
+        assert!(tag.ends_with(">text</attachment>"));
     }
 
     #[test]
@@ -1542,5 +1600,87 @@ mod tests {
         assert!(review.contains("[结果: system_info 成功]"));
         assert!(review.contains("..."));
         assert!(review.len() < 500);
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::{ChatOperationRegistry, MessageCancellationToken};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn cancellation_keeps_its_handle_when_stream_cleanup_runs() {
+        let registry = Arc::new(Mutex::new(ChatOperationRegistry::default()));
+        let cancellationHandle = MessageCancellationToken::default();
+        let operationId = registry
+            .lock()
+            .unwrap()
+            .register("chat".into(), cancellationHandle.clone());
+
+        // Cancellation takes the service before closing the stream. Reproduce
+        // cleanup waking on a different thread while cancellation owns it.
+        let (_, ownedHandle) = registry.lock().unwrap().take("chat").unwrap();
+        let cleanupRegistry = registry.clone();
+        std::thread::spawn(move || {
+            assert!(cleanupRegistry
+                .lock()
+                .unwrap()
+                .remove("chat", operationId)
+                .is_none());
+        })
+        .join()
+        .unwrap();
+
+        ownedHandle.cancel();
+        assert!(cancellationHandle.isCancelled());
+        assert!(registry.lock().unwrap().take("chat").is_none());
+    }
+
+    #[test]
+    fn old_stream_cleanup_does_not_remove_new_send() {
+        let mut registry = ChatOperationRegistry::default();
+        let oldId = registry.register("chat".into(), "old-service");
+        let newId = registry.register("chat".into(), "new-service");
+
+        assert_ne!(oldId, newId);
+        assert!(registry.remove("chat", oldId).is_none());
+        assert_eq!(registry.get_mut("chat", newId), Some(&mut "new-service"));
+    }
+
+    #[test]
+    fn cancelled_send_cannot_register_a_late_response_stream() {
+        let mut registry = ChatOperationRegistry::default();
+        let oldId = registry.register("chat".into(), None::<&str>);
+        registry.take("chat").unwrap();
+        assert!(registry.get_mut("chat", oldId).is_none());
+
+        let newId = registry.register("chat".into(), Some("new-stream"));
+        assert!(registry.get_mut("chat", oldId).is_none());
+        assert_eq!(registry.take("chat"), Some((newId, Some("new-stream"))));
+    }
+
+    #[test]
+    fn cancel_all_snapshot_cannot_cancel_a_later_send() {
+        let mut registry = ChatOperationRegistry::default();
+        let oldId = registry.register("chat".into(), "old-service");
+        let snapshot = registry.snapshot();
+        registry.remove("chat", oldId).unwrap();
+        let newId = registry.register("chat".into(), "new-service");
+
+        for (chatKey, operationId) in snapshot {
+            assert!(registry.remove(&chatKey, operationId).is_none());
+        }
+        assert_eq!(registry.take("chat"), Some((newId, "new-service")));
+    }
+
+    #[test]
+    fn finishing_one_chat_does_not_clear_another_chats_operation() {
+        let mut registry = ChatOperationRegistry::default();
+        let firstId = registry.register("first".into(), "first-service");
+        let secondId = registry.register("second".into(), "second-service");
+
+        assert_eq!(registry.remove("first", firstId), Some("first-service"));
+        assert_eq!(registry.take("second"), Some((secondId, "second-service")));
+        assert!(registry.snapshot().is_empty());
     }
 }

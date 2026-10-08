@@ -60,7 +60,12 @@ private fun verify(value: Boolean, message: String) { check(value) { message }; 
 
 fun main() {
     val docs = FakeDocuments()
-    val fs = AndroidDocumentFileSystem(docs)
+    val opened = mutableListOf<Triple<File?, String?, String?>>()
+    var openFailure = false
+    val fs = AndroidDocumentFileSystem(docs) { file, tree, id ->
+        check(!openFailure) { "Viewer denied opening" }
+        opened.add(Triple(file, tree, id))
+    }
     val temporary = Files.createTempDirectory("operit-saf-filesystem").toFile()
     fun invoke(operation: String, vararg fields: Pair<String, Any>): JSONObject = JSONObject(fs.execute(
         JSONObject().put("operation", operation).also { request -> fields.forEach { request.put(it.first, it.second) } }.toString()))
@@ -81,6 +86,24 @@ fun main() {
         val text = "第一行\nhello\nhello again\n"
         write(docs.target("src/项目 file.py"), text.toByteArray())
         verify(read(docs.target("src/项目 file.py")).contentEquals(text.toByteArray()), "Unicode document read/write")
+        docs.writeGrant = false
+        success("openFile", "path" to docs.target("src/项目 file.py"))
+        docs.writeGrant = true
+        verify(opened.single().second == docs.tree, "Opener retains the persisted tree grant")
+        verify(opened.single().third == docs.items.values.single { it.name == "项目 file.py" }.id,
+            "Opener receives the opaque document ID, not a fabricated filesystem path")
+        failure("openFile", "path" to docs.target("src"))
+        failure("openFile", "path" to docs.target("missing.txt"))
+        docs.readGrant = false
+        failure("openFile", "path" to docs.target("src/项目 file.py"))
+        docs.readGrant = true
+        val native = File(temporary, "中文 & 100%.txt").also { it.writeText("native file") }
+        success("openFile", "path" to native.path)
+        verify(opened.last() == Triple(native, null, null), "Native files reach the same platform opener")
+        failure("openFile", "path" to temporary.path)
+        openFailure = true
+        verify(failure("openFile", "path" to native.path).contains("Viewer denied"), "Viewer failures are returned")
+        openFailure = false
         val listing = success("listFiles", "path" to docs.target("src")) as JSONArray
         verify(listing.getJSONObject(0).getString("name") == "项目 file.py", "Child display names")
         verify(docs.items.values.single { it.name == "项目 file.py" }.id != "src/项目 file.py", "IDs remain opaque")

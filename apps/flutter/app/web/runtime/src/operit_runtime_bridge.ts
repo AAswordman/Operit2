@@ -1,3 +1,4 @@
+import { openBrowserFile } from "./browser_file_open.js";
 import { captureBrowserScreen, readBrowserLocation, recognizeBrowserText,
   type BrowserOcrEngine } from "./browser_system_capabilities.js";
 
@@ -4286,8 +4287,20 @@ self.onmessage = (event) => {
       unzipFiles() {
         unavailable("fileSystem.unzipFiles");
       },
-      openFile() {},
+      openFile(path: string): void {
+        if (!storageHasFile(filePrefix, path)) {
+          throw new Error(`File does not exist or is a directory: ${path}`);
+        }
+        // Bytes belong to the worker's OPFS store, presentation belongs to the UI page.
+        const host = runtimeGlobal.__operitHost as {
+          filePresentation: { openFile(path: string, bytes: Uint8Array): void };
+        };
+        host.filePresentation.openFile(path, storageRead(filePrefix, path));
+      },
       shareFile() {},
+    }),
+    filePresentation: registerMainHostModule({
+      openFile: openBrowserFile,
     }),
     webVisit: registerMainHostModule({
       visitWeb(request: { url: string }) {
