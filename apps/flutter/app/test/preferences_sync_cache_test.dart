@@ -130,33 +130,20 @@ void main() {
     },
   );
 
-  test(
-    'zoom watch updates existing listeners and surfaces invalid sync data',
-    () async {
-      final bridge = _PreferenceBridge();
-      final preferences = ApplicationZoomPreferences(
-        clients: GeneratedCoreProxyClients(bridge),
-      );
-      final values = <double>[];
-      final errors = <Object>[];
-      final subscription = preferences.watch().listen(
-        values.add,
-        onError: errors.add,
-      );
-      await _drainEvents();
-      bridge.applyPeerPreferences(_zoomFile, <String, String>{'zoom': '1.3'});
-      bridge.applyPeerPreferences(_zoomFile, <String, String>{'zoom': '1.3'});
-      bridge.applyPeerPreferences(_zoomFile, <String, String>{
-        'zoom': 'broken',
-      });
-      await _drainEvents();
-      expect(values, <double>[1, 1.3]);
-      expect(errors.single, isA<FormatException>());
-      expect(bridge.preferenceWrites, 0);
-      await subscription.cancel();
-      expect(bridge.activeWatches, 0);
-    },
-  );
+  test('peer zoom preferences do not change client-local zoom', () async {
+    final bridge = _PreferenceBridge();
+    final preferences = ApplicationZoomPreferences(
+      clients: GeneratedCoreProxyClients(bridge),
+    );
+    expect(await preferences.load(), 1);
+    await preferences.save(1.1);
+    bridge.applyPeerPreferences(_zoomFile, <String, String>{'zoom': '1.3'});
+    bridge.applyPeerPreferences(_zoomFile, <String, String>{'zoom': 'broken'});
+    await _drainEvents();
+    expect(await preferences.load(), 1.1);
+    expect(bridge.preferenceWrites, 0);
+    expect(bridge.activeWatches, 0);
+  });
 
   test(
     'long-paste cache receives sync updates without unrelated notifications',
@@ -314,6 +301,7 @@ class _PreferenceBridge extends OperitRuntimeBridge {
       };
   final Map<CoreWatchRequest, StreamController<CoreEvent>> _watches = {};
   int preferenceWrites = 0;
+  String? localZoom;
   Future<void>? nextPreferenceRead;
   Future<void>? targetRead;
   Object? watchError;
@@ -337,6 +325,21 @@ class _PreferenceBridge extends OperitRuntimeBridge {
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     final args = request.args as Map;
     switch (request.methodName) {
+      case 'applicationZoomPath':
+        expect(request.target, 'core/repository.runtimeStorageRepository');
+        return encodeCoreLink(<Object?>[
+          0,
+          'runtime/client/application_zoom.local',
+        ]);
+      case 'readText':
+        expect(request.target, 'core/repository.runtimeStorageRepository');
+        expect(args['path'], 'runtime/client/application_zoom.local');
+        return encodeCoreLink(<Object?>[0, localZoom]);
+      case 'writeText':
+        expect(request.target, 'core/repository.runtimeStorageRepository');
+        expect(args['path'], 'runtime/client/application_zoom.local');
+        localZoom = args['content'] as String;
+        return encodeCoreLink(<Object?>[0, null]);
       case 'getActivePrompt':
         return encodeCoreLink(<Object?>[
           0,

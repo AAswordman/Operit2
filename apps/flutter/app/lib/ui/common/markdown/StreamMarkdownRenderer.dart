@@ -67,6 +67,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
     this.selectionRoot = true,
     this.onContentReady,
     this.onStreamDone,
+    this.onStreamError,
     required this.splitMarkdownContent,
   });
 
@@ -86,6 +87,7 @@ class StreamMarkdownRenderer extends StatefulWidget {
   final bool selectionRoot;
   final VoidCallback? onContentReady;
   final VoidCallback? onStreamDone;
+  final VoidCallback? onStreamError;
   final MarkdownContentSplitter splitMarkdownContent;
 
   @override
@@ -244,6 +246,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       },
       onError: (Object _, StackTrace _) {
         _rendererState.streamParsingCompletedSuccessfully = false;
+        widget.onStreamError?.call();
       },
     );
   }

@@ -232,12 +232,51 @@ fn policy_cache_observes_remote_revocation_and_matches_fresh_replay() {
     assert!(reader.nodeHasCapability("peer", "chat.read", None).unwrap());
     assert!(!reader.nodeIsDisconnected("peer").unwrap());
     writer.clearIdentity("peer".into()).unwrap();
-    assert!(!reader.nodeHasCapability("peer", "chat.read", None).unwrap());
+    // Clearing resets to the default user identity: a member never becomes
+    // identity-less, so basic capabilities survive the reset.
+    assert_eq!(
+        reader
+            .currentState()
+            .unwrap()
+            .deviceIdentityIds
+            .get("peer")
+            .map(String::as_str),
+        Some("user")
+    );
+    assert!(reader.nodeHasCapability("peer", "chat.read", None).unwrap());
     writer.disconnectNode("peer".into()).unwrap();
     assert!(reader.nodeIsDisconnected("peer").unwrap());
     assert_eq!(reader.currentState().unwrap(), writer.currentState().unwrap());
     let fresh = NetworkControlStore::new(storage).unwrap();
     assert_eq!(reader.currentState().unwrap(), fresh.currentState().unwrap());
+}
+
+/// Verifies clearing a restricted identity resets it to the default user
+/// role, restoring basic capabilities instead of leaving the member
+/// identity-less.
+#[test]
+fn clearing_identity_resets_to_default_user() {
+    use crate::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlStore};
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = NetworkControlStore::new(storage.clone()).unwrap();
+    store.bootstrapCurrentSpace().unwrap();
+    store.admitMember("peer".into()).unwrap();
+    // The relay role has no chat.read, so the reset below is observable.
+    store.setIdentity(NetworkControlIdentityAssignment {
+        nodeId: "peer".into(), roleId: "relay".into(),
+    }).unwrap();
+    assert!(!store.nodeHasCapability("peer", "chat.read", None).unwrap());
+    store.clearIdentity("peer".into()).unwrap();
+    let state = store.currentState().unwrap();
+    assert_eq!(
+        state.deviceIdentityIds.get("peer").map(String::as_str),
+        Some("user")
+    );
+    assert!(state.memberNodeIds.contains("peer"));
+    assert!(store.nodeHasCapability("peer", "chat.read", None).unwrap());
+    // Replaying the same log into a fresh instance converges identically.
+    let replay = NetworkControlStore::new(storage).unwrap();
+    assert_eq!(replay.currentState().unwrap(), state);
 }
 
 /// Measures warm policy queries without rereading or decoding unrelated chat history.

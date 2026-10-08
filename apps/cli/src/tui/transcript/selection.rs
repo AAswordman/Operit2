@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use super::helpers::cell_column_to_char_index;
 use super::scrollbar::split_transcript_inner;
 use super::theme;
 
@@ -89,17 +90,19 @@ impl TranscriptSelectionState {
         Some(selected)
     }
 
-    /// Returns the normalized (start ≤ end) selection range when non-empty.
+    /// Returns the normalized (start ≤ end) selection range.
+    ///
+    /// The range spans exactly the characters under the press and release
+    /// pointers, both included, regardless of drag direction. A gesture that
+    /// starts and ends on the same character therefore selects exactly that
+    /// one character.
     pub(super) fn normalized_range(&self) -> Option<(TranscriptPosition, TranscriptPosition)> {
         let anchor = self.anchor?;
         let cursor = self.cursor?;
-        if anchor == cursor {
-            return None;
-        }
-        if anchor < cursor {
-            Some((anchor, cursor))
+        if anchor <= cursor {
+            Some((anchor, inclusive_end(cursor)))
         } else {
-            Some((cursor, anchor))
+            Some((cursor, inclusive_end(anchor)))
         }
     }
 }
@@ -173,11 +176,11 @@ pub(super) fn mouse_transcript_position(
     }
     let visible_row = mouse.row.saturating_sub(inner.y).min(inner.height - 1);
     let line = transcript_scroll as usize + visible_row as usize;
-    let column = mouse.column.saturating_sub(inner.x) as usize;
-    let max_column = lines.get(line)?.text.chars().count();
+    let text = &lines.get(line)?.text;
+    let cell_column = mouse.column.saturating_sub(inner.x) as usize;
     Some(TranscriptPosition {
         line,
-        column: column.min(max_column),
+        column: cell_column_to_char_index(text, cell_column),
     })
 }
 
@@ -193,13 +196,13 @@ pub(super) fn mouse_drag_transcript_position(
     }
     let max_x = inner.x.saturating_add(inner.width).saturating_sub(1);
     let max_y = inner.y.saturating_add(inner.height).saturating_sub(1);
-    let column = mouse.column.clamp(inner.x, max_x).saturating_sub(inner.x) as usize;
     let visible_row = mouse.row.clamp(inner.y, max_y).saturating_sub(inner.y);
     let line = transcript_scroll as usize + visible_row as usize;
-    let max_column = lines.get(line)?.text.chars().count();
+    let text = &lines.get(line)?.text;
+    let cell_column = mouse.column.clamp(inner.x, max_x).saturating_sub(inner.x) as usize;
     Some(TranscriptPosition {
         line,
-        column: column.min(max_column),
+        column: cell_column_to_char_index(text, cell_column),
     })
 }
 
@@ -225,6 +228,13 @@ pub(super) fn apply_transcript_selection(
             line_text_column_count(line)
         };
         highlight_line(line, start_column, end_column);
+    }
+}
+
+fn inclusive_end(position: TranscriptPosition) -> TranscriptPosition {
+    TranscriptPosition {
+        line: position.line,
+        column: position.column + 1,
     }
 }
 
@@ -426,6 +436,118 @@ pub(super) fn mouse_popup_drag_position(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    fn left_click_at(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        }
+    }
+
+    #[test]
+    fn transcript_mouse_position_maps_cells_to_char_indices() {
+        let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
+        let area = Rect {
+            x: 2,
+            y: 3,
+            width: 12,
+            height: 4,
+        };
+        let inner = split_transcript_inner(area).content;
+        let position_at = |cell: u16| {
+            mouse_transcript_position(left_click_at(inner.x + cell, inner.y), area, 0, &lines)
+        };
+        // "中" and "文" each occupy two cells; "a", "b", "c" occupy one each.
+        assert_eq!(
+            position_at(0),
+            Some(TranscriptPosition { line: 0, column: 0 })
+        );
+        assert_eq!(
+            position_at(1),
+            Some(TranscriptPosition { line: 0, column: 0 })
+        );
+        assert_eq!(
+            position_at(2),
+            Some(TranscriptPosition { line: 0, column: 1 })
+        );
+        assert_eq!(
+            position_at(4),
+            Some(TranscriptPosition { line: 0, column: 2 })
+        );
+        assert_eq!(
+            position_at(6),
+            Some(TranscriptPosition { line: 0, column: 4 })
+        );
+        // Past the end clamps to the char count.
+        assert_eq!(
+            position_at(8),
+            Some(TranscriptPosition { line: 0, column: 5 })
+        );
+    }
+
+    #[test]
+    fn transcript_mouse_drag_selects_wide_char_range() {
+        let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 12,
+            height: 4,
+        };
+        let inner = split_transcript_inner(area).content;
+        let drag_position_at = |cell: u16| {
+            mouse_drag_transcript_position(
+                MouseEvent {
+                    kind: MouseEventKind::Drag(MouseButton::Left),
+                    column: inner.x + cell,
+                    row: inner.y,
+                    modifiers: KeyModifiers::empty(),
+                },
+                area,
+                0,
+                &lines,
+            )
+        };
+
+        let mut selection = TranscriptSelectionState::default();
+        selection.begin(drag_position_at(2).expect("position inside transcript"));
+        selection.end(drag_position_at(6).expect("position inside transcript"));
+        assert_eq!(selection.selected_text(&lines).as_deref(), Some("文abc"));
+    }
+
+    #[test]
+    fn transcript_drag_selects_characters_under_both_pointers() {
+        let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
+
+        // Press on "文" (col 1), release on "中" (col 0): both endpoint
+        // characters are selected regardless of drag direction.
+        let mut leftward = TranscriptSelectionState::default();
+        leftward.begin(TranscriptPosition { line: 0, column: 2 });
+        leftward.end(TranscriptPosition { line: 0, column: 0 });
+        assert_eq!(
+            leftward.selected_text(&lines).as_deref(),
+            Some("中文a")
+        );
+
+        // Press on "文", release one character right on "a": the span covers
+        // exactly the two endpoint characters.
+        let mut rightward = TranscriptSelectionState::default();
+        rightward.begin(TranscriptPosition { line: 0, column: 1 });
+        rightward.end(TranscriptPosition { line: 0, column: 2 });
+        assert_eq!(rightward.selected_text(&lines).as_deref(), Some("文a"));
+    }
+
+    #[test]
+    fn transcript_click_selects_single_character() {
+        let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
+        let mut selection = TranscriptSelectionState::default();
+        selection.begin(TranscriptPosition { line: 0, column: 1 });
+        selection.end(TranscriptPosition { line: 0, column: 1 });
+        assert_eq!(selection.selected_text(&lines).as_deref(), Some("文"));
+    }
 
     #[test]
     fn selected_text_joins_soft_wrap_continuation_without_visual_indent() {
@@ -482,6 +604,19 @@ mod tests {
             popup_selected_text(&rows, &selection).as_deref(),
             Some("中\nxy")
         );
+
+        let mut release_inclusive = TranscriptSelectionState::default();
+        release_inclusive.begin(TranscriptPosition { line: 0, column: 2 });
+        release_inclusive.end(TranscriptPosition { line: 1, column: 0 });
+        assert_eq!(
+            popup_selected_text(&rows, &release_inclusive).as_deref(),
+            Some("中\nx")
+        );
+
+        let mut single_cell = TranscriptSelectionState::default();
+        single_cell.begin(TranscriptPosition { line: 0, column: 2 });
+        single_cell.end(TranscriptPosition { line: 0, column: 2 });
+        assert_eq!(popup_selected_text(&rows, &single_cell).as_deref(), Some("中"));
     }
 
     #[test]

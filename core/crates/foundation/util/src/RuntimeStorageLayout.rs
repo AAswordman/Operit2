@@ -194,6 +194,13 @@ pub const CLIENT_RUNTIME_BOOTSTRAP: RuntimeStoragePathDefinition =
         RuntimeStorageOwnership::CoreNode,
     );
 pub const CLIENT_RUNTIME_BOOTSTRAP_PATH: &str = CLIENT_RUNTIME_BOOTSTRAP.path;
+/// Owns interface zoom for this CoreNode, never replicated to the device Space.
+pub const RUNTIME_APPLICATION_ZOOM: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::exact(
+        "runtime/client/application_zoom.local",
+        RuntimeStorageOwnership::CoreNode,
+    );
+pub const RUNTIME_APPLICATION_ZOOM_PATH: &str = RUNTIME_APPLICATION_ZOOM.path;
 pub const RUNTIME_CLIENT_LOG: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::exact(
     "runtime/logs/client.log",
     RuntimeStorageOwnership::CoreNode,
@@ -394,6 +401,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS,
     RUNTIME_LINK_ACCESS_HOST_CONFIG,
     CLIENT_RUNTIME_BOOTSTRAP,
+    RUNTIME_APPLICATION_ZOOM,
     RUNTIME_CLIENT_LOG,
     RUNTIME_SHARE_IMAGE_EXPORTS,
     // Retain ownership for queued operations and legacy data during the non-destructive upgrade.
@@ -503,6 +511,17 @@ mod tests {
             runtimeStorageOwnership(RUNTIME_CLIENT_LOG_PATH).unwrap(),
             RuntimeStorageOwnership::CoreNode
         );
+    }
+
+    #[test]
+    fn application_zoom_is_node_local_not_space_data() {
+        assert_eq!(
+            runtimeStorageOwnership(RUNTIME_APPLICATION_ZOOM_PATH).unwrap(),
+            RuntimeStorageOwnership::CoreNode
+        );
+        assert!(runtimeStorageOwnership(
+            "runtime/client/application_zoom.local/other"
+        ).is_err());
     }
 
     #[test]

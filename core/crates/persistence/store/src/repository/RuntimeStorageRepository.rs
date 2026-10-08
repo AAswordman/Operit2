@@ -5,7 +5,8 @@ use base64::Engine;
 
 use operit_util::OperitPaths;
 use operit_util::RuntimeStorageLayout::{
-    runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_SYNC_DIR_PATH,
+    runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_APPLICATION_ZOOM_PATH,
+    RUNTIME_SYNC_DIR_PATH,
 };
 
 pub struct RuntimeStorageRepository;
@@ -98,6 +99,12 @@ impl RuntimeStorageRepository {
                 .delete(&path, false)
                 .map_err(|error| error.message),
         }
+    }
+
+    #[allow(non_snake_case)]
+    /// Returns the CoreNode-local interface zoom path, excluded from Space sync.
+    pub fn applicationZoomPath(&self) -> String {
+        RUNTIME_APPLICATION_ZOOM_PATH.to_string()
     }
 
     #[allow(non_snake_case)]

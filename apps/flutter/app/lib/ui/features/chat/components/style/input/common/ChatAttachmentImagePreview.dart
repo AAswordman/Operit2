@@ -114,6 +114,16 @@ Future<Uint8List> _readAttachmentImageBytes(
         .getMediaPoolData(mediaType: mediaPoolType, id: attachmentPath);
     return base64Decode(mediaData.base64);
   }
+  return readChatAttachmentFileBytes(attachmentPath);
+}
+
+/// Resolves a temporary VFS attachment through the runtime's actual storage root.
+Future<Uint8List> readChatAttachmentFileBytes(String attachmentPath) async {
+  const prefix = '/app/data/temp/clean_on_exit/';
+  if (attachmentPath.startsWith(prefix)) {
+    final root = await _mediaPoolClients.application.cleanOnExitPath();
+    attachmentPath = '$root/${attachmentPath.substring(prefix.length)}';
+  }
   return XFile(_localPathForAttachment(attachmentPath)).readAsBytes();
 }
 

@@ -397,28 +397,30 @@ class ChatViewModel {
   String createAttachmentReference(AttachmentInfo attachment) {
     final buffer = StringBuffer('<attachment ');
     const escape = HtmlEscape(HtmlEscapeMode.attribute);
-    buffer.write('id="${escape.convert(attachment.filePath)}" ');
+    final normalized = attachment.filePath.replaceAll('\\', '/');
+    const marker = '/temp/clean_on_exit/';
+    final markerIndex = normalized.lastIndexOf(marker);
+    String? toolPath;
+    if (markerIndex >= 0) {
+      final relative = normalized.substring(markerIndex + marker.length);
+      if (relative.isNotEmpty &&
+          relative
+              .split('/')
+              .every(
+                (part) => part.isNotEmpty && part != '.' && part != '..',
+              )) {
+        toolPath = '/app/data/temp/clean_on_exit/$relative';
+      }
+    }
+    buffer.write('id="${escape.convert(toolPath ?? attachment.filePath)}" ');
     buffer.write('filename="${escape.convert(attachment.fileName)}" ');
     buffer.write('type="${escape.convert(attachment.mimeType)}" ');
     final nodeId = attachment.nodeId;
     if (nodeId != null && nodeId.isNotEmpty) {
       buffer.write('node_id="${escape.convert(nodeId)}" ');
-      final normalized = attachment.filePath.replaceAll('\\', '/');
-      const marker = '/temp/clean_on_exit/';
-      final markerIndex = normalized.lastIndexOf(marker);
-      String? toolPath;
-      if (markerIndex >= 0) {
-        final relative = normalized.substring(markerIndex + marker.length);
-        if (relative.isNotEmpty &&
-            relative.split('/').every(
-              (part) => part.isNotEmpty && part != '.' && part != '..',
-            )) {
-          toolPath = '/app/data/temp/clean_on_exit/$relative';
-        }
-      }
-      if (toolPath != null) {
-        buffer.write('path="${escape.convert(toolPath)}" ');
-      }
+    }
+    if (toolPath != null) {
+      buffer.write('path="${escape.convert(toolPath)}" ');
     }
     if (attachment.fileSize > 0) {
       buffer.write('size="${attachment.fileSize}" ');

@@ -80,6 +80,15 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
         <provider
+            android:name=".OperitOpenFileProvider"
+            android:authorities="${applicationId}.openfiles"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/open_file_paths" />
+        </provider>
+        <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
             android:multiprocess="false"

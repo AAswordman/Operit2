@@ -177,9 +177,15 @@ impl FileSystemHost for AndroidFileSystemHost {
     }
 
     fn openFile(&self, path: &str) -> HostResult<()> {
-        Err(HostError::new(format!(
-            "Android open_file requires the Flutter Android host bridge: {path}"
-        )))
+        self.validatePath(path, "path")?;
+        let value = crate::document_filesystem::call(json!({
+            "operation": "openFile", "path": path
+        }))?;
+        if value.is_null() {
+            Ok(())
+        } else {
+            Err(HostError::new("Invalid Android open-file response"))
+        }
     }
 
     fn shareFile(&self, path: &str, title: &str) -> HostResult<()> {

@@ -51,6 +51,7 @@ class _StreamingStructuredMessageRendererState
     extends State<StreamingStructuredMessageRenderer> {
   Stream<Object>? _retainedContentStream;
   bool _retainedContentStreamDone = false;
+  bool _retainedContentStreamFailed = false;
 
   /// Captures the initial live stream for uninterrupted rendering.
   @override
@@ -64,11 +65,19 @@ class _StreamingStructuredMessageRendererState
   @override
   void didUpdateWidget(covariant StreamingStructuredMessageRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final nextStream = widget.contentStream;
-    // Keep the active subscription stable while Flow replaces only the Dart wrapper.
-    if (nextStream != null && _retainedContentStream == null) {
+    _acceptReplacementStream(widget.contentStream);
+  }
+
+  /// Accepts a fresh replay watch only after an explicit failure of the old one.
+  void _acceptReplacementStream(Stream<Object>? nextStream) {
+    // Ordinary Flow wrapper changes must not reset a working or completed tree.
+    if (nextStream != null &&
+        (_retainedContentStream == null ||
+            (_retainedContentStreamFailed &&
+                !identical(nextStream, _retainedContentStream)))) {
       _retainedContentStream = nextStream;
       _retainedContentStreamDone = false;
+      _retainedContentStreamFailed = false;
     }
   }
 
@@ -89,6 +98,8 @@ class _StreamingStructuredMessageRendererState
         state: widget.streamState,
         onLinkClick: widget.onLinkClick,
         onStreamDone: _markRetainedContentStreamDone,
+        onStreamError: () =>
+            _markRetainedContentStreamFailed(activeContentStream),
         rendererId: widget.rendererId,
         showThinkingProcess: widget.showThinkingProcess,
         initialThinkingExpanded: widget.initialThinkingExpanded,
@@ -101,6 +112,16 @@ class _StreamingStructuredMessageRendererState
   /// Retains the physical stream so completed nodes survive parts publication.
   Stream<Object>? get _activeContentStream {
     return _retainedContentStream;
+  }
+
+  /// Reconciles a replacement whether its descriptor arrived before or after
+  /// the failed stream's asynchronously delivered error callback.
+  void _markRetainedContentStreamFailed(Stream<Object>? failedStream) {
+    if (!mounted || !identical(failedStream, _retainedContentStream)) return;
+    setState(() {
+      _retainedContentStreamFailed = true;
+      _acceptReplacementStream(widget.contentStream);
+    });
   }
 
   /// Marks the retained live stream as complete.

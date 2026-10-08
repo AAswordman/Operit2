@@ -370,7 +370,9 @@ impl RuntimeRemoteLinkService {
         self.networkControlStore.setIdentity(assignment).map(|_| ())
     }
 
-    /// Clears the current identity from one device.
+    /// Resets one device's identity to the default user identity. Members
+    /// keep an identity at all times, so a reset never strips the basic
+    /// capabilities the device's own UI depends on.
     #[allow(non_snake_case)]
     pub fn clearDeviceSpaceIdentity(&self, nodeId: String) -> Result<(), String> {
         self.networkControlStore.clearIdentity(nodeId).map(|_| ())

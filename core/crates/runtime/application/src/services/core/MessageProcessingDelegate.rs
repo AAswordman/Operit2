@@ -1160,11 +1160,13 @@ impl MessageProcessingDelegate {
         let partialMessage = keepPartialResponse
             .then(|| self.detachStreamingAiMessage(chatId.clone()))
             .flatten();
+        self.clearCurrentTurnToolInvocationCount(chatId.clone());
+        // Cancel the producer first. Closing the stream earlier lets its cleanup task
+        // remove the active service before AIMessageManager can invalidate execution.
+        AIMessageManager::cancelOperation(chatId.clone()).await;
         if let Some(responseStream) = responseStream {
             responseStream.close();
         }
-        self.clearCurrentTurnToolInvocationCount(chatId.clone());
-        AIMessageManager::cancelOperation(chatId.clone()).await;
         let cancelled = self
             .withExistingRuntime(Some(chatId.clone()), |runtime| {
                 if runtime.activeTurnId != cancellationTurnId || !runtime.isCancelling {

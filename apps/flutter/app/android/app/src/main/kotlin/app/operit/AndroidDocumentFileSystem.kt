@@ -14,8 +14,13 @@ import java.util.zip.ZipOutputStream
 
 /** Application-layer mounts: document IDs stay opaque and every access uses a tree grant.
  * Invoked by native runtime workers, never by the UI thread through MethodChannel. */
-class AndroidDocumentFileSystem(private val documents: DocumentTreeAccess) {
-    constructor(context: Context) : this(ContentResolverDocumentTreeAccess(context))
+class AndroidDocumentFileSystem(
+    private val documents: DocumentTreeAccess,
+    private val fileOpener: ((File?, String?, String?) -> Unit)? = null,
+) {
+    constructor(context: Context) : this(
+        ContentResolverDocumentTreeAccess(context), AndroidFileOpener(context)::open,
+    )
     private val prefix = "operit-resource:"
     private class Missing(message: String) : FileNotFoundException(message)
 
@@ -33,6 +38,15 @@ class AndroidDocumentFileSystem(private val documents: DocumentTreeAccess) {
             "writeFileBytes", "writeFile" -> {
                 val content = Base64.decode(request.getString("content"), Base64.DEFAULT)
                 node(request.getString("path")).output(request.optBoolean("append")).use { it.write(content) }
+                JSONObject.NULL
+            }
+            "openFile" -> {
+                val target = node(request.getString("path"))
+                require(!target.info().getBoolean("isDirectory")) { "Cannot open a directory as a file" }
+                // Validate the real read capability, including revoked SAF grants.
+                target.input().use { }
+                val opener = fileOpener ?: throw UnsupportedOperationException("File opener is not installed")
+                opener(target.file, target.tree, if (target.file == null) target.documentId() else null)
                 JSONObject.NULL
             }
             "fileExists" -> node(request.getString("path")).existence()

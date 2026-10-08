@@ -262,7 +262,10 @@ impl NetworkControlStore {
         self.submitLocalCommand(NetworkControlCommand::GrantRole { grant: assignment })
     }
 
-    /// Clears the current identity from one device.
+    /// Resets one device's identity to the default user identity. Members
+    /// keep an identity at all times: an identity-less member would lose
+    /// every capability - including the ones its own UI depends on - with
+    /// no in-band recovery path.
     #[allow(non_snake_case)]
     pub fn clearIdentity(&self, nodeId: String) -> Result<SyncOperation, String> {
         self.requireKnownSpaceMember(&nodeId)?;
@@ -574,7 +577,7 @@ fn controlAuditSummary(
         ),
         NetworkControlCommand::RevokeRole { nodeId } => {
             format!(
-                "Clear identity from {}",
+                "Reset identity on {} to the default user",
                 controlDeviceLabel(profiles, nodeId)?
             )
         }
@@ -803,7 +806,14 @@ fn authorizeAndApplyCommand(
             if identityId == "admin" && clearingIdentityLeavesNoAdministrator(state, nodeId) {
                 return Err("Space control policy must retain an administrator".to_string());
             }
-            state.deviceIdentityIds.remove(nodeId);
+            // Reset to the default user identity instead of leaving the
+            // member identity-less. Every other replay path that grants
+            // membership also assigns an identity; an identity-less member
+            // would lose every capability - including the chat.read its own
+            // UI depends on - and, for a solo Space, any in-band recovery.
+            state
+                .deviceIdentityIds
+                .insert(nodeId.to_string(), "user".to_string());
             Ok(())
         }
         NetworkControlCommand::AdmitMember { nodeId } => {

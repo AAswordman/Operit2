@@ -709,7 +709,7 @@ fn run_link_control_identity_command(
             if cli_json_mode() {
                 emit_cli_json(serde_json::json!({ "deviceId": deviceId, "cleared": true }));
             } else {
-                println!("Cleared identity from \"{deviceName}\"");
+                println!("Reset identity of \"{deviceName}\" to the default user");
             }
             Ok(())
         }
@@ -970,7 +970,7 @@ fn find_core_stream_descriptor(value: &CoreValue) -> Option<CoreStreamDescriptor
 }
 
 /// Prints Link command usage in the selected output format.
-fn print_link_usage() {
+pub(crate) fn print_link_usage() {
     if cli_json_mode() {
         emit_cli_json(
             serde_json::json!({ "usage": "operit2 cli link <discover|token|pair-start|pair-finish|pair-cancel|unpair|peers|listen|session|space|control|stream-probe|edge-plugin>" }),

@@ -67,7 +67,8 @@ abstract class OperitRuntimeBridge {
       'CoreStreamTrace dart.embedded.create streamId=$streamId '
       'target=$target property=$propertyName',
     );
-    final embedded = _EmbeddedCoreStream<T>(
+    late final _EmbeddedCoreStream<T> embedded;
+    embedded = _EmbeddedCoreStream<T>(
       streamId,
       () {
         final requestId =
@@ -97,6 +98,19 @@ abstract class OperitRuntimeBridge {
           embeddedStreamFactory: openEmbeddedCoreStream,
         );
       },
+      // Chat responses are replayable Core watches, not new model requests.
+      // Evict only failed chat watches so the next live message descriptor can
+      // reopen them; successfully completed streams must keep their identity.
+      onFailure: streamId.startsWith('chat-message-stream:')
+          ? () {
+              if (identical(cache[streamId], embedded)) {
+                cache.remove(streamId);
+                debugPrint(
+                  'CoreStreamTrace dart.embedded.invalidate streamId=$streamId',
+                );
+              }
+            }
+          : null,
     );
     cache[streamId] = embedded;
     return embedded.stream;
@@ -119,8 +133,15 @@ abstract class OperitRuntimeBridge {
 
 /// Keeps one stable client-side stream proxy for one Core watch source.
 class _EmbeddedCoreStream<T> {
-  _EmbeddedCoreStream(this._streamId, this._open, this._decode);
+  _EmbeddedCoreStream(
+    this._streamId,
+    this._open,
+    this._decode, {
+    VoidCallback? onFailure,
+  }) : _onFailure = onFailure;
 
+  final VoidCallback? _onFailure;
+  StreamSubscription<CoreEvent>? _watchSubscription;
   final String _streamId;
   final Stream<CoreEvent> Function() _open;
   final T Function(CoreEvent event) _decode;
@@ -176,20 +197,36 @@ class _EmbeddedCoreStream<T> {
     }
     _started = true;
     try {
-      _open().listen(
+      _watchSubscription = _open().listen(
         _handleEvent,
         onError: (Object error, StackTrace stackTrace) {
           _fail(error, stackTrace);
         },
-        onDone: _complete,
+        onDone: _handleWatchDone,
       );
+      // A synchronous watch can fail before listen returns its subscription.
+      if (_terminalError != null) unawaited(_watchSubscription?.cancel());
     } catch (error, stackTrace) {
       _fail(error, stackTrace);
     }
   }
 
+  /// A chat response finishes only with its explicit Core Completed event.
+  void _handleWatchDone() {
+    if (_done) return;
+    if (_streamId.startsWith('chat-message-stream:')) {
+      _fail(
+        StateError('Chat response watch closed before Core Completed'),
+        StackTrace.current,
+      );
+    } else {
+      _complete();
+    }
+  }
+
   /// Decodes and publishes one physical Core event to every local listener.
   void _handleEvent(CoreEvent event) {
+    if (_done) return;
     if (event.kind == 'Completed') {
       _complete();
       return;
@@ -253,6 +290,8 @@ class _EmbeddedCoreStream<T> {
     debugPrint(
       'CoreStreamTrace dart.embedded.fail streamId=$_streamId error=$error',
     );
+    _onFailure?.call();
+    unawaited(_watchSubscription?.cancel());
     _events.addError(error, stackTrace);
     unawaited(_events.close());
   }

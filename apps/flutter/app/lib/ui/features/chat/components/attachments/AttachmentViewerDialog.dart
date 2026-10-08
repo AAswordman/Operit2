@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
@@ -179,11 +178,7 @@ Future<Uint8List> _readAttachmentMediaBytes(ChatAttachment attachment) async {
         );
     return base64Decode(data.base64);
   }
-  final uri = Uri.tryParse(attachment.id);
-  final path = uri != null && uri.scheme == 'file'
-      ? uri.toFilePath()
-      : attachment.id;
-  return XFile(path).readAsBytes();
+  return readChatAttachmentFileBytes(attachment.id);
 }
 
 bool isTextLikeMimeType(String mimeType) {

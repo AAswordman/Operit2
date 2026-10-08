@@ -6996,8 +6996,20 @@ abstract class AppLocalizations {
   /// No description provided for @settingsRuntimeControlClearIdentity.
   ///
   /// In en, this message translates to:
-  /// **'Clear device identity'**
+  /// **'Reset to default identity'**
   String get settingsRuntimeControlClearIdentity;
+
+  /// No description provided for @settingsRuntimeControlDeviceAdmitted.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection restriction lifted; waiting for the device to reconnect'**
+  String get settingsRuntimeControlDeviceAdmitted;
+
+  /// No description provided for @settingsRuntimeControlIdentityResetDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity reset to the default user'**
+  String get settingsRuntimeControlIdentityResetDone;
 
   /// No description provided for @settingsRuntimeControlIdentityDefinitions.
   ///

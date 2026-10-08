@@ -41,14 +41,13 @@ class SelectedFileInput {
   Uint8List? _pending;
   bool _closed = false;
 
-  /// Uses metadata-only Android selection, or the platform's file-backed XFile stream.
+  /// Uses the Android photo/document picker without loading file contents,
+  /// or the platform's file-backed XFile stream.
   static Future<List<SelectedFileInput>> pick({bool imagesOnly = false}) async {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       final values = await _fileInputChannel.invokeListMethod<Object?>(
-        'pickFiles',
-        <String, Object?>{
-          'mimeTypes': imagesOnly ? <String>['image/*'] : <String>[],
-        },
+        imagesOnly ? 'pickImages' : 'pickFiles',
+        imagesOnly ? null : const <String, Object?>{'mimeTypes': <String>[]},
       );
       final files = <SelectedFileInput>[];
       try {

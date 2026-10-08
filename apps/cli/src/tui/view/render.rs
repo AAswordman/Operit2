@@ -8,9 +8,16 @@ use ratatui::widgets::{
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use operit_node_runtime::RuntimeRemoteLinkService::{
+    RuntimeDeviceSpaceConnectionStatus, RuntimeDeviceSpaceDevice,
+};
 use operit_util::GithubReleaseUtil::FullUpdateStage;
 
-use super::app::{FocusArea, FullUpdateDownloadState, OperitTui, StartupInstallState};
+use super::app::{
+    DeviceManagerAction, DeviceManagerMode, DeviceManagerModal, DeviceManagerRow, FocusArea,
+    FullUpdateDownloadState, OperitTui, StartupInstallState,
+};
+use crate::cli::network_control_ui::{network_device_label_by_id, network_role_summary};
 use super::helpers::{
     centered_rect, display_width, short_chat_label, transcript_max_scroll, wrap_approx_lines,
 };
@@ -111,8 +118,12 @@ impl OperitTui {
             self.render_startup_workspace_prompt(frame);
         }
 
-        if self.approval_bridge.current().is_some() {
+        if !self.current_tool_permission_requests.is_empty() {
             self.render_approval_modal(frame);
+        }
+
+        if self.device_manager.is_some() {
+            self.render_device_manager(frame);
         }
 
         if self.join_decision.is_some() {
@@ -1017,13 +1028,18 @@ impl OperitTui {
     }
 
     fn render_approval_modal(&mut self, frame: &mut Frame) {
-        let Some(request) = self.approval_bridge.current() else {
+        let pending_count = self.current_tool_permission_requests.len();
+        let Some(request) = self.current_tool_permission_requests.first().cloned() else {
             return;
         };
         let text = self.text();
         let popup = centered_rect(82, 78, frame.area());
         frame.render_widget(Clear, popup);
-        let elapsed = request.requested_at.elapsed().as_secs();
+        let now_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(request.requestedAtMillis);
+        let elapsed = now_millis.saturating_sub(request.requestedAtMillis) / 1000;
         let params = if request.tool.parameters.is_empty() {
             text.params_none().to_string()
         } else {
@@ -1035,8 +1051,13 @@ impl OperitTui {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        let title = if pending_count > 1 {
+            format!("{} (1/{})", text.approval_title(), pending_count)
+        } else {
+            text.approval_title().to_string()
+        };
         let modal_block = Block::default()
-            .title(text.approval_title())
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::ACCENT_DIM));
         let inner = modal_block.inner(popup);
@@ -1188,6 +1209,302 @@ impl OperitTui {
             Style::default().fg(theme::TEXT_SUBTLE),
         )));
         frame.render_widget(hint, chunks[1]);
+    }
+
+    /// Renders the device management window: pending join requests and known
+    /// devices with their policy state while browsing, or the mode-specific
+    /// action surface otherwise. Reachability and restriction render as
+    /// independent flags; admit only lifts a restriction.
+    fn render_device_manager(&mut self, frame: &mut Frame) {
+        let Some(modal) = self.device_manager.as_ref() else {
+            return;
+        };
+        let text = self.text();
+        let popup = centered_rect(72, 60, frame.area());
+        frame.render_widget(Clear, popup);
+        let modal_block = Block::default()
+            .title(text.network_devices_title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let inner = modal_block.inner(popup);
+        frame.render_widget(modal_block, popup);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        match modal.mode {
+            DeviceManagerMode::Browsing => {
+                let rows = modal.rows();
+                if rows.is_empty() {
+                    let body = Paragraph::new(Line::from(Span::styled(
+                        text.network_devices_none(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    )));
+                    frame.render_widget(body, chunks[0]);
+                } else {
+                    // Section headers are their own (unselectable) items; the
+                    // row→item mapping keeps the highlight on actual entries,
+                    // never on a header line.
+                    let mut items = Vec::new();
+                    let mut item_for_row = Vec::with_capacity(rows.len());
+                    let mut requests_header_drawn = false;
+                    let mut devices_header_drawn = false;
+                    for row in &rows {
+                        match row {
+                            DeviceManagerRow::Request(request) => {
+                                if !requests_header_drawn {
+                                    requests_header_drawn = true;
+                                    items.push(ListItem::new(section_header_line(
+                                        text.network_devices_section_requests(),
+                                    )));
+                                }
+                                item_for_row.push(items.len());
+                                items.push(ListItem::new(vec![Line::from(vec![
+                                    Span::styled(
+                                        "▸ ",
+                                        Style::default().fg(theme::ACCENT_STRONG),
+                                    ),
+                                    Span::styled(
+                                        request.applicantName.clone(),
+                                        Style::default().add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(
+                                        format!(" · {}", request.spaceName),
+                                        Style::default().fg(theme::TEXT_SUBTLE),
+                                    ),
+                                ])]));
+                            }
+                            DeviceManagerRow::Device(device) => {
+                                if !devices_header_drawn {
+                                    devices_header_drawn = true;
+                                    items.push(ListItem::new(section_header_line(
+                                        text.network_devices_section_devices(),
+                                    )));
+                                }
+                                item_for_row.push(items.len());
+                                items.push(ListItem::new(vec![self
+                                    .device_manager_device_line(modal, device)]));
+                            }
+                        }
+                    }
+                    let mut state = ListState::default();
+                    state.select(Some(
+                        item_for_row[modal.selected.min(item_for_row.len() - 1)],
+                    ));
+                    let list = List::new(items)
+                        .highlight_style(
+                            Style::default()
+                                .bg(theme::ACCENT_BG)
+                                .fg(theme::TEXT)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .highlight_symbol(">> ");
+                    frame.render_stateful_widget(list, chunks[0], &mut state);
+                }
+            }
+            DeviceManagerMode::ActionMenu => {
+                if let Some((device, actions)) = modal.menu_device_id.as_ref().and_then(|id| {
+                    modal
+                        .topology
+                        .devices
+                        .iter()
+                        .find(|device| &device.deviceId == id)
+                        .map(|device| (device, modal.menu_actions(id)))
+                }) {
+                    let mut items = vec![ListItem::new(Line::from(vec![Span::styled(
+                        device_manager_device_label(modal, device),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )]))];
+                    items.extend(actions.iter().map(|action| {
+                        ListItem::new(Line::from(Span::raw(
+                            device_manager_action_label(text, *action),
+                        )))
+                    }));
+                    let mut state = ListState::default();
+                    // Item 0 is the unselectable device label header.
+                    state.select(Some(
+                        modal.menu_index.min(actions.len().saturating_sub(1)) + 1,
+                    ));
+                    let list = List::new(items)
+                        .highlight_style(
+                            Style::default()
+                                .bg(theme::ACCENT_BG)
+                                .fg(theme::TEXT)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .highlight_symbol(">> ");
+                    frame.render_stateful_widget(list, chunks[0], &mut state);
+                }
+            }
+            DeviceManagerMode::AssignIdentity => {
+                if let Some(device) = modal
+                    .menu_device_id
+                    .as_ref()
+                    .and_then(|id| {
+                        modal
+                            .topology
+                            .devices
+                            .iter()
+                            .find(|device| &device.deviceId == id)
+                    })
+                    .cloned()
+                {
+                    let roles = modal.sorted_roles();
+                    let mut items = vec![ListItem::new(Line::from(vec![Span::styled(
+                        device_manager_device_label(modal, &device),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )]))];
+                    items.extend(roles.iter().map(|role| {
+                        ListItem::new(Line::from(Span::raw(network_role_summary(role))))
+                    }));
+                    let mut state = ListState::default();
+                    // Item 0 is the unselectable device label header.
+                    state.select(Some(
+                        modal.menu_index.min(roles.len().saturating_sub(1)) + 1,
+                    ));
+                    let list = List::new(items)
+                        .highlight_style(
+                            Style::default()
+                                .bg(theme::ACCENT_BG)
+                                .fg(theme::TEXT)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .highlight_symbol(">> ");
+                    frame.render_stateful_widget(list, chunks[0], &mut state);
+                }
+            }
+            DeviceManagerMode::ConfirmRemove => {
+                let warning = Paragraph::new(Text::from(
+                    text.network_devices_remove_warning()
+                        .split('\n')
+                        .map(Line::from)
+                        .collect::<Vec<_>>(),
+                ))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(theme::ERROR_DIM));
+                frame.render_widget(warning, chunks[0]);
+            }
+        }
+
+        if !modal.initialized {
+            let notice = Paragraph::new(Line::from(Span::styled(
+                text.network_devices_not_initialized(),
+                Style::default().fg(theme::ERROR_DIM),
+            )));
+            frame.render_widget(notice, chunks[1]);
+        }
+        let hint_text = match modal.mode {
+            DeviceManagerMode::Browsing => text.network_devices_browse_hint(),
+            DeviceManagerMode::ActionMenu => text.network_devices_menu_hint(),
+            DeviceManagerMode::AssignIdentity => text.network_devices_assign_hint(),
+            // The confirm body already ends with the Y/N hint.
+            DeviceManagerMode::ConfirmRemove => "",
+        };
+        if !hint_text.is_empty() {
+            let hint = Paragraph::new(Line::from(Span::styled(
+                hint_text,
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )));
+            frame.render_widget(hint, chunks[2]);
+        }
+    }
+
+    /// Builds one device row: connectivity dot, device label, and the
+    /// policy/diagnostic tags in display order.
+    fn device_manager_device_line(
+        &self,
+        modal: &DeviceManagerModal,
+        device: &RuntimeDeviceSpaceDevice,
+    ) -> Line<'static> {
+        let text = self.text();
+        let connectivity = if device.online {
+            Span::styled("● ", Style::default().fg(theme::TEXT))
+        } else {
+            Span::styled("○ ", Style::default().fg(theme::TEXT_SUBTLE))
+        };
+        let mut spans = vec![
+            connectivity,
+            Span::styled(
+                device_manager_device_label(modal, device),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ];
+        let mut tag = |condition: bool, label: &'static str, color: ratatui::style::Color| {
+            if condition {
+                spans.push(Span::styled(
+                    format!(" · {label}"),
+                    Style::default().fg(color),
+                ));
+            }
+        };
+        tag(
+            device.deviceId == modal.topology.currentDeviceId,
+            text.network_devices_self(),
+            theme::TEXT_MUTED,
+        );
+        tag(
+            modal.blocked.contains(&device.deviceId),
+            text.network_devices_blocked(),
+            theme::ERROR_DIM,
+        );
+        tag(
+            !device.online,
+            text.network_devices_offline(),
+            theme::TEXT_SUBTLE,
+        );
+        tag(
+            modal.topology.connections.iter().any(|connection| {
+                connection.status == RuntimeDeviceSpaceConnectionStatus::VersionMismatch
+                    && (connection.firstDeviceId == device.deviceId
+                        || connection.secondDeviceId == device.deviceId)
+            }),
+            text.network_devices_version_mismatch(),
+            theme::ERROR_DIM,
+        );
+        spans.push(Span::styled(
+            format!(
+                " · {}",
+                device
+                    .currentIdentity
+                    .as_ref()
+                    .map(|identity| identity.displayName.clone())
+                    .unwrap_or_else(|| text.network_devices_no_identity().to_string())
+            ),
+            Style::default().fg(theme::TEXT_SUBTLE),
+        ));
+        Line::from(spans)
+    }
+}
+
+fn section_header_line(label: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        label.to_string(),
+        Style::default()
+            .fg(theme::TEXT_SUBTLE)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn device_manager_device_label(
+    modal: &DeviceManagerModal,
+    device: &RuntimeDeviceSpaceDevice,
+) -> String {
+    network_device_label_by_id(&modal.topology, &device.deviceId)
+        .unwrap_or_else(|_| device.deviceName.clone())
+}
+
+fn device_manager_action_label(text: super::i18n::TuiText, action: DeviceManagerAction) -> &'static str {
+    match action {
+        DeviceManagerAction::Admit => text.network_devices_menu_admit(),
+        DeviceManagerAction::Disconnect => text.network_devices_menu_disconnect(),
+        DeviceManagerAction::AssignIdentity => text.network_devices_menu_assign(),
+        DeviceManagerAction::ClearIdentity => text.network_devices_menu_clear(),
+        DeviceManagerAction::Remove => text.network_devices_menu_remove(),
     }
 }
 

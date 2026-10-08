@@ -84,6 +84,10 @@ control device remove <device-id>
 审批角色需要同时具备 `approve`（`network.approval`）和 `join`（`network.members.join`）。
 普通成员不能修改网络策略，CLI 不会替它提升权限。
 
+`control identity clear` 把设备身份重置为默认 User（自带 `chat.read` 等普通成员能力）。
+成员始终拥有身份，不存在无身份状态：身份被清空的设备会失去包括自身 UI 依赖能力在内的全部能力，
+且单机空间内没有任何带内恢复路径。
+
 `control device disconnect` 保留成员与配对，仅禁止直连和路由中转，`control device admit` 可恢复；
 `control device remove` 彻底遗忘设备：清除策略记录与加入申请历史、把它移出空间成员并删除本侧配对凭证。
 被移除设备回到陌生人状态，重新接入需要重新配对并重新申请加入，不存在移除黑名单。

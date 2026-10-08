@@ -3573,27 +3573,16 @@ mod tests {
         let response = router.routedCall("edge-client".into(), request.clone()).await;
         assert!(response.result.is_ok(), "{:?}", response.result);
         assert_eq!(target.callCount.load(Ordering::SeqCst), 1);
-        router.networkControlStore.clearIdentity("edge-executor".into()).unwrap();
-        let denied = router.routedCall("edge-client".into(), request).await;
-        let error = denied.result.unwrap_err();
-        assert_eq!(error.code, "ROUTE_PERMISSION_DENIED");
-        assert_eq!(
-            error.details,
-            Some(CoreValue::Map(BTreeMap::from([
-                ("callerNodeId".into(), CoreValue::String("edge-client".into())),
-                ("method".into(), CoreValue::String("sendUserMessage".into())),
-                (
-                    "requiredCapability".into(),
-                    CoreValue::String("runtime.execute".into()),
-                ),
-                ("subject".into(), CoreValue::String("target".into())),
-                (
-                    "targetNodeId".into(),
-                    CoreValue::String("edge-executor".into()),
-                ),
-            ])))
-        );
-        assert_eq!(target.callCount.load(Ordering::SeqCst), 1);
+        // Clearing resets the target to the default user identity, which
+        // still carries the runtime.execute capability this route needs, so
+        // the call keeps succeeding instead of losing its local UI access.
+        router
+            .networkControlStore
+            .clearIdentity("edge-executor".into())
+            .unwrap();
+        let retried = router.routedCall("edge-client".into(), request).await;
+        assert!(retried.result.is_ok(), "{:?}", retried.result);
+        assert_eq!(target.callCount.load(Ordering::SeqCst), 2);
         link.close();
     }
 

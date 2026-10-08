@@ -66,7 +66,6 @@ class _OperitThemeState extends State<OperitTheme> {
       const ApplicationZoomPreferences();
   double _zoom = 1.0;
   Future<void> _zoomSave = Future<void>.value();
-  StreamSubscription<double>? _zoomSubscription;
   StreamSubscription<LongPastedTextInputSettings>? _longPasteSubscription;
   late final OperitThemeController _controller = OperitThemeController(
     onChanged: () {
@@ -152,14 +151,6 @@ class _OperitThemeState extends State<OperitTheme> {
           !_runtimeManager.runtimeConfigured) {
         return;
       }
-      _zoomSubscription = _zoomPreferences.watch().listen((zoom) {
-        if (!mounted || generation != _runtimeGeneration || _zoom == zoom) {
-          return;
-        }
-        setState(() {
-          _zoom = zoom;
-        });
-      });
       _longPasteSubscription = const UserPreferencesManager()
           .longPastedTextInputSettingsFlow()
           .listen((settings) {
@@ -199,8 +190,6 @@ class _OperitThemeState extends State<OperitTheme> {
 
   /// Detaches application-level preference caches from the active runtime.
   void _cancelPreferenceSubscriptions() {
-    unawaited(_zoomSubscription?.cancel());
-    _zoomSubscription = null;
     unawaited(_longPasteSubscription?.cancel());
     _longPasteSubscription = null;
   }

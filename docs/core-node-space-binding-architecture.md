@@ -193,6 +193,7 @@ CoreNode 身份私钥
 两两配对密钥和 session
 HostManager 平台状态
 本机监听地址
+应用界面缩放（Ctrl + / - / 0，通过 RuntimeStorageRepository 保存为 CoreNode 本地状态）
 本机平台能力和临时交互句柄
 ```
 

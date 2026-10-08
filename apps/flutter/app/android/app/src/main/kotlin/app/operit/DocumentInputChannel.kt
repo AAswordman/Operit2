@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -61,6 +63,7 @@ class DocumentInputChannel(private val activity: MainActivity) {
             "pick" -> pickDocuments(result, false, true, listOf(
                 "application/zip", "application/x-zip-compressed", "application/octet-stream",
             ))
+            "pickImages" -> pickDocuments(result, true, false, listOf("image/*"), imagesOnly = true)
             "pickFiles" -> pickDocuments(result, true, false, call.argument<List<String>>("mimeTypes") ?: emptyList())
             "readChunk" -> readChunk(call, result)
             "close" -> closeInput(call, result)
@@ -74,19 +77,31 @@ class DocumentInputChannel(private val activity: MainActivity) {
         multiple: Boolean,
         requireLength: Boolean,
         mimeTypes: List<String>,
+        imagesOnly: Boolean = false,
     ) {
         if (pendingPick != null) {
             result.error("PICK_IN_PROGRESS", "A document picker is already open", null)
             return
         }
         pendingPick = PendingPick(result, multiple, requireLength)
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = if (mimeTypes.size == 1) mimeTypes.first() else "*/*"
-            if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
-        }
         try {
+            val intent = if (imagesOnly) {
+                // AndroidX chooses the system/backported photo picker and falls back to
+                // ACTION_OPEN_DOCUMENT only when no photo picker is available.
+                ActivityResultContracts.PickMultipleVisualMedia().createIntent(
+                    activity,
+                    PickVisualMediaRequest.Builder()
+                        .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        .build(),
+                )
+            } else {
+                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = if (mimeTypes.size == 1) mimeTypes.first() else "*/*"
+                    if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+                }
+            }
             activity.startActivityForResult(intent, PICK_DOCUMENT_REQUEST_CODE)
         } catch (error: Exception) {
             pendingPick = null

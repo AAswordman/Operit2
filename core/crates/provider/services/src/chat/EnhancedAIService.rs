@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -87,6 +88,8 @@ pub struct EnhancedAISharedState {
     pub request_window_estimate: Option<i64>,
     pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
     pub next_execution_context_id: i32,
+    /// Invalidates sends that are still waiting to register their response task.
+    pub execution_generation: u64,
     pub tool_execution_jobs: BTreeMap<String, ToolExecutionJobMirror>,
     pub accumulated_input_token_count: i64,
     pub accumulated_output_token_count: i64,
@@ -111,6 +114,50 @@ pub struct TurnModelIdentity {
 }
 
 impl EnhancedAISharedState {
+    /// Registers the execution before its worker can be queued or cancelled.
+    fn createExecutionContext(
+        &mut self,
+        expectedGeneration: u64,
+        options: &SendMessageOptions,
+    ) -> Result<MessageExecutionContext, AiServiceError> {
+        if self.execution_generation != expectedGeneration
+            || options
+                .cancellationToken
+                .as_ref()
+                .is_some_and(MessageCancellationToken::isCancelled)
+        {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        self.next_execution_context_id = self
+            .next_execution_context_id
+            .checked_add(1)
+            .expect("execution context id must not overflow");
+        let mut context = MessageExecutionContext::new(
+            self.next_execution_context_id,
+            options.chatHistory.clone(),
+            options.workspacePath.clone(),
+            options.workspaceFolders.clone(),
+            options.groupParticipantNamesText.clone(),
+            options.proxySenderName.clone(),
+            MutableSharedStreamMirror::new(usize::MAX),
+        );
+        context.cancellationToken = options.cancellationToken.clone();
+        self.active_execution_contexts
+            .insert(context.executionId, context.clone());
+        Ok(context)
+    }
+
+    /// Atomically invalidates running executions and sends not yet registered.
+    fn invalidateExecutionContexts(&mut self) {
+        self.execution_generation = self
+            .execution_generation
+            .checked_add(1)
+            .expect("execution generation must not overflow");
+        for context in self.active_execution_contexts.values_mut() {
+            context.isConversationActive = false;
+        }
+    }
+
     /// Publishes the selected model before the background response task starts.
     fn beginTurn(&mut self, config: &ResolvedModelConfig, providerModel: String) {
         self.last_provider_model = Some(providerModel);
@@ -140,7 +187,22 @@ pub trait SendMessageCallbacks: Send + Sync {
     fn onInputProcessingStateChanged(&self, _state: InputProcessingState) {}
 }
 
+/// Monotonic per-send cancellation gate, including work not yet registered or started.
+#[derive(Clone, Debug, Default)]
+pub struct MessageCancellationToken(Arc<AtomicBool>);
+
+impl MessageCancellationToken {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn isCancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
 pub struct SendMessageOptions {
+    pub cancellationToken: Option<MessageCancellationToken>,
     pub message: String,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
@@ -179,6 +241,7 @@ pub struct ResumeRequest {
 impl SendMessageOptions {
     pub fn new() -> Self {
         Self {
+            cancellationToken: None,
             message: String::new(),
             maxTokens: 0,
             tokenUsageThreshold: 0.0,
@@ -214,6 +277,7 @@ impl SendMessageOptions {
 #[derive(Clone, Debug)]
 pub struct MessageExecutionContext {
     pub executionId: i32,
+    pub cancellationToken: Option<MessageCancellationToken>,
     pub streamBuffer: String,
     pub roundManager: ConversationRoundManagerMirror,
     pub isConversationActive: bool,
@@ -237,6 +301,7 @@ impl MessageExecutionContext {
     ) -> Self {
         Self {
             executionId,
+            cancellationToken: None,
             streamBuffer: String::new(),
             roundManager: ConversationRoundManagerMirror::new(),
             isConversationActive: true,
@@ -984,18 +1049,7 @@ impl EnhancedAIService {
 
     pub fn invalidateAllExecutionContexts(&mut self, reason: String) {
         AppLogger::d(TAG, &format!("准备失效全部执行上下文: reason={}", reason));
-        let ids = self
-            .shared_state()
-            .active_execution_contexts
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
-        for id in ids {
-            if let Some(active) = self.shared_state().active_execution_contexts.get_mut(&id) {
-                active.isConversationActive = false;
-            }
-        }
-        let _ = reason;
+        self.shared_state().invalidateExecutionContexts();
     }
 
     fn isExecutionContextActiveInSharedState(
@@ -1003,6 +1057,10 @@ impl EnhancedAIService {
         context: &MessageExecutionContext,
     ) -> bool {
         context.isConversationActive
+            && !context
+                .cancellationToken
+                .as_ref()
+                .is_some_and(MessageCancellationToken::isCancelled)
             && shared_state
                 .lock()
                 .expect("EnhancedAIService shared_state mutex poisoned")
@@ -1052,6 +1110,13 @@ impl EnhancedAIService {
         &mut self,
         options: SendMessageOptions,
     ) -> Result<SharedAiResponseStream, AiServiceError> {
+        if options
+            .cancellationToken
+            .as_ref()
+            .is_some_and(MessageCancellationToken::isCancelled)
+        {
+            return Err(AiServiceError::RequestCancelled);
+        }
         let runtime = self.createSendMessageRuntime(&options)?;
         self.sendMessageWithRuntime(options, runtime).await
     }
@@ -1174,9 +1239,17 @@ impl EnhancedAIService {
         options: SendMessageOptions,
         runtime: SendMessageRuntime,
     ) -> Result<SharedAiResponseStream, AiServiceError> {
+        // Cancellation can occur while waiting for the provider handle. Do not
+        // register or launch a task from a generation that has already been cancelled.
+        let executionGeneration = self.shared_state().execution_generation;
         let providerModel = runtime.aiService.lock().await.provider_model();
-        self.shared_state()
-            .beginTurn(&runtime.modelConfig, providerModel);
+        let execContext = {
+            let mut shared = self.shared_state();
+            let context = shared.createExecutionContext(executionGeneration, &options)?;
+            shared.beginTurn(&runtime.modelConfig, providerModel);
+            context
+        };
+        let schedulingContext = execContext.clone();
         operit_util::AppLogger::AppLogger::v_with_level(
             "CoreSend",
             "provider response task schedule start",
@@ -1198,14 +1271,31 @@ impl EnhancedAIService {
                             "provider response task entered",
                             operit_util::AppLogger::VERBOSE_LEVEL_5,
                         );
+                        let cancellationToken = execContext.cancellationToken.clone();
                         let result = service
-                            .executeSendMessageWithRuntime(options, runtime, producerStream.clone())
+                            .executeSendMessageWithRuntime(
+                                options,
+                                runtime,
+                                producerStream.clone(),
+                                execContext,
+                            )
                             .await;
                         if let Err(error) = result {
-                            let message = error.to_string();
-                            producerStream.set_terminal_failure(message.clone());
-                            service
-                                .setInputProcessingState(InputProcessingState::Error { message });
+                            let cancelled = matches!(error, AiServiceError::RequestCancelled)
+                                || cancellationToken
+                                    .as_ref()
+                                    .is_some_and(MessageCancellationToken::isCancelled)
+                                || service.shared_state().execution_generation
+                                    != executionGeneration;
+                            // A late cancellation error belongs to the old task, not
+                            // the current chat state or a newly started response.
+                            if !cancelled {
+                                let message = error.to_string();
+                                producerStream.set_terminal_failure(message.clone());
+                                service.setInputProcessingState(InputProcessingState::Error {
+                                    message,
+                                });
+                            }
                         }
                         producerStream.close();
                         operit_util::AppLogger::AppLogger::v_with_level(
@@ -1216,7 +1306,10 @@ impl EnhancedAIService {
                     })
                 }),
             )
-            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            .map_err(|error| {
+                self.unregisterExecutionContext(&schedulingContext);
+                AiServiceError::RequestFailed(error.to_string())
+            })?;
         operit_util::AppLogger::AppLogger::v_with_level(
             "CoreSend",
             "provider response task scheduled",
@@ -1230,13 +1323,19 @@ impl EnhancedAIService {
         options: SendMessageOptions,
         mut runtime: SendMessageRuntime,
         responseStream: SharedAiResponseStream,
+        mut execContext: MessageExecutionContext,
     ) -> Result<(), AiServiceError> {
+        // The context is registered before scheduling, so cancellation also covers
+        // workers that have not started yet. They must not publish state or run hooks.
+        if !self.isExecutionContextActive(&execContext) {
+            self.unregisterExecutionContext(&execContext);
+            return Ok(());
+        }
         let message = options.message.clone();
         let chatId = options.chatId.clone();
         let logChatId = chatId
             .clone()
             .unwrap_or_else(|| "__DEFAULT_CHAT__".to_string());
-        let chatHistory = options.chatHistory.clone();
         let workspacePath = options.workspacePath.clone();
         let functionType = options.functionType.clone();
         let promptFunctionType = options.promptFunctionType.clone();
@@ -1283,22 +1382,6 @@ impl EnhancedAIService {
         }
 
         let mut lifecycle = Vec::new();
-        let eventChannel = MutableSharedStreamMirror::<TextStreamEventMirror>::new(usize::MAX);
-        let executionId = {
-            let mut shared = self.shared_state();
-            shared.next_execution_context_id += 1;
-            shared.next_execution_context_id
-        };
-        let mut execContext = MessageExecutionContext::new(
-            executionId,
-            chatHistory,
-            workspacePath.clone(),
-            options.workspaceFolders.clone(),
-            groupParticipantNamesText.clone(),
-            proxySenderName.clone(),
-            eventChannel,
-        );
-        self.registerExecutionContext(execContext.clone());
         if !isSubTask {
             lifecycle.push(SendMessageLifecycleStage::StartAiService);
             self.startAiService(characterName.clone(), avatarUri.clone());
@@ -3534,5 +3617,116 @@ mod model_identity_tests {
         assert_eq!(previous_identity.unwrap().modelName, "model-a");
         assert!(state.last_reply_content.is_none());
         assert!(state.last_turn_token_snapshot.is_none());
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::{
+        AiServiceError, EnhancedAIService, EnhancedAISharedState, MessageCancellationToken,
+        SendMessageOptions,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn queued_response_context_is_invalidated_before_worker_starts() {
+        let state = Arc::new(Mutex::new(EnhancedAISharedState::default()));
+        let context = state
+            .lock()
+            .unwrap()
+            .createExecutionContext(0, &SendMessageOptions::new())
+            .unwrap();
+        state.lock().unwrap().invalidateExecutionContexts();
+
+        // This is the worker's entry guard, before it publishes Processing or runs hooks.
+        assert!(!EnhancedAIService::isExecutionContextActiveInSharedState(
+            &state, &context
+        ));
+    }
+
+    #[test]
+    fn cancelled_generation_cannot_register_a_late_response_task() {
+        let mut state = EnhancedAISharedState::default();
+        let generation = state.execution_generation;
+        state.invalidateExecutionContexts();
+
+        let result = state.createExecutionContext(generation, &SendMessageOptions::new());
+        assert!(matches!(result, Err(AiServiceError::RequestCancelled)));
+        assert!(state.active_execution_contexts.is_empty());
+        assert_eq!(state.next_execution_context_id, 0);
+    }
+
+    #[test]
+    fn fresh_send_can_start_after_cancel_without_reactivating_old_execution() {
+        let mut state = EnhancedAISharedState::default();
+        let oldContext = state
+            .createExecutionContext(state.execution_generation, &SendMessageOptions::new())
+            .unwrap();
+        state.invalidateExecutionContexts();
+        let newContext = state
+            .createExecutionContext(state.execution_generation, &SendMessageOptions::new())
+            .unwrap();
+        let state = Arc::new(Mutex::new(state));
+
+        assert_ne!(oldContext.executionId, newContext.executionId);
+        assert!(!EnhancedAIService::isExecutionContextActiveInSharedState(
+            &state,
+            &oldContext
+        ));
+        assert!(EnhancedAIService::isExecutionContextActiveInSharedState(
+            &state,
+            &newContext
+        ));
+        state
+            .lock()
+            .unwrap()
+            .active_execution_contexts
+            .remove(&oldContext.executionId);
+        assert!(EnhancedAIService::isExecutionContextActiveInSharedState(
+            &state,
+            &newContext
+        ));
+    }
+
+    #[test]
+    fn cancelled_send_cannot_register_even_if_it_captures_the_latest_generation() {
+        let mut state = EnhancedAISharedState::default();
+        let token = MessageCancellationToken::default();
+        let options = SendMessageOptions {
+            cancellationToken: Some(token.clone()),
+            ..SendMessageOptions::new()
+        };
+        token.cancel();
+        state.invalidateExecutionContexts();
+
+        // Cancellation can win before sendMessageWithRuntime captures its generation.
+        let result = state.createExecutionContext(state.execution_generation, &options);
+        assert!(matches!(result, Err(AiServiceError::RequestCancelled)));
+        assert!(state.active_execution_contexts.is_empty());
+    }
+
+    #[test]
+    fn per_send_gate_stops_execution_before_provider_cancellation_completes() {
+        let mut state = EnhancedAISharedState::default();
+        let token = MessageCancellationToken::default();
+        let options = SendMessageOptions {
+            cancellationToken: Some(token.clone()),
+            ..SendMessageOptions::new()
+        };
+        let context = state
+            .createExecutionContext(state.execution_generation, &options)
+            .unwrap();
+        let state = Arc::new(Mutex::new(state));
+        token.cancel();
+
+        // Even before cancelConversation invalidates shared contexts or obtains
+        // the provider mutex, stream callbacks and tool rounds must stop.
+        assert!(
+            state.lock().unwrap().active_execution_contexts[&context.executionId]
+                .isConversationActive
+        );
+        assert!(!EnhancedAIService::isExecutionContextActiveInSharedState(
+            &state, &context
+        ));
     }
 }
