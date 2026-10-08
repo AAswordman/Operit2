@@ -436,6 +436,22 @@ impl TuiCore {
     }
 
     #[allow(non_snake_case)]
+    /// Answers one pending chat tool permission request through the owning
+    /// chat route, so the response reaches whichever node hosts the chat.
+    pub(super) async fn respondToolPermission(
+        &mut self,
+        chatId: String,
+        requestId: String,
+        result: String,
+    ) -> Result<(), String> {
+        let mut chatProxy = self.proxy.chat_runtime_holder_main();
+        chatProxy
+            .respondChatToolPermission(chatId, requestId, result)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    #[allow(non_snake_case)]
     /// Reports whether an event belongs to the active main chat state watch.
     pub(super) fn isActiveMainChatStateEvent(&self, event: &CoreEvent) -> bool {
         event.propertyName == "chatStateFlow"
@@ -675,6 +691,69 @@ mod tests {
             let decoded = values.decode::<ChatState>(&event).unwrap().unwrap();
             assert_eq!(decoded, expected);
         }
+    }
+
+    /// Verifies pending chat tool permission requests survive the chat state
+    /// round-trip, so the approval modal can be driven from chat state.
+    #[test]
+    fn tui_state_flow_decodes_tool_permission_requests() {
+        use operit_model::InputProcessingState::InputProcessingState;
+        use operit_runtime::services::ChatServiceCore::ChatState;
+        use operit_runtime::services::RuntimeHostInteractionService::{
+            RuntimeHostInteractionToolPermissionRequest,
+            RuntimeHostInteractionToolPermissionTool,
+            RuntimeHostInteractionToolPermissionToolParameter,
+        };
+
+        let request = RuntimeHostInteractionToolPermissionRequest {
+            requestId: "permission-1".to_string(),
+            chatId: "handoff-chat".to_string(),
+            tool: RuntimeHostInteractionToolPermissionTool {
+                name: "Tools.Terminal.execute".to_string(),
+                parameters: vec![RuntimeHostInteractionToolPermissionToolParameter {
+                    name: "command".to_string(),
+                    value: "cargo test".to_string(),
+                }],
+            },
+            description: "Run a terminal command".to_string(),
+            requestedAtMillis: 42_000,
+        };
+        let mut state = ChatState {
+            currentChatId: "handoff-chat".to_string(),
+            currentChatTitle: "title".to_string(),
+            currentCharacterCardName: None,
+            currentCharacterCardAvatarUri: None,
+            currentWorkspacePath: None,
+            isLoading: false,
+            inputProcessingState: InputProcessingState::Completed,
+            hasOlderDisplayHistory: false,
+            hasNewerDisplayHistory: false,
+            isLoadingDisplayWindow: false,
+            pendingQueueMessages: Vec::new(),
+            isPendingQueueExpanded: false,
+            toolPermissionRequests: vec![request],
+        };
+        let mut values = TuiStateFlowValues::default();
+        let mut previous = None;
+        let (kind, value) = CoreValue::incrementalEvent(
+            &mut previous,
+            operit_link::toCoreValue(state.clone()).unwrap(),
+        );
+        assert_eq!(kind, CoreEventKind::Snapshot);
+        let event = state_flow_event("state-1", "chatStateFlow", kind, value);
+        let decoded = values.decode::<ChatState>(&event).unwrap().unwrap();
+        assert_eq!(decoded.toolPermissionRequests.len(), 1);
+        assert_eq!(decoded.toolPermissionRequests[0].requestId, "permission-1");
+        assert_eq!(
+            decoded.toolPermissionRequests[0].tool.name,
+            "Tools.Terminal.execute"
+        );
+
+        state.toolPermissionRequests.clear();
+        let cleared = operit_link::toCoreValue(state).unwrap();
+        let event = state_flow_event("state-1", "chatStateFlow", CoreEventKind::Snapshot, cleared);
+        let decoded = values.decode::<ChatState>(&event).unwrap().unwrap();
+        assert!(decoded.toolPermissionRequests.is_empty());
     }
 
     /// Verifies replacement snapshots and changed values become the next delta base.

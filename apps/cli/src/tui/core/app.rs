@@ -36,7 +36,8 @@ use operit_node_runtime::RuntimeRemoteLinkService::{
 };
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatState;
-use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
+use operit_runtime::services::RuntimeHostInteractionService::RuntimeHostInteractionToolPermissionRequest;
+use operit_tools::tools::ToolPermissionSystem::AiPermissionMode;
 use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
 use operit_util::AppLogger::AppLogger;
 use operit_util::GithubReleaseUtil::{
@@ -44,7 +45,6 @@ use operit_util::GithubReleaseUtil::{
 };
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 
-use super::approval::TuiApprovalBridge;
 use super::commands::{expand_plugin_command, keyword_options_for, TuiPluginCommandSpec};
 use super::config;
 use super::config::ConfigUi;
@@ -154,7 +154,9 @@ pub(super) struct OperitTui {
     pub(super) awaiting_runtime_loading: bool,
     pub(super) last_runtime_status_refresh_at: Option<Instant>,
     pub(super) typewriter_state: TypewriterState,
-    pub(super) approval_bridge: TuiApprovalBridge,
+    /// Pending chat-scoped tool permission requests from the current chat
+    /// state; answers go back through the owning chat route.
+    pub(super) current_tool_permission_requests: Vec<RuntimeHostInteractionToolPermissionRequest>,
     pub(super) language: TuiLanguage,
     pub(super) show_help: bool,
     pub(super) startup_install_prompt: Option<StartupInstallPrompt>,
@@ -497,7 +499,6 @@ impl OperitTui {
         networkControl: RuntimeRemoteLinkService,
         initial_shell_args: ShellArgs,
         initial_chat_id: String,
-        approval_bridge: TuiApprovalBridge,
         language: TuiLanguage,
         startup_install_prompt: Option<StartupInstallPrompt>,
         startup_update_prompt: Option<StartupUpdatePrompt>,
@@ -570,6 +571,7 @@ impl OperitTui {
         let current_chat_is_loading_cache = current_chat_state_cache.isLoading;
         let current_chat_input_processing_state_cache =
             current_chat_state_cache.inputProcessingState.clone();
+        let current_tool_permission_requests = current_chat_state_cache.toolPermissionRequests;
         let current_window_size_cache = core
             .chat_runtime_holder_main()
             .currentWindowSizeFlowSnapshot()
@@ -673,7 +675,7 @@ impl OperitTui {
             awaiting_runtime_loading: false,
             last_runtime_status_refresh_at: None,
             typewriter_state: TypewriterState::default(),
-            approval_bridge,
+            current_tool_permission_requests,
             language,
             show_help: false,
             startup_install_prompt,
@@ -1003,7 +1005,7 @@ impl OperitTui {
             || self.startup_install_prompt.is_some()
             || self.startup_update_prompt.is_some()
             || self.startup_workspace_prompt.is_some()
-            || self.approval_bridge.current().is_some()
+            || !self.current_tool_permission_requests.is_empty()
             || self.join_decision.is_some()
             || self.device_manager.is_some();
         if self.compose.editor.is_some() {
@@ -1351,8 +1353,8 @@ impl OperitTui {
             return Ok(());
         }
 
-        if self.approval_bridge.current().is_some() {
-            self.handle_approval_key(key);
+        if !self.current_tool_permission_requests.is_empty() {
+            self.handle_approval_key(key).await;
             return Ok(());
         }
 
@@ -2392,23 +2394,36 @@ impl OperitTui {
         }
     }
 
-    fn handle_approval_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                self.approval_bridge.respond(PermissionRequestResult::ALLOW);
-                self.status_message = self.text().tool_approved_once().to_string();
-            }
-            KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                self.approval_bridge.respond(PermissionRequestResult::DENY);
-                self.status_message = self.text().tool_denied().to_string();
-            }
-            KeyCode::Char('3') | KeyCode::Char('a') | KeyCode::Char('A') => {
-                self.approval_bridge
-                    .respond(PermissionRequestResult::ALLOW_SESSION);
-                self.status_message = self.text().tool_approved_remembered().to_string();
-            }
-            _ => {}
+    async fn handle_approval_key(&mut self, key: KeyEvent) {
+        let result = match key.code {
+            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => "allow",
+            KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => "deny",
+            KeyCode::Char('3') | KeyCode::Char('a') | KeyCode::Char('A') => "allow_session",
+            _ => return,
+        };
+        let Some(request) = self.current_tool_permission_requests.first().cloned() else {
+            return;
+        };
+        if let Err(error) = self
+            .core
+            .respondToolPermission(
+                request.chatId.clone(),
+                request.requestId.clone(),
+                result.to_string(),
+            )
+            .await
+        {
+            self.status_message = error;
+            return;
         }
+        // The chat state watch confirms the removal; drop it locally so a
+        // second keypress cannot answer the same request twice.
+        self.current_tool_permission_requests.remove(0);
+        self.status_message = match result {
+            "allow" => self.text().tool_approved_once().to_string(),
+            "allow_session" => self.text().tool_approved_remembered().to_string(),
+            _ => self.text().tool_denied().to_string(),
+        };
     }
 
     /// Handles keys for the Space join decision popup. Y/N decide the
@@ -3627,6 +3642,7 @@ impl OperitTui {
     fn apply_chat_state(&mut self, state: ChatState) {
         self.current_chat_is_loading_cache = state.isLoading;
         self.current_chat_input_processing_state_cache = state.inputProcessingState;
+        self.current_tool_permission_requests = state.toolPermissionRequests;
     }
 
     fn apply_startup_install_events(&mut self) {
