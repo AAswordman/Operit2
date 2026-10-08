@@ -129,6 +129,19 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    // Help and unknown-command handling run before any Core runtime is created.
+    if matches!(args[0].as_str(), "help" | "-h" | "--help") {
+        return print_cli_help(args.get(1).map(String::as_str)).await;
+    }
+    if args.len() >= 2 && matches!(args[1].as_str(), "help" | "-h" | "--help") {
+        return print_cli_help(Some(&args[0])).await;
+    }
+    if !CLI_COMMANDS.iter().any(|(name, _)| *name == args[0]) {
+        eprintln!("Unknown command: {}", args[0]);
+        eprintln!("Run 'operit2 cli help' to list commands.");
+        return Ok(());
+    }
+
     if args[0].as_str() == "link" {
         return run_link_command(&args[1..]).await;
     }
@@ -1821,99 +1834,136 @@ pub(crate) fn print_root_usage() {
         emit_cli_json(serde_json::json!({ "usage": "operit2 [tui|cli|install|uninstall]" }));
         return;
     }
-    println!("operit2");
+    println!("operit2                       Start the interactive TUI");
+    println!("operit2 tui [options]         Start the TUI ('operit2 tui --help' for options)");
+    println!("operit2 cli <command> [args]  Run a CLI command");
     println!("operit2 install [--source <path>]");
     println!("operit2 uninstall");
-    println!("operit2 [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
-    println!("operit2 tui [--link-server --link-bind <addr:port> --link-token <token>] [--link-join <session>] [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]");
-    println!("operit2 cli <version|identity|prefs|host|log|local-models|stt|memory|tts|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|install|uninstall|skill|package|plugin|mcp|link|web|shell>");
-    println!("operit2 cli --link <session> <version|prefs|host|log|local-models|stt|memory|export|import|backup|model|chat|workspace|storage|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
     println!();
-    print_cli_usage();
+    println!("Run 'operit2 cli help' to list CLI commands.");
 }
 
-/// Prints the complete CLI usage entry point.
+/// One CLI command family with the short description shown by `operit2 cli help`.
+/// Every dispatched family must appear here; help routes core-owned families back
+/// to the core so its per-family usage stays the single source of truth.
+const CLI_COMMANDS: &[(&str, &str)] = &[
+    ("version", "Show CLI, core, and link versions"),
+    ("identity", "Manage local node identities"),
+    ("chat", "Manage chat sessions and messages"),
+    ("shell", "Interactive chat shell"),
+    ("character", "Manage character cards"),
+    ("group", "Manage character groups"),
+    ("tag", "Manage prompt tags"),
+    ("active-prompt", "Show or set the active prompt card"),
+    ("memory", "Manage character and shared memory"),
+    ("tts", "Configure text-to-speech and synthesize"),
+    ("stt", "Configure speech-to-text and transcribe"),
+    ("model", "Manage providers, models, and parameters"),
+    ("local-models", "Manage local model files"),
+    ("workspace", "Bind workspaces to chats and run commands"),
+    ("tool", "List, show, or execute tools"),
+    ("approval", "Manage AI permission mode and tool approval"),
+    ("skill", "Manage skills"),
+    ("package", "Manage ToolPkg packages"),
+    ("plugin", "Manage plugins"),
+    ("mcp", "Manage MCP servers"),
+    ("extension", "Move extensions between device and space"),
+    ("market", "Browse, publish, and install from the market"),
+    ("prefs", "Show or change preferences"),
+    ("host", "Show host information"),
+    ("storage", "Show storage paths or migrate storage"),
+    ("log", "Show, package, or clear logs"),
+    ("backup", "Create, restore, or inspect backups"),
+    ("export", "Export memory, chat, or a snapshot"),
+    ("import", "Import memory, chat, snapshot, or operit1 config"),
+    ("usage", "Show token usage summary and records"),
+    ("update", "Check or run self-update"),
+    ("link", "Pair peers and manage link sessions and spaces"),
+    ("web", "Open the Web Access UI"),
+    ("install", "Install CLI integration"),
+    ("uninstall", "Uninstall CLI integration"),
+];
+
+/// Prints the compact level-1 command list shown by `operit2 cli [help]`.
 fn print_cli_usage() {
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli <command> [arguments]" }));
+        emit_cli_json(serde_json::json!({ "usage": cli_usage_lines() }));
         return;
     }
-    println!("operit2 cli --link <session> <version|chat|workspace|local-models|stt>");
-    println!("operit2 cli version");
-    print_identity_usage();
-    println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>");
-    println!("operit2 cli host <show>");
-    println!("operit2 cli storage <paths|migrate>");
-    println!("operit2 cli log <show|package|path|clear>");
-    println!("operit2 cli local-models <paths|catalog|show|installed|installed-show|install|install-statuses|install-status|install-cancel|verify|delete|engine-delete>");
-    println!(
-        "operit2 cli stt <provider-list|provider-model-list|config|transcribe|transcribe-config>"
-    );
-    println!("operit2 cli memory <character|shared|mount|unmount>");
-    println!("operit2 cli tts config <list|show|current|use|create|update|delete>");
-    println!("operit2 cli tts synthesize --character <id> --text <text>");
-    println!("operit2 cli export <memory|chat|snapshot>");
-    println!("operit2 cli import <memory|chat|snapshot|operit1-model-config>");
-    println!("operit2 cli backup <create|restore|inspect|inspect-operit1-model-config>");
-    println!("operit2 cli model <init|list|show|set|set-key|api-settings-full|custom-headers|request-queue|api-key-pool|custom-parameters|parameters|builtin-tools|tool-call|direct-image|direct-audio|direct-video|google-search|params|context-show|context-set|summary-show|summary-set|function-list|function-show|function-set|function-reset>");
-    println!("operit2 cli tag <list|show|create|update|delete>");
-    println!("operit2 cli character <init|list|show|create|update|delete|set-active|combine|reset-default>");
-    println!("operit2 cli group <init|list|show|create|update|delete|set-active|duplicate>");
-    println!("operit2 cli active-prompt <show|set-card|set-group|activate-for-chat|resolved-card>");
-    println!("operit2 cli approval <status|list|allow|ask|forbid|tool>");
-    println!("operit2 cli tool <list|show|exec>");
-    println!(
-        "operit2 cli market <auth|rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>"
-    );
-    println!("operit2 cli update [check|target]");
-    println!("operit2 cli usage <summary|records|models|clear>");
-    println!("operit2 cli install [--source <path>]");
-    println!("operit2 cli uninstall");
-    println!("operit2 cli extension <list [kind] [--scope scope]|show <kind> <id>|move <kind> <id> <device|space> --yes>");
-    println!("operit2 cli <plugin|package|skill|mcp> scope <id> [device|space --yes]");
-    println!("operit2 cli skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>");
-    println!("operit2 cli package <help|dir|list|more|load|show|import|enable|disable|use|exec>");
-    println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
-    println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|meta|meta-set|describe>");
-    println!(
-        "operit2 cli link <serve|discover|hello|pair-start|pair-finish|connect|space|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>"
-    );
-    println!("operit2 cli web open");
-    println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|shell|send>");
-    println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli chat list");
-    println!("operit2 cli chat show <chat-id> [--runtime]");
-    println!("operit2 cli chat current");
-    println!("operit2 cli chat switch <chat-id>");
-    println!("operit2 cli chat delete <chat-id>");
-    println!("operit2 cli chat delete-message <message-timestamp>");
-    println!("operit2 cli chat clear");
-    println!("operit2 cli chat rollback <message-timestamp>");
-    println!("operit2 cli chat branch [--up-to <message-timestamp>]");
-    println!("operit2 cli chat branches [parent-chat-id]");
-    println!("operit2 cli chat lock <chat-id> <true|false>");
-    println!("operit2 cli chat pin <chat-id> <true|false>");
-    println!("operit2 cli chat stats");
-    println!("operit2 cli chat bind-character <chat-id> <character-card-name>");
-    println!("operit2 cli chat bind-group <chat-id> <character-group-id>");
-    println!("operit2 cli chat set-group <chat-id> <group-name>");
-    println!("operit2 cli chat shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli chat send [--chat <chat-id>] <message>");
-    println!(
-        "operit2 cli workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>"
-    );
-    println!("operit2 cli workspace default-path <chat-id>");
-    println!("operit2 cli workspace create-default <chat-id> [project-type]");
-    println!("operit2 cli workspace bind-default <chat-id> [project-type]");
-    println!("operit2 cli workspace bind <chat-id> <workspace>");
-    println!("operit2 cli workspace unbind <chat-id>");
-    println!("operit2 cli workspace list");
-    println!("operit2 cli workspace chats <workspace>");
-    println!("operit2 cli workspace commands <chat-id>");
-    println!("operit2 cli workspace commands-path <workspace>");
-    println!("operit2 cli workspace run <chat-id> <command-id>");
-    println!("operit2 cli workspace run-path <workspace> <command-id>");
+    for line in cli_usage_lines() {
+        println!("{line}");
+    }
+}
+
+fn cli_usage_lines() -> Vec<String> {
+    let mut lines = vec![
+        "operit2 cli <command> [arguments...]".to_string(),
+        String::new(),
+        "Global options:".to_string(),
+        "  --json              Emit machine-readable JSON output".to_string(),
+        "  --link <session>    Run a command through link session <session>".to_string(),
+        String::new(),
+        "Commands:".to_string(),
+    ];
+    for (name, description) in CLI_COMMANDS {
+        lines.push(format!("  {name:<15}  {description}"));
+    }
+    lines.push(String::new());
+    lines.push("Run 'operit2 cli help <command>' for details on one command.".to_string());
+    lines
+}
+
+/// Prints help for one level: no command lists all families, a command name
+/// prints that family's usage only. Families with usage owned by the CLI print
+/// locally; the rest forward to the core, which prints its own usage.
+async fn print_cli_help(command: Option<&str>) -> Result<(), String> {
+    let Some(command) = command else {
+        print_cli_usage();
+        return Ok(());
+    };
+    match command {
+        "identity" => {
+            print_identity_usage();
+            Ok(())
+        }
+        "tts" => {
+            print_tts_usage();
+            Ok(())
+        }
+        "update" => {
+            print_update_usage();
+            Ok(())
+        }
+        "install" => {
+            print_install_usage();
+            Ok(())
+        }
+        "uninstall" => {
+            print_uninstall_usage();
+            Ok(())
+        }
+        "link" => {
+            link::print_link_usage();
+            Ok(())
+        }
+        "web" => {
+            if cli_json_mode() {
+                emit_cli_json(serde_json::json!({ "usage": "operit2 cli web open" }));
+            } else {
+                println!("operit2 cli web open");
+            }
+            Ok(())
+        }
+        family if CLI_COMMANDS.iter().any(|(name, _)| *name == family) => {
+            let mut core = local_cli_core().await?;
+            run_core_command_and_print(&mut core, &[family.to_string()]).await
+        }
+        other => {
+            eprintln!("Unknown command: {other}");
+            eprintln!("Run 'operit2 cli help' to list commands.");
+            Ok(())
+        }
+    }
 }
 
 /// Prints local identity commands that run before Core startup.
@@ -1929,162 +1979,6 @@ fn print_identity_usage() {
     println!("operit2 cli identity create <name>");
     println!("operit2 cli identity use <id>");
     println!("operit2 cli identity rename <id> <name>");
-}
-
-fn print_cli_link_usage() {
-    println!("operit2 cli --link <session> <version|prefs|host|log|local-models|stt|memory|export|import|backup|model|chat|workspace|tag|character|group|active-prompt|approval|tool|market|update|skill|package|plugin|mcp|shell>");
-    println!("operit2 cli link run <session> <version|chat|local-models|stt>");
-}
-
-fn print_model_usage() {
-    println!("operit2 cli model init");
-    println!("operit2 cli model provider-type-list");
-    println!("operit2 cli model provider-list");
-    println!("operit2 cli model provider-show <provider-id>");
-    println!("operit2 cli model codex-login <browser|device>");
-    println!("operit2 cli model provider-create <name> <provider-type-id> <endpoint>");
-    println!("operit2 cli model provider-set-key <provider-id> <api-key>");
-    println!("operit2 cli model provider-set-endpoint <provider-id> <endpoint>");
-    println!("operit2 cli model provider-model-available-list <provider-id> [fetched|all]");
-    println!("operit2 cli model provider-model-add <provider-id> <provider-model-id>");
-    println!("operit2 cli model provider-model-create <provider-id> <provider-model-id>");
-    println!("operit2 cli model list");
-    println!("operit2 cli model show [model-id]");
-    println!("operit2 cli model use <provider-id> <model-id>");
-    println!("operit2 cli model params [model-id]");
-    println!("operit2 cli model parameters <provider-id> <model-id> <parameters-json>");
-    println!("operit2 cli model builtin-tools <provider-id> <model-id> <builtin-tools-json>");
-    println!("operit2 cli model context-show [model-id]");
-    println!("operit2 cli model context-set <provider-id> <model-id> <max-context-length>");
-    println!("operit2 cli model summary-show [model-id]");
-    println!("operit2 cli model summary-set <provider-id> <model-id> <enable-summary> <summary-token-threshold> <enable-summary-by-message-count> <summary-message-count-threshold>");
-    println!("operit2 cli model function-list");
-    println!("operit2 cli model function-show <function-type>");
-    println!("operit2 cli model function-set <function-type> <provider-id> <model-id>");
-    println!("operit2 cli model function-reset [function-type]");
-}
-
-fn print_prefs_usage() {
-    println!("operit2 cli prefs show");
-    println!("operit2 cli prefs thinking <on|off>");
-    println!("operit2 cli prefs thinking-quality <1-4>");
-    println!("operit2 cli prefs stream <on|off>");
-    println!("operit2 cli prefs media-history <image-user-turns> <media-user-turns>");
-    println!("operit2 cli prefs mcp-timeout <seconds>");
-}
-
-fn print_memory_usage() {
-    println!("operit2 cli memory character <character-id> user <show|write|path>");
-    println!(
-        "operit2 cli memory character <character-id> item <list|search|show|create|delete|move>"
-    );
-    println!("operit2 cli memory character <character-id> graph");
-    println!("operit2 cli memory shared <list|create|rename|delete>");
-    println!("operit2 cli memory shared <shared-id> user <show|write|path>");
-    println!("operit2 cli memory shared <shared-id> item <list|search|show|create|delete|move>");
-    println!("operit2 cli memory shared <shared-id> graph");
-    println!("operit2 cli memory mount <character-id> <shared-id> --read <true|false> --write <true|false>");
-    println!("operit2 cli memory unmount <character-id> <shared-id>");
-}
-
-fn print_chat_usage() {
-    println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli chat list");
-    println!("operit2 cli chat show <chat-id> [--runtime]");
-    println!("operit2 cli chat current");
-    println!("operit2 cli chat switch <chat-id>");
-    println!("operit2 cli chat delete <chat-id>");
-    println!("operit2 cli chat delete-message <message-timestamp>");
-    println!("operit2 cli chat clear");
-    println!("operit2 cli chat rollback <message-timestamp>");
-    println!("operit2 cli chat branch [--up-to <message-timestamp>]");
-    println!("operit2 cli chat branches [parent-chat-id]");
-    println!("operit2 cli chat lock <chat-id> <true|false>");
-    println!("operit2 cli chat pin <chat-id> <true|false>");
-    println!("operit2 cli chat stats");
-    println!("operit2 cli chat bind-character <chat-id> <character-card-name>");
-    println!("operit2 cli chat bind-group <chat-id> <character-group-id>");
-    println!("operit2 cli chat set-group <chat-id> <group-name>");
-    println!("operit2 cli chat shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
-    println!("operit2 cli chat send [--chat <chat-id>] <message>");
-}
-
-fn print_tag_usage() {
-    println!("operit2 cli tag list");
-    println!("operit2 cli tag show <id>");
-    println!("operit2 cli tag create <name> [prompt-content] [description] [tag-type]");
-    println!("operit2 cli tag update <id> <field> <value>");
-    println!("operit2 cli tag delete <id>");
-}
-
-fn print_character_usage() {
-    println!("operit2 cli character init");
-    println!("operit2 cli character list");
-    println!("operit2 cli character show <id>");
-    println!("operit2 cli character create <name> [character-setting]");
-    println!("operit2 cli character update <id> <field> <value>");
-    println!("operit2 cli character delete <id>");
-    println!("operit2 cli character set-active <id>");
-    println!("operit2 cli character combine <id> [CHAT|VOICE] [tag-id-csv]");
-    println!("operit2 cli character reset-default");
-}
-
-fn print_group_usage() {
-    println!("operit2 cli group init");
-    println!("operit2 cli group list");
-    println!("operit2 cli group show <id>");
-    println!("operit2 cli group create <name> [description]");
-    println!("operit2 cli group update <id> <field> <value>");
-    println!("operit2 cli group delete <id>");
-    println!("operit2 cli group set-active <id>");
-    println!("operit2 cli group duplicate <source-id> [new-name]");
-}
-
-fn print_active_prompt_usage() {
-    println!("operit2 cli active-prompt show");
-    println!("operit2 cli active-prompt set-card <id>");
-    println!("operit2 cli active-prompt set-group <id>");
-    println!(
-        "operit2 cli active-prompt activate-for-chat [character-card-name] [character-group-id]"
-    );
-    println!("operit2 cli active-prompt resolved-card");
-}
-
-fn print_approval_usage() {
-    println!("operit2 cli approval status");
-    println!("operit2 cli approval list");
-    println!("operit2 cli approval allow");
-    println!("operit2 cli approval ask");
-    println!("operit2 cli approval forbid");
-    println!("operit2 cli approval tool <tool-name> <allow|ask|forbid|clear>");
-}
-
-fn print_tool_usage() {
-    println!("operit2 cli tool list <public|internal|all>");
-    println!("operit2 cli tool show <tool-name>");
-    println!("operit2 cli tool exec <tool-name> <params-json>");
-}
-
-fn print_market_usage() {
-    println!("operit2 cli market auth login");
-    println!("operit2 cli market rank [updated|likes|downloads] [page]");
-    println!("operit2 cli market list [updated|likes|downloads] [type|-] [category|-] [page]");
-    println!("operit2 cli market search <query> [updated|likes|downloads] [type|-] [category|-]");
-    println!("operit2 cli market show <entryId>");
-    println!("operit2 cli market install <entryId> [versionId]");
-    println!("operit2 cli market comments <entryId> [page]");
-    println!("operit2 cli market comment <entryId> <body-or-@file>");
-    println!("operit2 cli market comment edit <commentId> <body-or-@file>");
-    println!("operit2 cli market comment delete <commentId>");
-    println!("operit2 cli market like <entryId>");
-    println!("operit2 cli market notifications [limit] [offset]");
-    println!("operit2 cli market my");
-    println!("operit2 cli market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256>");
-    println!("operit2 cli market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <changelog-or->");
-    println!("operit2 cli market publish version artifact <entryId> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
-    println!("operit2 cli market publish version repo <entryId> <version> <formatVer> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]");
-    println!("operit2 cli market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->");
-    println!("operit2 cli market download <assetId>");
 }
 
 /// Prints update command usage in the selected output format.
@@ -2124,66 +2018,6 @@ fn print_uninstall_usage() {
     }
     println!("operit2 uninstall");
     println!("operit2 cli uninstall");
-}
-
-fn print_skill_usage() {
-    println!("operit2 cli skill dir");
-    println!("operit2 cli skill list");
-    println!("operit2 cli skill more");
-    println!("operit2 cli skill load <name>");
-    println!("operit2 cli skill show <name>");
-    println!(
-        "operit2 cli skill create <skill-id> <description> <content-or-@file> [attachment-path...]"
-    );
-    println!("operit2 cli skill import-zip <zip-path> [sub-dir-in-zip]");
-    println!("operit2 cli skill delete <name>");
-    println!("operit2 cli skill visible <name> [true|false]");
-    println!("operit2 cli skill errors");
-}
-
-fn print_package_usage() {
-    println!("operit2 cli package help");
-    println!("operit2 cli package dir");
-    println!("operit2 cli package list");
-    println!("operit2 cli package more");
-    println!("operit2 cli package load <name>");
-    println!("operit2 cli package show <name>");
-    println!("operit2 cli package import <js-ts-hjson-toolpkg-path>");
-    println!("operit2 cli package enable <name>");
-    println!("operit2 cli package disable <name>");
-    println!("operit2 cli package use <name>");
-    println!("operit2 cli package exec <package:tool> <params-json>");
-}
-
-fn print_plugin_usage() {
-    println!("operit2 cli plugin help");
-    println!("operit2 cli plugin list");
-    println!("operit2 cli plugin more");
-    println!("operit2 cli plugin load <name>");
-    println!("operit2 cli plugin show <name>");
-    println!("operit2 cli plugin import <toolpkg-path>");
-    println!("operit2 cli plugin enable <name>");
-    println!("operit2 cli plugin disable <name>");
-}
-
-fn print_mcp_usage() {
-    println!("operit2 cli mcp dir");
-    println!("operit2 cli mcp list");
-    println!("operit2 cli mcp show <id>");
-    println!("operit2 cli mcp import <json-or-@file>");
-    println!("operit2 cli mcp export");
-    println!("operit2 cli mcp remove <id>");
-    println!("operit2 cli mcp enable <id>");
-    println!("operit2 cli mcp disable <id>");
-    println!("operit2 cli mcp start <id>");
-    println!("operit2 cli mcp kill <id>");
-    println!("operit2 cli mcp tools <id>");
-    println!("operit2 cli mcp config <id>");
-    println!("operit2 cli mcp config-set <id> <json-or-@file>");
-    println!("operit2 cli mcp local-set <id> [--disabled true|false] [--env KEY=VALUE] [--approve TOOL] -- <command> [args...]");
-    println!("operit2 cli mcp meta <id>");
-    println!("operit2 cli mcp meta-set <id> <name> <description-or-@file> <author> <version>");
-    println!("operit2 cli mcp describe <id>");
 }
 
 /// Prints one chat history header for a human reader.
@@ -2515,6 +2349,23 @@ fn currentTimeMillis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verifies the level-1 help table has unique, described command names.
+    #[test]
+    fn cli_help_commands_are_unique_and_described() {
+        let mut names = CLI_COMMANDS
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        let uniqueCount = names.len();
+        names.dedup();
+        assert_eq!(names.len(), uniqueCount, "CLI_COMMANDS names must be unique");
+        assert_eq!(uniqueCount, 35, "CLI_COMMANDS must cover every dispatched family");
+        assert!(CLI_COMMANDS
+            .iter()
+            .all(|(_, description)| !description.is_empty()));
+    }
 
     /// Verifies CLI errors expose the denied route subject and capability.
     #[test]
