@@ -90,28 +90,19 @@ impl TranscriptSelectionState {
         Some(selected)
     }
 
-    /// Returns the normalized (start ≤ end) selection range when non-empty.
+    /// Returns the normalized (start ≤ end) selection range.
     ///
-    /// The end position sits on the character under the release pointer and is
-    /// widened by one so drag selections include it, keeping the highlight's
-    /// right edge on the pointer. The start edge stays inclusive as-is, and a
-    /// plain click (anchor == cursor) still yields no range.
+    /// The range spans exactly the characters under the press and release
+    /// pointers, both included, regardless of drag direction. A gesture that
+    /// starts and ends on the same character therefore selects exactly that
+    /// one character.
     pub(super) fn normalized_range(&self) -> Option<(TranscriptPosition, TranscriptPosition)> {
         let anchor = self.anchor?;
         let cursor = self.cursor?;
-        if anchor == cursor {
-            return None;
-        }
-        if anchor < cursor {
-            Some((
-                anchor,
-                TranscriptPosition {
-                    line: cursor.line,
-                    column: cursor.column + 1,
-                },
-            ))
+        if anchor <= cursor {
+            Some((anchor, inclusive_end(cursor)))
         } else {
-            Some((cursor, anchor))
+            Some((cursor, inclusive_end(anchor)))
         }
     }
 }
@@ -237,6 +228,13 @@ pub(super) fn apply_transcript_selection(
             line_text_column_count(line)
         };
         highlight_line(line, start_column, end_column);
+    }
+}
+
+fn inclusive_end(position: TranscriptPosition) -> TranscriptPosition {
+    TranscriptPosition {
+        line: position.line,
+        column: position.column + 1,
     }
 }
 
@@ -521,22 +519,34 @@ mod tests {
     }
 
     #[test]
-    fn transcript_drag_left_includes_release_character_but_not_press_character() {
+    fn transcript_drag_selects_characters_under_both_pointers() {
         let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
-        let mut selection = TranscriptSelectionState::default();
-        selection.begin(TranscriptPosition { line: 0, column: 2 });
-        selection.end(TranscriptPosition { line: 0, column: 0 });
-        assert_eq!(selection.selected_text(&lines).as_deref(), Some("中文"));
+
+        // Press on "文" (col 1), release on "中" (col 0): both endpoint
+        // characters are selected regardless of drag direction.
+        let mut leftward = TranscriptSelectionState::default();
+        leftward.begin(TranscriptPosition { line: 0, column: 2 });
+        leftward.end(TranscriptPosition { line: 0, column: 0 });
+        assert_eq!(
+            leftward.selected_text(&lines).as_deref(),
+            Some("中文a")
+        );
+
+        // Press on "文", release one character right on "a": the span covers
+        // exactly the two endpoint characters.
+        let mut rightward = TranscriptSelectionState::default();
+        rightward.begin(TranscriptPosition { line: 0, column: 1 });
+        rightward.end(TranscriptPosition { line: 0, column: 2 });
+        assert_eq!(rightward.selected_text(&lines).as_deref(), Some("文a"));
     }
 
     #[test]
-    fn transcript_click_without_drag_selects_nothing() {
+    fn transcript_click_selects_single_character() {
         let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
         let mut selection = TranscriptSelectionState::default();
         selection.begin(TranscriptPosition { line: 0, column: 1 });
         selection.end(TranscriptPosition { line: 0, column: 1 });
-        assert!(selection.normalized_range().is_none());
-        assert_eq!(selection.selected_text(&lines), None);
+        assert_eq!(selection.selected_text(&lines).as_deref(), Some("文"));
     }
 
     #[test]
@@ -602,6 +612,11 @@ mod tests {
             popup_selected_text(&rows, &release_inclusive).as_deref(),
             Some("中\nx")
         );
+
+        let mut single_cell = TranscriptSelectionState::default();
+        single_cell.begin(TranscriptPosition { line: 0, column: 2 });
+        single_cell.end(TranscriptPosition { line: 0, column: 2 });
+        assert_eq!(popup_selected_text(&rows, &single_cell).as_deref(), Some("中"));
     }
 
     #[test]
