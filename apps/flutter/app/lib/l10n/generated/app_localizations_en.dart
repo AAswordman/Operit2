@@ -3902,7 +3902,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsRuntimeControlAssignIdentity => 'Set device identity';
 
   @override
-  String get settingsRuntimeControlClearIdentity => 'Clear device identity';
+  String get settingsRuntimeControlClearIdentity => 'Reset to default identity';
+
+  @override
+  String get settingsRuntimeControlDeviceAdmitted =>
+      'Connection restriction lifted; waiting for the device to reconnect';
+
+  @override
+  String get settingsRuntimeControlIdentityResetDone =>
+      'Identity reset to the default user';
 
   @override
   String get settingsRuntimeControlIdentityDefinitions =>

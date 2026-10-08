@@ -272,9 +272,7 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
 
   /// Builds the all-device current-state view.
   Widget _statusTab(BuildContext context, AppLocalizations l10n) {
-    final devices = <generated.RuntimeDeviceSpaceDevice>[
-      ...topology.devices,
-    ];
+    final devices = <generated.RuntimeDeviceSpaceDevice>[...topology.devices];
     final directory = _DeviceDirectory(devices);
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -331,19 +329,21 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
         MenuItemButton(
           onPressed: () => _commit(
             context,
-            () => clients.server.runtimeRemoteLinkService.admitDeviceSpaceMember(
-              deviceId: device.deviceId,
-            ),
+            () => clients.server.runtimeRemoteLinkService
+                .admitDeviceSpaceMember(deviceId: device.deviceId),
+            feedback: l10n.settingsRuntimeControlDeviceAdmitted,
           ),
           child: Text(l10n.settingsRuntimeControlAdmitDevice),
         ),
-      if (device.currentIdentity != null &&
+      if (device.deviceId != topology.currentDeviceId &&
+          device.currentIdentity != null &&
           _hasCapability(topology, 'network.identity.manage'))
         MenuItemButton(
           onPressed: () => _commit(
             context,
             () => clients.server.runtimeRemoteLinkService
                 .clearDeviceSpaceIdentity(nodeId: device.deviceId),
+            feedback: l10n.settingsRuntimeControlIdentityResetDone,
           ),
           child: Text(l10n.settingsRuntimeControlClearIdentity),
         ),
@@ -354,6 +354,7 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
             context,
             () => clients.server.runtimeRemoteLinkService
                 .disconnectDeviceSpaceNode(deviceId: device.deviceId),
+            feedback: l10n.settingsRuntimeControlDisconnected,
           ),
           child: Text(l10n.settingsRuntimeControlDisconnectDevice),
         ),
@@ -364,6 +365,7 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
             context,
             () => clients.server.runtimeRemoteLinkService
                 .removeDeviceSpaceMember(deviceId: device.deviceId),
+            feedback: l10n.settingsRuntimeControlRemoved,
           ),
           child: Text(l10n.settingsRuntimeControlRemoveDevice),
         ),
@@ -570,16 +572,22 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
     );
   }
 
-  /// Executes one administrator command and closes the stale snapshot dialog.
+  /// Executes one administrator command, closes the stale snapshot dialog,
+  /// and surfaces an optional feedback snackbar.
   Future<void> _commit(
     BuildContext context,
-    Future<void> Function() command,
-  ) async {
+    Future<void> Function() command, {
+    String? feedback,
+  }) async {
     try {
       await command();
       await onChanged();
       if (context.mounted) {
+        final messenger = ScaffoldMessenger.of(context);
         Navigator.of(context).pop();
+        if (feedback != null) {
+          messenger.showSnackBar(SnackBar(content: Text(feedback)));
+        }
       }
     } catch (error) {
       if (context.mounted) {
