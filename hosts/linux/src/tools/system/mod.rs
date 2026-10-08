@@ -903,9 +903,9 @@ fn linux_battery_info() -> HostResult<(i32, bool)> {
             return Ok((level, charging));
         }
     }
-    Err(HostError::new(
-        "Linux battery information was not found in /sys/class/power_supply",
-    ))
+    // Battery-less machines (desktops) expose no Battery entry; report the
+    // same 0/false default as the Windows host instead of failing device info.
+    Ok((0, false))
 }
 
 fn linux_network_type() -> HostResult<String> {
