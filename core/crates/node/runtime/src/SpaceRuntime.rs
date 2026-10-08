@@ -182,3 +182,20 @@ fn decodeArgument<T: DeserializeOwned>(
     operit_link::fromCoreValue(args.remove(name).unwrap_or(CoreValue::Null))
         .map_err(|error| CoreLinkError::new("INVALID_ARGS", format!("{name}: {error}")))
 }
+
+/// Full Core supplies chat execution through the existing Link service boundary.
+/// The shared router does not need to know or construct ChatRuntimeHolder.
+#[async_trait::async_trait(?Send)]
+impl operit_link::CoreLinkSharedClient for SpaceRuntime {
+    async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+        SpaceRuntime::call(self, request).await
+    }
+
+    async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
+        SpaceRuntime::watchSnapshot(self, request).await
+    }
+
+    async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+        SpaceRuntime::watch(self, request).await
+    }
+}

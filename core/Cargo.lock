@@ -2030,9 +2030,12 @@ dependencies = [
  "async-trait",
  "operit-edge-contract",
  "operit-host-api",
+ "operit-host-native-common",
  "operit-link",
  "operit-node-runtime",
+ "operit-store",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

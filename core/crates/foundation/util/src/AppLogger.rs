@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "espidf"))]
 use std::backtrace::Backtrace;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, Once, OnceLock};
@@ -54,6 +55,7 @@ struct LoggerState {
     log_file: Option<String>,
     package_log_file: Option<String>,
     entries: Vec<LogEntry>,
+    retain_entries: bool,
 }
 
 static STATE: OnceLock<Mutex<LoggerState>> = OnceLock::new();
@@ -71,6 +73,7 @@ fn state() -> &'static Mutex<LoggerState> {
             log_file: None,
             package_log_file: None,
             entries: Vec::new(),
+            retain_entries: true,
         })
     })
 }
@@ -87,6 +90,14 @@ fn install_host_log_sink_once() {
 pub struct AppLogger;
 
 impl AppLogger {
+    /// Controls in-memory history independently of console/file sinks.
+    /// Constrained apps may disable retention without changing other hosts.
+    pub fn set_retain_entries(enabled: bool) {
+        let mut guard = state().lock().expect("AppLogger mutex poisoned");
+        guard.retain_entries = enabled;
+        if !enabled { guard.entries = Vec::new(); }
+    }
+
     /// Enables or disables file logging.
     pub fn set_enable_file_logging(enabled: bool) {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
@@ -321,7 +332,10 @@ impl AppLogger {
 
     /// Captures the current stack trace as display text.
     pub fn get_stack_trace_string(_tr: &(dyn std::error::Error)) -> String {
-        format!("{:?}", Backtrace::capture())
+        #[cfg(not(target_os = "espidf"))]
+        { format!("{:?}", Backtrace::capture()) }
+        #[cfg(target_os = "espidf")]
+        { "Backtrace unavailable on ESP-IDF".to_string() }
     }
 
     /// Returns whether a severity is enabled by the console threshold.
@@ -364,7 +378,7 @@ fn write_entry(
         package_log_file,
     ) = {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
-        guard.entries.push(entry.clone());
+        if guard.retain_entries { guard.entries.push(entry.clone()); }
         (
             guard.enable_file_logging,
             guard.enable_console_logging,

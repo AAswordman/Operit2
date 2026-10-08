@@ -7669,6 +7669,12 @@ abstract class AppLocalizations {
   /// **'Cancel request'**
   String get spaceJoinCancel;
 
+  /// No description provided for @spaceJoinCancelFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not confirm cancellation. Check the connection or try again later.'**
+  String get spaceJoinCancelFailed;
+
   /// No description provided for @spaceJoinRefreshingFailed.
   ///
   /// In en, this message translates to:

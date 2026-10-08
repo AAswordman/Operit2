@@ -11,17 +11,18 @@ name = "operit-esp32"
 path = "src/main.rs"
 
 [dependencies]
-operit-node-runtime = { path = "../../core/crates/node/runtime", default-features = false }
+operit-node-runtime = { path = "../../core/crates/node/runtime", default-features = false, features = ["peer-runtime"] }
 operit-host-native-scheduler = { path = "../../hosts/common/operit-host-native-scheduler", default-features = false }
 operit-peer-link = { path = "../../core/crates/node/peer-link" }
 operit-edge-contract = { path = "../../core/crates/node/edge-contract" }
 async-trait = "0.1"
-base64 = "0.22"
 log = "0.4"
 operit-board-esp32 = { path = "../../hosts/boards/esp32" }
 operit-node-edge = { path = "../../core/crates/node/edge" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
 operit-link = { path = "../../core/crates/foundation/link" }
+operit-util = { path = "../../core/crates/foundation/util" }
+operit-store = { path = "../../core/crates/persistence/store", default-features = false, features = ["node-state"] }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 
@@ -49,11 +50,46 @@ esp_idf_components = [
   "esp_wifi",
   "esp_http_server",
   "espressif__mdns",
-  "lvgl_port",
-  "lvgl__lvgl",
+  "ui_port",
 ]
 extra_components = [
   { remote_component = { name = "espressif/mdns", version = "1.2.0" } },
-  { remote_component = { name = "lvgl/lvgl", version = "9.3.0" }, bindings_header = "lvgl_bindings.h", bindings_module = "lvgl" },
-  { component_dirs = ["lvgl_port"] },
+  { component_dirs = ["ui_port"] },
 ]
+
+# Xtensa LLVM cannot lower the vectorized UUID hex parser at opt-level 3.
+# Keep the workaround scoped to UUID; the firmware remains a release build.
+[profile.release.package.uuid]
+opt-level = 1
+
+# Prepare with: python ../../tools/esp32-editor/prepare-tokio.py
+# ESP-only overlay: avoid over-aligned stack frames in the esp LLVM 21 backend.
+# opt-level=1 did NOT fix this; see README.md (Xtensa build overlays).
+[patch.crates-io]
+tokio = { path = ".embuild/tokio-1.53.1" }
+# Prepared by the editor build; keep Poly1305 Rust/C padding within Xtensa ABI.
+ring = { path = ".embuild/ring-0.17.14" }
+
+[profile.release.package.tokio]
+opt-level = 1
+
+# Keep the shared peer runtime within the board's existing 4 MB flash layout.
+[profile.release.package.operit-esp32]
+opt-level = "z"
+[profile.release.package.operit-node-runtime]
+opt-level = "z"
+[profile.release.package.operit-store]
+opt-level = "z"
+[profile.release.package.operit-link]
+opt-level = "z"
+
+# The control-plane JSON adapter must fit the unchanged application partition.
+[profile.release.package.serde_json]
+opt-level = "z"
+[profile.release.package.operit-node-edge]
+opt-level = "z"
+
+[profile.release.package.operit-peer-link]
+opt-level = "z"
+[profile.release.package.operit-host-api]
+opt-level = "z"

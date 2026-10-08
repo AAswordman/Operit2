@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+pub mod PeerRouter;
 
 /// Identifies the CoreNode selected by one protocol request.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,16 +71,21 @@ impl GeneratedSpaceRoute {
     }
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "route-catalog")]
 include!(concat!(env!("OUT_DIR"), "/generated_route_catalog.rs"));
+
+#[cfg(feature = "full")]
+include!(concat!(env!("OUT_DIR"), "/generated_space_dispatch.rs"));
 
 #[cfg(feature = "full")]
 pub mod CoreNodeRouter;
 #[cfg(feature = "full")]
 pub mod NodeClient;
 pub mod RuntimePeerService;
-#[cfg(feature = "full")]
+#[cfg(feature = "peer-runtime")]
 pub mod HostRuntimePeerService;
+#[cfg(feature = "peer-runtime")]
+pub mod NodeSpaceService;
 pub mod NodeServices;
 #[cfg(feature = "peer-state")]
 pub mod PeerStateStore;
@@ -92,7 +98,7 @@ mod PeerSync;
 #[cfg(feature = "full")]
 pub mod SpaceRuntime;
 
-#[cfg(all(test, feature = "full"))]
+#[cfg(all(test, feature = "route-catalog"))]
 mod tests {
     use super::*;
 
@@ -123,4 +129,36 @@ mod tests {
         assert_eq!(generated_space_call_route(&request), Some(route));
     }
 
+    #[test]
+    fn route_catalog_contains_no_chat_execution_functions() {
+        let catalog = include_str!(concat!(env!("OUT_DIR"), "/generated_route_catalog.rs"));
+        assert!(!catalog.contains("generated_space_call_on_chat_core"));
+        assert!(!catalog.contains("generated_space_watch_on_chat_core"));
+        assert!(!catalog.contains("generated_space_watch_snapshot_on_chat_core"));
+    }
+
+    #[test]
+    fn shared_catalog_preserves_binding_validation() {
+        use operit_link::{CoreCallRequest, CoreValue};
+        let route = generated_space_route_for_method("beforeChangeRoute").unwrap();
+        let request =
+            |args| CoreCallRequest::new("binding-test", route.routeId, route.methodName, args);
+        let empty = request(CoreValue::emptyMap());
+        assert_eq!(
+            generated_core_call_route(&empty).unwrap_err().code,
+            "CORE_BINDING_KEY_REQUIRED"
+        );
+        let args = CoreValue::Map(std::collections::BTreeMap::from([(
+            route.bindingArgument.into(),
+            CoreValue::String("chat-1".into()),
+        )]));
+        assert_eq!(
+            generated_core_call_route(&request(args)).unwrap(),
+            GeneratedCoreRoute::Binding {
+                scope: 0,
+                key: "chat-1".into()
+            }
+        );
+        assert!(generated_space_route_for_id("device/unknown", route.methodName).is_none());
+    }
 }

@@ -175,17 +175,84 @@ impl PeerStateStore {
     }
     pub(crate) fn records<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
         self.preferences(path)?
-            .entries()
-            .into_iter()
-            .filter(|(name, _)| name != PREFERENCES_SCHEMA_VERSION_KEY_NAME)
+            .iterEntries()
+            .filter(|(name, _)| *name != PREFERENCES_SCHEMA_VERSION_KEY_NAME)
             .map(|(name, encoded)| {
-                let record = serde_json::from_str(&encoded)
+                let record = serde_json::from_str(encoded)
                     .map_err(|_| format!("Invalid peer state record at {path}, key {name}"))?;
-                Ok((name, record))
+                Ok((name.to_owned(), record))
             })
             .collect()
     }
 
+    /// Inspect only the version before decoding a record; do not build a JSON
+    /// Value tree (notably one allocation per secret byte) for every pending.
+    pub(crate) fn versionedRecords<T: DeserializeOwned>(&self, path: &str, version: u32) -> Result<BTreeMap<String, T>, String> {
+        #[derive(Deserialize)]
+        struct Header { version: Option<u32> }
+        let prefs = self.preferences(path)?;
+        let mut records = BTreeMap::new();
+        for (name, encoded) in prefs.iterEntries() {
+            if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
+            let header: Header = serde_json::from_str(encoded).map_err(|e| e.to_string())?;
+            if header.version == Some(version) {
+                records.insert(name.to_owned(), serde_json::from_str(encoded).map_err(|e| e.to_string())?);
+            }
+        }
+        Ok(records)
+    }
+
+    /// Expiry cleanup and insertion are one durable transaction. Unknown or
+    /// malformed records are retained; a failed write leaves the old state intact.
+    pub(crate) fn putPending<T: Serialize>(&self, path: &str, id: &str, value: &T, now: i64, capacity: usize) -> Result<(), String> {
+        #[derive(Deserialize)]
+        struct Header { version: u32, expires: i64 }
+        let encoded = serde_json::to_string(value).map_err(|e| e.to_string())?;
+        self.store(path).try_edit_result(|prefs| {
+            let mut expired = Vec::new();
+            let mut active = 0;
+            for (name, record) in prefs.iterEntries() {
+                if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
+                if let Ok(header) = serde_json::from_str::<Header>(record) {
+                    if header.version == PAIRING_SERVICE_VERSION && header.expires <= now {
+                        expired.push(name.to_owned());
+                        continue;
+                    }
+                }
+                if name != id { active += 1; }
+            }
+            if active >= capacity {
+                return Err(PreferencesDataStoreError::Message("Pending pairing capacity reached".into()));
+            }
+            for name in expired { prefs.remove(&stringPreferencesKey(&name)); }
+            prefs.set(&stringPreferencesKey(id), encoded);
+            Ok(())
+        }).map_err(|e: PreferencesDataStoreError| e.to_string())
+    }
+
+
+    /// Call once at boot, before serving requests on a clock without an epoch.
+    /// An uptime-based expiry from a previous boot is not a valid future lease.
+    /// Drop only current-version IN-FLIGHT pairings, never saved authorizations.
+    pub fn discardPendingPairingsForUnsynchronizedClock(&self, now: i64) -> Result<usize, String> {
+        if now >= 1_577_836_800_000 { return Ok(0); } // 2020-01-01, plausible epoch
+        #[derive(Deserialize)]
+        struct Header { version: Option<u32> }
+        let mut removed = 0;
+        for path in [RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH,
+            RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH] {
+            self.store(path).edit(|prefs| {
+                let names = prefs.iterEntries().filter_map(|(name, record)| {
+                    if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME { return None; }
+                    let header = serde_json::from_str::<Header>(record).ok()?;
+                    (header.version == Some(PAIRING_SERVICE_VERSION)).then(|| name.to_owned())
+                }).collect::<Vec<_>>();
+                removed += names.len();
+                for name in names { prefs.remove(&stringPreferencesKey(&name)); }
+            }).map_err(|e| e.to_string())?;
+        }
+        Ok(removed)
+    }
 
     /// 在原 Preferences 文件中提交一个事务/凭证；不创建平行的存储目录。
     pub(crate) fn putRecord<T: Serialize>(&self, path: &str, id: &str, value: &T) -> Result<(), String> {
@@ -339,6 +406,9 @@ impl PeerStateStore {
                 Ok((*path, keys))
             })
             .collect::<Result<Vec<_>, String>>()?;
+        // Pairing revocation ends the consent lifecycle authorized by these
+        // credentials, so a new pairing cannot replay a revoked review.
+        crate::NodeSpaceService::space_join::purgePeerRecords(self, nodeId)?;
         for (path, keys) in records {
             if keys.is_empty() {
                 continue;
@@ -469,7 +539,7 @@ mod tests {
     use operit_store::PreferencesDataStore::emptyPreferences;
     use std::sync::Mutex;
     #[derive(Default)]
-    struct Storage(Mutex<BTreeMap<String, Vec<u8>>>);
+    struct Storage(Mutex<BTreeMap<String, Vec<u8>>>, std::sync::atomic::AtomicBool);
     impl RuntimeStorageHost for Storage {
         fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
             None
@@ -486,6 +556,9 @@ mod tests {
                 .ok_or_else(|| HostError::new("missing"))
         }
         fn writeBytes(&self, path: &str, bytes: &[u8]) -> HostResult<()> {
+            if self.1.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(HostError::new("injected write failure"));
+            }
             self.0.lock().unwrap().insert(path.into(), bytes.into());
             Ok(())
         }
@@ -508,6 +581,69 @@ mod tests {
         preferences.set(&stringPreferencesKey(key), record.to_string());
         CoreNodeStateStore::newWithStorage(store.storage.clone(), path).replace(preferences).unwrap();
     }
+    #[test]
+    fn unsynchronized_boot_discards_only_inflight_pairings_and_keeps_credentials() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        store.putRecord(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, "keep", &serde_json::json!({"credential":true})).unwrap();
+        store.putRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, "keep", &serde_json::json!({"credential":true})).unwrap();
+        let inbound = storage.readBytes(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap();
+        let outbound = storage.readBytes(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap();
+        for path in [RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH] {
+            store.putRecord(path, "stale", &serde_json::json!({"version":1,"expires":999999})).unwrap();
+            store.putRecord(path, "future", &serde_json::json!({"version":2,"expires":999999})).unwrap();
+        }
+        assert_eq!(store.discardPendingPairingsForUnsynchronizedClock(1_800_000_000_000).unwrap(), 0);
+        assert_eq!(store.discardPendingPairingsForUnsynchronizedClock(10).unwrap(), 2);
+        for path in [RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH] {
+            assert_eq!(store.records::<Value>(path).unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["future"]);
+        }
+        assert_eq!(storage.readBytes(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap(), inbound);
+        assert_eq!(storage.readBytes(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap(), outbound);
+    }
+
+    #[test]
+    fn repeated_expired_pairings_remain_bounded_and_keep_credentials() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        let path = RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH;
+        store.putRecord(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, "credential", &serde_json::json!({"keep":true})).unwrap();
+        let credential = storage.readBytes(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap();
+        for now in 0..100 {
+            store.putPending(path, &format!("pending-{now}"), &serde_json::json!({"version":1,"expires":now+1}), now, 2).unwrap();
+            assert_eq!(store.records::<Value>(path).unwrap().len(), 1);
+        }
+        assert_eq!(storage.readBytes(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap(), credential);
+    }
+
+    #[test]
+    fn pending_capacity_and_failed_commit_leave_old_state_unchanged() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        let path = RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH;
+        let pending = serde_json::json!({"version":1,"expires":10});
+        store.putPending(path, "a", &pending, 0, 1).unwrap();
+        let before = storage.readBytes(path).unwrap();
+        assert!(store.putPending(path, "b", &pending, 0, 1).is_err());
+        storage.1.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(store.putPending(path, "b", &pending, 10, 1).is_err());
+        assert_eq!(storage.readBytes(path).unwrap(), before);
+        assert!(store.records::<Value>(path).unwrap().contains_key("a"));
+        assert!(!store.records::<Value>(path).unwrap().contains_key("b"));
+    }
+
+    #[test]
+    fn cleanup_retains_unknown_and_malformed_records_without_value_tree() {
+        let store = PeerStateStore::new(Arc::new(Storage::default()));
+        let path = RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH;
+        store.putRecord(path, "future", &serde_json::json!({"version":2,"expires":0})).unwrap();
+        store.putRecord(path, "old", &serde_json::json!({"version":1,"expires":0})).unwrap();
+        store.putRecord(path, "legacy", &serde_json::json!({"old":"unchanged"})).unwrap();
+        store.putPending(path, "new", &serde_json::json!({"version":1,"expires":100}), 1, 4).unwrap();
+        assert_eq!(store.records::<Value>(path).unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["future", "legacy", "new"]);
+        assert_eq!(store.versionedRecords::<Value>(path, 1).unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["new"]);
+    }
+
     #[test]
     fn original_pairing_credentials_are_used_without_repairing() {
         let store = PeerStateStore::new(Arc::new(Storage::default()));
@@ -905,6 +1041,82 @@ mod tests {
                 .unwrap(),
             identity
         );
+    }
+
+    #[test]
+    fn device_revocation_retires_join_requests_and_outcomes_but_preserves_other_peers() {
+        use crate::NodeSpaceService::space_join::{INBOUND, INBOX, OUTBOUND, RESULTS};
+        let store = PeerStateStore::new(Arc::new(Storage::default()));
+        for path in [INBOUND, OUTBOUND, INBOX] {
+            for (id, applicant, target) in [
+                ("applicant", "board", "local"),
+                ("target", "local", "board"),
+                ("other", "other", "local"),
+            ] {
+                store
+                    .putRecord(
+                        path,
+                        id,
+                        &serde_json::json!({"request": {
+                            "applicantDeviceId": applicant, "targetDeviceId": target
+                        }}),
+                    )
+                    .unwrap();
+                store
+                    .putRecord(RESULTS, id, &serde_json::json!({"decision": id}))
+                    .unwrap();
+            }
+        }
+        store.removePairedPeer("board").unwrap();
+        store.removePairedPeer("board").unwrap();
+        for path in [INBOUND, OUTBOUND, INBOX, RESULTS] {
+            assert_eq!(
+                store
+                    .records::<Value>(path)
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["other"]
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_join_record_aborts_revocation_before_deleting_any_peer_state() {
+        use crate::NodeSpaceService::space_join::{INBOUND, OUTBOUND, RESULTS};
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        store
+            .putRecord(
+                RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH,
+                "credential",
+                &serde_json::json!({"deviceId": "board"}),
+            )
+            .unwrap();
+        store
+            .putRecord(
+                INBOUND,
+                "request",
+                &serde_json::json!({"request": {
+                    "applicantDeviceId": "board", "targetDeviceId": "local"
+                }}),
+            )
+            .unwrap();
+        store
+            .putRecord(RESULTS, "request", &serde_json::json!({"decision": true}))
+            .unwrap();
+        store
+            .putRecord(OUTBOUND, "broken", &serde_json::json!({"request": null}))
+            .unwrap();
+        // Initialize the credential schema before comparing persisted bytes;
+        // its ordinary first-read migration is independent of revocation.
+        store
+            .records::<Value>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH)
+            .unwrap();
+        let before = storage.0.lock().unwrap().clone();
+        assert!(store.removePairedPeer("board").is_err());
+        assert_eq!(*storage.0.lock().unwrap(), before);
     }
 
     /// Verifies invalid listener preferences fail without modifying stored records.

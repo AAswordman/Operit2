@@ -22,6 +22,7 @@ impl ByteConnection for TcpBytes {
 struct TcpPeerListener {
     listener: Arc<dyn operit_host_api::Tcp::TcpListener>,
     source: PeerEndpoint,
+    maxMessageBytes: usize,
 }
 #[async_trait]
 impl PeerListener for TcpPeerListener {
@@ -35,6 +36,7 @@ impl PeerListener for TcpPeerListener {
             },
             PeerTransport::Tcp,
             Arc::new(TcpBytes(connection)),
+            self.maxMessageBytes,
         )))
     }
     async fn close(&self) {
@@ -46,6 +48,7 @@ pub(super) async fn connect(
     host: &HostManager,
     source: PeerEndpoint,
     target: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerConnection>, String> {
     let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
     let connection = provider
@@ -57,16 +60,18 @@ pub(super) async fn connect(
         target,
         PeerTransport::Tcp,
         Arc::new(TcpBytes(connection)),
+        maxMessageBytes,
     ))
 }
 pub(super) async fn listen(
     host: &HostManager,
     source: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
     let listener = provider
         .bind(&source.address)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(Arc::new(TcpPeerListener { listener, source }))
+    Ok(Arc::new(TcpPeerListener { listener, source, maxMessageBytes }))
 }

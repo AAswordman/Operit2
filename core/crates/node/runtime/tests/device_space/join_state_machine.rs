@@ -44,6 +44,8 @@ fn record(status: SpaceJoinStatus) -> Record {
         accepted: None,
         unavailableSince: None,
         approvedDecision: None,
+        decisionRevision: None,
+        cancelRequested: false,
     }
 }
 /// Verifies late polling responses cannot undo cancellation or an in-progress decision.

@@ -8,10 +8,11 @@ publish = false
 
 [dependencies]
 operit-node-runtime = { path = "../../../core/crates/node/runtime", default-features = false }
-operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common", features = ["tcp"] }
-operit-host-native-scheduler = { path = "../../../hosts/common/operit-host-native-scheduler", default-features = false }
+operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common", features = ["tcp", "storage"] }
+operit-host-native-scheduler = { path = "../../../hosts/common/operit-host-native-scheduler", default-features = false, features = ["esp32-compat"] }
 operit-peer-link = { path = "../../../core/crates/node/peer-link" }
 operit-edge-contract = { path = "../../../core/crates/node/edge-contract" }
+operit-store = { path = "../../../core/crates/persistence/store" }
 async-trait = "0.1"
 log = "0.4"
 base64 = "0.22"

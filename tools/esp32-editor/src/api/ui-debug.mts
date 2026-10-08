@@ -1,4 +1,4 @@
-/** Requests are executed by the browser's actual LVGL instance. The Rust
+/** Requests are executed by the browser's actual self-drawn UI instance. The Rust
  * simulator owns transport state only; it must never invent a second UI tree. */
 let sequence = 0;
 const queue: {id: number; command: string; input: unknown}[] = [];

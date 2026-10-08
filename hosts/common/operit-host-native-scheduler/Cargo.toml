@@ -8,6 +8,8 @@ publish = false
 [features]
 default = ["javascript"]
 javascript = ["dep:rquickjs"]
+# Desktop simulator mode that uses the ESP32 host worker stack budget.
+esp32-compat = []
 
 [dependencies]
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }

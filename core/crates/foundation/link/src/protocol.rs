@@ -5,7 +5,6 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::mpsc;
 
-use crate::CoreStreamDescriptor;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CoreValue {
@@ -47,7 +46,15 @@ impl CoreValue {
 
     /// Applies one generic incremental value payload to a complete base value.
     pub fn applyIncrementalDelta(&self, delta: &CoreValue) -> Result<CoreValue, String> {
-        applyCoreValueDelta(self, delta)
+        self.clone().intoIncrementalDelta(delta)
+    }
+
+    /// Applies a delta by transferring ownership of the base, without cloning
+    /// unchanged subtrees. On error the consumed base is dropped; callers that
+    /// need rollback must use applyIncrementalDelta instead.
+    pub fn intoIncrementalDelta(mut self, delta: &CoreValue) -> Result<CoreValue, String> {
+        applyCoreValueDelta(&mut self, delta)?;
+        Ok(self)
     }
 }
 
@@ -136,18 +143,17 @@ fn appendCoreDeltaOperation(
 }
 
 /// Applies all operations contained in one generic Core value delta.
-fn applyCoreValueDelta(base: &CoreValue, delta: &CoreValue) -> Result<CoreValue, String> {
+fn applyCoreValueDelta(result: &mut CoreValue, delta: &CoreValue) -> Result<(), String> {
     let CoreValue::Map(deltaFields) = delta else {
         return Err("incremental delta must be a map".to_string());
     };
     let Some(CoreValue::List(operations)) = deltaFields.get(CORE_DELTA_MARKER) else {
         return Err("incremental delta marker is missing".to_string());
     };
-    let mut result = base.clone();
     for operation in operations {
-        applyCoreDeltaOperation(&mut result, operation)?;
+        applyCoreDeltaOperation(result, operation)?;
     }
-    Ok(result)
+    Ok(())
 }
 
 /// Applies one set or remove operation to a mutable Core value tree.
@@ -447,9 +453,11 @@ where
 }
 
 pub struct CoreEventStream {
-    receiver: mpsc::UnboundedReceiver<CoreEvent>,
+    receiver: EventReceiver,
     onClose: Option<Box<dyn FnOnce() + Send + 'static>>,
 }
+
+enum EventReceiver { Unbounded(mpsc::UnboundedReceiver<CoreEvent>), Bounded(mpsc::Receiver<CoreEvent>) }
 
 impl CoreEventStream {
     /// Creates a stream together with its sender for an in-process Link source.
@@ -461,9 +469,15 @@ impl CoreEventStream {
     /// Wraps an event receiver as a link event stream.
     pub fn new(receiver: mpsc::UnboundedReceiver<CoreEvent>) -> Self {
         Self {
-            receiver,
+            receiver: EventReceiver::Unbounded(receiver),
             onClose: None,
         }
+    }
+
+    /// Bounded transport stream. A stalled consumer must not exhaust Edge RAM.
+    pub fn boundedChannel(capacity: usize) -> (mpsc::Sender<CoreEvent>, Self) {
+        let (sender, receiver) = mpsc::channel(capacity);
+        (sender, Self { receiver: EventReceiver::Bounded(receiver), onClose: None })
     }
 
     /// Registers a callback that runs when the stream is dropped.
@@ -481,17 +495,17 @@ impl CoreEventStream {
 
     /// Waits for the next event from the stream.
     pub async fn recv(&mut self) -> Option<CoreEvent> {
-        self.receiver.recv().await
+        match &mut self.receiver { EventReceiver::Unbounded(r) => r.recv().await, EventReceiver::Bounded(r) => r.recv().await }
     }
 
     /// Polls with the caller's waker, without adding a task or a timer.
     pub(crate) fn poll_recv(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<CoreEvent>> {
-        self.receiver.poll_recv(cx)
+        match &mut self.receiver { EventReceiver::Unbounded(r) => r.poll_recv(cx), EventReceiver::Bounded(r) => r.poll_recv(cx) }
     }
 
     /// Polls the stream for an already available event.
     pub fn try_recv(&mut self) -> Result<CoreEvent, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
+        match &mut self.receiver { EventReceiver::Unbounded(r) => r.try_recv(), EventReceiver::Bounded(r) => r.try_recv() }
     }
 }
 
@@ -1015,7 +1029,12 @@ impl CoreLinkError {
     /// Creates an internal link error annotated with caller location and backtrace.
     pub fn internal(message: impl Into<String>) -> Self {
         let caller = std::panic::Location::caller();
-        let backtrace = std::backtrace::Backtrace::force_capture();
+        // ESP-IDF's Xtensa unwind wrapper aborts instead of returning a
+        // backtrace. Reporting a recoverable error must never reset the board.
+        #[cfg(not(target_os = "espidf"))]
+        let backtrace = Some(format!("{:#}", std::backtrace::Backtrace::force_capture()));
+        #[cfg(target_os = "espidf")]
+        let backtrace = None;
         Self {
             code: "INTERNAL_ERROR".to_string(),
             message: message.into(),
@@ -1026,7 +1045,7 @@ impl CoreLinkError {
                 column: caller.column(),
             }),
             // Full formatting retains instruction addresses even without debug symbols.
-            backtrace: Some(format!("{backtrace:#}")),
+            backtrace,
         }
     }
 }
@@ -1054,3 +1073,23 @@ impl std::fmt::Display for CoreLinkError {
 }
 
 impl std::error::Error for CoreLinkError {}
+
+#[cfg(test)]
+mod internal_error_tests {
+    use super::CoreLinkError;
+
+    #[test]
+    fn internal_error_retains_message_and_caller_location() {
+        let line = line!() + 1;
+        let error = CoreLinkError::internal("NVS capacity exhausted");
+        assert_eq!(error.code, "INTERNAL_ERROR");
+        assert_eq!(error.message, "NVS capacity exhausted");
+        let location = error.location.as_ref().unwrap();
+        assert_eq!(location.line, line);
+        assert_eq!(location.file, file!());
+        #[cfg(not(target_os = "espidf"))]
+        assert!(error.backtrace.is_some());
+        #[cfg(target_os = "espidf")]
+        assert!(error.backtrace.is_none());
+    }
+}

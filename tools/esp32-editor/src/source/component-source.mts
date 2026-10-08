@@ -12,10 +12,10 @@ function hash(text: string): string {
 }
 
 const anchors: Array<[string, string, string]> = [
-  ['apps/esp32/lvgl_port/operit_lvgl.c', 'layout_action', 'static void layout_action('],
-  ['apps/esp32/lvgl_port/operit_lvgl.c', 'operit_lvgl_layout_bind', 'void operit_lvgl_layout_bind('],
-  ['apps/esp32/lvgl_port/operit_lvgl.c', 'page', 'static void page(const char *name) {'],
-  ['apps/esp32/src/main.rs', 'device action dispatch', '"run_node" =>'],
+  ['apps/esp32/ui_port/operit_mini_ui.c', 'activate', 'static void activate('],
+  ['apps/esp32/ui_port/operit_mini_ui.c', 'operit_ui_layout_bind', 'void operit_ui_layout_bind('],
+  ['apps/esp32/ui_port/operit_mini_ui.c', 'scene', 'static void scene(void) {'],
+  ['apps/esp32/src/main.rs', 'device action dispatch', '"run_node" | "edge_search" | "edge_pair" =>'],
   ['tools/esp32-editor/src/layout/routes.mts', 'routes', 'export const routes'],
 ];
 

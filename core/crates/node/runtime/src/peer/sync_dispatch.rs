@@ -2,6 +2,20 @@
 use super::*;
 
 impl CoreNodeRouter {
+    /// Check the replication endpoints, not a relay hop. Authorization comes
+    /// from the accepted Space policy, never platform names or remote claims.
+    pub(crate) fn requirePeerStorageProviders(
+        &self, originNodeId: &str, targetNodeId: &str,
+    ) -> Result<(), CoreLinkError> {
+        requireStorageProviders(&self.spaceStore, &self.networkControlStore, originNodeId, targetNodeId)
+    }
+
+    pub(super) fn guardPeerSyncPush(&self, origin: String, target: String, spaceId: String,
+        inner: Box<dyn CoreLinkPushSession>) -> Box<dyn CoreLinkPushSession> {
+        Box::new(AuthorizedSyncPush { control: self.networkControlStore.clone(), space: self.spaceStore.clone(),
+            origin, target, spaceId, inner })
+    }
+
     pub(super) fn validatePeerSyncRoute<T>(
         &self,
         previousNodeId: &str,
@@ -64,4 +78,51 @@ impl CoreNodeRouter {
         request.target = target.into();
         self.localCore.openPush(request)
     }
+}
+
+
+/// Opening a stream is not a permanent storage grant. Recheck every chunk and
+/// the final commit so an already-open transfer cannot outlive revocation.
+struct AuthorizedSyncPush {
+    control: NetworkControlStore,
+    space: CoreSpaceStore,
+    origin: String,
+    target: String,
+    spaceId: String,
+    inner: Box<dyn CoreLinkPushSession>,
+}
+impl AuthorizedSyncPush {
+    fn check(&self) -> Result<(), CoreLinkError> {
+        if self.space.space().map_err(CoreLinkError::internal)?.spaceId != self.spaceId {
+            return Err(CoreLinkError::new("SPACE_STORAGE_PERMISSION_DENIED", "Storage stream belongs to a previous Space"));
+        }
+        requireStorageProviders(&self.space, &self.control, &self.origin, &self.target)
+    }
+}
+#[async_trait]
+impl CoreLinkPushSession for AuthorizedSyncPush {
+    async fn send(&mut self, value: CoreValue) -> Result<(), CoreLinkError> {
+        self.check()?;
+        self.inner.send(value).await
+    }
+    async fn close(self: Box<Self>) -> Result<(), CoreLinkError> {
+        self.check()?;
+        self.inner.close().await
+    }
+}
+
+/// The same service-availability and policy check guards admission, each chunk
+/// and final commit. Unknown profiles do not advertise a storage engine.
+fn requireStorageProviders(space: &CoreSpaceStore, control: &NetworkControlStore,
+    origin: &str, target: &str) -> Result<(), CoreLinkError> {
+    let profiles = space.deviceProfiles().map_err(CoreLinkError::internal)?;
+    for node in [origin, target] {
+        if profiles.get(node).and_then(|profile| profile.coreVersion.as_ref()).is_none()
+            || control.nodeIsDisconnected(node).map_err(CoreLinkError::internal)?
+            || !control.nodeHasCapability(node, "storage.provide", None).map_err(CoreLinkError::internal)? {
+            return Err(CoreLinkError::new("SPACE_STORAGE_PERMISSION_DENIED",
+                format!("Node {node} cannot provide authorized Space storage")));
+        }
+    }
+    Ok(())
 }

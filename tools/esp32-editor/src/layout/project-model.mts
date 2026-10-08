@@ -94,7 +94,7 @@ export function withStatus(status: number, message: string): Error & {status: nu
   return error;
 }
 
-/** The root nodes are the home page (compatible with version 1). Other pages share the same schema; only the active page occupies LVGL runtime memory. */
+/** The root nodes are the home page (compatible with version 1). Other pages share the same schema; only the active page occupies self-drawn UI runtime memory. */
 export function pagesOf(doc: LayoutDocument): LayoutPage[] {
   return [{id: 'home', name: '首页', ...doc}, ...(doc.pages || [])];
 }

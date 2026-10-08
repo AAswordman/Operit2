@@ -446,6 +446,13 @@ impl HostManager {
         self
     }
 
+    /// Installs the host-owned virtual runtime storage used by node-local state.
+    #[allow(non_snake_case)]
+    pub fn withRuntimeStorageHost(mut self, host: Arc<dyn RuntimeStorageHost>) -> Self {
+        self.runtimeStorageHost = Some(host);
+        self
+    }
+
     /// Adds host-owned secret storage for runtime encryption keys.
     #[allow(non_snake_case)]
     pub fn withHostSecretStore(mut self, hostSecretStore: Arc<dyn HostSecretStore>) -> Self {

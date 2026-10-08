@@ -84,7 +84,7 @@ impl Esp32SetupServer {
             ..Default::default()
         })
         .map_err(|error| HostError::new(format!("setup server: {error}")))?;
-        crate::ui_deploy::register(&mut server, settingsStore.load()?.edgeToken)?;
+        crate::ui_capabilities::register(&mut server)?;
         let pageStatus = Arc::clone(&status);
         server
             .fn_handler("/", Method::Get, move |request| {

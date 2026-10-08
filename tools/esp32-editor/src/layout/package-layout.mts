@@ -4,7 +4,7 @@ import type {LayoutDocument} from './project-model.mts';
 
 export const packageLimit = 28672;
 
-/** Computes CRC-32 of a byte sequence. Compact, versioned data interpreted by the prebuilt LVGL runtime. No compiler. */
+/** Computes CRC-32 of a byte sequence. Compact, versioned data interpreted by the prebuilt self-drawn UI runtime. No compiler. */
 export function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff;
   for (const b of bytes) {
