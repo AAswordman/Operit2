@@ -53,7 +53,7 @@ impl TuiCommandSuggestion {
     }
 }
 
-const COMMAND_SPECS: [TuiCommandSpec; 73] = [
+const COMMAND_SPECS: [TuiCommandSpec; 74] = [
     TuiCommandSpec {
         name: "help",
         usage: "/help",
@@ -288,6 +288,12 @@ const COMMAND_SPECS: [TuiCommandSpec; 73] = [
         name: "network join-cancel",
         usage: "/network join-cancel <request-id|node-id>",
         description_key: TuiTextKey::CommandNetworkJoinCancelDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network leave",
+        usage: "/network leave",
+        description_key: TuiTextKey::CommandNetworkLeaveDescription,
         options: &[],
     },
     TuiCommandSpec {

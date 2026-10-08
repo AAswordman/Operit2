@@ -131,6 +131,9 @@ pub(super) struct OperitTui {
     /// confirmed or cancelled; lets the follow-up commands resolve the id.
     pending_pairings: Vec<PendingPairing>,
     last_outgoing_join_refresh_at: Option<Instant>,
+    /// The list popup is currently the Y/N confirm for `/network leave`; any
+    /// other popup open clears it so a stale confirm cannot fire elsewhere.
+    leave_confirm_pending: bool,
     /// Seeds the seen-id snapshots from the first fetch so a TUI start does
     /// not replay requests that predate the session.
     network_snapshots_seeded: bool,
@@ -659,6 +662,7 @@ impl OperitTui {
             seen_join_request_ids: BTreeSet::new(),
             pending_pairings: Vec::new(),
             last_outgoing_join_refresh_at: None,
+            leave_confirm_pending: false,
             network_snapshots_seeded: false,
             context_usage_label: String::new(),
             transcript_scroll: 0,
@@ -1428,6 +1432,11 @@ impl OperitTui {
             return Ok(());
         }
 
+        if self.show_list_popup && self.leave_confirm_pending {
+            self.handle_leave_confirm_key(key).await;
+            return Ok(());
+        }
+
         if self.show_list_popup {
             return self.handle_list_popup_key(key);
         }
@@ -2186,7 +2195,7 @@ impl OperitTui {
 
     /// Executes a Space control command through the runtime-owned authorization service.
     async fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
-        const USAGE: &str = "network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel>";
+        const USAGE: &str = "network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
         match args.first().map(String::as_str) {
             None | Some("show") if args.len() <= 1 => {
                 let state = self.networkControl.deviceSpaceControl()?;
@@ -2365,6 +2374,9 @@ impl OperitTui {
             }
             Some("join-cancel") if args.len() == 2 => {
                 self.status_message = self.network_join_cancel(&args[1]).await?;
+            }
+            Some("leave") if args.len() == 1 => {
+                self.network_leave().await?;
             }
             _ => {
                 self.status_message = USAGE.to_string();
@@ -2633,6 +2645,22 @@ impl OperitTui {
             join_status_label(&request.status),
             request_id
         ))
+    }
+
+    /// Opens the Y/N confirm popup for leaving the current device space, the
+    /// quick way out of tangled connection state. The leave itself only runs
+    /// on confirmation, and the popup quotes the space being exited.
+    async fn network_leave(&mut self) -> Result<(), String> {
+        let space = self.networkControl.deviceSpace()?;
+        let text = self.text();
+        let items = vec![
+            format!("{}: {}", text.network_leave_space_label(), space.spaceName),
+            format!("{}: {}", text.network_leave_members_label(), space.members.len()),
+            text.network_leave_warning().to_string(),
+        ];
+        self.open_list_popup(text.network_leave_title().to_string(), items);
+        self.leave_confirm_pending = true;
+        Ok(())
     }
 
     /// Resolves a `/network unpair|join` argument against paired devices:
@@ -3378,6 +3406,7 @@ impl OperitTui {
         self.list_popup_selected_index = 0;
         self.update_list_popup_filter();
         self.show_list_popup = true;
+        self.leave_confirm_pending = false;
         self.focus = FocusArea::Input;
     }
 
@@ -3406,6 +3435,34 @@ impl OperitTui {
         if self.list_popup_selected_index >= self.list_popup_filtered_indices.len() {
             self.list_popup_selected_index =
                 self.list_popup_filtered_indices.len().saturating_sub(1);
+        }
+    }
+
+    /// Y/N confirm for `/network leave`: Y leaves the current device space,
+    /// N/Esc cancels; every other key is consumed so the warning cannot be
+    /// searched or Enter-closed into an accidental state.
+    async fn handle_leave_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.leave_confirm_pending = false;
+                self.close_list_popup();
+                match self.networkControl.leaveDeviceSpace() {
+                    Ok(space) => {
+                        self.set_transient_status_message(
+                            self.text().network_leave_done(&space.spaceName),
+                        );
+                        // Re-seed the network snapshots for the new singleton
+                        // space so ids from the old one cannot replay.
+                        self.refresh_network_snapshots().await;
+                    }
+                    Err(error) => self.status_message = error,
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.leave_confirm_pending = false;
+                self.close_list_popup();
+            }
+            _ => {}
         }
     }
 
