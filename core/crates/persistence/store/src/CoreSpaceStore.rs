@@ -341,9 +341,8 @@ impl CoreSpaceStore {
             // still know which profile/topology files belong to a retired Space.
             for directory in [RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH, RUNTIME_SPACE_MEMBERS_DIR_PATH] {
                 let path = format!("{directory}/{node}.preferences.json");
-                if self.storage.exists(&path).map_err(|e| e.to_string())? {
-                    self.storage.delete(&path, false).map_err(|e| e.to_string())?;
-                }
+                CoreNodeStateStore::newWithStorage(self.storage.clone(), path)
+                    .delete().map_err(|e| e.to_string())?;
             }
         }
         Ok(())
@@ -1597,6 +1596,25 @@ mod tests {
         assert!(store
             .removeRemoteMember(identity.nodeId)
             .is_err());
+    }
+
+    /// Reimporting the same device after local exit must recreate its file,
+    /// not mistake a deleted preferences cache entry for durable storage.
+    #[test]
+    fn node_local_exit_then_identical_profile_reimport_restores_the_file() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::newNodeLocal(host.clone());
+        initializeTestDeviceProfile(&store);
+        let remote = "returning-core".to_string();
+        store.admitRemoteMember(remote.clone(), "Core".into(), "windows".into(), "desktop".into(), "1".into()).unwrap();
+        let profile = store.deviceProfiles().unwrap().remove(&remote).unwrap();
+        let path = format!("{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/{remote}.preferences.json");
+        store.leave().unwrap();
+        store.pruneNodeLocalProjection().unwrap();
+        assert!(!host.exists(&path).unwrap());
+        store.importDeviceProfiles(vec![profile.clone()]).unwrap();
+        assert!(host.exists(&path).unwrap(), "reimport incorrectly skipped a write because the deleted path was still cached");
+        assert_eq!(store.deviceProfiles().unwrap().get(&remote), Some(&profile));
     }
 
     /// Verifies that repeating the same paired Space observation records no new transaction.

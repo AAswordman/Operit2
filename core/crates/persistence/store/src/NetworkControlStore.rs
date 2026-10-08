@@ -448,7 +448,7 @@ impl NetworkControlStore {
         let spaceId = self.spaceStore.space()?.spaceId;
         let known = self.orderedCommands(&spaceId)?;
         let state = self.replayCommands(&spaceId, &known, false)?.0;
-        if !state.memberNodeIds.contains(peer) || state.removedNodeIds.contains(peer)
+        if !state.memberNodeIds.contains(peer)
             || state.disconnectedNodeIds.contains(peer) { return Err("Control source is not an admitted member".into()); }
         let canRelayAuthority = hasCapability(&state, peer, "*", None);
         for operation in operations {

@@ -1663,6 +1663,25 @@ pub struct CoreNodeStateStore {
 }
 
 impl CoreNodeStateStore {
+    /// Deletes a node-local record and its shared preferences snapshot together.
+    /// A raw host deletion would leave an identical later import cached and
+    /// silently skip recreating the durable file. Failed deletion preserves cache.
+    pub fn delete(&self) -> Result<(), PreferencesDataStoreError> {
+        let transaction = self.inner.sharedState.transaction.lock()
+            .expect("PreferencesDataStore transaction mutex must not be poisoned");
+        if self.inner.storageHost.exists(&self.inner.storagePath)? {
+            self.inner.storageHost.delete(&self.inner.storagePath, false)?;
+        }
+        let mut loaded = self.inner.sharedState.preferences.lock()
+            .expect("PreferencesDataStore shared state mutex must not be poisoned");
+        loaded.loaded = true;
+        loaded.preferences = emptyPreferences();
+        drop(loaded);
+        drop(transaction);
+        self.inner.notifyChanged();
+        Ok(())
+    }
+
     /// Declares a one-time schema migration for node-local state.
     #[allow(non_snake_case)]
     pub fn withSchema<F>(mut self, currentVersion: u32, migrate: F) -> Self
