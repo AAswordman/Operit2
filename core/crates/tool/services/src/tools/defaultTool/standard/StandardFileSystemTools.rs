@@ -1566,19 +1566,7 @@ pub enum FileSystemToolOperation {
 
 impl ToolExecutor for FileSystemToolExecutor {
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
-        let names = requiredParameters(&self.operation);
-        for name in names {
-            if parameterValue(tool, name).trim().is_empty() {
-                return ToolValidationResult {
-                    valid: false,
-                    errorMessage: format!("{name} parameter is required"),
-                };
-            }
-        }
-        ToolValidationResult {
-            valid: true,
-            errorMessage: String::new(),
-        }
+        validateOperationParameters(&self.operation, tool)
     }
 
     fn accessSpec(&self, _tool: &AITool) -> Result<ToolAccessSpec, String> {
@@ -1669,6 +1657,32 @@ impl ToolExecutor for FileSystemToolExecutor {
     }
 }
 
+/// Validates only the required operation fields; write payloads may be empty or omitted.
+#[allow(non_snake_case)]
+fn validateOperationParameters(
+    operation: &FileSystemToolOperation,
+    tool: &AITool,
+) -> ToolValidationResult {
+    for name in requiredParameters(operation) {
+        let parameter = tool
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name == *name);
+        if parameter.is_none()
+            || parameter.is_some_and(|parameter| parameter.value.trim().is_empty())
+        {
+            return ToolValidationResult {
+                valid: false,
+                errorMessage: format!("{name} parameter is required"),
+            };
+        }
+    }
+    ToolValidationResult {
+        valid: true,
+        errorMessage: String::new(),
+    }
+}
+
 fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static str] {
     match operation {
         FileSystemToolOperation::ListFiles
@@ -1680,8 +1694,8 @@ fn requiredParameters(operation: &FileSystemToolOperation) -> &'static [&'static
         | FileSystemToolOperation::FileExists
         | FileSystemToolOperation::MakeDirectory
         | FileSystemToolOperation::FileInfo => &["path"],
-        FileSystemToolOperation::WriteFile => &["path", "content"],
-        FileSystemToolOperation::WriteFileBinary => &["path", "base64Content"],
+        // Empty or omitted payloads intentionally write an empty file; only the target path is required.
+        FileSystemToolOperation::WriteFile | FileSystemToolOperation::WriteFileBinary => &["path"],
         FileSystemToolOperation::MoveFile | FileSystemToolOperation::CopyFile => {
             &["source", "destination"]
         }
@@ -1982,4 +1996,43 @@ fn isSpecialFileType(fileExtension: &str) -> bool {
             | "avi"
             | "m4v"
     )
+}
+
+#[cfg(test)]
+mod parameter_tests {
+    use super::*;
+
+    /// Covers real write validation without needing a filesystem or a successful host fixture.
+    #[test]
+    fn writes_accept_empty_or_missing_payload_but_reject_blank_path() {
+        for (operation, field) in [
+            (FileSystemToolOperation::WriteFile, "content"),
+            (FileSystemToolOperation::WriteFileBinary, "base64Content"),
+        ] {
+            let mut tool = AITool {
+                name: "write".to_string(),
+                parameters: vec![
+                    ToolParameter {
+                        name: "path".to_string(),
+                        value: "/USER.md".to_string(),
+                    },
+                    ToolParameter {
+                        name: field.to_string(),
+                        value: String::new(),
+                    },
+                ],
+            };
+            assert!(validateOperationParameters(&operation, &tool).valid);
+            tool.parameters[1].value = " ".to_string();
+            assert!(validateOperationParameters(&operation, &tool).valid);
+            tool.parameters.pop();
+            assert!(validateOperationParameters(&operation, &tool).valid);
+            tool.parameters.push(ToolParameter {
+                name: field.to_string(),
+                value: String::new(),
+            });
+            tool.parameters[0].value = " ".to_string();
+            assert!(!validateOperationParameters(&operation, &tool).valid);
+        }
+    }
 }

@@ -48,79 +48,9 @@ use operit_tools::ToolExecutionManager::{
     AITool, ToolEffect, ToolExecutionManager, ToolParameter, ToolValidationResult,
 };
 
-const FILE_SYSTEM_BUILTIN_TOOLS: &[BuiltinToolName] = &[
-    BuiltinToolName::ListFiles,
-    BuiltinToolName::ReadFile,
-    BuiltinToolName::ReadFilePart,
-    BuiltinToolName::ReadFileFull,
-    BuiltinToolName::ReadFileBinary,
-    BuiltinToolName::WriteFile,
-    BuiltinToolName::WriteFileBinary,
-    BuiltinToolName::DeleteFile,
-    BuiltinToolName::FileExists,
-    BuiltinToolName::MoveFile,
-    BuiltinToolName::CopyFile,
-    BuiltinToolName::MakeDirectory,
-    BuiltinToolName::FindFiles,
-    BuiltinToolName::GrepCode,
-    BuiltinToolName::GrepContext,
-    BuiltinToolName::FileInfo,
-    BuiltinToolName::ZipFiles,
-    BuiltinToolName::UnzipFiles,
-    BuiltinToolName::OpenFile,
-    BuiltinToolName::ShareFile,
-    BuiltinToolName::DownloadFile,
-    BuiltinToolName::ApplyFile,
-    BuiltinToolName::CreateFile,
-    BuiltinToolName::EditFile,
-];
-
-const BROWSER_AUTOMATION_BUILTIN_TOOLS: &[BuiltinToolName] = &[
-    BuiltinToolName::BrowserClick,
-    BuiltinToolName::BrowserClose,
-    BuiltinToolName::BrowserCloseAll,
-    BuiltinToolName::BrowserConsoleMessages,
-    BuiltinToolName::BrowserDrag,
-    BuiltinToolName::BrowserEvaluate,
-    BuiltinToolName::BrowserFileUpload,
-    BuiltinToolName::BrowserFillForm,
-    BuiltinToolName::BrowserHandleDialog,
-    BuiltinToolName::BrowserHover,
-    BuiltinToolName::BrowserNavigate,
-    BuiltinToolName::BrowserNavigateBack,
-    BuiltinToolName::BrowserNetworkRequests,
-    BuiltinToolName::BrowserPressKey,
-    BuiltinToolName::BrowserResize,
-    BuiltinToolName::BrowserRunCode,
-    BuiltinToolName::BrowserSelectOption,
-    BuiltinToolName::BrowserSnapshot,
-    BuiltinToolName::BrowserTabs,
-    BuiltinToolName::BrowserTakeScreenshot,
-    BuiltinToolName::BrowserType,
-    BuiltinToolName::BrowserWaitFor,
-];
-
 /// Registers every built-in public and internal tool on the handler.
 #[allow(non_snake_case)]
 pub fn registerAllTools(handler: &mut AIToolHandler, context: &HostManager) {
-    handler.markBuiltinToolsUnavailable(
-        &[
-            BuiltinToolName::ListCharacterCards,
-            BuiltinToolName::GetMemoryOwnerKey,
-            BuiltinToolName::QueryMemory,
-            BuiltinToolName::GetMemoryByTitle,
-            BuiltinToolName::CreateMemory,
-            BuiltinToolName::UpdateMemory,
-            BuiltinToolName::DeleteMemory,
-            BuiltinToolName::MoveMemory,
-            BuiltinToolName::UpdateUserPreferences,
-            BuiltinToolName::LinkMemories,
-            BuiltinToolName::QueryMemoryLinks,
-            BuiltinToolName::UpdateMemoryLink,
-            BuiltinToolName::DeleteMemoryLink,
-        ],
-        "Character and memory tools are owned by registered ToolPkg subpackages, not Core executors",
-    );
     registerPublicTools(handler, context);
     registerInternalTools(handler, context);
 }
@@ -266,11 +196,6 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     if let Some(fileSystemTools) = ToolGetter::getFileSystemTools(context, handler.runtimeSupport())
     {
         registerFileSystemTools(handler, fileSystemTools);
-    } else {
-        handler.markBuiltinToolsUnavailable(
-            FILE_SYSTEM_BUILTIN_TOOLS,
-            "File-system host capability is unavailable",
-        );
     }
     handler.registerBuiltinTool(
         BuiltinToolName::VisitWeb,
@@ -993,11 +918,6 @@ fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
     if let Some(browserTools) = ToolGetter::getBrowserAutomationTools(context) {
         registerBrowserAutomationTools(handler, browserTools);
-    } else {
-        handler.markBuiltinToolsUnavailable(
-            BROWSER_AUTOMATION_BUILTIN_TOOLS,
-            "Browser automation host capability is unavailable",
-        );
     }
 
     let packageProxyHandler = handler.clone();

@@ -615,6 +615,8 @@ impl AIMessageManager {
                 request.workspaceFolders,
                 request.promptFunctionType,
                 Some(request.runtime.chatConfiguration.profile.id.clone()),
+                false,
+                None,
                 request.proxySenderName,
                 request.chatProviderIdOverride,
                 request.chatModelIdOverride,

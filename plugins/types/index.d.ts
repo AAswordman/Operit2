@@ -104,7 +104,6 @@ import { System as SystemType } from './system';
 import { SoftwareSettings as SoftwareSettingsType } from './software_settings';
 import { UI as UIType } from './ui';
 import { Chat as ChatType } from './chat';
-import { Memory as MemoryType } from './memory';
 
 export { Net } from './network';
 export { System } from './system';
@@ -112,7 +111,6 @@ export { SoftwareSettings } from './software_settings';
 export { UI, UINode } from './ui';
 export { ToolPkg } from './toolpkg';
 export { Chat } from './chat';
-export { Memory } from './memory';
 export { Edge, Io } from './edge';
 export type { EdgeInterfaceInfo, IoInterfaceInfo, EdgeActionEvent, EdgeEventBatch, EdgeEventPayload, EdgeEventHookEvent, EdgeEventAck } from './edge';
 
@@ -285,7 +283,6 @@ declare global {
         SoftwareSettings: typeof SoftwareSettingsType;
         UI: typeof UIType;
         Chat: typeof ChatType;
-        Memory: typeof MemoryType;
         Edge: typeof EdgeType;
         Io: typeof IoType;
     };

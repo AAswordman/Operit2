@@ -17,6 +17,33 @@ export async function buildBrowserScript() {
   return result.outputFiles[0].text;
 }
 
+/** Bundles the real sidebar entry, including its native bridge startup. */
+export async function buildSidebarScript() {
+  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "web/sidebar.ts")], tsconfig: path.join(root, "tsconfig.web.json"), bundle: true, format: "iife", platform: "browser", target: "es2020", write: false, legalComments: "none" });
+  if (result.outputFiles.length !== 1) throw new Error("The offline sidebar must have exactly one browser script");
+  return result.outputFiles[0].text;
+}
+
+/** Produces the installed sidebar document from the same typed source as the actual bridge. */
+export async function createSidebarHtmlDocument() {
+  const script = await buildSidebarScript(), sections = [];
+  for (const file of ["web/style.css", "web/shared/ui/presentation.css", "web/features/sidebar/style.css"]) sections.push(await readFile(path.join(root, file), "utf8"));
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'none'"><title>角色侧栏</title><style>${sections.join("\n")}</style></head><body><main id="app" aria-label="角色侧栏"><div role="status">正在加载侧栏…</div></main><script>${script.replaceAll("</script", "<\\/script")}</script></body></html>`;
+}
+
+/** Includes every declared static resource in both build integrity checks and the archive. */
+async function staticResourcePaths() {
+  const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
+  const generated = new Set(["resources/character-memory.html", "resources/character-sidebar.html"]);
+  return manifest.resources.map(
+    /** Uses the manifest's exact resource path; missing files must fail the build. */
+    resource => resource.path,
+  ).filter(
+    /** Only the two documents generated from typed browser entries are excluded from static inputs. */
+    file => !generated.has(file),
+  );
+}
+
 /** Bundles graph geometry from its actual typed source for isolated Node/browser tests. */
 export async function buildGraphModule() {
   const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "web/features/graph/layout.ts")], tsconfig: path.join(root, "tsconfig.web.json"), bundle: true, format: "cjs", platform: "neutral", target: "es2020", write: false, legalComments: "none" });
@@ -24,9 +51,9 @@ export async function buildGraphModule() {
   return result.outputFiles[0].text;
 }
 
-/** Bundles the current main provider and every imported module without writing generated files. */
+/** Lowers async/await to scoped Promise continuations so shared services retain each execution owner. */
 export async function buildMainScript() {
-  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "src/main.ts")], bundle: true, format: "cjs", platform: "neutral", target: "es2020", write: false });
+  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "src/main.ts")], bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, write: false });
   if (result.outputFiles.length !== 1) throw new Error("The package must have exactly one main provider script");
   return result.outputFiles[0].contents;
 }
@@ -91,7 +118,7 @@ export async function sourceFiles(directory) {
 
 /** Captures every package input so concurrent source changes cannot produce a mixed production archive. */
 export async function captureBuildInputs() {
-  const files = ["manifest.json", "README.md", "tsconfig.json", "tsconfig.web.json", ...await sourceFiles("scripts"), ...await sourceFiles("src"), ...await sourceFiles("web")];
+  const files = ["manifest.json", "README.md", "tsconfig.json", "tsconfig.web.json", ...await sourceFiles("scripts"), ...await sourceFiles("src"), ...await sourceFiles("web"), ...await staticResourcePaths()];
   const inputs = new Map();
   for (const file of files.sort()) inputs.set(file, createHash("sha256").update(await readFile(path.join(root, file))).digest("hex"));
   return inputs;
@@ -104,13 +131,19 @@ export async function assertBuildInputsUnchanged(inputs) {
 }
 
 /** Creates an archive from real current bundles and all host/browser source modules. */
-export async function createPackageArchive(mainScript, toolsScript, htmlDocument) {
+export async function createPackageArchive(mainScript, toolsScript, htmlDocument, sidebarDocument = undefined) {
   if (!(mainScript instanceof Uint8Array) || mainScript.length === 0) throw new Error("The archive requires the actual main bundle bytes");
   if (!(toolsScript instanceof Uint8Array) || toolsScript.length === 0) throw new Error("The archive requires the actual memory-tools bundle bytes");
   if (typeof htmlDocument !== "string" || !htmlDocument.startsWith("<!doctype html>")) throw new Error("The archive requires the actual offline HTML document");
-  const entries = { "dist/main.js": new Uint8Array(mainScript), "dist/tools.js": new Uint8Array(toolsScript), "resources/character-memory.html": new TextEncoder().encode(htmlDocument) };
-  const files = ["manifest.json", "README.md", "tsconfig.json", "tsconfig.web.json", ...await sourceFiles("scripts"), ...await sourceFiles("src"), ...await sourceFiles("web")];
+  const sidebar = sidebarDocument ?? await createSidebarHtmlDocument();
+  if (typeof sidebar !== "string" || !sidebar.startsWith("<!doctype html>")) throw new Error("The archive requires the actual offline sidebar document");
+  const entries = { "dist/main.js": new Uint8Array(mainScript), "dist/tools.js": new Uint8Array(toolsScript), "resources/character-memory.html": new TextEncoder().encode(htmlDocument), "resources/character-sidebar.html": new TextEncoder().encode(sidebar) };
+  const files = ["manifest.json", "README.md", "tsconfig.json", "tsconfig.web.json", ...await sourceFiles("scripts"), ...await sourceFiles("src"), ...await sourceFiles("web"), ...await staticResourcePaths()];
   for (const file of files) entries[file] = new Uint8Array(await readFile(path.join(root, file)));
+  const manifest = JSON.parse(new TextDecoder().decode(entries["manifest.json"]));
+  for (const resource of manifest.resources) {
+    if (!(entries[resource.path] instanceof Uint8Array) || entries[resource.path].length === 0) throw new Error("Declared resource is missing from package: " + resource.path);
+  }
   return zipSync(entries);
 }
 
@@ -126,12 +159,15 @@ export async function buildPackage() {
   const mainScript = await buildMainScript();
   const toolsScript = await buildRuntimeToolsScript();
   const htmlDocument = await createHtmlDocument();
-  const archive = await createPackageArchive(mainScript, toolsScript, htmlDocument);
+  const sidebarDocument = await createSidebarHtmlDocument();
+  const archive = await createPackageArchive(mainScript, toolsScript, htmlDocument, sidebarDocument);
   await assertBuildInputsUnchanged(inputs);
   await mkdir(path.join(root, "dist"), { recursive: true });
   await writeFile(path.join(root, "dist/main.js"), mainScript);
   await writeFile(path.join(root, "dist/tools.js"), toolsScript);
+  await mkdir(path.join(root, "resources"), { recursive: true });
   await writeFile(path.join(root, "resources/character-memory.html"), htmlDocument);
+  await writeFile(path.join(root, "resources/character-sidebar.html"), sidebarDocument);
   await writeFile(path.join(root, "dist/character_cards.toolpkg"), archive);
   console.log("PACKED: character_cards.toolpkg (typed browser IIFE, exact executable tools metadata, public_api, all source modules included)");
 }

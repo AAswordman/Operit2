@@ -11,7 +11,7 @@ pub struct InputProcessor;
 pub struct ProcessUserInputRequest {
     pub input: String,
     pub chat_id: Option<String>,
-    pub role_card_id: Option<String>,
+    pub participant_id: Option<String>,
     /// Host callback used to surface a timed-out Prompt Input Hook.
     pub on_hook_timeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
@@ -23,7 +23,7 @@ impl InputProcessor {
             "executionContext".to_string(),
             serde_json::json!({
                 "chatId": request.chat_id,
-                "participantId": request.role_card_id,
+                "participantId": request.participant_id,
             }),
         )]);
 

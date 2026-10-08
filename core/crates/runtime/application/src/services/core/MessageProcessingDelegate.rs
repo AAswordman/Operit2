@@ -1804,6 +1804,7 @@ impl MessageProcessingDelegate {
         if !streamAccepted || !self.isCurrentChatTurn(&chatId, turnId) {
             sharedResponseStream.close();
             return Ok(SendUserMessageProcessingResult {
+                completion: ChatTurnSubmission::Pending(receiptReceiver),
                 aiMessage,
                 nextWindowSize: None,
             });

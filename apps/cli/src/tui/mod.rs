@@ -71,7 +71,7 @@ use std::sync::{mpsc, Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use crate::{
-    create_cli_core_application_configured_with_toast_host, initialize_shell_chat,
+    create_cli_core_application_configured_with_toast_host,
     parse_shell_args, ShellArgs,
 };
 
@@ -93,13 +93,12 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (shell_args, link_args) = parse_tui_startup_args(args)?;
-    let initial_chat_id_cell = Arc::new(StdMutex::new(None::<String>));
+    let approval_bridge = TuiApprovalBridge::new();
     let language_cell = Arc::new(StdMutex::new(None::<TuiLanguage>));
     let (toast_sender, toast_receiver) = mpsc::channel::<String>();
     let toast_host = tui_toast_host(toast_sender.clone());
     let (network_event_sender, network_event_receiver) = mpsc::channel::<NetworkUiEvent>();
-    let shell_args_for_core = shell_args.clone();
-    let initial_chat_id_for_core = initial_chat_id_cell.clone();
+    let approval_bridge_for_core = approval_bridge.clone();
     let language_for_core = language_cell.clone();
     let core_application = create_cli_core_application_configured_with_toast_host(
         "client",
@@ -109,15 +108,14 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
                 let application = local_core.localApplicationMut();
                 TuiLanguage::from_context(&application.hostManager)?
             };
-            let initial_chat_id =
-                initialize_shell_chat(local_core.localApplicationMut(), &shell_args_for_core)?;
-            install_local_permission_requester(local_core);
+            let application = local_core.localApplicationMut();
+            let service = EnhancedAIService::new(application.toolHandler.clone(), application.providerRuntimeContext.clone());
+            application.chatRuntimeHolder.try_lock().map_err(|error| error.to_string())?
+                .getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(service);
+            install_local_permission_requester(local_core, approval_bridge_for_core);
             *language_for_core
                 .lock()
                 .expect("TUI language cell lock must not be poisoned") = Some(language);
-            *initial_chat_id_for_core
-                .lock()
-                .expect("TUI initial chat cell lock must not be poisoned") = Some(initial_chat_id);
             Ok(())
         },
     )
@@ -130,11 +128,22 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         .take()
         .expect("TUI language must be initialized by CoreApplication startup");
     let network_peers = core_application.nodeServices()?.peers();
-    let initial_chat_id = initial_chat_id_cell
-        .lock()
-        .expect("TUI initial chat cell lock must not be poisoned")
-        .take()
-        .expect("TUI initial chat must be initialized by CoreApplication startup");
+    // Await plugin lifecycle initialization only after Core startup has scheduled registry loading.
+    let mut core = tui_core(core_application.localClient());
+    let existing_chat_id = if let Some(chat_id) = &shell_args.chatId { Some(chat_id.clone()) }
+        else if shell_args.resume {
+            let chats = core.chat_runtime_holder_main().chatHistoriesFlowSnapshot().await.map_err(|error| error.to_string())?;
+            Some(chats.into_iter().max_by_key(|chat| chat.updatedAt.parse::<i64>().unwrap_or(0))
+                .ok_or_else(|| "no previous chat to resume".to_string())?.id)
+        } else { None };
+    let command = match existing_chat_id {
+        Some(chat_id) => vec!["chat".to_string(), "switch".to_string(), chat_id, "--json".to_string()],
+        None => shell_args.new_chat_command_args(),
+    };
+    let output = core.runCoreCommand(&command).await.map_err(|error| error.to_string())?;
+    let result: serde_json::Value = serde_json::from_str(&output.stdout).map_err(|error| error.to_string())?;
+    let initial_chat_id = result.get("chatId").and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "chat initialization did not return a chatId".to_string())?.to_string();
     let startup_install_prompt = build_startup_install_prompt()?;
     let startup_update_prompt =
         build_startup_update_prompt(shell_args.updateCurrentVersion.as_deref()).await?;
@@ -149,7 +158,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         None
     };
     let mut tui = OperitTui::new(
-        tui_core(core_application.localClient()),
+        core,
         core_application.accessServices(),
         shell_args,
         initial_chat_id,
@@ -242,7 +251,7 @@ fn tui_toast_host(sender: mpsc::Sender<String>) -> Arc<dyn operit_host_api::Toas
 /// Returns the TUI startup usage text, shared by `tui --help` and argument
 /// parsing errors.
 fn tui_usage_text() -> &'static str {
-    "usage: operit2 tui [--link-listen <http|ws|tcp|serial|bluetooth>[,<transport>...]] [--no-listen] [--link-join <node-id>] [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]"
+    "usage: operit2 tui [--link-listen <http|ws|tcp|serial|bluetooth>[,<transport>...]] [--no-listen] [--link-join <node-id>] [--chat <chat-id>] [--resume] [--source <chat-id>] [--input <json-object>] [--update-current-version <version>]"
 }
 
 /// Splits TUI Link startup arguments from normal shell startup arguments.

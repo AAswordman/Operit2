@@ -280,3 +280,40 @@ for (const method of snapshotDirectoryMethods) {
     assertDirectoryCalls(settings, snapshotDirectoryMethods); assertNoMutations(disk);
   });
 }
+
+/** The native main runtime evaluates the bundle independently of registration-only capture. */
+test("independently evaluated main API connects lazy directory readers without calling registerToolPkg", async t => {
+  const disk = await createDiskHarness(t), calls = [];
+  const failure = new Error("EXACT_NATIVE_DIRECTORY_REJECTION");
+  const globals = {
+    ...disk.globals,
+    Tools: {
+      Files: disk.files,
+      SoftwareSettings: {
+        /** Records the real directory read attempt and rejects instead of simulating production success. */
+        async listModelSummaries() { calls.push("listModelSummaries"); throw failure; },
+        /** Rejects another real dependency without inventing a configured TTS directory. */
+        async listTtsConfigs() { calls.push("listTtsConfigs"); throw failure; },
+        /** Rejects another real dependency without inventing a complete tool catalog. */
+        async readToolSourceCatalog() { calls.push("readToolSourceCatalog"); throw failure; },
+      },
+    },
+    ToolPkg: {
+      ...disk.globals.ToolPkg,
+      ipc: {
+        /** Accepts module channel declaration only; no successful service response is supplied. */
+        on() {},
+      },
+    },
+  };
+  const main = loadModule("src/main.ts", globals);
+  assert.equal(disk.calls.length, 0, "Evaluation must not open business files");
+  assert.deepEqual(calls, [], "Evaluation must not read host settings eagerly");
+  await assert.rejects(
+    /** Invokes the actual exported provider on the independent runtime, bypassing registration-only capture. */
+    main.snapshotApi({ callerPackage: "host", payload: {} }),
+    /** Requires the original host rejection, not the missing-reader failure caught by native CLI testing. */
+    error => error === failure,
+  );
+  assert.deepEqual(calls, ["listModelSummaries", "listTtsConfigs", "readToolSourceCatalog"]);
+});

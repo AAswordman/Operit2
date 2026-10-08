@@ -264,9 +264,21 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ChatConfigurationResult, String>> + Send + '_>,
     > {
+        let tool_handler = self.tool_handler.clone();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let scheduled = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask("resolve-chat-configuration", Box::new(move || {
+                Box::pin(async move {
+                    let result = async {
+                        let api = ChatConfigurationApi::ready(&tool_handler).await?;
+                        api.resolve(request).await
+                    }.await;
+                    let _ = sender.send(result);
+                })
+            }));
         Box::pin(async move {
-            let api = ChatConfigurationApi::ready(&self.tool_handler).await?;
-            api.resolve(request).await
+            scheduled.map_err(|error| format!("Chat configuration scheduling failed: {error}"))?;
+            receiver.await.map_err(|error| format!("Chat configuration execution ended without a result: {error}"))?
         })
     }
 

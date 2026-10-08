@@ -216,7 +216,8 @@ impl SqlChatSyncStore {
                 variantRows,
                 deletions: Vec::new(),
             };
-            let payloadValue = serde_json::to_value(&payload)?;
+            let payloadValue = serde_json::to_value(&payload)
+                .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
             upsertChat(transaction, &chat)?;
             upsertMessage(transaction, &message)?;
             for variant in &payload.variantRows {

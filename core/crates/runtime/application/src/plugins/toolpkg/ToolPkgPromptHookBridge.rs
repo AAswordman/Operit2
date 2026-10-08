@@ -282,6 +282,8 @@ impl ToolPromptComposeHook for ToolPromptComposeBridge {
 /// Strictly decodes an invoked tool policy without converting malformed fields into absent mutations.
 pub(super) fn decode_tool_prompt_policy_result(raw: Option<String>) -> Result<Option<PromptHookMutation>, String> {
     let Some(raw) = raw else { return Ok(None); };
+    // The JavaScript engine encodes a valid undefined/void hook result as an empty string.
+    if raw.is_empty() { return Ok(None); }
     let value: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
     match value {
         Value::Null => Ok(None),
@@ -745,7 +747,7 @@ mod tool_policy_result_tests {
     #[test]
     fn rejects_malformed_policy_results() {
         for raw in [
-            "not-json", "17", "true", "[]",
+            " ", "not-json", "17", "true", "[]",
             r#"{"toolPrompt":null}"#,
             r#"{"availableTools":{}}"#,
             r#"{"availableTools":[17]}"#,
@@ -762,6 +764,7 @@ mod tool_policy_result_tests {
     #[test]
     fn preserves_explicit_nonparticipation_and_exact_tool_mutations() {
         assert!(decode_tool_prompt_policy_result(None).unwrap().is_none());
+        assert!(decode_tool_prompt_policy_result(Some(String::new())).unwrap().is_none());
         assert!(decode_tool_prompt_policy_result(Some("null".to_string())).unwrap().is_none());
         let mutation = decode_tool_prompt_policy_result(Some(r#"{"toolPrompt":" exact prompt ","availableTools":[]}"#.to_string())).unwrap().unwrap();
         assert_eq!(mutation.tool_prompt.as_deref(), Some(" exact prompt "));

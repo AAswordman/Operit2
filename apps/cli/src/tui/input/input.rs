@@ -288,7 +288,7 @@ impl OperitTui {
             .to_ascii_lowercase();
         let name = suggestions[index].name();
         // Enter only completes while the buffer is still a prefix of the
-        // suggestion; once values follow (e.g. `/new character Alice `),
+        // suggestion; once values follow (e.g. `/new source parent `),
         // remaining option suggestions must not swallow the submission.
         !current.is_empty() && current != name && name.starts_with(&current)
     }

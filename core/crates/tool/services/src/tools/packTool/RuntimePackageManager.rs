@@ -355,6 +355,7 @@ impl RuntimePackageManager {
 
     /// Returns the shared lifecycle handle without cloning an incomplete registration snapshot.
     #[allow(non_snake_case)]
+    #[operit_route_macros::operit_core_internal]
     pub fn packageRegistryReadiness(&self) -> PackageRegistryReadiness {
         self.packageRegistryReadiness.clone()
     }

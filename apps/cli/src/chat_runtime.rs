@@ -1,31 +1,11 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use crate::core_proxy::{local_cli_core, CliCore};
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatMessage::ChatMessage;
-use operit_model::ChatTurnOptions::ChatTurnOptions;
-use operit_model::InputProcessingState::InputProcessingState;
-use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_providers::chat::EnhancedAIService::EnhancedAIService;
-use operit_runtime::core::application::OperitApplication::OperitApplication;
-use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
-
-/// Runs a synchronous action against the local main chat runtime core.
-fn with_main_chat_core<R>(
-    application: &OperitApplication,
-    action: impl FnOnce(&mut ChatServiceCore) -> R,
-) -> Result<R, String> {
-    let mut holder = application
-        .chatRuntimeHolder
-        .try_lock()
-        .map_err(|_| "Chat runtime holder is busy".to_string())?;
-    Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
-}
 
 /// Runs the chat shell through an existing CoreNode-aware CLI proxy.
 pub(super) async fn run_chat_shell_command_with_core(
@@ -43,16 +23,13 @@ async fn list_chats_with_core(core: &mut CliCore) -> Result<(), String> {
         .map_err(|error| error.to_string())?
     {
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             chat.id,
             chat.title,
             chat.createdAt,
             chat.updatedAt,
-            "",
             chat.inputTokens,
             chat.outputTokens,
-            chat.characterCardName.clone().unwrap_or_default(),
-            chat.characterGroupId.clone().unwrap_or_default(),
             chat.locked,
             chat.pinned
         );
@@ -242,149 +219,6 @@ async fn switch_chat_command_with_core(core: &mut CliCore, args: &[String]) -> R
     Ok(())
 }
 
-fn show_chat_stats() -> Result<(), String> {
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    println!(
-        "totalChats={}",
-        manager
-            .getTotalChatCount()
-            .map_err(|error| error.to_string())?
-    );
-    println!(
-        "totalMessages={}",
-        manager
-            .getTotalMessageCount()
-            .map_err(|error| error.to_string())?
-    );
-    for stats in manager
-        .characterCardStatsFlow()
-        .map_err(|error| error.to_string())?
-    {
-        println!(
-            "characterCard\t{}\t{}\t{}",
-            stats.characterCardName.clone().unwrap_or_default(),
-            stats.chatCount,
-            stats.messageCount
-        );
-    }
-    for stats in manager
-        .characterGroupStatsFlow()
-        .map_err(|error| error.to_string())?
-    {
-        println!(
-            "characterGroup\t{}\t{}\t{}",
-            stats.characterGroupId.clone().unwrap_or_default(),
-            stats.chatCount,
-            stats.messageCount
-        );
-    }
-    Ok(())
-}
-
-fn bind_chat_character(args: &[String]) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| {
-            "usage: operit2 chat bind-character <chat-id> <character-card-name>".to_string()
-        })?
-        .clone();
-    let characterCardName = args
-        .get(1)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| {
-            "usage: operit2 chat bind-character <chat-id> <character-card-name>".to_string()
-        })?;
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    manager
-        .updateChatCharacterBinding(chatId.clone(), Some(characterCardName), None)
-        .map_err(|error| error.to_string())?;
-    println!("chat character binding updated: {chatId}");
-    Ok(())
-}
-
-fn bind_chat_group_card(args: &[String]) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 chat bind-group <chat-id> <character-group-id>".to_string())?
-        .clone();
-    let characterGroupId = args
-        .get(1)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| {
-            "usage: operit2 chat bind-group <chat-id> <character-group-id>".to_string()
-        })?;
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    manager
-        .updateChatCharacterBinding(chatId.clone(), None, Some(characterGroupId))
-        .map_err(|error| error.to_string())?;
-    println!("chat group binding updated: {chatId}");
-    Ok(())
-}
-
-fn set_chat_group(args: &[String]) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 chat set-group <chat-id> <group-name>".to_string())?
-        .clone();
-    let groupName = args
-        .get(1)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| "usage: operit2 chat set-group <chat-id> <group-name>".to_string())?;
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    manager
-        .updateChatGroup(chatId.clone(), Some(groupName))
-        .map_err(|error| error.to_string())?;
-    println!("chat group updated: {chatId}");
-    Ok(())
-}
-
-async fn create_chat_with_core(core: &mut CliCore, args: &[String]) -> Result<(), String> {
-    let (characterCardName, characterGroupId, group) = parse_chat_new_args(args)?;
-    core.chat_runtime_holder_main()
-        .createNewChat(characterCardName, group, true, true, characterGroupId)
-        .await
-        .map_err(|error| error.to_string())?;
-    let chatId = core
-        .chat_runtime_holder_main()
-        .currentChatIdFlowSnapshot()
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "core did not create chat".to_string())?;
-    println!("{chatId}");
-    Ok(())
-}
-
-fn parse_chat_new_args(
-    args: &[String],
-) -> Result<(Option<String>, Option<String>, Option<String>), String> {
-    let mut characterCardName = None;
-    let mut characterGroupId = None;
-    let mut group = None;
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--character" => {
-                index += 1;
-                characterCardName = args.get(index).cloned().and_then(nonBlankString);
-            }
-            "--group-card" => {
-                index += 1;
-                characterGroupId = args.get(index).cloned().and_then(nonBlankString);
-            }
-            "--group" => {
-                index += 1;
-                group = args.get(index).cloned().and_then(nonBlankString);
-            }
-            _ => return Err("usage: operit2 chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]".to_string()),
-        }
-        index += 1;
-    }
-    Ok((characterCardName, characterGroupId, group))
-}
-
 fn parse_branch_args(args: &[String]) -> Result<Option<i64>, String> {
     let usage = "usage: operit2 chat branch [--up-to <message-timestamp>]";
     let mut upToMessageTimestamp = None;
@@ -432,16 +266,9 @@ pub(crate) struct ChatSendArgs {
 pub(crate) struct ShellArgs {
     pub(crate) chatId: Option<String>,
     pub(crate) resume: bool,
-    pub(crate) characterCardName: Option<String>,
-    pub(crate) characterGroupId: Option<String>,
-    pub(crate) group: Option<String>,
+    pub(crate) sourceChatId: Option<String>,
+    pub(crate) input: Option<serde_json::Value>,
     pub(crate) updateCurrentVersion: Option<String>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub(crate) struct ChatSendResult {
-    chatId: String,
-    aiMessage: ChatMessage,
 }
 
 pub(crate) enum ShellLoopControl {
@@ -493,65 +320,74 @@ fn parse_chat_send_args(args: &[String]) -> Result<ChatSendArgs, String> {
     })
 }
 
+/// Parses only generic chat creation input; plugin identity remains opaque to the frontend.
 pub(crate) fn parse_shell_args(args: &[String]) -> Result<ShellArgs, String> {
-    let usage = "usage: operit2 [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]";
+    let usage = "usage: operit2 [--chat <chat-id> | --resume | --source <chat-id> --input <json-object>] [--update-current-version <version>]";
     let mut shellArgs = ShellArgs {
         chatId: None,
         resume: false,
-        characterCardName: None,
-        characterGroupId: None,
-        group: None,
+        sourceChatId: None,
+        input: None,
         updateCurrentVersion: None,
     };
     let mut index = 0;
     while index < args.len() {
-        match args[index].as_str() {
-            "--chat" => {
-                index += 1;
-                shellArgs.chatId = Some(args.get(index).ok_or_else(|| usage.to_string())?.clone());
+        let flag = args[index].as_str();
+        if flag == "--resume" {
+            if shellArgs.resume {
+                return Err(usage.to_string());
             }
-            "--resume" => {
-                shellArgs.resume = true;
+            shellArgs.resume = true;
+        } else {
+            index += 1;
+            let value = args
+                .get(index)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| usage.to_string())?;
+            match flag {
+                "--chat" if shellArgs.chatId.is_none() => shellArgs.chatId = Some(value.clone()),
+                "--source" if shellArgs.sourceChatId.is_none() => {
+                    shellArgs.sourceChatId = Some(value.clone())
+                }
+                "--input" if shellArgs.input.is_none() => {
+                    let input: serde_json::Value = serde_json::from_str(value)
+                        .map_err(|error| format!("invalid --input JSON: {error}"))?;
+                    if !input.is_object() {
+                        return Err("--input must be a JSON object".to_string());
+                    }
+                    shellArgs.input = Some(input);
+                }
+                "--update-current-version" if shellArgs.updateCurrentVersion.is_none() => {
+                    shellArgs.updateCurrentVersion = Some(value.clone())
+                }
+                _ => return Err(usage.to_string()),
             }
-            "--character" => {
-                index += 1;
-                shellArgs.characterCardName = args.get(index).cloned().and_then(nonBlankString);
-            }
-            "--group-card" => {
-                index += 1;
-                shellArgs.characterGroupId = args.get(index).cloned().and_then(nonBlankString);
-            }
-            "--group" => {
-                index += 1;
-                shellArgs.group = args.get(index).cloned().and_then(nonBlankString);
-            }
-            "--update-current-version" => {
-                index += 1;
-                shellArgs.updateCurrentVersion = args.get(index).cloned().and_then(nonBlankString);
-            }
-            _ => return Err(usage.to_string()),
         }
         index += 1;
     }
-    if shellArgs.chatId.is_some()
-        && (shellArgs.resume
-            || shellArgs.characterCardName.is_some()
-            || shellArgs.characterGroupId.is_some()
-            || shellArgs.group.is_some())
-    {
-        return Err(usage.to_string());
-    }
-    if shellArgs.resume
-        && (shellArgs.characterCardName.is_some()
-            || shellArgs.characterGroupId.is_some()
-            || shellArgs.group.is_some())
+    if (shellArgs.chatId.is_some() && shellArgs.resume)
+        || ((shellArgs.chatId.is_some() || shellArgs.resume)
+            && (shellArgs.sourceChatId.is_some() || shellArgs.input.is_some()))
     {
         return Err(usage.to_string());
     }
     Ok(shellArgs)
 }
 
-/// Runs the interactive shell through the local CoreNode router.
+impl ShellArgs {
+    /// Builds the canonical new-chat command without interpreting any plugin payload.
+    pub(crate) fn new_chat_command_args(&self) -> Vec<String> {
+        let mut args = vec!["chat".to_string(), "new".to_string(), "--json".to_string()];
+        if let Some(source) = &self.sourceChatId {
+            args.extend(["--source".to_string(), source.clone()]);
+        }
+        if let Some(input) = &self.input {
+            args.extend(["--input".to_string(), input.to_string()]);
+        }
+        args
+    }
+}
+
 pub(crate) async fn run_shell_command(core: &mut CliCore, args: &[String]) -> Result<(), String> {
     run_shell_command_with_core(core, args).await
 }
@@ -622,78 +458,18 @@ async fn initialize_shell_chat_with_core(
             .map_err(|error| error.to_string())?;
         Ok(chatId)
     } else {
-        core.chat_runtime_holder_main()
-            .createNewChat(
-                shellArgs.characterCardName.clone(),
-                shellArgs.group.clone(),
-                true,
-                true,
-                shellArgs.characterGroupId.clone(),
-            )
+        let output = core
+            .runCoreCommand(&shellArgs.new_chat_command_args())
             .await
             .map_err(|error| error.to_string())?;
-        core.chat_runtime_holder_main()
-            .currentChatIdFlowSnapshot()
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "core did not create chat".to_string())
+        let result: serde_json::Value =
+            serde_json::from_str(&output.stdout).map_err(|error| error.to_string())?;
+        result
+            .get("chatId")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "chat creation did not return a chatId".to_string())
     }
-}
-
-pub(crate) fn initialize_shell_chat(
-    application: &mut OperitApplication,
-    shellArgs: &ShellArgs,
-) -> Result<String, String> {
-    let enhanced_ai_service = EnhancedAIService::new(
-        application.toolHandler.clone(),
-        application.providerRuntimeContext.clone(),
-    );
-    with_main_chat_core(application, |core| {
-        core.enhancedAiService = Some(enhanced_ai_service);
-        if let Some(chatId) = shellArgs.chatId.clone() {
-            ensure_chat_exists(&chatId)?;
-            core.switchChat(chatId.clone());
-            Ok(chatId)
-        } else if shellArgs.resume {
-            let chatId = latest_chat_id()?;
-            core.switchChat(chatId.clone());
-            Ok(chatId)
-        } else {
-            core.createNewChat(
-                shellArgs.characterCardName.clone(),
-                shellArgs.group.clone(),
-                true,
-                true,
-                shellArgs.characterGroupId.clone(),
-            );
-            core.currentChatIdFlow()
-                .value()
-                .ok_or_else(|| "core did not create chat".to_string())
-        }
-    })?
-}
-
-fn latest_chat_id() -> Result<String, String> {
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    manager
-        .loadChatHistories()
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .max_by(|left, right| {
-            let leftUpdated = left
-                .updatedAt
-                .parse::<i64>()
-                .expect("chat.updatedAt must be epoch millis");
-            let rightUpdated = right
-                .updatedAt
-                .parse::<i64>()
-                .expect("chat.updatedAt must be epoch millis");
-            leftUpdated
-                .cmp(&rightUpdated)
-                .then_with(|| right.displayOrder.cmp(&left.displayOrder))
-        })
-        .map(|chat| chat.id)
-        .ok_or_else(|| "no previous chat to resume".to_string())
 }
 
 async fn latest_chat_id_with_core(core: &mut CliCore) -> Result<String, String> {
@@ -767,14 +543,7 @@ async fn handle_shell_command_with_core(
             if shellArgs.chatId.is_some() {
                 return Err("shell /new does not accept --chat".to_string());
             }
-            core.chat_runtime_holder_main()
-                .createNewChat(
-                    shellArgs.characterCardName,
-                    shellArgs.group,
-                    true,
-                    true,
-                    shellArgs.characterGroupId,
-                )
+            core.runCoreCommand(&shellArgs.new_chat_command_args())
                 .await
                 .map_err(|error| error.to_string())?;
             let chatId = current_shell_chat_id_with_core(core).await?;
@@ -926,7 +695,7 @@ fn print_shell_usage() {
     println!("/exit");
     println!("/quit");
     println!("/chat");
-    println!("/new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
+    println!("/new [--source <chat-id>] [--input <json-object>]");
     println!("/switch <chat-id>");
     println!("/resume");
     println!("/show");
@@ -936,159 +705,40 @@ fn print_shell_usage() {
     println!("/send <message>");
 }
 
-/// Prints a completed chat send result in human-readable or explicit JSON form.
-fn print_chat_send_result(result: &ChatSendResult) {
+/// Prints the native originating-turn outcome, including cancellation and hook consumption.
+fn print_chat_send_result(result: &serde_json::Value) {
     if crate::cli::cli_json_mode() {
-        crate::cli::emit_cli_json(serde_json::json!({
-            "chatId": result.chatId,
-            "message": result.aiMessage,
-            "text": result.aiMessage.displayText(),
-            "provider": result.aiMessage.provider,
-            "modelName": result.aiMessage.modelName,
-            "inputTokens": result.aiMessage.inputTokens,
-            "cachedInputTokens": result.aiMessage.cachedInputTokens,
-            "outputTokens": result.aiMessage.outputTokens,
-        }));
+        crate::cli::emit_cli_json(result.clone());
     } else {
-        print!("{}", result.aiMessage.displayText());
-        println!();
-        eprintln!(
-            "chat={} provider={} modelName={} inputTokens={} cachedInputTokens={} outputTokens={}",
-            result.chatId,
-            result.aiMessage.provider,
-            result.aiMessage.modelName,
-            result.aiMessage.inputTokens,
-            result.aiMessage.cachedInputTokens,
-            result.aiMessage.outputTokens
+        println!(
+            "{}",
+            serde_json::to_string_pretty(result).expect("chat receipt must serialize")
         );
     }
 }
 
-/// Sends one chat message command through a CoreNode-aware CLI proxy.
-pub(crate) async fn run_chat_send_command_with_core(
-    core: &mut CliCore,
-    args: &[String],
-) -> Result<(), String> {
-    let sendArgs = parse_chat_send_args(args)?;
-    send_chat_message_with_core(core, sendArgs).await
-}
-
-/// Sends one parsed chat message through a CoreNode-aware CLI proxy.
-async fn send_chat_message_with_core(
-    core: &mut CliCore,
-    sendArgs: ChatSendArgs,
-) -> Result<(), String> {
-    let result = send_chat_message_with_core_result(core, sendArgs).await?;
-    print_chat_send_result(&result);
-    Ok(())
-}
-
+/// Uses the same receipt-based Core command as non-interactive CLI sends.
 async fn send_chat_message_with_core_result(
     core: &mut CliCore,
     sendArgs: ChatSendArgs,
-) -> Result<ChatSendResult, String> {
-    if let Some(chatId) = sendArgs.chatId.clone() {
-        core.chat_runtime_holder_main()
-            .switchChat(chatId)
-            .await
-            .map_err(|error| error.to_string())?;
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["chat".to_string(), "send".to_string(), "--json".to_string()];
+    if let Some(chatId) = sendArgs.chatId {
+        args.extend(["--chat".to_string(), chatId]);
     }
-    let chatId = core
-        .chat_runtime_holder_main()
-        .currentChatIdFlowSnapshot()
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "core has no active chat before send".to_string())?;
-    let beforeMessages = core
-        .chat_runtime_holder_main()
-        .chatMessagesFlowSnapshot(chatId.clone())
+    for path in sendArgs.attachmentPaths {
+        args.extend(["--attachment".to_string(), path]);
+    }
+    if let Some(timestamp) = sendArgs.replyToTimestamp {
+        args.extend(["--reply-to".to_string(), timestamp.to_string()]);
+    }
+    args.push(sendArgs.message);
+    let output = core
+        .runCoreCommand(&args)
         .await
         .map_err(|error| error.to_string())?;
-    let beforeLastAiTimestamp = beforeMessages
-        .iter()
-        .filter(|message| message.sender == "ai")
-        .map(|message| message.timestamp)
-        .max()
-        .unwrap_or(0);
-    let attachments = sendArgs
-        .attachmentPaths
-        .iter()
-        .map(|path| build_attachment_info(path))
-        .collect::<Result<Vec<_>, _>>()?;
-    let replyToMessage = match sendArgs.replyToTimestamp {
-        Some(timestamp) => beforeMessages
-            .iter()
-            .find(|message| message.timestamp == timestamp)
-            .cloned()
-            .ok_or_else(|| format!("reply-to message not found: {timestamp}"))?,
-        None => ChatMessage::new(String::new()),
-    };
-    let replyToMessage = if replyToMessage.sender.is_empty() {
-        None
-    } else {
-        Some(replyToMessage)
-    };
-    core.chat_runtime_holder_main()
-        .sendUserMessage(
-            PromptFunctionType::CHAT,
-            None,
-            Some(chatId.clone()),
-            sendArgs.message,
-            None,
-            None,
-            None,
-            attachments,
-            replyToMessage,
-            ChatTurnOptions::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let aiMessage = wait_for_committed_ai_message_with_core(
-        core,
-        &chatId,
-        beforeLastAiTimestamp,
-        Duration::from_secs(30),
-    )
-    .await?;
-    Ok(ChatSendResult { chatId, aiMessage })
-}
-
-/// Waits for one proxied chat turn to commit an assistant message or report its exact error.
-async fn wait_for_committed_ai_message_with_core(
-    core: &mut CliCore,
-    chatId: &str,
-    afterTimestampExclusive: i64,
-    timeout: Duration,
-) -> Result<ChatMessage, String> {
-    let startedAt = Instant::now();
-    loop {
-        let state = core
-            .chat_runtime_holder_main()
-            .currentChatInputProcessingState()
-            .await
-            .map_err(|error| error.to_string())?;
-        if let InputProcessingState::Error { message } = state {
-            return Err(message);
-        }
-        let messages = core
-            .chat_runtime_holder_main()
-            .chatMessagesFlowSnapshot(chatId.to_string())
-            .await
-            .map_err(|error| error.to_string())?;
-        if let Some(message) = messages.into_iter().rev().find(|message| {
-            message.sender == "ai"
-                && message.timestamp > afterTimestampExclusive
-                && message.completedAt > 0
-        }) {
-            return Ok(message);
-        }
-        if startedAt.elapsed() >= timeout {
-            return Err(format!(
-                "timed out waiting for committed ai message: chat={chatId} afterTimestamp={afterTimestampExclusive}"
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    serde_json::from_str(&output.stdout)
+        .map_err(|error| format!("invalid Core chat receipt: {error}"))
 }
 
 /// Builds one attachment descriptor from a local filesystem path.
@@ -1152,7 +802,6 @@ fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!("Input tokens: {}", chat.inputTokens);
     println!("Output tokens: {}", chat.outputTokens);
     println!("Context window: {}", chat.currentWindowSize);
-    println!("Group: {}", chat.group.clone().unwrap_or_default());
     println!("Display order: {}", chat.displayOrder);
     println!(
         "Workspace: {}",
@@ -1161,14 +810,6 @@ fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!(
         "parentChatId={}",
         chat.parentChatId.clone().unwrap_or_default()
-    );
-    println!(
-        "characterCardName={}",
-        chat.characterCardName.clone().unwrap_or_default()
-    );
-    println!(
-        "characterGroupId={}",
-        chat.characterGroupId.clone().unwrap_or_default()
     );
     println!("Locked: {}", chat.locked);
     println!("Pinned: {}", chat.pinned);
@@ -1201,5 +842,57 @@ fn nonBlankString(value: String) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+#[cfg(test)]
+mod shell_argument_tests {
+    use super::*;
+
+    #[test]
+    fn new_chat_payload_remains_opaque_and_source_is_forwarded() {
+        let input =
+            serde_json::json!({"arbitrary.plugin": {"selection": "opaque value", "version": 7}});
+        let args = parse_shell_args(&[
+            "--source".to_string(),
+            "source-chat".to_string(),
+            "--input".to_string(),
+            input.to_string(),
+        ])
+        .unwrap();
+        assert_eq!(args.input, Some(input.clone()));
+        assert_eq!(
+            args.new_chat_command_args(),
+            vec![
+                "chat".to_string(),
+                "new".to_string(),
+                "--json".to_string(),
+                "--source".to_string(),
+                "source-chat".to_string(),
+                "--input".to_string(),
+                input.to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_retired_role_flags_and_invalid_creation_options() {
+        for args in [
+            vec!["--character", "old-role"],
+            vec!["--group-card", "old-group"],
+            vec!["--input", "[]"],
+            vec!["--input", "not-json"],
+            vec!["--source"],
+            vec!["--source", "one", "--source", "two"],
+            vec!["--chat", "existing", "--input", "{}"],
+            vec!["--resume", "--source", "source"],
+            vec!["--resume", "--resume"],
+            vec!["--chat", "existing", "--resume"],
+        ] {
+            assert!(
+                parse_shell_args(&args.into_iter().map(str::to_string).collect::<Vec<_>>())
+                    .is_err()
+            );
+        }
     }
 }

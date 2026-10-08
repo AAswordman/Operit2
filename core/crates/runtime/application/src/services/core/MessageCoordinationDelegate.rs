@@ -1,3 +1,4 @@
+use operit_util::stream::Stream::Stream;
 use operit_store::ChatExecutionLease::ChatExecutionLease;
 use std::collections::HashMap;
 
@@ -527,7 +528,7 @@ impl MessageCoordinationDelegate {
             Some(_) => {
                 self.messageProcessingDelegate
                     .nonFatalErrorEventFlow
-                    .emit("Chat id is empty".to_string());
+                    .set_value(Some("Chat id is empty".to_string()));
                 return Err("Chat id is empty".to_string());
             }
             None => match self.chatHistoryDelegate.currentChatIdFlow.value() {
@@ -541,7 +542,7 @@ impl MessageCoordinationDelegate {
                     Err(error) => {
                         self.messageProcessingDelegate
                             .nonFatalErrorEventFlow
-                            .emit(error.clone());
+                            .set_value(Some(error.clone()));
                         return Err(error);
                     }
                 },
@@ -916,6 +917,7 @@ impl MessageCoordinationDelegate {
             self.refreshStableContextWindow(
                 enhancedAiService,
                 Some(originalChatId.clone()),
+                None,
                 None,
                 chatProviderIdOverride,
                 chatModelIdOverride)

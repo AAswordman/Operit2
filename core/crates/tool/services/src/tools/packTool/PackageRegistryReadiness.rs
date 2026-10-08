@@ -26,7 +26,7 @@ struct PackageRegistryReadinessInner {
 
 impl PackageRegistryReadiness {
     /// Creates an uninitialized registry lifecycle without loading any packages.
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         let (state, _) = watch::channel(PackageRegistryLoadState::NotScheduled);
         Self {
             inner: Arc::new(PackageRegistryReadinessInner {

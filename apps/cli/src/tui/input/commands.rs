@@ -6,7 +6,7 @@ pub(super) struct TuiCommandSpec {
     pub(super) usage: &'static str,
     pub(super) description_key: TuiTextKey,
     /// Keyword-value options completing in any order after the command
-    /// (e.g. `new character <name> group <name>`). Empty for path-style
+    /// (e.g. `new source <chat-id> input <json-object>`). Empty for path-style
     /// commands; only the entry whose `name` equals the command word
     /// declares them.
     pub(super) options: &'static [&'static str],
@@ -62,26 +62,20 @@ const COMMAND_SPECS: [TuiCommandSpec; 75] = [
     },
     TuiCommandSpec {
         name: "new",
-        usage: "/new [character <name>] [group-card <id>] [group <name>]",
+        usage: "/new [source <chat-id>] [input <json-object>]",
         description_key: TuiTextKey::CommandNewDescription,
-        options: &["character", "group-card", "group"],
+        options: &["source", "input"],
     },
     TuiCommandSpec {
-        name: "new character",
-        usage: "/new character <name>",
-        description_key: TuiTextKey::CommandNewCharacterDescription,
+        name: "new source",
+        usage: "/new source <chat-id>",
+        description_key: TuiTextKey::CommandNewDescription,
         options: &[],
     },
     TuiCommandSpec {
-        name: "new group-card",
-        usage: "/new group-card <id>",
-        description_key: TuiTextKey::CommandNewGroupCardDescription,
-        options: &[],
-    },
-    TuiCommandSpec {
-        name: "new group",
-        usage: "/new group <name>",
-        description_key: TuiTextKey::CommandNewGroupDescription,
+        name: "new input",
+        usage: "/new input <json-object>",
+        description_key: TuiTextKey::CommandNewDescription,
         options: &[],
     },
     TuiCommandSpec {
@@ -678,7 +672,7 @@ pub(super) fn complete_command_input(
             .trim()
             .to_ascii_lowercase()
     );
-    // Option-style entries such as `new group-card` are appended after the
+    // Option-style entries such as `new source` are appended after the
     // keywords and values already typed; everything else replaces the buffer.
     let completed =
         if typed == lowercased || lowercased.starts_with(&typed) {
@@ -795,28 +789,15 @@ mod tests {
 
     #[test]
     fn new_options_complete_after_trailing_space() {
-        assert_eq!(
-            builtin_names("/new g"),
-            vec!["new group-card".to_string(), "new group".to_string()]
-        );
-        assert_eq!(
-            builtin_names("/new character Alice "),
-            vec!["new group-card".to_string(), "new group".to_string()]
-        );
-        assert_eq!(
-            builtin_names("/new character Alice group-card 5 "),
-            vec!["new group".to_string()]
-        );
-        assert_eq!(
-            builtin_names("/new character Alice group-card 5 group Heroes "),
-            Vec::<String>::new()
-        );
+        assert_eq!(builtin_names("/new s"), vec!["new source".to_string()]);
+        assert_eq!(builtin_names("/new source parent "), vec!["new input".to_string()]);
+        assert_eq!(builtin_names("/new source parent input {} "), Vec::<String>::new());
     }
 
     #[test]
     fn new_value_positions_stay_clear_of_suggestions() {
-        assert_eq!(builtin_names("/new character "), Vec::<String>::new());
-        assert_eq!(builtin_names("/new cha"), vec!["new character".to_string()]);
+        assert_eq!(builtin_names("/new source "), Vec::<String>::new());
+        assert_eq!(builtin_names("/new inp"), vec!["new input".to_string()]);
     }
 
     #[test]

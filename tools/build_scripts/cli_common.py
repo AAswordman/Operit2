@@ -8,6 +8,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from cli_macos_signing import sign_cli_macos
+
 from common import (
     DIST_DIR,
     REPO_ROOT,
@@ -325,6 +327,8 @@ def build_cli_target(
     reset_dir(package_dir)
     copy_required_file(binary_source, package_dir / binary_name)
     write_cli_installer_files(package_dir, target.platform)
+    if target.platform == "macos":
+        sign_cli_macos(package_dir / binary_name)
 
     if target.platform == "windows":
         compress_zip(package_dir, package_path)

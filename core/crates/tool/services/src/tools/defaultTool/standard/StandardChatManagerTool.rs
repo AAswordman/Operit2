@@ -667,28 +667,54 @@ impl AsyncToolExecutor for ChatManagerToolExecutor {
         })
     }
 
-    /// Runs the selected generic chat operation on its actual asynchronous runtime path.
+    /// Creates local runtime futures on their owning scheduler and awaits only a Send receipt.
     fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool) -> ToolInvocationFuture<'a> {
+        let tools = self.tools.clone();
+        let operation = self.operation;
+        let request = tool.clone();
+        let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let scheduled = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask("chat-tool-invocation", Box::new(move || {
+                Box::pin(async move {
+                    let invocation = async move {
+                        let tool = request;
+                        let result = match operation {
+                            ChatManagerToolOperation::StartChatService => tools.startChatService(&tool),
+                            ChatManagerToolOperation::StopChatService => tools.stopChatService(&tool),
+                            ChatManagerToolOperation::CreateNewChat => tools.createNewChat(&tool).await,
+                            ChatManagerToolOperation::ListChats => tools.listChats(&tool),
+                            ChatManagerToolOperation::FindChat => tools.findChat(&tool),
+                            ChatManagerToolOperation::AgentStatus => tools.agentStatus(&tool),
+                            ChatManagerToolOperation::SwitchChat => tools.switchChat(&tool).await,
+                            ChatManagerToolOperation::UpdateChatTitle => tools.updateChatTitle(&tool),
+                            ChatManagerToolOperation::DeleteChat => tools.deleteChat(&tool),
+                            ChatManagerToolOperation::SendMessageToAi => tools.sendMessageToAi(&tool).await,
+                            ChatManagerToolOperation::SendMessageToAiStreaming => {
+                                tools.sendMessageToAi(&tool).await
+                            }
+                            ChatManagerToolOperation::CallChatModel => tools.callChatModel(&tool).await,
+                            ChatManagerToolOperation::GetChatMessages => tools.getChatMessages(&tool),
+                            ChatManagerToolOperation::GetChatMessagesRange => {
+                                tools.getChatMessagesRange(&tool)
+                            }
+                        };
+                        result
+                    };
+                    let result = match context {
+                        Some(context) => crate::ToolExecutionManager::ToolExecutionManager::scopeToolRuntimeContext(context, invocation).await,
+                        None => invocation.await,
+                    };
+                    let _ = sender.send(result);
+                })
+            }));
         Box::pin(async move {
-            let result = match self.operation {
-                ChatManagerToolOperation::StartChatService => self.tools.startChatService(tool),
-                ChatManagerToolOperation::StopChatService => self.tools.stopChatService(tool),
-                ChatManagerToolOperation::CreateNewChat => self.tools.createNewChat(tool).await,
-                ChatManagerToolOperation::ListChats => self.tools.listChats(tool),
-                ChatManagerToolOperation::FindChat => self.tools.findChat(tool),
-                ChatManagerToolOperation::AgentStatus => self.tools.agentStatus(tool),
-                ChatManagerToolOperation::SwitchChat => self.tools.switchChat(tool).await,
-                ChatManagerToolOperation::UpdateChatTitle => self.tools.updateChatTitle(tool),
-                ChatManagerToolOperation::DeleteChat => self.tools.deleteChat(tool),
-                ChatManagerToolOperation::SendMessageToAi => self.tools.sendMessageToAi(tool).await,
-                ChatManagerToolOperation::SendMessageToAiStreaming => {
-                    self.tools.sendMessageToAi(tool).await
-                }
-                ChatManagerToolOperation::CallChatModel => self.tools.callChatModel(tool).await,
-                ChatManagerToolOperation::GetChatMessages => self.tools.getChatMessages(tool),
-                ChatManagerToolOperation::GetChatMessagesRange => {
-                    self.tools.getChatMessagesRange(tool)
-                }
+            let result = match scheduled {
+                Err(error) => toolError(tool, format!("Chat tool scheduling failed: {error}")),
+                Ok(()) => match receiver.await {
+                    Ok(result) => result,
+                    Err(error) => toolError(tool, format!("Chat tool execution ended without a result: {error}")),
+                },
             };
             vec![result]
         })
@@ -1122,7 +1148,7 @@ fn parseSendAttachments(tool: &AITool) -> Result<Vec<AttachmentInfo>, String> {
             let records: Vec<operit_plugin_sdk::js_sdk::chat::ChatSendAttachment> = serde_json::from_str(&value)
                 .map_err(|error| format!("attachments must be a complete attachment array: {error}"))?;
             Ok(records.into_iter().map(|record| AttachmentInfo {
-                filePath: record.filePath, nodeId: record.nodeId, fileName: record.fileName,
+                filePath: record.filePath, nodeId: record.nodeId.as_value().cloned(), fileName: record.fileName,
                 mimeType: record.mimeType, fileSize: record.fileSize, content: record.content,
             }).collect())
         }

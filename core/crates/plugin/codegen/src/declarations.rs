@@ -73,11 +73,6 @@ const MODULES: &[ModuleSpec] = &[
         ts_file: "chat.d.ts",
     },
     ModuleSpec {
-        rust_file: "js_sdk/memory.rs",
-        additional_rust_file: None,
-        ts_file: "memory.d.ts",
-    },
-    ModuleSpec {
         rust_file: "js_sdk/compose_dsl.rs",
         additional_rust_file: None,
         ts_file: "compose-dsl.d.ts",
@@ -1440,7 +1435,7 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
             "SoftwareSettingsHost" => Some(vec!["SoftwareSettings".to_string()]),
             "UIHost" => Some(vec!["UI".to_string()]),
             "ChatHost" => Some(vec!["Chat".to_string()]),
-            "MemoryHost" => Some(vec!["Memory".to_string()]),
+            "NativeInterfaceHost" => Some(vec!["NativeInterface".to_string()]),
             "GlobalHost" => Some(vec!["global".to_string()]),
             _ => None,
         };
@@ -1464,7 +1459,6 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
         }
         "ui.d.ts" => prefixed_path(declaration_name, "UI"),
         "chat.d.ts" => prefixed_path(declaration_name, "Chat"),
-        "memory.d.ts" => prefixed_path(declaration_name, "Memory"),
         "toolpkg.d.ts" => prefixed_path(declaration_name, "ToolPkg"),
         _ => vec![declaration_name.to_string()],
     };

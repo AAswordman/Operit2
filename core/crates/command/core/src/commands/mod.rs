@@ -84,7 +84,7 @@ async fn run_core_owned_command(
         BuiltinRoot::Model => {
             model::run_model_command(application.hostManager.clone(), args, output)
         }
-        BuiltinRoot::Chat => chat::run_chat_command(application, args, output),
+        BuiltinRoot::Chat => chat::run_chat_command(application, args, output).await,
         BuiltinRoot::Workspace => workspace::run_workspace_command(application, args, output).await,
         BuiltinRoot::Storage => storage::run_storage_command(application, args, output),
         BuiltinRoot::Stt => stt::run_stt_command(application, args, output),

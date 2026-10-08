@@ -30,7 +30,6 @@ const HOST_TRAITS: &[(&str, &str, &str)] = &[
         "SoftwareSettings",
     ),
     ("js_sdk/chat.rs", "ChatHost", "Chat"),
-    ("js_sdk/memory.rs", "MemoryHost", "Memory"),
     ("js_sdk/edge.rs", "EdgeHost", "Edge"),
     ("js_sdk/edge.rs", "IoHost", "Io"),
 ];
@@ -482,7 +481,6 @@ function __operitToolsBuildParameters(namespace, method, overloads, args) {
     if (namespace === "Net.cookies" && method === "get") parameters.action = "get";
     if (namespace === "Net.cookies" && method === "set") parameters.action = "set";
     if (namespace === "Net.cookies" && method === "clear") parameters.action = "clear";
-    if (namespace === "Memory" && Array.isArray(parameters.titles)) parameters.titles = parameters.titles.join(",");
     return parameters;
 }
 
@@ -492,9 +490,11 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
 
 /** Reads one declared SoftwareSettings directory through the existing typed host callback bridge. */
 function __operitReadSoftwareSettingsDirectory(method) {
+    var ownerCallId = globalThis.__operitCurrentCallId;
     return new Promise(function(resolve, reject) {
         var callbackId = "__operit_directory_" + (++globalThis.__operitSoftwareDirectorySequence);
         globalThis[callbackId] = function(result, isError) {
+            if (ownerCallId && typeof globalThis.__operitActivateCall === 'function') globalThis.__operitActivateCall(ownerCallId);
             delete globalThis[callbackId];
             try {
                 var value = JSON.parse(result);
@@ -510,11 +510,13 @@ globalThis.__operitSoftwareDirectorySequence = 0;
 
 /** Applies one declared ordinary configuration ID without an AI tool call or plugin-owner projection. */
 function __operitApplySoftwareSettingsConfig(method, id) {
+    var ownerCallId = globalThis.__operitCurrentCallId;
     if (typeof id !== 'string' || id.trim() === '' || id.trim() !== id) return Promise.reject(new Error('Configuration ID must be exact nonblank text'));
     return new Promise(function(resolve, reject) {
         var callbackId = "__operit_config_" + (++globalThis.__operitSoftwareConfigSequence);
         /** Delivers the actual single native result and retains its original failure message. */
         globalThis[callbackId] = function(result, isError) {
+            if (ownerCallId && typeof globalThis.__operitActivateCall === 'function') globalThis.__operitActivateCall(ownerCallId);
             delete globalThis[callbackId];
             try {
                 var value = JSON.parse(result);
@@ -559,12 +561,14 @@ function __operitRequireChatJsonObject(value) {
 }
 /** Invokes only the narrow typed native record binding; the engine supplies the authenticated owner. */
 function __operitChatExtension(method, target, value) {
+    var ownerCallId = globalThis.__operitCurrentCallId;
     return new Promise(function(resolve, reject) {
         if (method === 'writeExtension') __operitRequireChatJsonObject(value);
         var targetJson = JSON.stringify(target), valueJson = JSON.stringify(value);
         if (typeof targetJson !== 'string' || typeof valueJson !== 'string') throw new Error('Chat extension arguments require JSON');
         var callbackId = '__operit_chat_extension_' + (++globalThis.__operitChatExtensionSequence);
         globalThis[callbackId] = function(result, isError) {
+            if (ownerCallId && typeof globalThis.__operitActivateCall === 'function') globalThis.__operitActivateCall(ownerCallId);
             delete globalThis[callbackId];
             try { var parsed = JSON.parse(result); if (isError) reject(new Error(parsed.message)); else resolve(parsed); }
             catch (error) { reject(error); }

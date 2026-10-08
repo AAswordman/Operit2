@@ -26,16 +26,8 @@ fn with_main_chat_core<R>(
     Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
 }
 
-/// Builds the single-thread runtime used by chat commands that call async Core APIs.
-fn build_chat_command_runtime() -> Result<tokio::runtime::Runtime, String> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())
-}
-
 /// Runs only host-owned chat history, messages, branches, neutral statistics and sends.
-pub fn run_chat_command(
+pub async fn run_chat_command(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -46,20 +38,20 @@ pub fn run_chat_command(
     }
 
     match args[0].as_str() {
-        "new" => create_chat(application, &args[1..], output),
+        "new" => create_chat(application, &args[1..], output).await,
         "list" => list_chats(application, output),
-        "show" => show_chat(application, &args[1..], output),
+        "show" => show_chat(application, &args[1..], output).await,
         "current" => show_current_chat(application, output),
-        "switch" => switch_chat_command(application, &args[1..], output),
-        "delete" => delete_chat(application, &args[1..], output),
-        "delete-message" => delete_chat_message(application, &args[1..], output),
+        "switch" => switch_chat_command(application, &args[1..], output).await,
+        "delete" => delete_chat(application, &args[1..], output).await,
+        "delete-message" => delete_chat_message(application, &args[1..], output).await,
         "clear" => clear_current_chat(application, output),
-        "rollback" => rollback_chat(application, &args[1..], output),
-        "branch" => create_chat_branch(application, &args[1..], output),
+        "rollback" => rollback_chat(application, &args[1..], output).await,
+        "branch" => create_chat_branch(application, &args[1..], output).await,
         "branches" => list_chat_branches(application, &args[1..], output),
         "lock" => update_chat_locked(application, &args[1..], output),
         "pin" => update_chat_pinned(application, &args[1..], output),
-        "send" => send_chat_message_command(application, &args[1..], output),
+        "send" => send_chat_message_command(application, &args[1..], output).await,
         "stats" => show_chat_stats(output),
         _ => Err(format!("unknown chat command: {}", args[0])),
     }
@@ -89,7 +81,7 @@ fn list_chats(
 }
 
 /// Shows one chat and its messages.
-fn show_chat(
+async fn show_chat(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -98,8 +90,7 @@ fn show_chat(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat show <chat-id> [--runtime]".to_string())?
         .clone();
-    let runtime = build_chat_command_runtime()?;
-    let (chat, messages) = runtime.block_on(async {
+    let (chat, messages) = async {
         let mut holder = application.chatRuntimeHolder.lock().await;
         let core = holder.getCore(ChatRuntimeSlot::MAIN);
         core.switchChat(chatId.clone()).await?;
@@ -110,7 +101,8 @@ fn show_chat(
             .find(|chat| chat.id == chatId)
             .ok_or_else(|| format!("chat not found: {chatId}"))?;
         Ok::<_, String>((chat, core.chatHistory()))
-    })?;
+    }
+    .await?;
     print_chat_history_header(&chat, output);
     for message in &messages {
         print_chat_message(&message, output);
@@ -123,7 +115,7 @@ fn show_chat(
 }
 
 /// Deletes one chat.
-fn delete_chat(
+async fn delete_chat(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -132,11 +124,14 @@ fn delete_chat(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat delete <chat-id>".to_string())?
         .clone();
-    let runtime = build_chat_command_runtime()?;
-    let deleted = runtime.block_on(async {
+    let deleted = async {
         let mut holder = application.chatRuntimeHolder.lock().await;
-        holder.getCore(ChatRuntimeSlot::MAIN).deleteChatHistory(chatId.clone()).await
-    })?;
+        holder
+            .getCore(ChatRuntimeSlot::MAIN)
+            .deleteChatHistory(chatId.clone())
+            .await
+    }
+    .await?;
     output.push_stdout_line(format!("Deleted chat {chatId}: {deleted}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -146,7 +141,7 @@ fn delete_chat(
 }
 
 /// Deletes one message from the current chat by timestamp.
-fn delete_chat_message(
+async fn delete_chat_message(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -156,17 +151,18 @@ fn delete_chat_message(
         .ok_or_else(|| "usage: operit2 chat delete-message <message-timestamp>".to_string())?
         .parse::<i64>()
         .map_err(|error| error.to_string())?;
-    let runtime = build_chat_command_runtime()?;
-    let chatId = runtime.block_on(async {
+    let chatId = async {
         let mut holder = application.chatRuntimeHolder.lock().await;
         let core = holder.getCore(ChatRuntimeSlot::MAIN);
         let chatId = core
+            .chatHistoryDelegate
             .currentChatIdFlow()
             .value()
             .ok_or_else(|| "core has no active chat".to_string())?;
         core.deleteMessage(chatId.clone(), messageTimestamp).await;
         Ok::<_, String>(chatId)
-    })?;
+    }
+    .await?;
     output.push_stdout_line(format!("Deleted message {messageTimestamp} from {chatId}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -188,7 +184,7 @@ fn clear_current_chat(
 }
 
 /// Rolls the current chat back to one user message timestamp.
-fn rollback_chat(
+async fn rollback_chat(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -198,11 +194,11 @@ fn rollback_chat(
         .ok_or_else(|| "usage: operit2 chat rollback <message-timestamp>".to_string())?
         .parse::<i64>()
         .map_err(|error| error.to_string())?;
-    let runtime = build_chat_command_runtime()?;
-    let (chatId, rolledBack) = runtime.block_on(async {
+    let (chatId, rolledBack) = async {
         let mut holder = application.chatRuntimeHolder.lock().await;
         let core = holder.getCore(ChatRuntimeSlot::MAIN);
         let chatId = core
+            .chatHistoryDelegate
             .currentChatIdFlow()
             .value()
             .ok_or_else(|| "core has no active chat".to_string())?;
@@ -210,7 +206,8 @@ fn rollback_chat(
             .rollbackToMessage(chatId.clone(), messageTimestamp)
             .await;
         Ok::<_, String>((chatId, rolledBack))
-    })?;
+    }
+    .await?;
     let rolledBackMessage = rolledBack.clone();
     if rolledBack.is_some() {
         output.push_stdout_line(format!(
@@ -229,23 +226,23 @@ fn rollback_chat(
 }
 
 /// Creates a branch from the current chat.
-fn create_chat_branch(
+async fn create_chat_branch(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let upToMessageTimestamp = parse_branch_args(args)?;
-    let runtime = build_chat_command_runtime()?;
     let service = EnhancedAIService::new(
         application.toolHandler.clone(),
         application.providerRuntimeContext.clone(),
     );
-    let chatId = runtime.block_on(async {
+    let chatId = async {
         let mut holder = application.chatRuntimeHolder.lock().await;
         let core = holder.getCore(ChatRuntimeSlot::MAIN);
         core.enhancedAiService = Some(service);
         core.createBranch(upToMessageTimestamp).await
-    })?;
+    }
+    .await?;
     output.push_stdout_line(format!("Created chat branch {chatId}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -262,7 +259,8 @@ fn list_chat_branches(
 ) -> Result<(), String> {
     let (parentChatId, branches) = with_main_chat_core(application, |core| {
         let parentChatId = args.get(0).cloned().map(Ok).unwrap_or_else(|| {
-            core.currentChatIdFlow()
+            core.chatHistoryDelegate
+                .currentChatIdFlow()
                 .value()
                 .ok_or_else(|| "usage: operit2 chat branches [parent-chat-id]".to_string())
         })?;
@@ -326,14 +324,16 @@ fn show_current_chat(
     application: &mut OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let chatId = with_main_chat_core(application, |core| core.currentChatIdFlow().value())?;
+    let chatId = with_main_chat_core(application, |core| {
+        core.chatHistoryDelegate.currentChatIdFlow().value()
+    })?;
     output.push_stdout_line(format!("Current chat: {}", option_text(chatId.as_deref())));
     output.setJsonStdout(json!({ "chatId": chatId }));
     Ok(())
 }
 
 /// Switches the current chat.
-fn switch_chat_command(
+async fn switch_chat_command(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -342,11 +342,14 @@ fn switch_chat_command(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat switch <chat-id>".to_string())?
         .clone();
-    let runtime = build_chat_command_runtime()?;
-    runtime.block_on(async {
+    async {
         let mut holder = application.chatRuntimeHolder.lock().await;
-        holder.getCore(ChatRuntimeSlot::MAIN).switchChat(chatId.clone()).await
-    })?;
+        holder
+            .getCore(ChatRuntimeSlot::MAIN)
+            .switchChat(chatId.clone())
+            .await
+    }
+    .await?;
     output.push_stdout_line(format!("Current chat: {chatId}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -358,8 +361,12 @@ fn switch_chat_command(
 /// Shows only neutral aggregate statistics from canonical host records.
 fn show_chat_stats(output: &mut CoreCommandOutput) -> Result<(), String> {
     let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    let totalChats = manager.getTotalChatCount().map_err(|error| error.to_string())?;
-    let totalMessages = manager.getTotalMessageCount().map_err(|error| error.to_string())?;
+    let totalChats = manager
+        .getTotalChatCount()
+        .map_err(|error| error.to_string())?;
+    let totalMessages = manager
+        .getTotalMessageCount()
+        .map_err(|error| error.to_string())?;
     output.push_stdout_line("Chat statistics");
     output.push_stdout_line(format!("Total chats: {totalChats}"));
     output.push_stdout_line(format!("Total messages: {totalMessages}"));
@@ -376,18 +383,17 @@ struct ChatNewArgs {
 }
 
 /// Creates a chat through the awaited canonical lifecycle and uses its returned identity.
-fn create_chat(
+async fn create_chat(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let options = parse_chat_new_args(args)?;
-    let runtime = build_chat_command_runtime()?;
     let service = EnhancedAIService::new(
         application.toolHandler.clone(),
         application.providerRuntimeContext.clone(),
     );
-    let chatId = runtime.block_on(async {
+    let chatId = async {
         let mut holder = application.chatRuntimeHolder.lock().await;
         let core = holder.getCore(ChatRuntimeSlot::MAIN);
         core.enhancedAiService = Some(service);
@@ -395,8 +401,10 @@ fn create_chat(
             options.setAsCurrentChat,
             options.sourceChatId.clone(),
             options.input.clone(),
-        ).await
-    })?;
+        )
+        .await
+    }
+    .await?;
     output.push_stdout_line(format!("Created chat {chatId}"));
     output.setJsonStdout(json!({ "chatId": chatId, "setAsCurrentChat": options.setAsCurrentChat, "sourceChatId": options.sourceChatId, "input": options.input }));
     Ok(())
@@ -405,7 +413,11 @@ fn create_chat(
 /// Parses only the generic source, opaque JSON input and current-selection switches.
 fn parse_chat_new_args(args: &[String]) -> Result<ChatNewArgs, String> {
     let usage = "usage: operit2 chat new [--set-current <true|false>] [--source <chat-id>] [--input <json-object>]";
-    let mut options = ChatNewArgs { setAsCurrentChat: true, sourceChatId: None, input: None };
+    let mut options = ChatNewArgs {
+        setAsCurrentChat: true,
+        sourceChatId: None,
+        input: None,
+    };
     let mut hasSetCurrent = false;
     let mut index = 0;
     while index < args.len() {
@@ -414,19 +426,30 @@ fn parse_chat_new_args(args: &[String]) -> Result<ChatNewArgs, String> {
         let value = args.get(index).ok_or_else(|| usage.to_string())?;
         match option {
             "--set-current" => {
-                if hasSetCurrent { return Err("Duplicate --set-current option".to_string()); }
+                if hasSetCurrent {
+                    return Err("Duplicate --set-current option".to_string());
+                }
                 options.setAsCurrentChat = parse_bool_arg(value)?;
                 hasSetCurrent = true;
             }
             "--source" => {
-                if options.sourceChatId.is_some() { return Err("Duplicate --source option".to_string()); }
-                if value.trim().is_empty() || value.trim() != value { return Err("Source chat id must be nonblank canonical text".to_string()); }
+                if options.sourceChatId.is_some() {
+                    return Err("Duplicate --source option".to_string());
+                }
+                if value.trim().is_empty() || value.trim() != value {
+                    return Err("Source chat id must be nonblank canonical text".to_string());
+                }
                 options.sourceChatId = Some(value.clone());
             }
             "--input" => {
-                if options.input.is_some() { return Err("Duplicate --input option".to_string()); }
-                let input: serde_json::Value = serde_json::from_str(value).map_err(|error| error.to_string())?;
-                if !input.is_object() { return Err("Chat creation input must be a JSON object".to_string()); }
+                if options.input.is_some() {
+                    return Err("Duplicate --input option".to_string());
+                }
+                let input: serde_json::Value =
+                    serde_json::from_str(value).map_err(|error| error.to_string())?;
+                if !input.is_object() {
+                    return Err("Chat creation input must be a JSON object".to_string());
+                }
                 options.input = Some(input);
             }
             _ => return Err(usage.to_string()),
@@ -527,15 +550,14 @@ fn parse_chat_send_args(args: &[String]) -> Result<ChatSendArgs, String> {
     })
 }
 
-/// Sends one user message and waits for the committed AI response.
-fn send_chat_message_command(
+/// Sends one user message and awaits its native originating-turn outcome.
+async fn send_chat_message_command(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let sendArgs = parse_chat_send_args(args)?;
-    let runtime = build_chat_command_runtime()?;
-    let result = runtime.block_on(send_chat_message_with_application(application, sendArgs))?;
+    let result = send_chat_message_with_application(application, sendArgs).await?;
     print_chat_send_result(&result, output)?;
     Ok(())
 }
@@ -545,6 +567,17 @@ async fn send_chat_message_with_application(
     application: &mut OperitApplication,
     sendArgs: ChatSendArgs,
 ) -> Result<serde_json::Value, String> {
+    let service = EnhancedAIService::new(
+        application.toolHandler.clone(),
+        application.providerRuntimeContext.clone(),
+    );
+    {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        let core = holder.getCore(ChatRuntimeSlot::MAIN);
+        if core.enhancedAiService.is_none() {
+            core.enhancedAiService = Some(service);
+        }
+    }
     let attachments = sendArgs
         .attachmentPaths
         .iter()
@@ -560,13 +593,21 @@ async fn send_chat_message_with_application(
         replyToMessageTimestamp: sendArgs.replyToTimestamp,
         turnOptions: ChatTurnOptions::default(),
     };
-    let receipt = application.toolHandler.runtimeSupport().sendChatMessage(request).await?;
+    let receipt = application
+        .toolHandler
+        .runtimeSupport()
+        .sendChatMessage(request)
+        .await?;
     serde_json::to_value(&receipt).map_err(|error| error.to_string())
 }
 
 /// Preserves the complete native completion, cancellation, blocked or consumed outcome in text and JSON.
-fn print_chat_send_result(result: &serde_json::Value, output: &mut CoreCommandOutput) -> Result<(), String> {
-    output.push_stdout_line(serde_json::to_string_pretty(result).map_err(|error| error.to_string())?);
+fn print_chat_send_result(
+    result: &serde_json::Value,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    output
+        .push_stdout_line(serde_json::to_string_pretty(result).map_err(|error| error.to_string())?);
     output.setJsonStdout(result.clone());
     Ok(())
 }

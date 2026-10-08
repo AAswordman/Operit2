@@ -18,9 +18,7 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 use serde::Deserialize;
 
-use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::AttachmentInfo::AttachmentInfo;
-use operit_model::CharacterCard::CharacterCardChatModelBindingMode;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
@@ -37,7 +35,6 @@ use operit_node_runtime::RuntimeRemoteLinkService::{
     RuntimeDeviceSpaceDevice, RuntimeDeviceSpaceTopology, RuntimePairedDevice,
     RuntimePairedDeviceStatus, RuntimeRemoteLinkService, SpaceJoinRequest, SpaceJoinStatus,
 };
-use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatState;
 use operit_runtime::services::RuntimeHostInteractionService::RuntimeHostInteractionToolPermissionRequest;
 use operit_tools::tools::ToolPermissionSystem::AiPermissionMode;
@@ -2389,8 +2386,8 @@ impl OperitTui {
         Ok(())
     }
 
-    /// `/new` takes repeatable `keyword value` pairs (`character`,
-    /// `group-card`, `group`); translate them into the shared shell flags so
+    /// `/new` takes generic `source` and opaque `input` keyword/value pairs;
+    /// translate them into the shared shell flags so
     /// `parse_shell_args` stays the single option parser. Legacy `--keyword`
     /// spellings are still accepted.
     fn parse_new_chat_args(args: &[String]) -> Result<ShellArgs, ()> {
@@ -4226,35 +4223,8 @@ impl OperitTui {
         })
     }
 
+    /// The frontend edits the application model binding; plugin-specific overrides belong to the plugin.
     async fn editable_chat_model_ref(&mut self) -> Result<ModelRef, String> {
-        if let ActivePrompt::CharacterCard { id } = self
-            .core
-            .preferences_active_prompt_manager()
-            .getActivePrompt()
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            let card = self
-                .core
-                .preferences_character_card_manager()
-                .getCharacterCard(&id)
-                .await
-                .map_err(|error| error.to_string())?;
-            let binding_mode = CharacterCardChatModelBindingMode::normalize(Some(
-                card.chatModelBindingMode.as_str(),
-            ));
-            if binding_mode == CharacterCardChatModelBindingMode::FIXED_MODEL {
-                let model_id = card
-                    .chatModelId
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| format!("character card fixed model is empty: {id}"))?;
-                return Ok(ModelRef {
-                    provider_id: ModelConfigManager::DEFAULT_PROVIDER_ID.to_string(),
-                    model_id,
-                });
-            }
-        }
         self.current_chat_model_ref().await
     }
 
@@ -4562,16 +4532,7 @@ impl OperitTui {
             return Ok(());
         }
 
-        self.core
-            .chat_runtime_holder_main()
-            .createNewChat(
-                shell_args.characterCardName,
-                shell_args.group,
-                true,
-                true,
-                shell_args.characterGroupId,
-            )
-            .await
+        self.core.runCoreCommand(&shell_args.new_chat_command_args()).await
             .map_err(|error| error.to_string())?;
         self.refresh_core_snapshot().await?;
         let chat_id = self.current_chat_id()?;
@@ -5292,52 +5253,19 @@ impl OperitTui {
     }
 
     async fn handle_character_command(&mut self, args: &[String]) -> Result<(), String> {
-        match args.first().map(String::as_str) {
-            None | Some("choose") => {
-                let cards = self
-                    .core
-                    .preferences_character_card_manager()
-                    .getAllCharacterCards()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if cards.is_empty() {
-                    self.status_message = self.text().character_none().to_string();
-                } else {
-                    let items = cards.into_iter().map(|c| c.name).collect::<Vec<_>>();
-                    self.open_list_popup(self.text().character_title().to_string(), items);
-                }
-            }
-            Some(other) => {
-                self.status_message = self.text().unknown_command(&format!("character {other}"));
-            }
-        }
+        let default_args = vec!["list".to_string()];
+        let args = if args.is_empty() || args == ["choose"] { &default_args } else { args };
+        self.handle_plugin_core_command("character", args).await;
         Ok(())
     }
 
     async fn handle_group_command(&mut self, args: &[String]) -> Result<(), String> {
-        match args.first().map(String::as_str) {
-            None | Some("choose") => {
-                let groups = self
-                    .core
-                    .preferences_character_group_card_manager()
-                    .getAllCharacterGroupCards()
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if groups.is_empty() {
-                    self.status_message = self.text().group_none().to_string();
-                } else {
-                    let items = groups.into_iter().map(|g| g.name).collect::<Vec<_>>();
-                    self.open_list_popup(self.text().group_title().to_string(), items);
-                }
-            }
-            Some(other) => {
-                self.status_message = self.text().unknown_command(&format!("group {other}"));
-            }
-        }
+        let default_args = vec!["list".to_string()];
+        let args = if args.is_empty() || args == ["choose"] { &default_args } else { args };
+        self.handle_plugin_core_command("group", args).await;
         Ok(())
     }
 
-    /// Handles installed-skill commands through the application skill repository.
     async fn handle_skill_command(&mut self, args: &[String]) -> Result<(), String> {
         if args.first().map(String::as_str) == Some("toggle") {
             let name = args
@@ -5447,22 +5375,9 @@ impl OperitTui {
     }
 
     async fn handle_tag_command(&mut self, args: &[String]) -> Result<(), String> {
-        if args.first().is_some() {
-            self.status_message = self.text().unknown_command(&format!("tag {}", args[0]));
-            return Ok(());
-        }
-        let tags = self
-            .core
-            .preferences_prompt_tag_manager()
-            .getAllTags()
-            .await
-            .map_err(|error| error.to_string())?;
-        if tags.is_empty() {
-            self.status_message = self.text().tag_none().to_string();
-        } else {
-            let items = tags.into_iter().map(|t| t.name).collect::<Vec<_>>();
-            self.open_list_popup(self.text().tag_title().to_string(), items);
-        }
+        let default_args = vec!["list".to_string()];
+        let args = if args.is_empty() || args == ["choose"] { &default_args } else { args };
+        self.handle_plugin_core_command("tag", args).await;
         Ok(())
     }
 
@@ -5563,18 +5478,7 @@ fn chat_histories_to_list(chat_histories: Vec<ChatHistory>) -> Vec<ChatListItem>
             } else {
                 chat.title.clone()
             };
-            let mut secondary = short_chat_label(&chat.id);
-            let character_card_name = chat.characterCardName.clone().unwrap_or_default();
-            if !character_card_name.is_empty() {
-                secondary.push_str(" | ");
-                secondary.push_str(&character_card_name);
-            }
-            if let Some(group_id) = chat.characterGroupId.clone() {
-                if !group_id.trim().is_empty() {
-                    secondary.push_str(" | group=");
-                    secondary.push_str(&group_id);
-                }
-            }
+            let secondary = short_chat_label(&chat.id);
             ChatListItem {
                 id: chat.id,
                 title,
@@ -6092,32 +5996,23 @@ mod tests {
         assert!(modal.menu_actions("self").is_empty());
     }
 
-    /// Verifies `/new` keyword options translate into the shared shell flags.
+    /// Verifies generic creation input is preserved without frontend domain interpretation.
     #[test]
     fn new_chat_args_translate_keywords_into_shell_flags() {
         let args = OperitTui::parse_new_chat_args(&[
-            "character".to_string(),
-            "Alice".to_string(),
-            "group-card".to_string(),
-            "42".to_string(),
-            "group".to_string(),
-            "Heroes".to_string(),
-        ])
-        .expect("keyword options must translate");
-        assert_eq!(args.characterCardName.as_deref(), Some("Alice"));
-        assert_eq!(args.characterGroupId.as_deref(), Some("42"));
-        assert_eq!(args.group.as_deref(), Some("Heroes"));
+            "source".to_string(), "chat-parent".to_string(),
+            "input".to_string(), r#"{"plugin.example":{"selection":"opaque"}}"#.to_string(),
+        ]).expect("generic keyword options must translate");
+        assert_eq!(args.sourceChatId.as_deref(), Some("chat-parent"));
+        assert_eq!(args.input.unwrap()["plugin.example"]["selection"], "opaque");
     }
 
-    /// Verifies legacy `--` spellings still parse and bad input is rejected.
     #[test]
-    fn new_chat_args_accept_legacy_flags_and_reject_unknowns() {
-        let args = OperitTui::parse_new_chat_args(&["--group".to_string(), "Heroes".to_string()])
-            .expect("legacy flag spelling must translate");
-        assert_eq!(args.group.as_deref(), Some("Heroes"));
-
-        assert!(OperitTui::parse_new_chat_args(&["chat".to_string(), "x".to_string()]).is_err());
-        assert!(OperitTui::parse_new_chat_args(&["character".to_string()]).is_err());
+    fn new_chat_args_accept_flags_and_reject_retired_role_options() {
+        assert!(OperitTui::parse_new_chat_args(&["--source".into(), "parent".into()]).is_ok());
+        assert!(OperitTui::parse_new_chat_args(&["character".into(), "Alice".into()]).is_err());
+        assert!(OperitTui::parse_new_chat_args(&["chat".into(), "x".into()]).is_err());
+        assert!(OperitTui::parse_new_chat_args(&["input".into()]).is_err());
     }
 
     /// Verifies TUI embedded stream projection preserves split tool markup.

@@ -5,7 +5,6 @@ use operit_plugin_sdk::js_sdk::chat::*;
 use operit_plugin_sdk::js_sdk::core::JsonObject;
 use operit_plugin_sdk::js_sdk::files::*;
 use operit_plugin_sdk::js_sdk::edge::*;
-use operit_plugin_sdk::js_sdk::memory::*;
 use operit_plugin_sdk::js_sdk::network::*;
 use operit_plugin_sdk::js_sdk::results::*;
 use operit_plugin_sdk::js_sdk::software_settings::*;
@@ -95,29 +94,6 @@ fn flattened_wire_name(namespace: &str, name: &str) -> String {
     }
 }
 
-/// Normalizes the one legacy memory field whose executor uses comma-separated text.
-fn normalize_memory_titles(
-    namespace: &str,
-    parameters: &mut Map<String, Value>,
-) -> Result<(), JsHostError> {
-    if namespace != "Memory" {
-        return Ok(());
-    }
-    let Some(Value::Array(titles)) = parameters.get("titles") else {
-        return Ok(());
-    };
-    let titles = titles
-        .iter()
-        .map(|title| match title {
-            Value::String(title) => Ok(title.as_str()),
-            _ => Err(JsHostError::new("Memory titles must contain strings")),
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .join(",");
-    parameters.insert("titles".to_string(), Value::String(titles));
-    Ok(())
-}
-
 /// Adds fixed protocol fields that are part of a method binding rather than a Rust argument.
 fn add_binding_fields(namespace: &str, method: &str, parameters: &mut Map<String, Value>) {
     match (namespace, method) {
@@ -166,7 +142,6 @@ fn build_generated_parameters(
         }
     }
     add_binding_fields(namespace, method, &mut parameters);
-    normalize_memory_titles(namespace, &mut parameters)?;
     Ok(parameters.into_iter().collect())
 }
 

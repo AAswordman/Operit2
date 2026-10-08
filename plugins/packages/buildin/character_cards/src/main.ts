@@ -22,6 +22,15 @@ export { beforeChatCreate } from "./chat-lifecycle";
 export { onGroupInputSubmit } from "./group-execution/hooks";
 export { chatContextActionsApi, chatListSectionsApi } from "./ui-contributions";
 const definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
+/** Connects lazy directory readers for every evaluated runtime, not just the registration-only module. */
+connectDirectorySources({
+  /** Reads the actual configured model directory only when the shared service requests it. */
+  listModels: () => Tools.SoftwareSettings.listModelSummaries(),
+  /** Reads the actual TTS directory without opening storage during registration. */
+  listTtsConfigs: () => Tools.SoftwareSettings.listTtsConfigs(),
+  /** Reads complete real builtin, package, skill and MCP sources through the generic settings capability. */
+  readToolCatalog: () => Tools.SoftwareSettings.readToolSourceCatalog(),
+});
 /** Declares IPC handlers when the main runtime is evaluated; no business service is opened. */
 registerUiRequestChannel();
 /** Registers the actual embedded-sidebar catalog IPC without reading host metadata or opening the business store. */
@@ -38,14 +47,6 @@ export function selectionScreen(ctx: ComposeDslContext): ComposeNode { return re
 export function groupExecutionScreen(ctx: ComposeDslContext): ComposeNode { return renderGroupExecutionScreen(ctx); }
 /** Registers plugin-owned domain commands, typed public APIs, and independent character/memory/sidebar surfaces. */
 export function registerToolPkg(): boolean {
-  connectDirectorySources({
-    /** Reads the actual configured model directory only when the shared service requests it. */
-    listModels: () => Tools.SoftwareSettings.listModelSummaries(),
-    /** Reads the actual TTS directory without opening storage during registration. */
-    listTtsConfigs: () => Tools.SoftwareSettings.listTtsConfigs(),
-    /** Reads complete real builtin, package, skill and MCP sources through the generic settings capability. */
-    readToolCatalog: () => Tools.SoftwareSettings.readToolSourceCatalog(),
-  });
   registerSelectionSettingsAccess();
   registerDomainCommands();
   registerDomainApis();
