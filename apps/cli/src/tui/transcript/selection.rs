@@ -91,6 +91,11 @@ impl TranscriptSelectionState {
     }
 
     /// Returns the normalized (start ≤ end) selection range when non-empty.
+    ///
+    /// The end position sits on the character under the release pointer and is
+    /// widened by one so drag selections include it, keeping the highlight's
+    /// right edge on the pointer. The start edge stays inclusive as-is, and a
+    /// plain click (anchor == cursor) still yields no range.
     pub(super) fn normalized_range(&self) -> Option<(TranscriptPosition, TranscriptPosition)> {
         let anchor = self.anchor?;
         let cursor = self.cursor?;
@@ -98,7 +103,13 @@ impl TranscriptSelectionState {
             return None;
         }
         if anchor < cursor {
-            Some((anchor, cursor))
+            Some((
+                anchor,
+                TranscriptPosition {
+                    line: cursor.line,
+                    column: cursor.column + 1,
+                },
+            ))
         } else {
             Some((cursor, anchor))
         }
@@ -506,7 +517,26 @@ mod tests {
         let mut selection = TranscriptSelectionState::default();
         selection.begin(drag_position_at(2).expect("position inside transcript"));
         selection.end(drag_position_at(6).expect("position inside transcript"));
-        assert_eq!(selection.selected_text(&lines).as_deref(), Some("文ab"));
+        assert_eq!(selection.selected_text(&lines).as_deref(), Some("文abc"));
+    }
+
+    #[test]
+    fn transcript_drag_left_includes_release_character_but_not_press_character() {
+        let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
+        let mut selection = TranscriptSelectionState::default();
+        selection.begin(TranscriptPosition { line: 0, column: 2 });
+        selection.end(TranscriptPosition { line: 0, column: 0 });
+        assert_eq!(selection.selected_text(&lines).as_deref(), Some("中文"));
+    }
+
+    #[test]
+    fn transcript_click_without_drag_selects_nothing() {
+        let lines = vec![transcript_copy_line(&Line::from("中文abc"))];
+        let mut selection = TranscriptSelectionState::default();
+        selection.begin(TranscriptPosition { line: 0, column: 1 });
+        selection.end(TranscriptPosition { line: 0, column: 1 });
+        assert!(selection.normalized_range().is_none());
+        assert_eq!(selection.selected_text(&lines), None);
     }
 
     #[test]
@@ -563,6 +593,14 @@ mod tests {
         assert_eq!(
             popup_selected_text(&rows, &selection).as_deref(),
             Some("中\nxy")
+        );
+
+        let mut release_inclusive = TranscriptSelectionState::default();
+        release_inclusive.begin(TranscriptPosition { line: 0, column: 2 });
+        release_inclusive.end(TranscriptPosition { line: 1, column: 0 });
+        assert_eq!(
+            popup_selected_text(&rows, &release_inclusive).as_deref(),
+            Some("中\nx")
         );
     }
 
