@@ -191,6 +191,29 @@ async fn failed_local_cancellation_preserves_pending_request_and_can_retry() {
     gatewayPeer.stop().await.unwrap();
 }
 
+/// Cleanup must not evict the cache when the host rejects the durable delete.
+#[test]
+fn node_local_delete_failure_preserves_shared_snapshot_and_durable_file() {
+    use operit_store::PreferencesDataStore::{CoreNodeStateStore, emptyPreferences, stringPreferencesKey};
+    let storage = Arc::new(Storage::default());
+    let path = "runtime/space/device_profiles/delete-failure.preferences.json";
+    let first = CoreNodeStateStore::newWithStorage(storage.clone(), path);
+    let second = CoreNodeStateStore::newWithStorage(storage.clone(), path);
+    let mut snapshot = emptyPreferences();
+    snapshot.set(&stringPreferencesKey("record"), "unchanged-profile".to_string());
+    first.replaceRecoverably(snapshot.clone()).unwrap();
+    *storage.3.lock().unwrap() = Some(0);
+    assert!(first.delete().is_err());
+    assert!(storage.exists(path).unwrap());
+    assert_eq!(second.data().unwrap(), snapshot);
+    first.delete().unwrap();
+    assert!(!storage.exists(path).unwrap());
+    assert_eq!(second.data().unwrap(), emptyPreferences());
+    second.replaceRecoverably(snapshot.clone()).unwrap();
+    assert!(storage.exists(path).unwrap());
+    assert_eq!(first.data().unwrap(), snapshot);
+}
+
 #[tokio::test]
 async fn approval_retry_recovers_each_partial_write_without_duplicate_admission() {
     for failure in 0..32 {
@@ -395,10 +418,12 @@ mod core_edge {
         }
     }
     fn core_node() -> CoreFixture {
+        core_node_with_storage(Arc::new(Storage::default()))
+    }
+    fn core_node_with_storage(storage: Arc<Storage>) -> CoreFixture {
         operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
             NativeHostRuntimeTaskSchedulerHost,
         ));
-        let storage = Arc::new(Storage::default());
         configure_listener(&storage);
         let application = Arc::new(ApplicationSpy::default());
         let runtime = CoreNodeLocalRuntime::new(
@@ -503,7 +528,7 @@ mod core_edge {
     fn reopened(storage: &Arc<Storage>) -> Arc<Storage> {
         Arc::new(Storage(
             Mutex::new(storage.0.lock().unwrap().clone()),
-            true,
+            storage.1,
             Mutex::new(storage.2.lock().unwrap().clone()),
             Mutex::default(),
         ))
@@ -711,6 +736,221 @@ mod core_edge {
         core.peers.stop().await.unwrap();
         edge.peers.stop().await.unwrap();
         result.unwrap();
+    }
+
+    /// Reproduce the physical device scenario: the SAME Core keeps the former
+    /// group (including Edge) while Edge leaves and creates a new singleton.
+    #[tokio::test]
+    async fn same_core_rejoins_edge_after_local_exit_without_losing_member_profiles() {
+        let _guard = TEST_LOCK.lock().await;
+        let core = core_node();
+        let edge = fresh_edge();
+        start(&core, &edge).await;
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            let core_id = core.router.localNodeId();
+            let edge_id = edge.service.localNodeId();
+            pair(&core.peers, &edge.peers, &edge.storage, edge_id.clone()).await;
+            let first = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            edge.service.decideDeviceSpaceJoin(first.requestId.clone(), first.assignmentVersion, true).await.unwrap();
+            assert_eq!(core.service.refreshDeviceSpaceJoin(first.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+            for _cycle in 0..3 {
+            let former = core.service.deviceSpace().unwrap();
+            assert!(former.members.contains(&edge_id) && former.members.contains(&core_id));
+            let credentials = edge.peers.pairedPeers().unwrap();
+            let singleton = edge.service.leaveDeviceSpace().unwrap();
+            assert_eq!(singleton.members, vec![edge_id.clone()]);
+            assert_eq!(core.service.deviceSpace().unwrap(), former, "the remote Core retains its original group");
+            assert!(!edge.service.spaceStore().deviceProfiles().unwrap().contains_key(&core_id));
+            let withdrawn = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            assert_eq!(core.service.cancelDeviceSpaceJoin(withdrawn.requestId.clone()).await.unwrap().status, SpaceJoinStatus::Cancelled);
+            assert!(edge.service.decideDeviceSpaceJoin(withdrawn.requestId, withdrawn.assignmentVersion, true).await.is_err());
+            assert_eq!(core.service.deviceSpace().unwrap(), former, "withdrawal changed the applicant group");
+            assert_eq!(edge.service.spaceStore().space().unwrap(), singleton, "withdrawal admitted the applicant");
+            let request = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            let before = edge.service.spaceStore().space().unwrap();
+            assert_eq!(before, singleton);
+            let decision = edge.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await;
+            assert!(decision.is_ok(), "same-Core rejoin approval failed: {decision:?}");
+            assert_eq!(decision.unwrap().status, SpaceJoinStatus::Approved);
+            assert_eq!(core.service.refreshDeviceSpaceJoin(request.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+            assert_eq!(core.service.deviceSpace().unwrap(), edge.service.spaceStore().space().unwrap());
+            let joined = edge.service.spaceStore().space().unwrap();
+            let profiles = edge.service.spaceStore().deviceProfiles().unwrap();
+            assert!(joined.members.iter().all(|node| profiles.contains_key(node)));
+            assert_eq!(edge.peers.pairedPeers().unwrap(), credentials);
+            assert_no_replica(&core, &edge);
+            }
+        }).await;
+        core.peers.stop().await.unwrap();
+        edge.peers.stop().await.unwrap();
+        result.unwrap();
+    }
+
+    /// Model the durable state left by the old deleted-profile cache bug:
+    /// admission/member writes succeeded but the receipt could not be built.
+    #[tokio::test]
+    async fn committed_rejoin_with_missing_profile_recovers_after_cancel_and_restart() {
+        let _guard = TEST_LOCK.lock().await;
+        let mut core = core_node();
+        let mut edge = fresh_edge();
+        start(&core, &edge).await;
+        let result = tokio::time::timeout(Duration::from_secs(40), async {
+            let core_id = core.router.localNodeId();
+            let edge_id = edge.service.localNodeId();
+            pair(&core.peers, &edge.peers, &edge.storage, edge_id.clone()).await;
+            let first = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            edge.service.decideDeviceSpaceJoin(first.requestId.clone(), first.assignmentVersion, true).await.unwrap();
+            core.service.refreshDeviceSpaceJoin(first.requestId).await.unwrap();
+            edge.service.leaveDeviceSpace().unwrap();
+            let request = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            let credentials = edge.peers.pairedPeers().unwrap();
+            let core_credentials = core.peers.pairedPeers().unwrap();
+            // Claim through the production dispatcher, then persist the exact
+            // admission and membership prefix completed before the old failure.
+            edge.service.acceptSpaceApprovalCall(&edge_id, CoreCallRequest::new(
+                "partial-rejoin-claim", NODE_SPACE_APPROVAL_TARGET, "claim",
+                operit_link::toCoreValue(serde_json::json!({"requestId": request.requestId,
+                    "assignmentVersion": request.assignmentVersion, "approve": true})).unwrap(),
+            )).await.unwrap();
+            let records: BTreeMap<String, String> = serde_json::from_slice(&edge.storage.readBytes(
+                "runtime/link_access/space_merge_inbound.preferences.json").unwrap()).unwrap();
+            let record: serde_json::Value = serde_json::from_str(&records[&request.requestId]).unwrap();
+            let source_space: operit_store::CoreSpaceStore::CoreSpace = serde_json::from_value(record["source"]["space"].clone()).unwrap();
+            let profiles: Vec<CoreSpaceDeviceProfile> = serde_json::from_value(record["source"]["deviceProfiles"].clone()).unwrap();
+            edge.service.spaceStore().importDeviceProfiles(profiles).unwrap();
+            edge.service.networkControlStore().admitSpaceForReview(source_space.spaceId.clone(),
+                source_space.members.iter().cloned().collect(), &format!("{}-{}", request.requestId, request.assignmentVersion)).unwrap();
+            let mut joined = edge.service.spaceStore().space().unwrap();
+            joined.members.extend(source_space.members); joined.members.sort(); joined.members.dedup();
+            joined.spaceRevision = record["decisionRevision"].as_i64().unwrap();
+            edge.service.spaceStore().adoptAt(joined, request.createdAt).unwrap();
+            operit_store::PreferencesDataStore::CoreNodeStateStore::newWithStorage(edge.storage.clone(),
+                format!("runtime/space/device_profiles/{core_id}.preferences.json")).delete().unwrap();
+            assert!(edge.service.spaceStore().deviceProfilesForCurrentSpace().is_err());
+            // An admission already exists: cancellation must NOT revoke it or
+            // manufacture success. It returns the real in-progress state.
+            assert_eq!(core.service.cancelDeviceSpaceJoin(request.requestId.clone()).await.unwrap().status, SpaceJoinStatus::Approving);
+            // Restart BOTH processes against fresh storage-host handles. The
+            // applicant's persisted in-progress request must survive too.
+            core.peers.stop().await.unwrap();
+            edge.peers.stop().await.unwrap();
+            core = core_node_with_storage(reopened(&core.storage));
+            edge = edge_node(reopened(&edge.storage));
+            assert_eq!(core.router.localNodeId(), core_id);
+            assert_eq!(edge.service.localNodeId(), edge_id);
+            assert_eq!(core.service.outgoingDeviceSpaceJoins().unwrap().into_iter()
+                .find(|saved| saved.requestId == request.requestId).unwrap().status, SpaceJoinStatus::Approving);
+            start(&core, &edge).await;
+            wait_for_peer_availability(&core.peers, &edge_id, true).await;
+            wait_for_peer_availability(&edge.peers, &core_id, true).await;
+            let recovered = edge.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await;
+            assert!(recovered.is_ok(), "durable rejoin did not recover after restart: {recovered:?}");
+            // The same Core cancel action must reconcile the now-completed
+            // approval as Joined, never falsely report Cancelled or stay stuck.
+            assert_eq!(core.service.cancelDeviceSpaceJoin(request.requestId.clone()).await.unwrap().status, SpaceJoinStatus::Joined);
+            assert_eq!(core.service.deviceSpace().unwrap(), edge.service.spaceStore().space().unwrap());
+            assert!(edge.service.spaceStore().deviceProfilesForCurrentSpace().is_ok());
+            let review_id = format!("control-review-{}-{}", request.requestId, request.assignmentVersion);
+            assert_eq!(edge.service.networkControlStore().currentSpaceOperations().unwrap().iter()
+                .filter(|operation| operation.entityId == review_id).count(), 1, "retry duplicated a committed admission");
+            assert_eq!(edge.peers.pairedPeers().unwrap(), credentials);
+            assert_eq!(core.peers.pairedPeers().unwrap(), core_credentials);
+            assert_no_replica(&core, &edge);
+        }).await;
+        core.peers.stop().await.unwrap(); edge.peers.stop().await.unwrap(); result.unwrap();
+    }
+
+    /// A failed Pending cancellation is durable intent, not a fake terminal
+    /// result. Reopening BOTH peers must retry it before any admission can win.
+    #[tokio::test]
+    async fn same_core_pending_rejoin_cancel_intent_survives_both_restarts() {
+        let _guard = TEST_LOCK.lock().await;
+        let mut core = core_node();
+        let mut edge = fresh_edge();
+        start(&core, &edge).await;
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            let core_id = core.router.localNodeId();
+            let edge_id = edge.service.localNodeId();
+            pair(&core.peers, &edge.peers, &edge.storage, edge_id.clone()).await;
+            let first = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            edge.service.decideDeviceSpaceJoin(first.requestId.clone(), first.assignmentVersion, true).await.unwrap();
+            core.service.refreshDeviceSpaceJoin(first.requestId).await.unwrap();
+            let former = core.service.deviceSpace().unwrap();
+            let singleton = edge.service.leaveDeviceSpace().unwrap();
+            let request = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            let core_credentials = core.peers.pairedPeers().unwrap();
+            let edge_credentials = edge.peers.pairedPeers().unwrap();
+            edge.peers.stop().await.unwrap();
+            wait_for_peer_availability(&core.peers, &edge_id, false).await;
+            assert!(core.service.cancelDeviceSpaceJoin(request.requestId.clone()).await.is_err());
+            let records: BTreeMap<String, String> = serde_json::from_slice(&core.storage.readBytes(
+                "runtime/link_access/space_merge_outbound.preferences.json").unwrap()).unwrap();
+            let saved: serde_json::Value = serde_json::from_str(&records[&request.requestId]).unwrap();
+            assert_eq!(saved["cancelRequested"], true, "lost cancellation must retain durable intent");
+            assert_eq!(core.service.outgoingDeviceSpaceJoins().unwrap().into_iter()
+                .find(|saved| saved.requestId == request.requestId).unwrap().status, SpaceJoinStatus::Pending);
+            core.peers.stop().await.unwrap();
+            core = core_node_with_storage(reopened(&core.storage));
+            edge = edge_node(reopened(&edge.storage));
+            start(&core, &edge).await;
+            wait_for_peer_availability(&core.peers, &edge_id, true).await;
+            wait_for_peer_availability(&edge.peers, &core_id, true).await;
+            // The regular dialog/background refresh path retries saved intent;
+            // the user does not have to submit another cancellation request.
+            assert_eq!(core.service.refreshDeviceSpaceJoin(request.requestId.clone()).await.unwrap().status, SpaceJoinStatus::Cancelled);
+            assert!(!edge.service.incomingDeviceSpaceJoins().await.unwrap().iter()
+                .any(|saved| saved.requestId == request.requestId));
+            assert!(edge.service.decideDeviceSpaceJoin(request.requestId, request.assignmentVersion, true).await.is_err());
+            assert_eq!(core.service.deviceSpace().unwrap(), former);
+            assert_eq!(edge.service.spaceStore().space().unwrap(), singleton);
+            assert!(!edge.service.spaceStore().deviceProfiles().unwrap().contains_key(&core_id));
+            assert_eq!(core.peers.pairedPeers().unwrap(), core_credentials);
+            assert_eq!(edge.peers.pairedPeers().unwrap(), edge_credentials);
+            assert_no_replica(&core, &edge);
+            // Cancellation must also release the original request slot, so the
+            // SAME applicant can apply again and complete a fresh admission.
+            let next = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            edge.service.decideDeviceSpaceJoin(next.requestId.clone(), next.assignmentVersion, true).await.unwrap();
+            assert_eq!(core.service.refreshDeviceSpaceJoin(next.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+            assert_eq!(core.service.deviceSpace().unwrap(), edge.service.spaceStore().space().unwrap());
+            assert_no_replica(&core, &edge);
+        }).await;
+        core.peers.stop().await.unwrap();
+        edge.peers.stop().await.unwrap();
+        result.unwrap();
+    }
+
+    /// A pending/claimed source is not authority to repair arbitrary member
+    /// references: recovery requires the exact durable admission operation.
+    #[tokio::test]
+    async fn uncommitted_claim_cannot_restore_profiles_from_unapproved_source() {
+        let _guard = TEST_LOCK.lock().await;
+        let core = core_node();
+        let edge = fresh_edge();
+        start(&core, &edge).await;
+        let result = tokio::time::timeout(Duration::from_secs(20), async {
+            let core_id = core.router.localNodeId();
+            let edge_id = edge.service.localNodeId();
+            pair(&core.peers, &edge.peers, &edge.storage, edge_id.clone()).await;
+            let request = core.service.requestDeviceSpaceJoin(edge_id.clone()).await.unwrap();
+            edge.service.acceptSpaceApprovalCall(&edge_id, CoreCallRequest::new(
+                "uncommitted-claim", NODE_SPACE_APPROVAL_TARGET, "claim",
+                operit_link::toCoreValue(serde_json::json!({"requestId": request.requestId,
+                    "assignmentVersion": request.assignmentVersion, "approve": true})).unwrap(),
+            )).await.unwrap();
+            // Emulate an inconsistent member reference, without an admission.
+            let mut inconsistent = edge.service.spaceStore().space().unwrap();
+            inconsistent.members.push(core_id.clone()); inconsistent.spaceRevision += 1;
+            edge.service.spaceStore().adopt(inconsistent).unwrap();
+            assert!(!edge.service.spaceStore().deviceProfiles().unwrap().contains_key(&core_id));
+            let before = edge.storage.0.lock().unwrap().clone();
+            let decision = edge.service.decideDeviceSpaceJoin(request.requestId, request.assignmentVersion, true).await;
+            assert!(decision.unwrap_err().contains("Device profile is missing"));
+            assert!(!edge.service.spaceStore().deviceProfiles().unwrap().contains_key(&core_id));
+            assert_eq!(*edge.storage.0.lock().unwrap(), before, "recovery fabricated a record without admission authority");
+            assert_no_replica(&core, &edge);
+        }).await;
+        core.peers.stop().await.unwrap(); edge.peers.stop().await.unwrap(); result.unwrap();
     }
 
     #[tokio::test]

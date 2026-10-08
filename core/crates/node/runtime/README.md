@@ -123,3 +123,32 @@ cargo check --manifest-path core/Cargo.toml -p operit-proxy-local
   endpoint. Blob streams recheck eligibility for every chunk and final commit.
 - Control-only exchange is additive: only `METHOD_NOT_FOUND` falls back to the
   legacy sync path. Denials, malformed payloads and network failures propagate.
+
+## Repeated Space admission and recovery
+
+Node-local projection cleanup uses `CoreNodeStateStore::delete` so deletion of
+profile/topology/member files also clears their shared Preferences snapshot.
+A same-Core rejoin after an Edge-local exit must recreate identical profiles,
+not skip the durable write because an earlier profile remains cached.
+
+An approval claim and its persisted admission are not a pending offer. Applicant
+cancellation before claim is terminal; a cancellation after an authoritative
+approval cannot revoke membership and must report the actual recovery state.
+If a partial approval has published membership but a profile file is missing,
+retry can restore only missing current-member profiles from that exact durable
+review, after matching its authorized admission, request and assignment version.
+No new admission, role or business-storage synchronization is introduced.
+
+The rejoin regressions reopen both Core and Edge storage hosts. A failed Pending
+cancellation survives restart and is retried by normal refresh; cancellation
+racing a completed approval reconciles to Joined instead of fabricating Cancelled.
+Both paths preserve pairing and keep the non-storage Edge out of business replicas.
+
+Targeted software regressions (real TCP/pairing and the ESP32 snapshot codec,
+without touching hardware):
+
+```powershell
+cargo test --manifest-path core/Cargo.toml -p operit-node-edge --lib rejoin
+cargo test --manifest-path core/Cargo.toml -p operit-node-edge --lib uncommitted_claim
+cargo test --manifest-path core/Cargo.toml -p operit-store --lib node_local_
+```

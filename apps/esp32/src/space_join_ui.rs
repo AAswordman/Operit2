@@ -102,6 +102,7 @@ impl SpaceJoinUi {
         match scheduled {
             Ok(()) => {
                 self.busy = true;
+                ui.actionError("");
                 ui.setSpaceJoinPrompt("", true);
             }
             Err(error) => {
@@ -158,9 +159,13 @@ impl SpaceJoinUi {
                     log::info!("Space review completed: {:?}", request.status);
                     self.pending = None;
                     ui.setSpaceJoinPrompt("", false);
+                    ui.actionError("");
                 }
                 Event::Decision(Err(error)) => {
                     log::error!("Space review failed (request retained): {error}");
+                    // Console logging is disabled once UART carries Link frames.
+                    // Retain the actual error in the existing bounded UI diagnostic.
+                    ui.actionError(&error);
                     // Keep the captured request/version and real approval controls.
                     let message = if error.contains("NVS capacity")
                         || error.contains("NOT_ENOUGH_SPACE")

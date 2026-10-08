@@ -456,6 +456,33 @@ pub(crate) fn receiveApproval(service: &dyn NodeSpaceContext, origin: &str, requ
     }
 }
 
+/// Repair presentation bytes from this durable review only after its matching
+/// admission is authoritative. Missing profiles must not prevent resuming a
+/// membership prefix written before the final approval receipt.
+fn restoreClaimedMemberProfiles(service: &dyn NodeSpaceContext, record: &Record, current: &CoreSpace) -> Result<(), String> {
+    if record.approvedDecision != Some(true)
+        || !matches!(record.request.status, SpaceJoinStatus::Approving | SpaceJoinStatus::Approved) {
+        return Ok(());
+    }
+    let profiles = service.spaceStore().deviceProfiles()?;
+    if current.members.iter().all(|node| profiles.contains_key(node)) { return Ok(()); }
+    let id = format!("control-review-{}-{}", record.request.requestId, record.request.assignmentVersion);
+    let members = record.source.space.members.iter().cloned().collect::<BTreeSet<_>>();
+    let admitted = service.networkControlStore().currentSpaceOperations()?.into_iter().any(|operation| {
+        operation.entityId == id && operation.originDeviceId == record.request.reviewerDeviceId.as_deref().unwrap_or("")
+            && NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
+                command.spaceId == current.spaceId && command.issuerNodeId == operation.originDeviceId
+                    && matches!(command.command, NetworkControlCommand::AdmitSpace { sourceSpaceId, nodeIds }
+                        if sourceSpaceId == record.sourceSpaceId && nodeIds == members)
+            })
+    });
+    if !admitted { return Ok(()); }
+    CoreSpaceStore::validateSpaceProfiles(&record.source.space, &record.source.deviceProfiles)?;
+    service.spaceStore().importDeviceProfiles(record.source.deviceProfiles.iter()
+        .filter(|profile| current.members.contains(&profile.nodeId) && !profiles.contains_key(&profile.nodeId))
+        .cloned().collect())
+}
+
 // Typed local calls and wire calls share the exact same transitions.
 fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decision, current: CoreSpace) -> Result<Claim, String> {
             let mut record = load(service, INBOUND, &decision.requestId)?;
@@ -477,6 +504,7 @@ fn claimDecision(service: &dyn NodeSpaceContext, origin: &str, decision: Decisio
         record.decisionRevision = Some(current.spaceRevision.max(record.sourceRevision).checked_add(1).ok_or("Space revision overflow")?);
         saveRecord(service, INBOUND, &decision.requestId, &record)?;
     }
+    restoreClaimedMemberProfiles(service, &record, &current)?;
     Ok(Claim { record, current: PeerSpaceJoin { space: current,
         deviceProfiles: service.spaceStore().deviceProfilesForCurrentSpace()?,
         topology: service.spaceStore().topologyRecords()?.into_values().collect(),

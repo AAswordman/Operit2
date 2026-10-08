@@ -73,9 +73,7 @@ pub trait NodeSpaceContext: Send + Sync {
 }
 
 pub(crate) fn peerSpaceSnapshot(service: &dyn NodeSpaceContext) -> Result<PeerSpaceSnapshot, String> {
-    let mut space = service.spaceStore().initialize()?;
-    let removed = service.networkControlStore().currentState()?.removedNodeIds;
-    space.members.retain(|node| !removed.contains(node));
+    let space = service.spaceStore().initialize()?;
     peerSpaceSnapshotFor(service, space)
 }
 pub(crate) fn peerSpaceSnapshotFor(service: &dyn NodeSpaceContext, space: CoreSpace) -> Result<PeerSpaceSnapshot, String> {
@@ -130,7 +128,7 @@ pub(crate) fn observePeerSpaceSnapshot(service: &dyn NodeSpaceContext, peerNodeI
         }
         let policy = service.networkControlStore().validateSpacePolicy(&snapshot.space.spaceId, &snapshot.controlOperations)?;
         for node in &snapshot.space.members {
-            if !policy.memberNodeIds.contains(node) || policy.removedNodeIds.contains(node) {
+            if !policy.memberNodeIds.contains(node) {
                 return Err(format!("Space snapshot contains an unauthorized member: {node}"));
             }
         }
@@ -224,7 +222,7 @@ impl NodeSpaceService {
         let control = self.control.currentState().map_err(CoreLinkError::internal)?;
         if peer == self.localNodeId || !control.initialized || control.spaceId != space.spaceId
             || [&self.localNodeId, &peer.to_string()].iter().any(|node| !space.members.contains(node)
-                || !control.memberNodeIds.contains(*node) || control.removedNodeIds.contains(*node)
+                || !control.memberNodeIds.contains(*node)
                 || control.disconnectedNodeIds.contains(*node)) { return Ok(None); }
         Ok(Some(space.spaceId))
     }
@@ -274,7 +272,7 @@ pub fn acceptSpaceControlCall(service: &dyn NodeSpaceContext, origin: &str, requ
     let control = service.networkControlStore().currentState()?;
     if !space.members.iter().any(|node| node == origin)
         || !control.memberNodeIds.contains(origin)
-        || control.removedNodeIds.contains(origin) || control.disconnectedNodeIds.contains(origin) {
+        || control.disconnectedNodeIds.contains(origin) {
         return Err("Space control exchange requires an admitted member".into());
     }
     if request.methodName != "exchange" { return Err("Unknown Space control method".into()); }
