@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
-import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtemp, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 
@@ -46,6 +46,12 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
   const memory = await (await fetch(base + '/api/simulator/memory')).json();
   assert.deepEqual(memory, first.device.memory);
   assert.match(first.token, /^[0-9a-f]{48}$/);
+  const runtimeData = path.join(dir, 'runtime');
+  const runtimeExecutable = path.join(dir, 'operit-esp32-simulator' +
+    (process.platform === 'win32' ? '.exe' : ''));
+  assert((await stat(runtimeData)).isDirectory(), 'runtime data must not collide with the executable');
+  assert((await stat(runtimeExecutable)).isFile(), 'the child executable has its own path');
+
   const invalidImage = await fetch(base + '/api/simulator/send-image', {method:'POST',headers:{'Content-Type':'text/plain'},body:'not an image'});
   assert.equal(invalidImage.status,400);
   assert.match((await invalidImage.json()).error,/PNG\/JPEG/);

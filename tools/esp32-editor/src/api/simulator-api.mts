@@ -108,7 +108,10 @@ async function start(): Promise<void> {
     if (child !== build) return;
     const executable = fileURLToPath(new URL('../../simulator/target/release/operit-esp32-simulator' +
       (process.platform === 'win32' ? '.exe' : ''), import.meta.url));
-    const runPath = fileURLToPath(new URL('runtime' + (process.platform === 'win32' ? '.exe' : ''), stateDir));
+    // Keep the executable separate from NativeRuntimeStorageHost's runtime/
+    // directory. On Unix an extensionless 'runtime' binary occupies that path.
+    const runPath = fileURLToPath(new URL('operit-esp32-simulator' +
+      (process.platform === 'win32' ? '.exe' : ''), stateDir));
     await copySimulatorBinary(executable, runPath);
     if (generation !== lifecycle) return;
     const runtime = spawn(runPath, [], {cwd: root, windowsHide: true,
