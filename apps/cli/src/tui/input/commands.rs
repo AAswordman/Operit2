@@ -53,7 +53,7 @@ impl TuiCommandSuggestion {
     }
 }
 
-const COMMAND_SPECS: [TuiCommandSpec; 64] = [
+const COMMAND_SPECS: [TuiCommandSpec; 73] = [
     TuiCommandSpec {
         name: "help",
         usage: "/help",
@@ -234,6 +234,60 @@ const COMMAND_SPECS: [TuiCommandSpec; 64] = [
         name: "network reject",
         usage: "/network reject <device|request-id> <assignment-version>",
         description_key: TuiTextKey::CommandNetworkRejectDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network discover",
+        usage: "/network discover [timeout-ms]",
+        description_key: TuiTextKey::CommandNetworkDiscoverDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network pair",
+        usage: "/network pair <address> <http|ws|tcp|serial|bluetooth> [--token <token>]",
+        description_key: TuiTextKey::CommandNetworkPairDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network pair-confirm",
+        usage: "/network pair-confirm [pairing-id] <code>",
+        description_key: TuiTextKey::CommandNetworkPairConfirmDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network pair-cancel",
+        usage: "/network pair-cancel [pairing-id]",
+        description_key: TuiTextKey::CommandNetworkPairCancelDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network peers",
+        usage: "/network peers",
+        description_key: TuiTextKey::CommandNetworkPeersDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network unpair",
+        usage: "/network unpair <node-id|name>",
+        description_key: TuiTextKey::CommandNetworkUnpairDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network join",
+        usage: "/network join <node-id|name>",
+        description_key: TuiTextKey::CommandNetworkJoinDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network joins",
+        usage: "/network joins",
+        description_key: TuiTextKey::CommandNetworkJoinsDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network join-cancel",
+        usage: "/network join-cancel <request-id|node-id>",
+        description_key: TuiTextKey::CommandNetworkJoinCancelDescription,
         options: &[],
     },
     TuiCommandSpec {
