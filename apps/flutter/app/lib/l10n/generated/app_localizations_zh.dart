@@ -3748,7 +3748,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeControlAssignIdentity => '设置设备身份';
 
   @override
-  String get settingsRuntimeControlClearIdentity => '清除设备身份';
+  String get settingsRuntimeControlClearIdentity => '重置为默认身份';
+
+  @override
+  String get settingsRuntimeControlDeviceAdmitted => '已解除连接限制，等待设备重连';
+
+  @override
+  String get settingsRuntimeControlIdentityResetDone => '身份已重置为默认用户';
 
   @override
   String get settingsRuntimeControlIdentityDefinitions => '身份定义';
