@@ -523,7 +523,10 @@ fn runFirmware(
         if std::time::Instant::now() >= nextChatRoutePoll {
             nextChatRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
             if let Some(client) = peerService.spaceClient() {
-                if !chatRouteInstalled {
+                if !chatRouteInstalled || crate::edge_chat::needsReconnect() {
+                    if chatRouteInstalled {
+                        reconnectChatId = crate::edge_chat::snapshot()["chatId"].as_str().unwrap_or("").to_owned();
+                    }
                     crate::edge_chat::install(client, NodeServices::new(peerService.clone()), reconnectChatId.clone());
                     chatRouteInstalled = true;
                 }

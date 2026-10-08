@@ -169,6 +169,7 @@ struct ChatSession {
     generating: AtomicBool,
     sending: AtomicBool,
     sendResult: Mutex<Option<Result<(), String>>>,
+    subscriptionsClosed: AtomicBool,
     streams: Mutex<BTreeMap<String, StreamText>>,
     streamTasks: Mutex<BTreeMap<String, NodeUiTask>>,
 }
@@ -594,6 +595,7 @@ pub fn install(
         generating: AtomicBool::new(false),
         sending: AtomicBool::new(false),
         sendResult: Mutex::new(None),
+        subscriptionsClosed: AtomicBool::new(false),
         streams: Mutex::new(BTreeMap::new()),
         streamTasks: Mutex::new(BTreeMap::new()),
     });
@@ -658,6 +660,7 @@ pub fn install(
             for (_, task) in std::mem::take(&mut *session.streamTasks.lock().unwrap()) { task.abort(); }
             session.streams.lock().unwrap().clear();
             if !switched {
+                recordSubscriptionEnd(&session.subscriptionsClosed, &cancelled);
                 if !*cancelled.borrow() { *session.error.lock().unwrap() = Some("聊天连接已断开，请等待重新连接".into()); UI_REVISION.fetch_add(1, Ordering::Relaxed); }
                 return;
             }
@@ -741,10 +744,12 @@ pub fn install(
                         }
                         Err(error) => {
                             *session.executionError.lock().unwrap() = Some(error);
-                            break;
+                            UI_REVISION.fetch_add(1, Ordering::Relaxed);
+                            return;
                         }
                     }
                 }
+                recordSubscriptionEnd(&session.subscriptionsClosed, &cancelled);
                 session.generating.store(false, Ordering::Release);
                 if session.executionError.lock().unwrap().is_none() {
                     *session.executionError.lock().unwrap() = Some("聊天状态连接已断开".into());
@@ -772,6 +777,18 @@ fn executionStatus(value: &CoreValue) -> (bool, Option<String>) {
     (generating, error)
 }
 
+// Peer reachability can recover before the 500 ms route poll observes an
+// outage. A completed long-lived chat watch must still replace its old UI
+// session, even when spaceClient() already points at the reconnected peer.
+fn recordSubscriptionEnd(closed: &AtomicBool, cancelled: &tokio::sync::watch::Receiver<bool>) {
+    if !*cancelled.borrow() { closed.store(true, Ordering::Release); }
+}
+
+pub fn needsReconnect() -> bool {
+    SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
+        .is_some_and(|session| session.subscriptionsClosed.load(Ordering::Acquire))
+}
+
 /// Returns the live Space route state, rather than whether the pairing
 /// listener is enabled.
 pub fn isConnected() -> bool {
@@ -781,7 +798,7 @@ pub fn isConnected() -> bool {
         .ok()
         .and_then(|session| {
             session.as_ref().map(|session| {
-                !session
+                !session.subscriptionsClosed.load(Ordering::Acquire) && !session
                     .services
                     .peers()
                     .activePeerNodeIds()
@@ -1264,6 +1281,18 @@ mod tests {
             assert!(1 + text.text.matches('\n').count() <= MAX_CHAT_LINES);
         }
         assert!(text.text.ends_with("短行-99"));
+    }
+
+    #[test]
+    fn subscription_end_requires_reconnect_but_local_cancellation_does_not() {
+        let (cancel, cancelled) = tokio::sync::watch::channel(false);
+        let closed = AtomicBool::new(false);
+        recordSubscriptionEnd(&closed, &cancelled);
+        assert!(closed.load(Ordering::Acquire));
+        closed.store(false, Ordering::Release);
+        cancel.send_replace(true);
+        recordSubscriptionEnd(&closed, &cancelled);
+        assert!(!closed.load(Ordering::Acquire));
     }
 
     fn uiEvent(kind: CoreEventKind, value: CoreValue) -> operit_link::CoreEvent {

@@ -182,7 +182,10 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
         let line = tokio::select! {
             _ = routePoll.tick() => {
                 if let Some(client) = peers.spaceClient() {
-                    if !chatRouteInstalled {
+                    if !chatRouteInstalled || edge_chat::needsReconnect() {
+                        if chatRouteInstalled {
+                            reconnectChatId = edge_chat::snapshot()["chatId"].as_str().unwrap_or("").to_owned();
+                        }
                         edge_chat::install(client, services.clone(), reconnectChatId.clone());
                         chatRouteInstalled = true;
                     }
