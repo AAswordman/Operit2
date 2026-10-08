@@ -7,6 +7,7 @@ import android.util.Log
 import android.view.Display
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import org.json.JSONException
 import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
@@ -136,13 +137,21 @@ class MainActivity : FlutterActivity() {
     /** Parses and records the notification activation embedded in one launch intent. */
     private fun recordNotificationActivation(intent: Intent?) {
         val encodedActivation = intent?.getStringExtra(NOTIFICATION_ACTIVATION_EXTRA) ?: return
-        val json = JSONObject(encodedActivation)
-        val type = json.getString("type")
         val activation =
-            when (type) {
-                "open_application" -> mapOf("type" to type)
-                "open_chat" -> mapOf("type" to type, "chatId" to json.getString("chatId"))
-                else -> throw IllegalArgumentException("unsupported notification activation type: $type")
+            try {
+                val json = JSONObject(encodedActivation)
+                val type = json.getString("type")
+                when (type) {
+                    "open_application" -> mapOf("type" to type)
+                    "open_chat" -> mapOf("type" to type, "chatId" to json.getString("chatId"))
+                    else -> {
+                        Log.w(TAG, "Ignoring notification activation with unsupported type: $type")
+                        return
+                    }
+                }
+            } catch (error: JSONException) {
+                Log.w(TAG, "Ignoring malformed notification activation payload", error)
+                return
             }
         if (notificationActivationReceiverReady && ::runtimeRouter.isInitialized) {
             runtimeRouter.emitNotificationActivation(activation)
