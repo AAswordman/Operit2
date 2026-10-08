@@ -29,7 +29,9 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::AssistantMarkupStreamState;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_node_runtime::NodeServices::{PairingPrompt, PeerTransport, PendingPairing};
+use operit_node_runtime::NodeServices::{
+    DiscoveredPeer, PairedPeer, PairingPrompt, PeerTransport, PendingPairing,
+};
 use operit_node_runtime::RuntimeRemoteLinkService::{
     RuntimeDeviceSpaceDevice, RuntimeDeviceSpaceTopology, RuntimePairedDevice,
     RuntimeRemoteLinkService, SpaceJoinRequest, SpaceJoinStatus,
@@ -129,11 +131,19 @@ pub(super) struct OperitTui {
     seen_join_request_ids: BTreeSet<String>,
     /// Pairings this session started with `/network pair` and has not yet
     /// confirmed or cancelled; lets the follow-up commands resolve the id.
-    pending_pairings: Vec<PendingPairing>,
+    pub(super) pending_pairings: Vec<PendingPairing>,
     last_outgoing_join_refresh_at: Option<Instant>,
     /// The list popup is currently the Y/N confirm for `/network leave`; any
     /// other popup open clears it so a stale confirm cannot fire elsewhere.
     leave_confirm_pending: bool,
+    /// The network hub panel opened by bare `/network`.
+    pub(super) network_hub: Option<NetworkHubModal>,
+    /// The pairing wizard; opened from the hub, discovery, or `/network pair`.
+    pub(super) pair_wizard: Option<PairWizardModal>,
+    /// Discovery candidates behind the current list popup; Enter on the
+    /// popup feeds the selected candidate into the pairing wizard.
+    pub(super) discovered_peers: Vec<DiscoveredPeer>,
+    discover_select_pending: bool,
     /// Seeds the seen-id snapshots from the first fetch so a TUI start does
     /// not replay requests that predate the session.
     network_snapshots_seeded: bool,
@@ -329,6 +339,7 @@ pub(super) enum DeviceManagerAction {
     Disconnect,
     AssignIdentity,
     ClearIdentity,
+    Unpair,
     Remove,
 }
 
@@ -419,6 +430,7 @@ impl DeviceManagerModal {
         {
             actions.push(DeviceManagerAction::ClearIdentity);
         }
+        actions.push(DeviceManagerAction::Unpair);
         actions.push(DeviceManagerAction::Remove);
         actions
     }
@@ -429,6 +441,133 @@ pub(super) struct StartupInstallPrompt {
     pub(super) install_selected: bool,
     pub(super) state: StartupInstallState,
     pub(super) progress_rx: Option<mpsc::Receiver<StartupInstallMessage>>,
+}
+
+/// One selectable row in the network hub device area: a Space member from
+/// the live topology, or a paired device that has not joined this Space.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum NetworkHubRow {
+    Member(RuntimeDeviceSpaceDevice),
+    Peer {
+        deviceId: String,
+        label: String,
+        outbound: bool,
+    },
+}
+
+impl NetworkHubRow {
+    pub(super) fn id(&self) -> &str {
+        match self {
+            NetworkHubRow::Member(device) => &device.deviceId,
+            NetworkHubRow::Peer { deviceId, .. } => deviceId,
+        }
+    }
+}
+
+/// The `/network` hub panel: a persistent answer to "who am I, what is
+/// waiting for me, what do I manage", with flows one key away. Data is a
+/// snapshot refreshed on open and on every peer-change signal.
+pub(super) struct NetworkHubModal {
+    pub(super) topology: RuntimeDeviceSpaceTopology,
+    pub(super) spaceName: String,
+    pub(super) initialized: bool,
+    /// Listener summary ("bind · transports") or None when not listening.
+    pub(super) listening: Option<String>,
+    pub(super) paired: BTreeMap<String, RuntimePairedDevice>,
+    pub(super) prompts: Vec<PairingPrompt>,
+    pub(super) outgoingJoins: Vec<SpaceJoinRequest>,
+    pub(super) selected: usize,
+}
+
+/// Stages of the pairing wizard. `Code` and `JoinOffer` are reached
+/// automatically: starting a pairing (command or wizard) jumps straight to
+/// code entry, and a successful confirmation advances to the join offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PairStage {
+    Address,
+    Code,
+    JoinOffer,
+}
+
+/// Focused input field on the wizard address form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PairField {
+    Address,
+    Transport,
+    Token,
+}
+
+pub(super) struct PairWizardModal {
+    pub(super) stage: PairStage,
+    pub(super) field: PairField,
+    pub(super) address: String,
+    pub(super) transportIndex: usize,
+    pub(super) token: String,
+    pub(super) pairing: Option<PendingPairing>,
+    pub(super) code: String,
+    /// The peer a finished pairing produced; drives the join offer.
+    pub(super) peer: Option<PairedPeer>,
+    pub(super) error: Option<String>,
+}
+
+/// Transports the wizard cycles through, in listener-spelling order.
+pub(super) const PAIR_WIZARD_TRANSPORTS: [PeerTransport; 5] = [
+    PeerTransport::Http,
+    PeerTransport::WebSocket,
+    PeerTransport::Tcp,
+    PeerTransport::Serial,
+    PeerTransport::Bluetooth,
+];
+
+/// Listener-spelling label for one transport, shared by the wizard and hub.
+pub(super) fn peer_transport_label(transport: &PeerTransport) -> &'static str {
+    match transport {
+        PeerTransport::Http => "http",
+        PeerTransport::WebSocket => "ws",
+        PeerTransport::Tcp => "tcp",
+        PeerTransport::Serial => "serial",
+        PeerTransport::Bluetooth => "bluetooth",
+    }
+}
+
+/// Pushes one character into the confirmation-code buffer: digits only,
+/// six digits at most, so `Enter` can mean "code is complete".
+pub(super) fn pair_code_push(code: &str, ch: char) -> String {
+    if !ch.is_ascii_digit() || code.len() >= 6 {
+        return code.to_string();
+    }
+    format!("{code}{ch}")
+}
+
+/// Derives the hub device rows: every Space member (self first, matching
+/// the topology order), then every paired device that is not a member yet -
+/// those are the natural join targets after a fresh pairing.
+pub(super) fn network_hub_rows(
+    topology: &RuntimeDeviceSpaceTopology,
+    paired: &BTreeMap<String, RuntimePairedDevice>,
+) -> Vec<NetworkHubRow> {
+    let mut rows = topology
+        .devices
+        .iter()
+        .cloned()
+        .map(NetworkHubRow::Member)
+        .collect::<Vec<_>>();
+    let members = topology
+        .devices
+        .iter()
+        .map(|device| device.deviceId.as_str())
+        .collect::<BTreeSet<_>>();
+    rows.extend(
+        paired
+            .iter()
+            .filter(|(device_id, _)| !members.contains(device_id.as_str()))
+            .map(|(device_id, peer)| NetworkHubRow::Peer {
+                deviceId: device_id.clone(),
+                label: paired_device_label(device_id, peer),
+                outbound: peer.outbound,
+            }),
+    );
+    rows
 }
 
 #[derive(Debug, Clone)]
@@ -663,6 +802,10 @@ impl OperitTui {
             pending_pairings: Vec::new(),
             last_outgoing_join_refresh_at: None,
             leave_confirm_pending: false,
+            network_hub: None,
+            pair_wizard: None,
+            discovered_peers: Vec::new(),
+            discover_select_pending: false,
             network_snapshots_seeded: false,
             context_usage_label: String::new(),
             transcript_scroll: 0,
@@ -916,7 +1059,9 @@ impl OperitTui {
         let has_new_prompts = prompts
             .iter()
             .any(|prompt| !self.seen_pairing_prompt_ids.contains(&prompt.pairingId));
-        if self.network_snapshots_seeded && has_new_prompts {
+        // The hub's waiting area shows inbound pairing codes live, so the
+        // popup would only fight it for screen space.
+        if self.network_snapshots_seeded && has_new_prompts && self.network_hub.is_none() {
             self.open_pairing_prompts_popup(&prompts);
         }
         self.seen_pairing_prompt_ids = prompts
@@ -941,6 +1086,9 @@ impl OperitTui {
         self.network_snapshots_seeded = true;
         if self.device_manager.is_some() {
             self.refresh_device_manager_snapshot().await;
+        }
+        if self.network_hub.is_some() {
+            self.refresh_network_hub().await;
         }
     }
 
@@ -1429,6 +1577,24 @@ impl OperitTui {
 
         if self.device_manager.is_some() {
             self.handle_device_manager_key(key).await?;
+            return Ok(());
+        }
+
+        if self.pair_wizard.is_some() {
+            self.handle_pair_wizard_key(key).await?;
+            return Ok(());
+        }
+
+        if self.network_hub.is_some() {
+            self.handle_network_hub_key(key).await?;
+            return Ok(());
+        }
+
+        if self.show_list_popup
+            && self.discover_select_pending
+            && key.code == KeyCode::Enter
+        {
+            self.start_pair_wizard_from_discovery().await;
             return Ok(());
         }
 
@@ -2195,9 +2361,12 @@ impl OperitTui {
 
     /// Executes a Space control command through the runtime-owned authorization service.
     async fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
-        const USAGE: &str = "network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
+        const USAGE: &str = "network opens the hub panel; subcommands: <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
         match args.first().map(String::as_str) {
-            None | Some("show") if args.len() <= 1 => {
+            None if args.is_empty() => {
+                self.open_network_hub().await;
+            }
+            Some("show") if args.len() == 1 => {
                 let state = self.networkControl.deviceSpaceControl()?;
                 let topology = self.networkControl.deviceSpaceTopology()?;
                 // Read-only views share the list popup so output persists
@@ -2222,22 +2391,7 @@ impl OperitTui {
                 self.status_message = "network control initialized".to_string();
             }
             Some("audit") if args.len() == 1 => {
-                let audit = self.networkControl.deviceSpaceControlAudit()?;
-                let items = audit
-                    .into_iter()
-                    .map(|record| {
-                        format!(
-                            "{} {}",
-                            if record.accepted {
-                                "accepted"
-                            } else {
-                                "rejected"
-                            },
-                            record.summary,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                self.open_list_popup("Network audit".to_string(), items);
+                self.network_audit_popup().await?;
             }
             Some("devices") if args.len() == 1 => {
                 self.open_device_manager().await;
@@ -2293,14 +2447,7 @@ impl OperitTui {
                 self.status_message = self.network_disconnect_device(&args[1]).await?;
             }
             Some("policy") if args.len() == 2 && args[1] == "list" => {
-                let items = self
-                    .networkControl
-                    .deviceSpaceControl()?
-                    .policies
-                    .into_iter()
-                    .map(|(policyId, value)| format!("{policyId}={value}"))
-                    .collect::<Vec<_>>();
-                self.open_list_popup("Network policies".to_string(), items);
+                self.network_policy_popup()?;
             }
             Some("policy") if args.len() == 4 && args[1] == "set" => {
                 self.networkControl
@@ -2308,10 +2455,7 @@ impl OperitTui {
                 self.status_message = format!("network policy updated: {}", args[2]);
             }
             Some("token") if args.len() == 1 => {
-                // The pairing token must stay on screen for transfer to the
-                // other device, so it goes to the popup instead of the status line.
-                let token = self.networkControl.localPairingToken()?;
-                self.open_list_popup("Network token".to_string(), vec![token]);
+                self.network_token_popup()?;
             }
             Some("prompts") if args.len() == 1 => {
                 let prompts = self.networkControl.pairingPrompts()?;
@@ -2348,8 +2492,8 @@ impl OperitTui {
                     request.status,
                 );
             }
-            Some("discover") if args.len() <= 2 => {
-                self.network_discover(&args[1..]).await?;
+            Some("discover") if args.is_empty() => {
+                self.open_discover_list().await;
             }
             Some("pair") if args.len() >= 3 => {
                 self.network_pair(&args[1..]).await?;
@@ -2449,49 +2593,22 @@ impl OperitTui {
     /// Lists unpaired LAN discovery candidates so `/network pair` has an
     /// address to dial. The result stays in the popup because the address is
     /// typed into the next command.
-    async fn network_discover(&mut self, args: &[String]) -> Result<(), String> {
-        const USAGE: &str = "usage: network discover [timeout-ms]";
-        let timeout_ms = match args {
-            [] => 3000,
-            [timeout_ms] => timeout_ms.parse::<u64>().map_err(|_| USAGE.to_string())?,
-            _ => return Err(USAGE.to_string()),
-        };
-        let candidates = self.networkControl.discoverPeers(timeout_ms).await?;
-        if candidates.is_empty() {
-            self.set_transient_status_message(self.text().network_discover_none().to_string());
-            return Ok(());
-        }
-        let text = self.text();
-        let mut items = candidates
-            .iter()
-            .map(|peer| format!("{} · {} · {}", peer.displayName, peer.nodeId, peer.address))
-            .collect::<Vec<_>>();
-        items.push(text.network_discover_hint().to_string());
-        self.open_list_popup(text.network_discover_title().to_string(), items);
-        Ok(())
-    }
-
     /// Starts an outbound pairing toward an explicit address. The pairing id
     /// must stay on screen for the confirmation step, so it goes to the popup
     /// and is remembered for id-less `/network pair-confirm <code>`.
+    /// `/network pair` funnels into the wizard and dials immediately: the
+    /// command keeps working for muscle memory, but its UX is the wizard's
+    /// code-entry screen instead of an id to copy around.
     async fn network_pair(&mut self, args: &[String]) -> Result<(), String> {
         let (address, transport, token) = parse_pair_arguments(args)?;
-        let pending = self
-            .networkControl
-            .startPairing(String::new(), address, transport, token)
-            .await?;
-        let text = self.text();
-        let mut items = vec![format!(
-            "{}: {}",
-            text.network_pair_id_label(),
-            pending.pairingId
-        )];
-        if !pending.displayName.is_empty() {
-            items.push(pending.displayName.clone());
-        }
-        items.push(text.network_pair_hint(&pending.pairingId));
-        self.pending_pairings.push(pending);
-        self.open_list_popup(text.network_pair_title().to_string(), items);
+        let transport_index = PAIR_WIZARD_TRANSPORTS
+            .iter()
+            .position(|candidate| {
+                peer_transport_label(candidate) == peer_transport_label(&transport)
+            })
+            .unwrap_or(2);
+        self.open_pair_wizard(address, transport_index, token.unwrap_or_default(), true);
+        self.pair_wizard_start().await;
         Ok(())
     }
 
@@ -2516,6 +2633,19 @@ impl OperitTui {
             .await?;
         self.pending_pairings
             .retain(|pending| pending.pairingId != pairing_id);
+        // A finished pairing naturally continues into the join offer: the
+        // applicant side (this device) is the one holding outbound trust.
+        self.pair_wizard = Some(PairWizardModal {
+            stage: PairStage::JoinOffer,
+            field: PairField::Address,
+            address: String::new(),
+            transportIndex: 2,
+            token: String::new(),
+            pairing: None,
+            code: String::new(),
+            peer: Some(peer.clone()),
+            error: None,
+        });
         Ok(format!(
             "network pairing confirmed: {} ({})",
             peer.displayName, peer.nodeId
@@ -2577,9 +2707,26 @@ impl OperitTui {
     /// target device; this session pulls the decision in the background.
     async fn network_join(&mut self, device: &str) -> Result<String, String> {
         let (device_id, label) = self.resolve_paired_device_argument(device, true).await?;
+        self.network_join_target(&device_id, &label).await
+    }
+
+    /// Join entry for callers that already hold the node id (hub rows,
+    /// pairing wizard): validates the outbound direction, then submits.
+    async fn network_join_target(
+        &mut self,
+        device_id: &str,
+        label: &str,
+    ) -> Result<String, String> {
+        let peers = self.networkControl.pairedDevicesSnapshot()?;
+        let Some(peer) = peers.get(device_id) else {
+            return Err(format!("no paired device matches {device_id}"));
+        };
+        if !peer.outbound {
+            return Err(format!("network join requires an outbound pairing with {label}"));
+        }
         let request = self
             .networkControl
-            .requestDeviceSpaceJoin(device_id)
+            .requestDeviceSpaceJoin(device_id.to_string())
             .await?;
         if request.status == SpaceJoinStatus::Joined {
             return Ok(format!(
@@ -2588,9 +2735,17 @@ impl OperitTui {
             ));
         }
         Ok(format!(
-            "network join request submitted: {} must approve it; this TUI refreshes the status automatically",
-            label
+            "network join request submitted: {label} must approve it; \
+             this TUI refreshes the status automatically"
         ))
+    }
+
+    /// Shows the local pairing token in a popup; it must stay on screen for
+    /// transfer to the other device.
+    fn network_token_popup(&mut self) -> Result<(), String> {
+        let token = self.networkControl.localPairingToken()?;
+        self.open_list_popup(self.text().network_token_title().to_string(), vec![token]);
+        Ok(())
     }
 
     /// Lists this device's outgoing join requests with their live status.
@@ -2860,6 +3015,476 @@ impl OperitTui {
     /// The window is keyboard-driven like the join decision modal; the
     /// mouse overlay flag only keeps clicks from leaking into the
     /// transcript underneath.
+    /// Lists accepted and rejected Space authorization commands.
+    async fn network_audit_popup(&mut self) -> Result<(), String> {
+        let audit = self.networkControl.deviceSpaceControlAudit()?;
+        let items = audit
+            .into_iter()
+            .map(|record| {
+                format!(
+                    "{} {}",
+                    if record.accepted {
+                        "accepted"
+                    } else {
+                        "rejected"
+                    },
+                    record.summary,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.open_list_popup("Network audit".to_string(), items);
+        Ok(())
+    }
+
+    /// Lists the current Space policy settings.
+    fn network_policy_popup(&mut self) -> Result<(), String> {
+        let items = self
+            .networkControl
+            .deviceSpaceControl()?
+            .policies
+            .into_iter()
+            .map(|(policyId, value)| format!("{policyId}={value}"))
+            .collect::<Vec<_>>();
+        self.open_list_popup("Network policies".to_string(), items);
+        Ok(())
+    }
+
+    /// Opens the network hub: the persistent `/network` panel answering
+    /// who-this-node-is, what-is-waiting, and what-is-managed in one place.
+    async fn open_network_hub(&mut self) {
+        self.network_hub = Some(NetworkHubModal {
+            topology: RuntimeDeviceSpaceTopology {
+                currentDeviceId: String::new(),
+                devices: Vec::new(),
+                connections: Vec::new(),
+            },
+            spaceName: String::new(),
+            initialized: false,
+            listening: None,
+            paired: BTreeMap::new(),
+            prompts: Vec::new(),
+            outgoingJoins: Vec::new(),
+            selected: 0,
+        });
+        self.refresh_network_hub().await;
+    }
+
+    /// Re-pulls every hub snapshot, keeping the selection on the same row.
+    async fn refresh_network_hub(&mut self) {
+        let selected_id = self
+            .network_hub
+            .as_ref()
+            .map(|hub| {
+                network_hub_rows(&hub.topology, &hub.paired)
+                    .get(hub.selected)
+                    .map(|row| row.id().to_string())
+            })
+            .flatten();
+        let Ok(state) = self.networkControl.deviceSpaceControl() else {
+            return;
+        };
+        let Ok(topology) = self.networkControl.deviceSpaceTopology() else {
+            return;
+        };
+        let space_name = self.networkControl.deviceSpace().map(|space| space.spaceName);
+        let listening = self
+            .networkControl
+            .localHostConfig()
+            .ok()
+            .flatten()
+            .map(|config| {
+                format!(
+                    "{} · {}",
+                    config.bindAddress,
+                    config
+                        .transports
+                        .iter()
+                        .map(|transport| peer_transport_label(transport))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            });
+        let Ok(paired) = self.networkControl.pairedDevicesSnapshot() else {
+            return;
+        };
+        let prompts = self.networkControl.pairingPrompts().unwrap_or_default();
+        let outgoing_joins = self
+            .networkControl
+            .outgoingDeviceSpaceJoins()
+            .unwrap_or_default();
+        let Some(hub) = self.network_hub.as_mut() else {
+            return;
+        };
+        hub.initialized = state.initialized;
+        hub.topology = topology;
+        if let Ok(name) = space_name {
+            hub.spaceName = name;
+        }
+        hub.listening = listening;
+        hub.paired = paired;
+        hub.prompts = prompts;
+        hub.outgoingJoins = outgoing_joins;
+        let rows = network_hub_rows(&hub.topology, &hub.paired);
+        if let Some(selected_id) = selected_id {
+            if let Some(position) = rows.iter().position(|row| row.id() == selected_id) {
+                hub.selected = position;
+            }
+        }
+        hub.selected = hub.selected.min(rows.len().saturating_sub(1));
+    }
+
+    /// Routes keys inside the network hub: rows select with Up/Down, Enter
+    /// manages members and joins paired peers, single letters open flows.
+    async fn handle_network_hub_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        let row_count = self
+            .network_hub
+            .as_ref()
+            .map(|hub| network_hub_rows(&hub.topology, &hub.paired).len())
+            .unwrap_or(0);
+        let selected_row = self.network_hub.as_ref().and_then(|hub| {
+            network_hub_rows(&hub.topology, &hub.paired)
+                .into_iter()
+                .nth(hub.selected)
+        });
+        match key.code {
+            KeyCode::Up => {
+                if let Some(hub) = self.network_hub.as_mut() {
+                    hub.selected = hub.selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Some(hub) = self.network_hub.as_mut() {
+                    if hub.selected + 1 < row_count {
+                        hub.selected += 1;
+                    }
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('j') | KeyCode::Char('J') => {
+                match selected_row {
+                    Some(NetworkHubRow::Member(_)) if key.code == KeyCode::Enter => {
+                        self.open_device_manager().await;
+                    }
+                    Some(NetworkHubRow::Peer { deviceId, label, .. }) => {
+                        self.status_message = self.network_join_target(&deviceId, &label).await?;
+                    }
+                    Some(NetworkHubRow::Member(device)) => {
+                        self.status_message = format!(
+                            "{} ({}) is already a member of this space",
+                            device.deviceName, device.deviceId
+                        );
+                    }
+                    None => {}
+                }
+            }
+            KeyCode::Char('u') | KeyCode::Char('U') => {
+                if let Some(NetworkHubRow::Peer { deviceId, label, .. }) = selected_row {
+                    self.networkControl.removePairedDevice(deviceId).await?;
+                    self.set_transient_status_message(
+                        self.text().network_unpair_done(&label),
+                    );
+                    self.refresh_network_hub().await;
+                }
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') if key.modifiers.is_empty() => {
+                self.open_pair_wizard(String::new(), 0, String::new(), false);
+            }
+            KeyCode::Char('P') => {
+                if let Err(error) = self.network_policy_popup() {
+                    self.status_message = error;
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                self.open_discover_list().await;
+            }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                self.network_leave().await?;
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                match self.networkControl.localPairingToken() {
+                    Ok(token) => {
+                        self.open_list_popup(
+                            self.text().network_token_title().to_string(),
+                            vec![token],
+                        );
+                    }
+                    Err(error) => self.status_message = error,
+                }
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                if let Err(error) = self.network_audit_popup().await {
+                    self.status_message = error;
+                }
+            }
+            KeyCode::Esc => {
+                self.network_hub = None;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Opens the pairing wizard. `autostart` immediately dials the address -
+    /// the wizard then lands on code entry, which is the only step left.
+    fn open_pair_wizard(
+        &mut self,
+        address: String,
+        transport_index: usize,
+        token: String,
+        autostart: bool,
+    ) {
+        self.pair_wizard = Some(PairWizardModal {
+            stage: if autostart { PairStage::Code } else { PairStage::Address },
+            field: PairField::Address,
+            address,
+            transportIndex: transport_index.min(PAIR_WIZARD_TRANSPORTS.len() - 1),
+            token,
+            pairing: None,
+            code: String::new(),
+            peer: None,
+            error: None,
+        });
+        self.network_hub = None;
+    }
+
+    /// Dials the wizard's address form and advances to code entry. The
+    /// pending pairing is remembered app-level so Esc never loses it.
+    async fn pair_wizard_start(&mut self) {
+        let Some(wizard) = self.pair_wizard.as_ref() else {
+            return;
+        };
+        if wizard.address.trim().is_empty() {
+            let message = self.text().network_pair_wizard_address_required().to_string();
+            if let Some(wizard) = self.pair_wizard.as_mut() {
+                wizard.error = Some(message);
+            }
+            return;
+        }
+        let address = wizard.address.trim().to_string();
+        let transport = PAIR_WIZARD_TRANSPORTS[wizard.transportIndex];
+        let token = if wizard.token.trim().is_empty() {
+            None
+        } else {
+            Some(wizard.token.trim().to_string())
+        };
+        match self
+            .networkControl
+            .startPairing(String::new(), address, transport, token)
+            .await
+        {
+            Ok(pending) => {
+                if let Some(wizard) = self.pair_wizard.as_mut() {
+                    wizard.stage = PairStage::Code;
+                    wizard.pairing = Some(pending.clone());
+                    wizard.code.clear();
+                    wizard.error = None;
+                }
+                self.pending_pairings.push(pending);
+            }
+            Err(error) => {
+                if let Some(wizard) = self.pair_wizard.as_mut() {
+                    wizard.stage = PairStage::Address;
+                    wizard.error = Some(error);
+                }
+            }
+        }
+    }
+
+    /// Submits the six-digit code for the wizard's pending pairing. Failure
+    /// keeps the code stage open for a retry, exactly like the command path.
+    async fn pair_wizard_confirm(&mut self) {
+        let (pairing_id, code) = match self.pair_wizard.as_ref() {
+            Some(wizard) => match &wizard.pairing {
+                Some(pending) => (pending.pairingId.clone(), wizard.code.clone()),
+                None => return,
+            },
+            None => return,
+        };
+        if code.len() != 6 {
+            let message = self.text().network_pair_wizard_code_invalid().to_string();
+            if let Some(wizard) = self.pair_wizard.as_mut() {
+                wizard.error = Some(message);
+            }
+            return;
+        }
+        match self
+            .networkControl
+            .finishPairing(pairing_id.clone(), code)
+            .await
+        {
+            Ok(peer) => {
+                self.pending_pairings
+                    .retain(|pending| pending.pairingId != pairing_id);
+                if let Some(wizard) = self.pair_wizard.as_mut() {
+                    wizard.stage = PairStage::JoinOffer;
+                    wizard.peer = Some(peer);
+                    wizard.error = None;
+                }
+            }
+            Err(error) => {
+                if let Some(wizard) = self.pair_wizard.as_mut() {
+                    wizard.error = Some(error);
+                }
+            }
+        }
+    }
+
+    /// Sends the join request for the freshly paired peer and closes the
+    /// wizard; the background refresher reports the reviewer's decision.
+    async fn pair_wizard_join(&mut self) {
+        let Some(peer) = self.pair_wizard.as_ref().and_then(|wizard| wizard.peer.clone()) else {
+            return;
+        };
+        let result = self.network_join_target(&peer.nodeId, &peer.displayName).await;
+        self.pair_wizard = None;
+        match result {
+            Ok(message) => self.set_transient_status_message(message),
+            Err(error) => self.status_message = error,
+        }
+    }
+
+    /// Routes keys inside the pairing wizard by stage.
+    async fn handle_pair_wizard_key(&mut self, key: KeyEvent) -> Result<(), String> {
+        let stage = self
+            .pair_wizard
+            .as_ref()
+            .map(|wizard| wizard.stage)
+            .unwrap_or(PairStage::Address);
+        match stage {
+            PairStage::Address => {
+                let field = self
+                    .pair_wizard
+                    .as_ref()
+                    .map(|wizard| wizard.field)
+                    .unwrap_or(PairField::Address);
+                match (key.code, field) {
+                    (KeyCode::Esc, _) => self.pair_wizard = None,
+                    (KeyCode::Tab, _) | (KeyCode::BackTab, _) => {
+                        if let Some(wizard) = self.pair_wizard.as_mut() {
+                            wizard.field = match wizard.field {
+                                PairField::Address => PairField::Transport,
+                                PairField::Transport => PairField::Token,
+                                PairField::Token => PairField::Address,
+                            };
+                            wizard.error = None;
+                        }
+                    }
+                    (KeyCode::Left, PairField::Transport) => self.cycle_pair_transport(false),
+                    (KeyCode::Right, PairField::Transport) => self.cycle_pair_transport(true),
+                    (KeyCode::Enter, _) => self.pair_wizard_start().await,
+                    (KeyCode::Backspace, PairField::Address | PairField::Token) => {
+                        if let Some(wizard) = self.pair_wizard.as_mut() {
+                            match wizard.field {
+                                PairField::Address => {
+                                    wizard.address.pop();
+                                }
+                                PairField::Token => {
+                                    wizard.token.pop();
+                                }
+                                PairField::Transport => {}
+                            }
+                        }
+                    }
+                    (
+                        KeyCode::Char(ch),
+                        PairField::Address | PairField::Token,
+                    ) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                        if let Some(wizard) = self.pair_wizard.as_mut() {
+                            match wizard.field {
+                                PairField::Address => wizard.address.push(ch),
+                                PairField::Token => wizard.token.push(ch),
+                                PairField::Transport => {}
+                            }
+                            wizard.error = None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            PairStage::Code => match key.code {
+                KeyCode::Esc => self.pair_wizard = None,
+                KeyCode::Backspace => {
+                    if let Some(wizard) = self.pair_wizard.as_mut() {
+                        wizard.code.pop();
+                    }
+                }
+                KeyCode::Char(ch) => {
+                    if let Some(wizard) = self.pair_wizard.as_mut() {
+                        wizard.code = pair_code_push(&wizard.code, ch);
+                        wizard.error = None;
+                    }
+                }
+                KeyCode::Enter => self.pair_wizard_confirm().await,
+                _ => {}
+            },
+            PairStage::JoinOffer => match key.code {
+                KeyCode::Enter => self.pair_wizard_join().await,
+                KeyCode::Esc => self.pair_wizard = None,
+                _ => {}
+            },
+        }
+        Ok(())
+    }
+
+    /// Cycles the wizard transport selector; Tab walks fields while the
+    /// arrows walk transports, so one hand never leaves the home row.
+    fn cycle_pair_transport(&mut self, forward: bool) {
+        let Some(wizard) = self.pair_wizard.as_mut() else {
+            return;
+        };
+        let len = PAIR_WIZARD_TRANSPORTS.len();
+        wizard.transportIndex = if forward {
+            (wizard.transportIndex + 1) % len
+        } else {
+            (wizard.transportIndex + len - 1) % len
+        };
+    }
+
+    /// Runs LAN discovery and shows candidates as a selectable list: Enter
+    /// feeds the chosen candidate straight into the pairing wizard.
+    async fn open_discover_list(&mut self) {
+        let candidates = match self.networkControl.discoverPeers(3000).await {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                self.status_message = error;
+                return;
+            }
+        };
+        if candidates.is_empty() {
+            self.set_transient_status_message(self.text().network_discover_none().to_string());
+            return;
+        }
+        let text = self.text();
+        let mut items = candidates
+            .iter()
+            .map(|peer| format!("{} · {} · {}", peer.displayName, peer.nodeId, peer.address))
+            .collect::<Vec<_>>();
+        items.push(text.network_discover_select_hint().to_string());
+        self.discovered_peers = candidates;
+        self.open_list_popup(text.network_discover_title().to_string(), items);
+        self.discover_select_pending = true;
+    }
+
+    /// Feeds the discovery candidate under the popup cursor into the wizard
+    /// and dials it right away - selecting a device is already consent.
+    async fn start_pair_wizard_from_discovery(&mut self) {
+        let selected = self
+            .list_popup_filtered_indices
+            .get(self.list_popup_selected_index)
+            .copied();
+        let candidate = selected.and_then(|index| self.discovered_peers.get(index).cloned());
+        self.close_list_popup();
+        self.discover_select_pending = false;
+        let Some(candidate) = candidate else {
+            return;
+        };
+        let transport_index = PAIR_WIZARD_TRANSPORTS
+            .iter()
+            .position(|transport| matches!(transport, PeerTransport::Tcp))
+            .unwrap_or(2);
+        self.open_pair_wizard(candidate.address.clone(), transport_index, String::new(), false);
+        self.pair_wizard_start().await;
+    }
+
     async fn open_device_manager(&mut self) {
         let state = match self.networkControl.deviceSpaceControl() {
             Ok(state) => state,
@@ -3180,6 +3805,7 @@ impl OperitTui {
         let result = match action {
             DeviceManagerAction::Admit => self.network_admit_device(device_id).await,
             DeviceManagerAction::Disconnect => self.network_disconnect_device(device_id).await,
+            DeviceManagerAction::Unpair => self.network_unpair(device_id).await,
             DeviceManagerAction::Remove => self.network_remove_device(device_id).await,
             DeviceManagerAction::ClearIdentity => {
                 self.network_clear_device_identity(device_id).await
@@ -3407,6 +4033,7 @@ impl OperitTui {
         self.update_list_popup_filter();
         self.show_list_popup = true;
         self.leave_confirm_pending = false;
+        self.discover_select_pending = false;
         self.focus = FocusArea::Input;
     }
 
@@ -3417,6 +4044,7 @@ impl OperitTui {
         self.list_popup_search.clear();
         self.list_popup_filtered_indices.clear();
         self.list_popup_selected_index = 0;
+        self.discover_select_pending = false;
     }
 
     fn update_list_popup_filter(&mut self) {
@@ -4690,14 +5318,14 @@ fn resolve_pending_pairing<'a>(
 
 /// Join requests in these states still resolve to a decision; mirrors the
 /// runtime's own active-status rule for outgoing refreshes.
-fn space_join_is_active(status: &SpaceJoinStatus) -> bool {
+pub(super) fn space_join_is_active(status: &SpaceJoinStatus) -> bool {
     matches!(
         status,
         SpaceJoinStatus::Pending | SpaceJoinStatus::Approving | SpaceJoinStatus::Approved
     )
 }
 
-fn join_status_label(status: &SpaceJoinStatus) -> &'static str {
+pub(super) fn join_status_label(status: &SpaceJoinStatus) -> &'static str {
     match status {
         SpaceJoinStatus::Pending => "pending",
         SpaceJoinStatus::Approving => "approving",
@@ -5061,5 +5689,92 @@ mod tests {
             paired_device_direction(peer.inbound, peer.outbound),
             "inbound"
         );
+    }
+
+    fn hub_topology_fixture() -> RuntimeDeviceSpaceTopology {
+        let device = |device_id: &str, online: bool| RuntimeDeviceSpaceDevice {
+            deviceId: device_id.to_string(),
+            userName: "alice".to_string(),
+            deviceName: device_id.to_string(),
+            platform: "linux".to_string(),
+            model: String::new(),
+            coreVersion: None,
+            online,
+            currentIdentity: None,
+        };
+        RuntimeDeviceSpaceTopology {
+            currentDeviceId: "self".to_string(),
+            devices: vec![device("self", true), device("phone", true)],
+            connections: Vec::new(),
+        }
+    }
+
+    fn hub_paired_fixture() -> BTreeMap<String, RuntimePairedDevice> {
+        let peer = |device_id: &str, model: &str, outbound: bool| {
+            (
+                device_id.to_string(),
+                RuntimePairedDevice {
+                    deviceId: device_id.to_string(),
+                    deviceInfo: operit_link::protocol::LinkDeviceInfo {
+                        platform: String::new(),
+                        model: model.to_string(),
+                    },
+                    inbound: true,
+                    outbound,
+                },
+            )
+        };
+        BTreeMap::from([
+            peer("phone", "phone", true),
+            peer("server", "server", true),
+            peer("watch", "watch", false),
+        ])
+    }
+
+    #[test]
+    fn network_hub_rows_list_members_then_paired_non_members() {
+        let topology = hub_topology_fixture();
+        let paired = hub_paired_fixture();
+        let rows = network_hub_rows(&topology, &paired);
+
+        let ids = rows.iter().map(|row| row.id().to_string()).collect::<Vec<_>>();
+        // Members come first in topology order; paired non-members follow in
+        // stable id order; an existing member never appears twice.
+        assert_eq!(ids, vec!["self", "phone", "server", "watch"]);
+        assert!(matches!(&rows[0], NetworkHubRow::Member(_)));
+        assert!(matches!(&rows[2], NetworkHubRow::Peer { outbound: true, .. }));
+        assert!(matches!(&rows[3], NetworkHubRow::Peer { outbound: false, .. }));
+        if let NetworkHubRow::Peer { label, .. } = &rows[2] {
+            assert_eq!(label, "server");
+        } else {
+            panic!("third hub row must be a paired non-member");
+        }
+    }
+
+    #[test]
+    fn pair_code_push_accepts_digits_only_up_to_six() {
+        assert_eq!(pair_code_push("", '4'), "4");
+        assert_eq!(pair_code_push("123", '4'), "1234");
+        assert_eq!(pair_code_push("123456", '7'), "123456");
+        assert_eq!(pair_code_push("123", 'a'), "123");
+        assert_eq!(pair_code_push("123", '*'), "123");
+    }
+
+    #[test]
+    fn peer_transport_label_matches_listener_spellings() {
+        let round_trip = |label: &str, expected: PeerTransport| {
+            let parsed = parse_peer_transport(label)
+                .expect("listener spelling must parse back");
+            assert!(
+                std::mem::discriminant(&parsed) == std::mem::discriminant(&expected),
+                "{label} must round-trip"
+            );
+        };
+        round_trip("http", PeerTransport::Http);
+        round_trip("ws", PeerTransport::WebSocket);
+        round_trip("tcp", PeerTransport::Tcp);
+        round_trip("serial", PeerTransport::Serial);
+        round_trip("bluetooth", PeerTransport::Bluetooth);
+        assert_eq!(peer_transport_label(&PeerTransport::Tcp), "tcp");
     }
 }

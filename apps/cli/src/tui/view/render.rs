@@ -14,8 +14,10 @@ use operit_node_runtime::RuntimeRemoteLinkService::{
 use operit_util::GithubReleaseUtil::FullUpdateStage;
 
 use super::app::{
+    join_status_label, network_hub_rows, peer_transport_label, space_join_is_active,
     DeviceManagerAction, DeviceManagerMode, DeviceManagerModal, DeviceManagerRow, FocusArea,
-    FullUpdateDownloadState, OperitTui, StartupInstallState,
+    FullUpdateDownloadState, NetworkHubModal, NetworkHubRow, OperitTui, PairField, PairStage,
+    PAIR_WIZARD_TRANSPORTS, StartupInstallState,
 };
 use crate::cli::network_control_ui::{network_device_label_by_id, network_role_summary};
 use super::helpers::{
@@ -122,8 +124,16 @@ impl OperitTui {
             self.render_approval_modal(frame);
         }
 
+        if self.network_hub.is_some() {
+            self.render_network_hub(frame);
+        }
+
         if self.device_manager.is_some() {
             self.render_device_manager(frame);
+        }
+
+        if self.pair_wizard.is_some() {
+            self.render_pair_wizard(frame);
         }
 
         if self.join_decision.is_some() {
@@ -1215,6 +1225,432 @@ impl OperitTui {
     /// devices with their policy state while browsing, or the mode-specific
     /// action surface otherwise. Reachability and restriction render as
     /// independent flags; admit only lifts a restriction.
+    /// The `/network` hub: identity header, waiting-for-me area, and the
+    /// combined member/paired-peer device list with selection.
+    fn render_network_hub(&mut self, frame: &mut Frame) {
+        let Some(hub) = self.network_hub.as_ref() else {
+            return;
+        };
+        let text = self.text();
+        let popup = centered_rect(78, 78, frame.area());
+        frame.render_widget(Clear, popup);
+        let modal_block = Block::default()
+            .title(text.network_hub_title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let inner = modal_block.inner(popup);
+        frame.render_widget(modal_block, popup);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Min(4),
+                Constraint::Min(5),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        let self_identity = hub
+            .topology
+            .devices
+            .iter()
+            .find(|device| device.deviceId == hub.topology.currentDeviceId)
+            .and_then(|device| device.currentIdentity.as_ref())
+            .map(|identity| identity.displayName.clone())
+            .unwrap_or_else(|| text.network_devices_no_identity().to_string());
+        let header = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", text.network_hub_node()),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
+                Span::styled(
+                    hub.topology.currentDeviceId.clone(),
+                    Style::default().fg(theme::ACCENT_STRONG),
+                ),
+                Span::styled(
+                    format!("  {} ", text.network_hub_identity()),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
+                Span::raw(self_identity),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", text.network_hub_space()),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
+                Span::raw(if hub.spaceName.is_empty() {
+                    text.network_devices_not_initialized().to_string()
+                } else {
+                    format!(
+                        "{} ({})",
+                        hub.spaceName,
+                        hub.topology.devices.len()
+                    )
+                }),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", text.network_hub_listening()),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
+                Span::raw(match &hub.listening {
+                    Some(summary) => summary.clone(),
+                    None => text.network_hub_not_listening().to_string(),
+                }),
+            ]),
+        ]);
+        frame.render_widget(header, chunks[0]);
+
+        let mut todo_lines = Vec::new();
+        for prompt in &hub.prompts {
+            todo_lines.push(Line::from(vec![
+                Span::styled("▸ ", Style::default().fg(theme::ACCENT_STRONG)),
+                Span::raw(text.network_hub_todo_inbound_pairing(&prompt.displayName)),
+                Span::styled(
+                    format!("  {}: {}", text.network_pairing_popup_code(), prompt.confirmationCode),
+                    Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+        for pending in &self.pending_pairings {
+            todo_lines.push(Line::from(Span::raw(
+                text.network_hub_todo_outbound_pairing(&pending.displayName),
+            )));
+        }
+        for request in &hub.outgoingJoins {
+            if space_join_is_active(&request.status) {
+                todo_lines.push(Line::from(Span::raw(
+                    text.network_hub_todo_outbound_join(
+                        &request.targetDeviceId,
+                        join_status_label(&request.status),
+                    ),
+                )));
+            }
+        }
+        if !hub.initialized {
+            todo_lines.push(Line::from(Span::styled(
+                text.network_devices_not_initialized(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )));
+        }
+        let todo_count = todo_lines.len();
+        let todo_block = Block::default()
+            .title(format!(
+                "{} ({todo_count})",
+                text.network_hub_todo_title()
+            ))
+            .borders(Borders::TOP);
+        let todo_inner = todo_block.inner(chunks[1]);
+        frame.render_widget(todo_block, chunks[1]);
+        if todo_lines.is_empty() {
+            todo_lines.push(Line::from(Span::styled(
+                text.network_hub_todo_none(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            )));
+        }
+        frame.render_widget(
+            Paragraph::new(todo_lines).wrap(Wrap { trim: false }),
+            todo_inner,
+        );
+
+        let rows = network_hub_rows(&hub.topology, &hub.paired);
+        let mut items = Vec::new();
+        let mut item_for_row = Vec::with_capacity(rows.len());
+        let mut members_header_drawn = false;
+        let mut peers_header_drawn = false;
+        for row in &rows {
+            match row {
+                NetworkHubRow::Member(device) => {
+                    if !members_header_drawn {
+                        members_header_drawn = true;
+                        items.push(ListItem::new(section_header_line(
+                            text.network_hub_devices_title(),
+                        )));
+                    }
+                    item_for_row.push(items.len());
+                    items.push(ListItem::new(vec![self.hub_member_line(hub, device)]));
+                }
+                NetworkHubRow::Peer {
+                    deviceId,
+                    label,
+                    outbound,
+                } => {
+                    if !peers_header_drawn {
+                        peers_header_drawn = true;
+                        items.push(ListItem::new(section_header_line(
+                            text.network_hub_peers_title(),
+                        )));
+                    }
+                    item_for_row.push(items.len());
+                    let hint = if *outbound {
+                        text.network_hub_peer_joinable()
+                    } else {
+                        text.network_hub_peer_inbound_only()
+                    };
+                    items.push(ListItem::new(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(label.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(format!(" · {deviceId} "), Style::default().fg(theme::TEXT_SUBTLE)),
+                        Span::styled(hint.to_string(), Style::default().fg(theme::TEXT_SUBTLE)),
+                    ])));
+                }
+            }
+        }
+        if items.is_empty() {
+            items.push(ListItem::new(Line::from(Span::styled(
+                text.network_hub_devices_none(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ))));
+        }
+        let selected_item = item_for_row.get(hub.selected).copied();
+        let list = List::new(items)
+            .highlight_style(
+                Style::default()
+                    .bg(theme::SELECTION_BG)
+                    .fg(theme::SELECTION_TEXT),
+            )
+            .highlight_symbol("▸ ");
+        let mut state = ListState::default();
+        if let Some(index) = selected_item {
+            state.select(Some(index));
+        }
+        frame.render_stateful_widget(list, chunks[2], &mut state);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text.network_hub_hint(),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ))),
+            chunks[3],
+        );
+        self.popup_selection_rect = Some(inner);
+    }
+
+    /// One member row in the hub device list; mirrors the device-manager
+    /// styling so the two windows read as one family.
+    fn hub_member_line(
+        &self,
+        hub: &NetworkHubModal,
+        device: &RuntimeDeviceSpaceDevice,
+    ) -> Line<'static> {
+        let text = self.text();
+        if device.deviceId == hub.topology.currentDeviceId {
+            return Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    text.network_devices_self().to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" · {}", device.platform),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ),
+            ]);
+        }
+        let status = if device.online {
+            String::new()
+        } else {
+            text.network_devices_offline().to_string()
+        };
+        let identity = device
+            .currentIdentity
+            .as_ref()
+            .map(|identity| format!(" · {}", identity.displayName))
+            .unwrap_or_else(|| format!(" · {}", text.network_devices_no_identity()));
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                device.deviceName.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" · {}{}", device.platform, identity),
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ),
+            Span::styled(
+                if status.is_empty() {
+                    status
+                } else {
+                    format!(" · {status}")
+                },
+                Style::default().fg(theme::TEXT_SUBTLE),
+            ),
+        ])
+    }
+
+    /// The pairing wizard: address form, six-digit code entry, or the
+    /// post-pairing join offer, one stage at a time.
+    fn render_pair_wizard(&mut self, frame: &mut Frame) {
+        let Some(wizard) = self.pair_wizard.as_ref() else {
+            return;
+        };
+        let text = self.text();
+        let (popup, stage) = match wizard.stage {
+            PairStage::Address => (centered_rect(58, 34, frame.area()), wizard.stage),
+            PairStage::Code | PairStage::JoinOffer => (centered_rect(50, 30, frame.area()), wizard.stage),
+        };
+        frame.render_widget(Clear, popup);
+        let modal_block = Block::default()
+            .title(text.network_pair_wizard_title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let inner = modal_block.inner(popup);
+        frame.render_widget(modal_block, popup);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Length(1)])
+            .split(inner);
+
+        match stage {
+            PairStage::Address => {
+                let field_style = |focused: bool| {
+                    if focused {
+                        Style::default().fg(theme::ACCENT_STRONG).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme::TEXT_MUTED)
+                    }
+                };
+                let transport_label =
+                    peer_transport_label(&PAIR_WIZARD_TRANSPORTS[wizard.transportIndex]);
+                let transport_value = if wizard.field == PairField::Transport {
+                    format!("‹ {transport_label} ›")
+                } else {
+                    format!("  {transport_label}  ")
+                };
+                let body = Paragraph::new(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} ", text.network_pair_wizard_address()),
+                            field_style(wizard.field == PairField::Address),
+                        ),
+                        Span::styled(
+                            format!("{}▏", wizard.address),
+                            field_style(wizard.field == PairField::Address),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} ", text.network_pair_wizard_transport()),
+                            field_style(wizard.field == PairField::Transport),
+                        ),
+                        Span::styled(
+                            transport_value,
+                            field_style(wizard.field == PairField::Transport),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} ", text.network_pair_wizard_token()),
+                            field_style(wizard.field == PairField::Token),
+                        ),
+                        Span::styled(
+                            format!("{}▏", wizard.token),
+                            field_style(wizard.field == PairField::Token),
+                        ),
+                        Span::styled(
+                            format!(" ({})", text.network_pair_wizard_token_optional()),
+                            Style::default().fg(theme::TEXT_SUBTLE),
+                        ),
+                    ]),
+                    blank_line(),
+                    Line::from(Span::styled(
+                        text.network_pair_wizard_start_hint(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    )),
+                ]);
+                frame.render_widget(body, chunks[0]);
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        text.network_pair_wizard_form_hint(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))),
+                    chunks[2],
+                );
+            }
+            PairStage::Code => {
+                let peer_name = wizard
+                    .pairing
+                    .as_ref()
+                    .map(|pending| pending.displayName.clone())
+                    .unwrap_or_default();
+                let mut filled: Vec<Span<'static>> = Vec::new();
+                filled.push(Span::raw("[ "));
+                for index in 0..6 {
+                    let cell = wizard.code.chars().nth(index).unwrap_or('·');
+                    filled.push(Span::styled(
+                        format!("{cell} "),
+                        Style::default()
+                            .fg(theme::ACCENT_STRONG)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                filled.push(Span::raw("]"));
+                let body = Paragraph::new(vec![
+                    Line::from(Span::raw(
+                        text.network_pair_wizard_code_prompt(&peer_name),
+                    )),
+                    blank_line(),
+                    Line::from(filled),
+                    blank_line(),
+                    Line::from(Span::styled(
+                        text.network_pair_wizard_code_hint(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    )),
+                ]);
+                frame.render_widget(body, chunks[0]);
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        text.network_pair_wizard_code_footer(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))),
+                    chunks[2],
+                );
+            }
+            PairStage::JoinOffer => {
+                let peer_name = wizard
+                    .peer
+                    .as_ref()
+                    .map(|peer| peer.displayName.clone())
+                    .unwrap_or_default();
+                let body = Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        text.network_pair_wizard_join_prompt(&peer_name),
+                        Style::default().fg(theme::TEXT),
+                    )),
+                    blank_line(),
+                    Line::from(Span::styled(
+                        text.network_pair_wizard_join_wait_hint(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    )),
+                ]);
+                frame.render_widget(body, chunks[0]);
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        text.network_pair_wizard_join_hint(),
+                        Style::default().fg(theme::TEXT_SUBTLE),
+                    ))),
+                    chunks[2],
+                );
+            }
+        }
+
+        if let Some(error) = &wizard.error {
+            let error_area = Rect {
+                y: chunks[1].y,
+                ..chunks[0]
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    error.clone(),
+                    Style::default().fg(theme::ERROR),
+                )))
+                .wrap(Wrap { trim: false }),
+                error_area,
+            );
+        }
+        self.popup_selection_rect = Some(inner);
+    }
+
     fn render_device_manager(&mut self, frame: &mut Frame) {
         let Some(modal) = self.device_manager.as_ref() else {
             return;
@@ -1490,6 +1926,10 @@ fn section_header_line(label: &str) -> Line<'static> {
     ))
 }
 
+fn blank_line() -> Line<'static> {
+    Line::from("")
+}
+
 fn device_manager_device_label(
     modal: &DeviceManagerModal,
     device: &RuntimeDeviceSpaceDevice,
@@ -1504,6 +1944,7 @@ fn device_manager_action_label(text: super::i18n::TuiText, action: DeviceManager
         DeviceManagerAction::Disconnect => text.network_devices_menu_disconnect(),
         DeviceManagerAction::AssignIdentity => text.network_devices_menu_assign(),
         DeviceManagerAction::ClearIdentity => text.network_devices_menu_clear(),
+        DeviceManagerAction::Unpair => text.network_devices_menu_unpair(),
         DeviceManagerAction::Remove => text.network_devices_menu_remove(),
     }
 }
