@@ -29,10 +29,10 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::AssistantMarkupStreamState;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_node_runtime::NodeServices::PairingPrompt;
+use operit_node_runtime::NodeServices::{PairingPrompt, PeerTransport, PendingPairing};
 use operit_node_runtime::RuntimeRemoteLinkService::{
-    RuntimeDeviceSpaceDevice, RuntimeDeviceSpaceTopology, RuntimeRemoteLinkService,
-    SpaceJoinRequest,
+    RuntimeDeviceSpaceDevice, RuntimeDeviceSpaceTopology, RuntimePairedDevice,
+    RuntimeRemoteLinkService, SpaceJoinRequest, SpaceJoinStatus,
 };
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatState;
@@ -73,6 +73,7 @@ use operit_store::NetworkControlStore::{NetworkControlIdentityAssignment, Networ
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const RUNTIME_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const OUTGOING_JOIN_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSIENT_STATUS_DURATION: Duration = Duration::from_secs(3);
 const MAX_PENDING_TERMINAL_EVENTS_PER_FRAME: usize = 64;
 
@@ -126,6 +127,13 @@ pub(super) struct OperitTui {
     network_event_receiver: mpsc::Receiver<NetworkUiEvent>,
     seen_pairing_prompt_ids: BTreeSet<String>,
     seen_join_request_ids: BTreeSet<String>,
+    /// Pairings this session started with `/network pair` and has not yet
+    /// confirmed or cancelled; lets the follow-up commands resolve the id.
+    pending_pairings: Vec<PendingPairing>,
+    last_outgoing_join_refresh_at: Option<Instant>,
+    /// The list popup is currently the Y/N confirm for `/network leave`; any
+    /// other popup open clears it so a stale confirm cannot fire elsewhere.
+    leave_confirm_pending: bool,
     /// Seeds the seen-id snapshots from the first fetch so a TUI start does
     /// not replay requests that predate the session.
     network_snapshots_seeded: bool,
@@ -652,6 +660,9 @@ impl OperitTui {
             network_event_receiver,
             seen_pairing_prompt_ids: BTreeSet::new(),
             seen_join_request_ids: BTreeSet::new(),
+            pending_pairings: Vec::new(),
+            last_outgoing_join_refresh_at: None,
+            leave_confirm_pending: false,
             network_snapshots_seeded: false,
             context_usage_label: String::new(),
             transcript_scroll: 0,
@@ -787,6 +798,7 @@ impl OperitTui {
             }
             self.apply_toast_messages();
             self.apply_network_events().await;
+            self.refresh_outgoing_joins_if_due().await;
             if let Err(error) = self.sync_compose_surfaces().await {
                 if Self::is_route_permission_error_message(&error) {
                     self.apply_route_permission_error(error);
@@ -844,6 +856,58 @@ impl OperitTui {
             .unwrap_or(false)
         {
             self.refresh_network_snapshots().await;
+        }
+    }
+
+    /// Pulls the reviewer decision for every active outgoing join request,
+    /// mirroring the Flutter peer-dialog monitor: the target never pushes the
+    /// approval, so the applicant side has to poll. Failures (offline targets)
+    /// leave the request pending for the next tick; only a terminal status is
+    /// reported and it refreshes the network snapshots once.
+    async fn refresh_outgoing_joins_if_due(&mut self) {
+        let now = Instant::now();
+        let due = self
+            .last_outgoing_join_refresh_at
+            .map(|last| now.saturating_duration_since(last) >= OUTGOING_JOIN_REFRESH_INTERVAL)
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.last_outgoing_join_refresh_at = Some(now);
+        let Ok(requests) = self.networkControl.outgoingDeviceSpaceJoins() else {
+            return;
+        };
+        for request in requests
+            .iter()
+            .filter(|request| space_join_is_active(&request.status))
+        {
+            let Ok(updated) = self
+                .networkControl
+                .refreshDeviceSpaceJoin(request.requestId.clone())
+                .await
+            else {
+                continue;
+            };
+            if !space_join_is_active(&updated.status) {
+                let status = updated.status;
+                let message = match status {
+                    SpaceJoinStatus::Joined => format!(
+                        "network join approved: joined {} with {}",
+                        updated.spaceName, updated.targetDeviceId
+                    ),
+                    SpaceJoinStatus::Rejected => {
+                        format!("network join rejected by {}", updated.targetDeviceId)
+                    }
+                    _ => format!(
+                        "network join {}: {} ({})",
+                        join_status_label(&status),
+                        updated.targetDeviceId,
+                        updated.spaceName
+                    ),
+                };
+                self.set_transient_status_message(message);
+                self.refresh_network_snapshots().await;
+            }
         }
     }
 
@@ -1365,6 +1429,11 @@ impl OperitTui {
 
         if self.device_manager.is_some() {
             self.handle_device_manager_key(key).await?;
+            return Ok(());
+        }
+
+        if self.show_list_popup && self.leave_confirm_pending {
+            self.handle_leave_confirm_key(key).await;
             return Ok(());
         }
 
@@ -2126,7 +2195,7 @@ impl OperitTui {
 
     /// Executes a Space control command through the runtime-owned authorization service.
     async fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
-        const USAGE: &str = "network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject>";
+        const USAGE: &str = "network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
         match args.first().map(String::as_str) {
             None | Some("show") if args.len() <= 1 => {
                 let state = self.networkControl.deviceSpaceControl()?;
@@ -2279,6 +2348,36 @@ impl OperitTui {
                     request.status,
                 );
             }
+            Some("discover") if args.len() <= 2 => {
+                self.network_discover(&args[1..]).await?;
+            }
+            Some("pair") if args.len() >= 3 => {
+                self.network_pair(&args[1..]).await?;
+            }
+            Some("pair-confirm") if (2..=3).contains(&args.len()) => {
+                self.status_message = self.network_pair_confirm(&args[1..]).await?;
+            }
+            Some("pair-cancel") if args.len() <= 2 => {
+                self.status_message = self.network_pair_cancel(&args[1..]).await?;
+            }
+            Some("peers") if args.len() == 1 => {
+                self.network_peers().await?;
+            }
+            Some("unpair") if args.len() == 2 => {
+                self.status_message = self.network_unpair(&args[1]).await?;
+            }
+            Some("join") if args.len() == 2 => {
+                self.status_message = self.network_join(&args[1]).await?;
+            }
+            Some("joins") if args.len() == 1 => {
+                self.network_joins().await?;
+            }
+            Some("join-cancel") if args.len() == 2 => {
+                self.status_message = self.network_join_cancel(&args[1]).await?;
+            }
+            Some("leave") if args.len() == 1 => {
+                self.network_leave().await?;
+            }
             _ => {
                 self.status_message = USAGE.to_string();
             }
@@ -2345,6 +2444,263 @@ impl OperitTui {
         let device_id = network_device_id(&topology, device)?;
         self.networkControl.clearDeviceSpaceIdentity(device_id)?;
         Ok(format!("network identity reset to default: {device}"))
+    }
+
+    /// Lists unpaired LAN discovery candidates so `/network pair` has an
+    /// address to dial. The result stays in the popup because the address is
+    /// typed into the next command.
+    async fn network_discover(&mut self, args: &[String]) -> Result<(), String> {
+        const USAGE: &str = "usage: network discover [timeout-ms]";
+        let timeout_ms = match args {
+            [] => 3000,
+            [timeout_ms] => timeout_ms.parse::<u64>().map_err(|_| USAGE.to_string())?,
+            _ => return Err(USAGE.to_string()),
+        };
+        let candidates = self.networkControl.discoverPeers(timeout_ms).await?;
+        if candidates.is_empty() {
+            self.set_transient_status_message(self.text().network_discover_none().to_string());
+            return Ok(());
+        }
+        let text = self.text();
+        let mut items = candidates
+            .iter()
+            .map(|peer| format!("{} · {} · {}", peer.displayName, peer.nodeId, peer.address))
+            .collect::<Vec<_>>();
+        items.push(text.network_discover_hint().to_string());
+        self.open_list_popup(text.network_discover_title().to_string(), items);
+        Ok(())
+    }
+
+    /// Starts an outbound pairing toward an explicit address. The pairing id
+    /// must stay on screen for the confirmation step, so it goes to the popup
+    /// and is remembered for id-less `/network pair-confirm <code>`.
+    async fn network_pair(&mut self, args: &[String]) -> Result<(), String> {
+        let (address, transport, token) = parse_pair_arguments(args)?;
+        let pending = self
+            .networkControl
+            .startPairing(String::new(), address, transport, token)
+            .await?;
+        let text = self.text();
+        let mut items = vec![format!(
+            "{}: {}",
+            text.network_pair_id_label(),
+            pending.pairingId
+        )];
+        if !pending.displayName.is_empty() {
+            items.push(pending.displayName.clone());
+        }
+        items.push(text.network_pair_hint(&pending.pairingId));
+        self.pending_pairings.push(pending);
+        self.open_list_popup(text.network_pair_title().to_string(), items);
+        Ok(())
+    }
+
+    /// Confirms an outbound pairing with the code shown on the other device.
+    /// With exactly one pending pairing the id can be omitted. A failed
+    /// confirmation keeps the pairing pending so the code can be retried.
+    async fn network_pair_confirm(&mut self, args: &[String]) -> Result<String, String> {
+        const USAGE: &str = "usage: network pair-confirm [pairing-id] <code>";
+        let (pairing_id, code) = match args {
+            [code] => (
+                resolve_pending_pairing(&self.pending_pairings, None)?
+                    .pairingId
+                    .clone(),
+                code.clone(),
+            ),
+            [pairing_id, code] => (pairing_id.clone(), code.clone()),
+            _ => return Err(USAGE.to_string()),
+        };
+        let peer = self
+            .networkControl
+            .finishPairing(pairing_id.clone(), code)
+            .await?;
+        self.pending_pairings
+            .retain(|pending| pending.pairingId != pairing_id);
+        Ok(format!(
+            "network pairing confirmed: {} ({})",
+            peer.displayName, peer.nodeId
+        ))
+    }
+
+    /// Cancels a pending pairing this session started (id omitted) or any
+    /// pairing by id. Cancelling never removes an established pairing.
+    async fn network_pair_cancel(&mut self, args: &[String]) -> Result<String, String> {
+        const USAGE: &str = "usage: network pair-cancel [pairing-id]";
+        let pairing_id = match args {
+            [] => resolve_pending_pairing(&self.pending_pairings, None)?
+                .pairingId
+                .clone(),
+            [pairing_id] => pairing_id.clone(),
+            _ => return Err(USAGE.to_string()),
+        };
+        self.networkControl
+            .cancelPairing(pairing_id.clone())
+            .await?;
+        self.pending_pairings
+            .retain(|pending| pending.pairingId != pairing_id);
+        Ok(format!("network pairing cancelled: {pairing_id}"))
+    }
+
+    /// Lists paired devices with their authorization directions. The node id
+    /// is required input for `/network unpair` and `/network join`.
+    async fn network_peers(&mut self) -> Result<(), String> {
+        let peers = self.networkControl.pairedDevicesSnapshot()?;
+        if peers.is_empty() {
+            self.set_transient_status_message(self.text().network_peers_none().to_string());
+            return Ok(());
+        }
+        let text = self.text();
+        let items = peers
+            .into_iter()
+            .map(|(device_id, peer)| {
+                format!(
+                    "{} · {} · {}",
+                    paired_device_label(&device_id, &peer),
+                    device_id,
+                    paired_device_direction(peer.inbound, peer.outbound),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.open_list_popup(text.network_peers_title().to_string(), items);
+        Ok(())
+    }
+
+    /// Removes one pairing credential without touching Space membership;
+    /// `/network remove` is the full forget for Space members.
+    async fn network_unpair(&mut self, device: &str) -> Result<String, String> {
+        let (device_id, label) = self.resolve_paired_device_argument(device, false).await?;
+        self.networkControl.removePairedDevice(device_id).await?;
+        Ok(format!("network pairing removed: {label}"))
+    }
+
+    /// Requests to join the paired device's Space. Approval happens on the
+    /// target device; this session pulls the decision in the background.
+    async fn network_join(&mut self, device: &str) -> Result<String, String> {
+        let (device_id, label) = self.resolve_paired_device_argument(device, true).await?;
+        let request = self
+            .networkControl
+            .requestDeviceSpaceJoin(device_id)
+            .await?;
+        if request.status == SpaceJoinStatus::Joined {
+            return Ok(format!(
+                "network join completed: now a member of {}",
+                request.spaceName
+            ));
+        }
+        Ok(format!(
+            "network join request submitted: {} must approve it; this TUI refreshes the status automatically",
+            label
+        ))
+    }
+
+    /// Lists this device's outgoing join requests with their live status.
+    async fn network_joins(&mut self) -> Result<(), String> {
+        let requests = self.networkControl.outgoingDeviceSpaceJoins()?;
+        if requests.is_empty() {
+            self.set_transient_status_message(self.text().network_joins_none().to_string());
+            return Ok(());
+        }
+        let text = self.text();
+        let items = requests
+            .iter()
+            .map(|request| {
+                format!(
+                    "{} · {} · {} · {}",
+                    request.targetDeviceId,
+                    request.spaceName,
+                    join_status_label(&request.status),
+                    request.requestId,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.open_list_popup(text.network_joins_title().to_string(), items);
+        Ok(())
+    }
+
+    /// Withdraws an outgoing join request by id or by its target device.
+    async fn network_join_cancel(&mut self, value: &str) -> Result<String, String> {
+        let requests = self.networkControl.outgoingDeviceSpaceJoins()?;
+        let request_id = if requests.iter().any(|request| request.requestId == value) {
+            value.to_string()
+        } else {
+            let matches = requests
+                .iter()
+                .filter(|request| {
+                    request.targetDeviceId == value && space_join_is_active(&request.status)
+                })
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [request] => request.requestId.clone(),
+                _ => return Err(format!(
+                    "no outgoing join request matches \"{value}\"; list them with /network joins"
+                )),
+            }
+        };
+        let request = self
+            .networkControl
+            .cancelDeviceSpaceJoin(request_id.clone())
+            .await?;
+        Ok(format!(
+            "network join request cancelled: {} ({})",
+            join_status_label(&request.status),
+            request_id
+        ))
+    }
+
+    /// Opens the Y/N confirm popup for leaving the current device space, the
+    /// quick way out of tangled connection state. The leave itself only runs
+    /// on confirmation, and the popup quotes the space being exited.
+    async fn network_leave(&mut self) -> Result<(), String> {
+        let space = self.networkControl.deviceSpace()?;
+        let text = self.text();
+        let items = vec![
+            format!("{}: {}", text.network_leave_space_label(), space.spaceName),
+            format!("{}: {}", text.network_leave_members_label(), space.members.len()),
+            text.network_leave_warning().to_string(),
+        ];
+        self.open_list_popup(text.network_leave_title().to_string(), items);
+        self.leave_confirm_pending = true;
+        Ok(())
+    }
+
+    /// Resolves a `/network unpair|join` argument against paired devices:
+    /// exact node id, or a unique display-name match. Join additionally
+    /// requires the outbound authorization direction.
+    async fn resolve_paired_device_argument(
+        &self,
+        value: &str,
+        require_outbound: bool,
+    ) -> Result<(String, String), String> {
+        let peers = self.networkControl.pairedDevicesSnapshot()?;
+        let (device_id, peer) = match peers.get(value) {
+            Some(peer) => (value.to_string(), peer.clone()),
+            None => {
+                let matches = peers
+                    .iter()
+                    .filter(|(_, peer)| peer.deviceInfo.model == value)
+                    .collect::<Vec<_>>();
+                match matches.as_slice() {
+                    [(device_id, peer)] => ((*device_id).clone(), (*peer).clone()),
+                    [] => {
+                        return Err(format!(
+                            "no paired device matches \"{value}\"; list them with /network peers"
+                        ))
+                    }
+                    _ => {
+                        return Err(format!(
+                            "paired device name is ambiguous: {value}; use the node id from /network peers"
+                        ))
+                    }
+                }
+            }
+        };
+        let label = paired_device_label(&device_id, &peer);
+        if require_outbound && !peer.outbound {
+            return Err(format!(
+                "network join requires an outbound pairing with {label}"
+            ));
+        }
+        Ok((device_id, label))
     }
 
     /// Resolves a `/network approve|reject` argument into the pending join
@@ -3050,6 +3406,7 @@ impl OperitTui {
         self.list_popup_selected_index = 0;
         self.update_list_popup_filter();
         self.show_list_popup = true;
+        self.leave_confirm_pending = false;
         self.focus = FocusArea::Input;
     }
 
@@ -3078,6 +3435,34 @@ impl OperitTui {
         if self.list_popup_selected_index >= self.list_popup_filtered_indices.len() {
             self.list_popup_selected_index =
                 self.list_popup_filtered_indices.len().saturating_sub(1);
+        }
+    }
+
+    /// Y/N confirm for `/network leave`: Y leaves the current device space,
+    /// N/Esc cancels; every other key is consumed so the warning cannot be
+    /// searched or Enter-closed into an accidental state.
+    async fn handle_leave_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.leave_confirm_pending = false;
+                self.close_list_popup();
+                match self.networkControl.leaveDeviceSpace() {
+                    Ok(space) => {
+                        self.set_transient_status_message(
+                            self.text().network_leave_done(&space.spaceName),
+                        );
+                        // Re-seed the network snapshots for the new singleton
+                        // space so ids from the old one cannot replay.
+                        self.refresh_network_snapshots().await;
+                    }
+                    Err(error) => self.status_message = error,
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.leave_confirm_pending = false;
+                self.close_list_popup();
+            }
+            _ => {}
         }
     }
 
@@ -4247,6 +4632,102 @@ fn format_context_length(value: f32) -> String {
     }
 }
 
+/// Parses the transport spelling shared by TUI startup (`--link-listen`) and
+/// `/network pair`.
+pub(super) fn parse_peer_transport(value: &str) -> Result<PeerTransport, String> {
+    match value {
+        "http" => Ok(PeerTransport::Http),
+        "ws" => Ok(PeerTransport::WebSocket),
+        "tcp" => Ok(PeerTransport::Tcp),
+        "serial" => Ok(PeerTransport::Serial),
+        "bluetooth" => Ok(PeerTransport::Bluetooth),
+        _ => Err(format!(
+            "unknown transport: {value}; expected http, ws, tcp, serial or bluetooth"
+        )),
+    }
+}
+
+/// Parses `/network pair <address> <transport> [--token <token>]`; the token
+/// flag matches the headless CLI spelling. The node id is left empty like the
+/// Flutter manual pairing dialog: the handshake learns the real identity.
+fn parse_pair_arguments(
+    args: &[String],
+) -> Result<(String, PeerTransport, Option<String>), String> {
+    const USAGE: &str =
+        "usage: network pair <address> <http|ws|tcp|serial|bluetooth> [--token <token>]";
+    let [address, transport, tail @ ..] = args else {
+        return Err(USAGE.to_string());
+    };
+    let token = match tail {
+        [] => None,
+        [flag, token] if flag == "--token" => Some(token.clone()),
+        _ => return Err(USAGE.to_string()),
+    };
+    Ok((address.clone(), parse_peer_transport(transport)?, token))
+}
+
+/// Resolves the pairing a `/network pair-confirm|pair-cancel` refers to: an
+/// exact pairing id when given, otherwise the only pairing this session
+/// started. Several pending pairings require an explicit id.
+fn resolve_pending_pairing<'a>(
+    pending: &'a [PendingPairing],
+    pairing_id: Option<&str>,
+) -> Result<&'a PendingPairing, String> {
+    match (pairing_id, pending) {
+        (Some(pairing_id), _) => pending
+            .iter()
+            .find(|pending| pending.pairingId == pairing_id)
+            .ok_or_else(|| {
+                format!("no pending pairing \"{pairing_id}\"; start one with /network pair")
+            }),
+        (None, [only]) => Ok(only),
+        (None, []) => Err("no pending pairing; start one with /network pair".to_string()),
+        (None, _) => {
+            Err("several pending pairings; name the pairing id from /network pair".to_string())
+        }
+    }
+}
+
+/// Join requests in these states still resolve to a decision; mirrors the
+/// runtime's own active-status rule for outgoing refreshes.
+fn space_join_is_active(status: &SpaceJoinStatus) -> bool {
+    matches!(
+        status,
+        SpaceJoinStatus::Pending | SpaceJoinStatus::Approving | SpaceJoinStatus::Approved
+    )
+}
+
+fn join_status_label(status: &SpaceJoinStatus) -> &'static str {
+    match status {
+        SpaceJoinStatus::Pending => "pending",
+        SpaceJoinStatus::Approving => "approving",
+        SpaceJoinStatus::Approved => "approved",
+        SpaceJoinStatus::Rejected => "rejected",
+        SpaceJoinStatus::Cancelled => "cancelled",
+        SpaceJoinStatus::Expired => "expired",
+        SpaceJoinStatus::Joined => "joined",
+    }
+}
+
+/// Display label for a paired device; the projection carries the human name
+/// in the device-info model slot and may leave it empty.
+fn paired_device_label(device_id: &str, peer: &RuntimePairedDevice) -> String {
+    if peer.deviceInfo.model.is_empty() {
+        device_id.to_string()
+    } else {
+        peer.deviceInfo.model.clone()
+    }
+}
+
+fn paired_device_direction(inbound: bool, outbound: bool) -> &'static str {
+    match (inbound, outbound) {
+        (true, true) => "inbound+outbound",
+        (true, false) => "inbound",
+        (false, true) => "outbound",
+        (false, false) => "no authorization direction",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4468,5 +4949,117 @@ mod tests {
             .iter()
             .any(|part| part.kind == MessagePartKind::Thinking));
         assert_eq!(MessagePartCodec::visibleText(&parts), "visible");
+    }
+
+    fn pending_pairing(pairing_id: &str, display_name: &str) -> PendingPairing {
+        PendingPairing {
+            pairingId: pairing_id.to_string(),
+            peerNodeId: format!("node-{pairing_id}"),
+            displayName: display_name.to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_peer_transport_accepts_listener_transports() {
+        assert!(matches!(
+            parse_peer_transport("http"),
+            Ok(PeerTransport::Http)
+        ));
+        assert!(matches!(
+            parse_peer_transport("ws"),
+            Ok(PeerTransport::WebSocket)
+        ));
+        assert!(matches!(
+            parse_peer_transport("tcp"),
+            Ok(PeerTransport::Tcp)
+        ));
+        assert!(matches!(
+            parse_peer_transport("serial"),
+            Ok(PeerTransport::Serial)
+        ));
+        assert!(matches!(
+            parse_peer_transport("bluetooth"),
+            Ok(PeerTransport::Bluetooth)
+        ));
+        assert!(parse_peer_transport("quic").is_err());
+    }
+
+    #[test]
+    fn parse_pair_arguments_reads_address_transport_and_optional_token() {
+        let args = |values: &[&str]| values.iter().map(ToString::to_string).collect::<Vec<_>>();
+
+        let (address, transport, token) = parse_pair_arguments(&args(&["192.168.1.8:4835", "ws"]))
+            .expect("pair arguments must parse");
+        assert_eq!(address, "192.168.1.8:4835");
+        assert!(matches!(transport, PeerTransport::WebSocket));
+        assert_eq!(token, None);
+
+        let (address, transport, token) =
+            parse_pair_arguments(&args(&["192.168.1.8:4835", "tcp", "--token", "secret"]))
+                .expect("pair arguments with token must parse");
+        assert_eq!(address, "192.168.1.8:4835");
+        assert!(matches!(transport, PeerTransport::Tcp));
+        assert_eq!(token.as_deref(), Some("secret"));
+
+        assert!(parse_pair_arguments(&args(&["192.168.1.8:4835"])).is_err());
+        assert!(parse_pair_arguments(&args(&["192.168.1.8:4835", "quic"])).is_err());
+        assert!(parse_pair_arguments(&args(&["192.168.1.8:4835", "ws", "--token"])).is_err());
+    }
+
+    #[test]
+    fn resolve_pending_pairing_auto_picks_a_single_session_pairing() {
+        let pending = vec![pending_pairing("pair-1", "phone")];
+
+        let resolved = resolve_pending_pairing(&pending, None)
+            .expect("a single pending pairing resolves without id");
+        assert_eq!(resolved.pairingId, "pair-1");
+
+        let resolved = resolve_pending_pairing(&pending, Some("pair-1"))
+            .expect("an exact pairing id resolves");
+        assert_eq!(resolved.displayName, "phone");
+
+        assert!(resolve_pending_pairing(&pending, Some("pair-2")).is_err());
+        assert!(resolve_pending_pairing(&[], None).is_err());
+
+        let several = vec![
+            pending_pairing("pair-1", "phone"),
+            pending_pairing("pair-2", "server"),
+        ];
+        assert!(resolve_pending_pairing(&several, None).is_err());
+        let resolved = resolve_pending_pairing(&several, Some("pair-2"))
+            .expect("an explicit id resolves among several pending pairings");
+        assert_eq!(resolved.displayName, "server");
+    }
+
+    #[test]
+    fn space_join_active_states_cover_every_decision_pending_status() {
+        assert!(space_join_is_active(&SpaceJoinStatus::Pending));
+        assert!(space_join_is_active(&SpaceJoinStatus::Approving));
+        assert!(space_join_is_active(&SpaceJoinStatus::Approved));
+        assert!(!space_join_is_active(&SpaceJoinStatus::Joined));
+        assert!(!space_join_is_active(&SpaceJoinStatus::Rejected));
+        assert!(!space_join_is_active(&SpaceJoinStatus::Cancelled));
+        assert!(!space_join_is_active(&SpaceJoinStatus::Expired));
+    }
+
+    #[test]
+    fn paired_device_label_falls_back_to_node_id_when_the_name_is_missing() {
+        let mut peer = RuntimePairedDevice {
+            deviceId: "node-1".to_string(),
+            deviceInfo: operit_link::protocol::LinkDeviceInfo {
+                platform: String::new(),
+                model: "phone".to_string(),
+            },
+            inbound: true,
+            outbound: false,
+        };
+        assert_eq!(paired_device_label("node-1", &peer), "phone");
+
+        peer.deviceInfo.model = String::new();
+        assert_eq!(paired_device_label("node-1", &peer), "node-1");
+        assert_eq!(
+            paired_device_direction(peer.inbound, peer.outbound),
+            "inbound"
+        );
     }
 }

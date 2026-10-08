@@ -39,7 +39,7 @@ mod typewriter;
 
 use app::{
     FullUpdateDownloadState, OperitTui, StartupInstallPrompt, StartupInstallState,
-    StartupUpdatePrompt,
+    StartupUpdatePrompt, parse_peer_transport,
 };
 use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
@@ -221,14 +221,10 @@ fn parse_tui_startup_args(args: &[String]) -> Result<(ShellArgs, TuiLinkStartupA
         match args[index].as_str() {
             "--link-listen" => {
                 index += 1;
-                link_args.listen = Some(match args.get(index).map(String::as_str) {
-                    Some("http") => PeerTransport::Http,
-                    Some("ws") => PeerTransport::WebSocket,
-                    Some("tcp") => PeerTransport::Tcp,
-                    Some("serial") => PeerTransport::Serial,
-                    Some("bluetooth") => PeerTransport::Bluetooth,
-                    _ => return Err(usage.to_string()),
-                });
+                link_args.listen = Some(
+                    parse_peer_transport(args.get(index).map(String::as_str).unwrap_or_default())
+                        .map_err(|_| usage.to_string())?,
+                );
             }
             "--link-join" => {
                 index += 1;
