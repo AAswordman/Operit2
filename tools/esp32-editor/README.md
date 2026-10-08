@@ -214,3 +214,19 @@ Emscripten 编译工具链单独安装，不属于调试器运行包；运行已
 修改屏幕请编辑 `apps/esp32/ui_port/operit_mini_ui.c`，修改表情矢量请编辑 `face.svg`，然后重新构建。
 服务返回的 `/api/board` capabilities 表明当前不支持布局编辑、图片或软键盘。
 协议和软件工作区嵌入接口见 [AGENT_API.md](AGENT_API.md) 与 [FRONTEND.md](FRONTEND.md)。
+
+### 模拟器设备空间端到端回归
+
+```powershell
+npm run test:space --prefix tools/esp32-editor
+```
+
+该命令构建当前 Core CLI，启动真实 TCP 模拟器，用同一套 C/WASM 屏幕读取配对码、点击审批及确认退出，
+验证同一 Core 退出后重入、取消后迟到的审批点击、拒绝后重新申请、双方重启后的申请恢复与再次加入。
+还验证离线取消会保留待重试意图，双方重启后的普通刷新能够补交取消，不伪装成已完成。
+审批点击绑定屏幕显示的申请编号和审批版本，旧按钮不得误批随后提交的新申请。
+浏览器与测试共用设备动作错误处理，失败不得退出模拟器，成功重试不得留下挡住操作的旧错误层。
+测试使用独立临时配置和数据目录，不读取或修改已有 Core 配置、配对或硬件；结束后关闭进程并清理目录。
+还会检查无存储权限的 Edge 未创建业务同步日志或聊天/模型副本。
+首次使用需要先运行 `npm run build --prefix tools/esp32-editor` 生成 C/WASM UI；
+也可通过 `OPERIT_SIM_TEST_CLI` 指定已构建的独立 Core CLI。模拟器报告的资源限制不等于真机剩余堆。

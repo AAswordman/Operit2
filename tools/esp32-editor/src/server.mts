@@ -24,6 +24,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 const files = new Map<string, string>([
   ['/', 'web/index.html'],
   ['/app.js', 'web/app.ts'],
+  ['/device-actions.js', 'web/device-actions.ts'],
   ['/simulator.js', 'web/simulator.ts'],
   ['/src/layout/project-model.mjs', 'src/layout/project-model.mts'],
   ['/src/layout/geometry.mjs', 'src/layout/geometry.mts'],

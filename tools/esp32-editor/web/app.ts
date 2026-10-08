@@ -1,4 +1,5 @@
 import {request} from './transport.js';
+import {performDeviceAction} from './device-actions.js';
 import {point, pixel} from './model.js';
 import {errorMessage, query} from './types.js';
 import type {BoardInfo, BuildManifest, BuildStatus, RuntimeFactory, RuntimeModule} from './types.js';
@@ -44,6 +45,7 @@ let miniStaticBytes = 0;
 interface DeviceState {
   running?: boolean; connected?: boolean; paired?: boolean; pairingCode?: string; spaceState?: string;
   spaceJoinPrompt?: string; spaceJoinBusy?: boolean;
+  spaceJoinRequestId?: string; spaceJoinAssignmentVersion?: number;
   chatPreview?: string; chatScreen?: string; chatTask?: string;
   chat?: {chatId?: string; messages?: {sender: string; text: string}[];
     conversations?: {id: string; title: string; characterCardName?: string}[]; error?: string};
@@ -277,17 +279,18 @@ function handleRuntimeAction(value: string): void {
     return;
   }
   if (value.startsWith('edge_')) {
-    void fetch('/api/simulator/action', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action: value}),
-    }).then(async response => { if (!response.ok) {
-      const detail = await response.json() as {error?: string};
-      throw new Error(detail.error ?? `操作失败 (${response.status})`);
-    } })
-      .catch(error => {
-        log('设备 action 错误: ' + errorMessage(error));
-        runtime?.ccall('operit_ui_action_error', null, ['string'], [errorMessage(error)]);
+    void performDeviceAction(runtime, value, async request => {
+      const response = await fetch('/api/simulator/action', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(request),
       });
+      if (!response.ok) {
+        const detail = await response.json() as {error?: string};
+        throw new Error(detail.error ?? `操作失败 (${response.status})`);
+      }
+    }, {requestId: latestDeviceState?.spaceJoinRequestId,
+      assignmentVersion: latestDeviceState?.spaceJoinAssignmentVersion})
+      .catch(error => log('设备 action 错误: ' + errorMessage(error)));
   }
   pageLabel.textContent = value;
   if (value === 'face_online' || value === 'run_node') {

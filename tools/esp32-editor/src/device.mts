@@ -5,6 +5,19 @@ import {fileURLToPath} from 'node:url';
 import {editorRoot, configFile, firmwareElf, loadDeviceConfig, listSerialPorts, selectSerialPort,
   buildFlashPlan, executeFlashPlan, runTool} from './device-tools.mts';
 
+const debugActions = new Set(['screen', 'tree', 'tap', 'swipe', 'health', 'draft']);
+
+/** Builds one debug request; draft must never fall through to the serial monitor. */
+export function deviceDebugArgs(action: string, connection: string[], values: ReadonlyMap<string, string>): string[] {
+  if (!debugActions.has(action)) throw new Error(`未知调试命令 ${action}`);
+  const args = [action, ...connection];
+  for (const name of ['--id', '--direction', '--timeout', '--text']) {
+    const value = values.get(name);
+    if (value !== undefined) args.push(name, value);
+  }
+  return args;
+}
+
 /** Small npm entrypoint: no HTTP server required for build/flash/monitor. */
 export async function deviceMain(args: string[]): Promise<void> {
   const action = args[0] ?? 'help';
@@ -27,7 +40,7 @@ export async function deviceMain(args: string[]): Promise<void> {
     return;
   }
   if (!['setup', 'ports', 'flash', 'monitor', 'dev', 'screen', 'tree', 'tap', 'swipe', 'health', 'draft'].includes(action)) throw new Error(`未知命令 ${action}`);
-  if (!['screen', 'tree', 'tap', 'swipe', 'health', 'draft'].includes(action) &&
+  if (!debugActions.has(action) &&
       ['--id', '--direction', '--timeout', '--text'].some(flag => values.has(flag))) {
     throw new Error('--id / --direction / --timeout 只支持真机调试命令');
   }
@@ -59,23 +72,16 @@ export async function deviceMain(args: string[]): Promise<void> {
     return;
   }
   if (values.has('--bridge')) {
-    if (!['screen', 'tree', 'tap', 'swipe', 'health', 'draft'].includes(action) || values.has('--port')) throw new Error('--bridge 只支持实时调试，且不能同时 --port');
-    const debugFlags = [action, '--bridge', values.get('--bridge')!];
-    for (const name of ['--id', '--direction', '--timeout', '--text']) {
-      const value = values.get(name); if (value !== undefined) debugFlags.push(name, value);
-    }
+    if (!debugActions.has(action) || values.has('--port')) throw new Error('--bridge 只支持实时调试，且不能同时 --port');
+    const debugFlags = deviceDebugArgs(action, ['--bridge', values.get('--bridge')!], values);
     await runTool('python', ['-X', 'utf8', path.join(editorRoot, 'device-debug.py'), ...debugFlags], {cwd: editorRoot, inherit: true});
     return;
   }
   const requested = values.get('--port') ?? process.env.ESPFLASH_PORT ?? config.port;
   // A dry run only prints a validated plan; no device enumeration or serial connection.
   const port = enabled.has('--dry-run') ? requested ?? '<USB-port>' : selectSerialPort(await listSerialPorts(), requested);
-  if (['screen', 'tree', 'tap', 'swipe', 'health'].includes(action)) {
-    const debugFlags = [action, '--port', port];
-    for (const name of ['--id', '--direction', '--timeout']) {
-      const value = values.get(name);
-      if (value) debugFlags.push(name, value);
-    }
+  if (debugActions.has(action)) {
+    const debugFlags = deviceDebugArgs(action, ['--port', port], values);
     await runTool('python', ['-X', 'utf8', path.join(editorRoot, 'device-debug.py'), ...debugFlags],
       {cwd: editorRoot, inherit: true});
     return;

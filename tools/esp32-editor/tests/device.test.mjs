@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {buildFlashPlan, executeFlashPlan, selectSerialPort, validateFirmwareImages, xtensaCompilerEnvironment} from '../src/device-tools.mts';
-import {deviceMain} from '../src/device.mts';
+import {deviceMain, deviceDebugArgs} from '../src/device.mts';
 import {deployRoute} from '../src/api/deploy-api.mts';
 
 const partitions = [
@@ -167,4 +167,16 @@ test('compiler discovery respects SDK location, host suffix and explicit overrid
   assert.equal(explicit.CC_xtensa_esp32_espidf, undefined);
   assert.equal(explicit.AR_xtensa_esp32_espidf, windows.AR_xtensa_esp32_espidf);
   assert.deepEqual(await xtensaCompilerEnvironment(path.join(root, 'absent'), {}, 'linux'), {});
+});
+
+test('UART and bridge drafts use the debug handler and retain text including an empty draft', () => {
+  for (const connection of [['--port', 'COM27'], ['--bridge', 'http://127.0.0.1:8767']]) {
+    for (const text of ['链路测试', '']) {
+      assert.deepEqual(deviceDebugArgs('draft', connection, new Map([['--text', text], ['--timeout', '12']])),
+        ['draft', ...connection, '--timeout', '12', '--text', text]);
+    }
+    assert.deepEqual(deviceDebugArgs('tap', connection, new Map([['--id', 'edge_send']])),
+      ['tap', ...connection, '--id', 'edge_send']);
+  }
+  assert.throws(() => deviceDebugArgs('monitor', ['--port', 'COM27'], new Map()), /未知调试命令/);
 });

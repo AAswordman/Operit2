@@ -59,6 +59,16 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
   });
   assert.equal(oversizedImage.status,400);
   assert.match((await oversizedImage.json()).error,/512 KiB/);
+  for (const action of ['edge_space_approve', 'edge_space_reject']) {
+    for (const identity of [{}, {requestId:'A',assignmentVersion:-1},
+      {requestId:'A',assignmentVersion:1.5}, {requestId:' ',assignmentVersion:0}]) {
+      const response = await fetch(base + '/api/simulator/action', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({action,...identity})});
+      assert.equal(response.status,400);
+      assert.match((await response.json()).error,/申请编号或审批版本/);
+    }
+  }
+  assert.equal((await state()).ready,true, 'invalid review actions must not kill the simulator');
   const leave = await fetch(base + '/api/simulator/action', {method:'POST',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'edge_space_leave'})});
   assert.equal(leave.status,200);

@@ -38,6 +38,8 @@ async function refresh(): Promise<void> {
       running: state.ready, connected: state.device?.chat.connected === true, paired: state.device?.paired === true,
       pairingCode: state.device?.pairingCode ?? '', spaceState: state.device?.chat.connected ? '已连接 Operit' : '等待连接 Operit',
       spaceJoinPrompt: state.device?.spaceJoinPrompt ?? '', spaceJoinBusy: false,
+      spaceJoinRequestId: state.device?.spaceJoinRequestId,
+      spaceJoinAssignmentVersion: state.device?.spaceJoinAssignmentVersion,
       chatPreview: state.device?.chatPreview ?? '尚未连接对话',
       chat: state.device?.chat, chatScreen: state.device?.chatScreen, chatTask: state.device?.chatTask,
       chatSendResult: state.device?.chatSendResult,

@@ -217,14 +217,23 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         body += String(chunk);
         if (Buffer.byteLength(body) > 8192) throw new Error('消息过长');
       }
-      const input = JSON.parse(body) as {action?: unknown; text?: unknown};
+      const input = JSON.parse(body) as {action?: unknown; text?: unknown; requestId?: unknown; assignmentVersion?: unknown};
       if (url.pathname.endsWith('/send')) {
         if (typeof input.text !== 'string') throw new Error('缺少消息内容');
         reply(200, await rpc('send', {text: input.text}));
         return true;
       }
       if (typeof input.action !== 'string') throw new Error('缺少设备 action');
-      reply(200, await rpc('action', {action: input.action}));
+      const action: Record<string, unknown> = {action: input.action};
+      if (input.action === 'edge_space_approve' || input.action === 'edge_space_reject') {
+        if (typeof input.requestId !== 'string' || !input.requestId.trim() ||
+            typeof input.assignmentVersion !== 'number' || !Number.isSafeInteger(input.assignmentVersion) || input.assignmentVersion < 0) {
+          throw new Error('缺少有效的设备空间申请编号或审批版本');
+        }
+        action.requestId = input.requestId;
+        action.assignmentVersion = input.assignmentVersion;
+      }
+      reply(200, await rpc('action', action));
     } else reply(404, {error: 'Unknown simulator endpoint'});
   } catch (e) { reply(400, {error: String(e)}); }
   return true;

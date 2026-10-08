@@ -7,6 +7,7 @@
     "build": "node --experimental-strip-types src/build.mts",
     "build:firmware": "node --experimental-strip-types src/build.mts --firmware",
     "test": "node --test --experimental-strip-types tests/*.test.mjs",
+    "test:space": "node --test --experimental-strip-types tests/integration/simulator-space.test.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
     "dev": "node --experimental-strip-types src/device.mts dev",
     "flash": "node --experimental-strip-types src/device.mts flash",

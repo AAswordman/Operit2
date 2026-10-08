@@ -170,8 +170,34 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
     emit(
         serde_json::json!({"ready": true, "peerServiceAvailable": true, "memory": memory::snapshot(), "address": address, "deviceId": nodeId}),
     );
+    // Match the firmware's 500 ms Space route polling. Compiling edge_chat
+    // alone does not install a session; pairing and approval must not fake one.
+    let peers = services.peers();
+    let mut routePoll = tokio::time::interval(std::time::Duration::from_millis(500));
+    routePoll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut chatRouteInstalled = false;
+    let mut reconnectChatId = String::new();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    while let Some(line) = lines.next_line().await? {
+    loop {
+        let line = tokio::select! {
+            _ = routePoll.tick() => {
+                if let Some(client) = peers.spaceClient() {
+                    if !chatRouteInstalled {
+                        edge_chat::install(client, services.clone(), reconnectChatId.clone());
+                        chatRouteInstalled = true;
+                    }
+                } else if chatRouteInstalled {
+                    reconnectChatId = edge_chat::snapshot()["chatId"].as_str().unwrap_or("").to_owned();
+                    edge_chat::clear();
+                    chatRouteInstalled = false;
+                }
+                continue;
+            }
+            line = lines.next_line() => match line? {
+                Some(line) => line,
+                None => break,
+            },
+        };
         let request: serde_json::Value = serde_json::from_str(&line)?;
         let id = request["id"].clone();
         let services = edgeNode.nodeServices();
@@ -215,19 +241,24 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                 })}))
             }
             Some("memory") => Ok(memory::snapshot()),
-            Some("action") => {
+            // Decision/cleanup failures belong to this RPC, not to run(). In
+            // particular a stale approval tap after cancellation must not
+            // terminate the device or drop its authenticated TCP listener.
+            Some("action") => async {
                 let action = request["action"].as_str().unwrap_or("");
                 *lastAction.lock().unwrap() = action.to_string();
                 if action == "edge_space_approve" || action == "edge_space_reject" {
-                    let request = spaceService.incomingDeviceSpaceJoins().await
-                        .map_err(|error| error.to_string())?
-                        .into_iter()
-                        .find(|request| request.canApprove)
-                        .ok_or_else(|| "当前没有待审批的设备空间申请".to_string())?;
+                    // Match firmware's captured pending request/version. A stale
+                    // screen must never approve a different, newer submission.
+                    let requestId = request["requestId"].as_str()
+                        .filter(|id| !id.trim().is_empty())
+                        .ok_or_else(|| "Missing Space review requestId".to_string())?;
+                    let assignmentVersion = request["assignmentVersion"].as_u64()
+                        .ok_or_else(|| "Missing Space review assignmentVersion".to_string())?;
                     let approve = action == "edge_space_approve";
                     spaceService.decideDeviceSpaceJoin(
-                        request.requestId,
-                        request.assignmentVersion,
+                        requestId.to_string(),
+                        assignmentVersion,
                         approve,
                     ).await.map_err(|error| error.to_string())?;
                 } else if action == "edge_pair" || action == "edge_unpair" {
@@ -256,33 +287,21 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                         Ok::<_, String>(())
                     }
                     .await;
-                    if let Err(error) = result {
-                        emit(serde_json::json!({"id":id,"error":error}));
-                        continue;
-                    }
+                    result?;
                 } else if action == "edge_space_leave" {
                     spaceService.leaveDeviceSpace()?;
                     edge_chat::clear();
                 } else if action == "edge_history_older" || action == "edge_history_newer" {
-                    if let Err(error) = edge_chat::moveHistory(action == "edge_history_older") {
-                        emit(serde_json::json!({"id":id,"error":error})); continue;
-                    }
+                    edge_chat::moveHistory(action == "edge_history_older")?;
                 } else if action == "edge_new" {
-                    if let Err(error) = edge_chat::newChat() {
-                        emit(serde_json::json!({"id":id, "error":error}));
-                        continue;
-                    }
+                    edge_chat::newChat()?;
                 } else if let Some(chatId) = action.strip_prefix("edge_select:") {
-                    if let Err(error) = edge_chat::selectChat(chatId) {
-                        emit(serde_json::json!({"id":id, "error":error}));
-                        continue;
-                    }
+                    edge_chat::selectChat(chatId)?;
                 } else {
-                    emit(serde_json::json!({"id":id, "error":"Unknown simulator action"}));
-                    continue;
+                    return Err("Unknown simulator action".to_string());
                 }
-                Ok(serde_json::json!({"ok": true, "action": action}))
-            }
+                Ok::<_, String>(serde_json::json!({"ok": true, "action": action}))
+            }.await,
             Some("sendImage") => (|| {
                 use base64::Engine;
                 let encoded = request["bytes"].as_str().unwrap_or("");
