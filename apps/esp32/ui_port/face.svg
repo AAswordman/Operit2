@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100">
+  <!-- Build-time vector source; no SVG parser or bitmap allocated on ESP32. -->
+  <ellipse cx="48" cy="38" rx="10" ry="17" fill="#b1f2d8"/>
+  <ellipse cx="112" cy="38" rx="10" ry="17" fill="#b1f2d8"/>
+  <path d="M 56 68 L 64 75 L 80 79 L 96 75 L 104 68" fill="none" stroke="#b1f2d8" stroke-width="4"/>
+</svg>

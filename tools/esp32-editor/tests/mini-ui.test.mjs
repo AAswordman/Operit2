@@ -45,14 +45,22 @@ test('approval buttons emit service actions, do not locally approve, and reject 
   assert.equal(inspect().page,'Space');assert.equal(tap('edge_space_approve'),0);assert.equal(tap('edge_space_reject'),0);
   call('set_space_join_prompt',['string','number'],['申请加入空间',0]);
   assert.equal(tap('edge_space_reject'),1);assert.deepEqual(actions,['edge_space_approve','edge_space_reject']);
-  call('set_space_join_prompt',['string','number'],['',0]);assert.equal(inspect().page,'Pairing');
+  call('set_space_join_prompt',['string','number'],['',0]);assert.equal(inspect().page,'Chat');
 });
+function tapSettings(inspect, ui) {
+  for(const id of ['sidebar_toggle','sidebar_settings']) {
+    if(!ui.ccall('operit_ui_debug_tap','number',['string'],[id]))return false;
+  }
+  return inspect().page==='Settings';
+}
 test('touch requires press/release on the same target and cancels across state changes',options,async()=>{
   const {ui,call,inspect,actions}=await fixture();
+  assert.equal(tapSettings(inspect, ui), true);
+  assert.equal(ui.ccall('operit_ui_debug_tap','number',['string'],['settings_connection']),1);
   const n=inspect().nodes.find(n=>n.id==='pair_listen'),x=n.rect.x+10,y=n.rect.y+10;
   ui._simulator_touch(x,y,1);assert.deepEqual(actions,[]);
   ui._simulator_touch(x+180,y,0);assert.deepEqual(actions,[]);
-  ui._simulator_touch(x,y,1);call('set_pairing_code',['string'],['654321']);
+  ui._simulator_touch(x,y,1);call('set_connection',['number','number'],[1,0]);
   ui._simulator_touch(x,y,0);assert.deepEqual(actions,[]);
   ui._simulator_touch(x,y,1);ui._simulator_touch(x,y,0);assert.deepEqual(actions,['edge_pair']);
 });
@@ -84,7 +92,7 @@ test('unchanged state does not continuously redraw or allocate',options,async()=
 });
 test('unpair requires a confirmation before forwarding the existing service action',options,async()=>{
   const {call,tap,inspect,actions}=await fixture();call('set_paired',['number'],[1]);
-  assert.equal(tap('open_status'),1);assert.equal(tap('edge_unpair'),1);
+  assert.equal(tap('sidebar_toggle'),1);assert.equal(tap('sidebar_settings'),1);assert.equal(tap('settings_device'),1);assert.equal(tap('edge_unpair'),1);
   assert.equal(inspect().page,'Unpair');assert.deepEqual(actions,[]);
   assert.equal(tap('unpair_cancel'),1);assert.deepEqual(actions,[]);
   tap('edge_unpair');tap('unpair_confirm');assert.deepEqual(actions,['edge_unpair']);
@@ -156,7 +164,7 @@ test('real chat row reaches the painted and inspected mini buffer without a tran
 test('station Wi-Fi status is independent of an authenticated serial Space connection',options,async()=>{
   const {call,inspect,tap}=await fixture();
   call('set_paired',['number'],[1]);call('set_connection',['number','number'],[0,1]);
-  assert.equal(tap('open_status'),1);
+  assert.equal(tap('sidebar_toggle'),1);assert.equal(tap('sidebar_settings'),1);assert.equal(tap('settings_connection'),1);
   assert.equal(inspect().nodes.find(n=>n.id==='wifi').text,'Wi-Fi 未连接');
   assert.equal(inspect().nodes.find(n=>n.id==='link_status').text,'已连接');
   call('set_connection',['number','number'],[1,1]);
@@ -168,12 +176,12 @@ test('station Wi-Fi status is independent of an authenticated serial Space conne
 
 test('leaving a Space requires local confirmation and does not revoke pairing',options,async()=>{
   const {call,tap,inspect,actions}=await fixture();call('set_paired',['number'],[1]);
-  tap('open_status');assert.equal(tap('space_leave'),1);
+  tap('sidebar_toggle');tap('sidebar_settings');assert.equal(tap('settings_space'),1);assert.equal(tap('space_leave'),1);
   assert.equal(inspect().page,'LeaveSpace');assert.deepEqual(actions,[]);
-  assert.equal(tap('space_leave_cancel'),1);assert.equal(inspect().page,'Status');
+  assert.equal(tap('space_leave_cancel'),1);assert.equal(inspect().page,'SpaceSettings');
   assert.deepEqual(actions,[]);
   tap('space_leave');assert.equal(tap('space_leave_confirm'),1);
-  assert.deepEqual(actions,['edge_space_leave']);assert.equal(inspect().page,'Status');
+  assert.deepEqual(actions,['edge_space_leave']);assert.equal(inspect().page,'Settings');
   assert.equal(inspect().nodes.find(n=>n.id==='link_status').text,'已配对 / 离线');
   assert(inspect().staticBytes<10*1024);assert.equal(inspect().heapBytes,0);
 });
@@ -204,4 +212,98 @@ test('scrolling past newest history does not jump back to the top or issue a no-
   assert.equal(inspect().chatScrollLine,tail);assert.deepEqual(actions,[]);
   for(let n=0;n<5;n++)call('debug_swipe',['string'],['down']);
   assert.equal(inspect().chatScrollLine,0);assert.deepEqual(actions,[]);
+});
+
+
+test('left sidebar opens on tap, routes its bottom corners, and settings owns device buttons',options,async()=>{
+  const {call,inspect,tap,actions}=await fixture();call('set_paired',['number'],[1]);
+  assert.equal(inspect().page,'Chat');
+  for(const id of ['edge_new','edge_unpair','space_leave','pair_listen'])assert(!inspect().nodes.some(n=>n.id===id));
+  assert.equal(tap('sidebar_toggle'),1);
+  let state=inspect();assert.equal(state.page,'Sidebar');assert.equal(state.sidebarOpen,true);
+  const plugins=state.nodes.find(n=>n.id==='sidebar_plugins'),settings=state.nodes.find(n=>n.id==='sidebar_settings');
+  assert(plugins.rect.x<settings.rect.x);assert.equal(plugins.rect.y,settings.rect.y);assert(plugins.rect.y>=190);
+  assert.equal(tap('sidebar_plugins'),1);assert.equal(inspect().page,'Plugins');
+  assert.equal(inspect().sidebarOpen,false);assert(inspect().nodes.some(n=>n.id==='plugins_empty'));
+  assert.deepEqual(actions,[],'plugin placeholder must not invoke an unimplemented host action');
+  assert.equal(tap('sidebar_toggle'),1);assert.equal(tap('sidebar_settings'),1);
+  assert.equal(inspect().page,'Settings');
+  for(const id of ['settings_connection','settings_space','settings_device'])assert(inspect().nodes.some(n=>n.id===id));
+  for(const id of ['edge_new','edge_unpair','space_leave','pair_listen'])assert(!inspect().nodes.some(n=>n.id===id));
+  assert(!inspect().error);assert(inspect().staticBytes<10*1024);assert.equal(inspect().heapBytes,0);
+  tap('sidebar_toggle');tap('sidebar_backdrop');assert.equal(inspect().page,'Settings');
+});
+
+test('SVG expression paints in sidebar and dedicated screen without heap allocation',options,async()=>{
+  const {call,inspect,tap,frame,ui}=await fixture();
+  tap('sidebar_toggle');assert(inspect().nodes.some(n=>n.id==='sidebar_face'));
+  const sidebar=frame();tap('sidebar_face');assert.equal(inspect().page,'Expression');
+  const happy=frame();assert.notDeepEqual(happy,sidebar);
+  call('set_expression',['string'],['sad']);const sad=frame();assert.notDeepEqual(sad,happy);
+  call('set_expression',['string'],['sleepy']);assert.notDeepEqual(frame(),sad);
+  for(let i=0;i<50;i++){tap('sidebar_toggle');tap('sidebar_face');frame();}
+  assert.equal(ui._simulator_heap_used(),0);assert(ui._simulator_stack_free()>2048);
+  assert(inspect().staticBytes<10*1024);
+});
+
+test('incoming approval or pairing code preempts the sidebar and cannot be hidden by navigation',options,async()=>{
+  const {call,inspect,tap}=await fixture();tap('sidebar_toggle');
+  call('set_space_join_prompt',['string','number'],['申请加入空间',0]);
+  assert.equal(inspect().page,'Space');assert.equal(tap('sidebar_toggle'),0);
+  call('set_pairing_code',['string'],['123456']);assert.equal(inspect().page,'Pairing');
+  assert.equal(tap('sidebar_toggle'),0);
+  call('set_pairing_code',['string'],['']);call('set_space_join_prompt',['string','number'],['',0]);
+  assert.equal(inspect().sidebarOpen,false);
+});
+
+
+test('home paints expression left and chat right with wrap width matching the actual text column',options,async()=>{
+  const {call,inspect,frame,ui}=await fixture();
+  assert.equal(inspect().page,'Chat','unpaired home also shows the split screen, not a pairing form');
+  const face=inspect().nodes.find(n=>n.id==='home_face').rect;
+  const chat=inspect().nodes.find(n=>n.id==='chat_text').rect;
+  assert(face.x+face.w<chat.x);assert.equal(inspect().chatWrapWidth,chat.w-10);
+  assert.equal(inspect().chatVisibleLines,6);
+  call('set_chat_screen',['string'],['中'.repeat(60)]);
+  assert(inspect().chatCachedLines>=5,'wrapping must use the narrower right column');
+  const idle=frame();call('set_expression',['string'],['sad']);const sad=frame();
+  let leftChanges=0,rightChanges=0;
+  for(let y=44;y<180;y++)for(let x=0;x<320;x++) {
+    const i=(y*320+x)*2;
+    if(idle[i]!==sad[i]||idle[i+1]!==sad[i+1]){if(x<chat.x)leftChanges++;else rightChanges++;}
+  }
+  assert(leftChanges>0);assert.equal(rightChanges,0,'expression must not repaint or overwrite conversation pixels');
+  call('set_chat_screen',['string'],[Array.from({length:15},(_,i)=>'Line '+i).join('\n')]);frame();
+  const scroll=inspect().chatScrollLine;
+  ui._simulator_touch(50,100,1);ui._simulator_touch(50,160,0);
+  assert.equal(inspect().chatScrollLine,scroll,'face-pane swipe must not scroll the right-hand conversation');
+  ui._simulator_touch(chat.x+40,100,1);ui._simulator_touch(chat.x+40,160,0);
+  assert(inspect().chatScrollLine<scroll,'right-pane swipe must scroll the real bounded transcript');
+});
+
+test('settings groups navigate back without emitting service operations',options,async()=>{
+  const {call,inspect,tap,actions}=await fixture();call('set_paired',['number'],[1]);
+  tap('sidebar_toggle');tap('sidebar_settings');
+  for(const [route,page,buttons] of [
+    ['settings_connection','Connection',['pairing_open','pair_listen']],
+    ['settings_space','SpaceSettings',['space_leave']],
+    ['settings_device','DeviceSettings',['edge_new','edge_unpair']],
+  ]) {
+    assert.equal(tap(route),1);assert.equal(inspect().page,page);
+    for(const id of buttons)assert(inspect().nodes.some(n=>n.id===id));
+    assert.equal(tap('page_back'),1);assert.equal(inspect().page,'Settings');
+  }
+  assert.deepEqual(actions,[]);
+  tap('settings_connection');tap('pairing_open');assert.equal(inspect().page,'Pairing');
+  assert.equal(tap('page_back'),1);assert.equal(inspect().page,'Settings');
+});
+
+test('drawer scrim cannot trigger the underlying send, and closing preserves the draft',options,async()=>{
+  const {call,inspect,tap,actions,ui}=await fixture();call('set_connection',['number','number'],[1,1]);
+  call('set_chat_draft',['string'],['草稿']);tap('sidebar_toggle');
+  assert.equal(inspect().nodes.find(n=>n.id==='sidebar_backdrop').rect.x,180);
+  ui._simulator_touch(285,207,1);ui._simulator_touch(285,207,0);
+  assert.equal(inspect().page,'Chat');assert.deepEqual(actions,[]);
+  assert.equal(inspect().nodes.find(n=>n.id==='chat_draft').text,'草稿');
+  assert.equal(tap('edge_send'),1);assert.deepEqual(actions,['edge_send']);
 });

@@ -38,3 +38,23 @@ test('one set of commands builds the standalone renderer without compatibility a
   for (const alias of ['build:mini', 'build:firmware:mini', 'dev:mini', 'test:mini']) assert.equal(scripts[alias], undefined);
   assert(!Object.values(scripts).some(command => command.includes('--minimal-ui') || command.includes('--lvgl')));
 });
+
+
+test('fixed runtime preview hides the editing overlay before and after Wasm initialization', async () => {
+  const html = await read('tools/esp32-editor/web/index.html');
+  const app = await read('tools/esp32-editor/web/app.ts');
+  assert.match(html, /<div\s+id="edit-layer"\s+hidden\s*>/,
+    'an uninitialized or disabled editor must not swallow real pointer clicks');
+  assert(app.includes("query<HTMLElement>('#edit-layer').hidden = true;"),
+    'runtime initialization must keep the retired editing overlay hidden');
+});
+
+
+test('state-driven expression selector does not advertise inactive preview options', async () => {
+  const html = await read('tools/esp32-editor/web/index.html');
+  const app = await read('tools/esp32-editor/web/app.ts');
+  const selector = /<select id="expression">([\s\S]*?)<\/select>/.exec(html);
+  assert(selector);
+  assert(!/<option>(happy|sad|sleepy)<\/option>/.test(selector[1]));
+  assert(app.includes('expressionSelect.disabled = true;'));
+});

@@ -363,6 +363,8 @@ async function initialize(): Promise<void> {
   editorStatus.textContent = '自绘 UI：固定页面，布局编辑已停用';
   const toggle = document.querySelector<HTMLInputElement>('#edit-mode');
   if (toggle) { toggle.checked = false; toggle.disabled = true; }
+  // The retired layout overlay must never intercept the live canvas touches.
+  query<HTMLElement>('#edit-layer').hidden = true;
   themeSelect.disabled = true;
   shapeSelect.disabled = true;
   expressionSelect.disabled = true;

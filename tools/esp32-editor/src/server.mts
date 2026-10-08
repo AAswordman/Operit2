@@ -82,6 +82,7 @@ async function hash(): Promise<string> {
     ...names.filter((n: string) => n.endsWith('.c')).sort(),
     ...names.filter((n: string) => n.endsWith('.h')).sort(),
     ...names.filter((n: string) => n.endsWith('.inc')).sort(),
+    ...names.filter((n: string) => n.endsWith('.svg')).sort(),
   ];
   const digest = createHash('sha256');
   for (const n of hashed) {

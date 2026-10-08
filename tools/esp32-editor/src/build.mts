@@ -1,4 +1,5 @@
 import {spawn} from 'node:child_process';
+import {compileFaceSvg} from './face-svg.mts';
 import {createHash} from 'node:crypto';
 import {
   copyFile,
@@ -123,7 +124,7 @@ async function sharedHash(): Promise<string> {
   return hashFiles([
     ...await filesWithSuffix(ui, '.c'),
     ...await filesWithSuffix(ui, '.h'),
-    ...await filesWithSuffix(ui, '.inc'),
+    ...await filesWithSuffix(ui, '.inc'), ...await filesWithSuffix(ui, '.svg'),
   ]);
 }
 
@@ -238,6 +239,11 @@ async function buildFirmware(): Promise<string> {
   return firmwareElf;
 }
 
+const faceHeader = compileFaceSvg(await readFile(path.join(ui, 'face.svg'), 'utf8'));
+const faceHeaderPath = path.join(ui, 'mini_face.h');
+if (!existsSync(faceHeaderPath) || await readFile(faceHeaderPath, 'utf8') !== faceHeader) {
+  await writeFile(faceHeaderPath, faceHeader);
+}
 const emcc = emccCommand(emsdk);
 const builtFirmwareElf = firmware ? await buildFirmware() : undefined;
 await mkdir(out, {recursive: true});
@@ -325,7 +331,7 @@ if (linked.code !== 0) throw new Error('emcc link failed');
 const runtimeFiles = [
   ...await filesWithSuffix(ui, '.c'),
   ...await filesWithSuffix(ui, '.h'),
-  ...await filesWithSuffix(ui, '.inc'),
+  ...await filesWithSuffix(ui, '.inc'), ...await filesWithSuffix(ui, '.svg'),
   ...await filesWithSuffix(path.join(root, 'apps/esp32/src'), '.rs'),
   path.join(root, 'apps/esp32/partitions.csv'),
 ];
