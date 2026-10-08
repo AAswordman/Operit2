@@ -118,7 +118,7 @@ impl OperitTui {
             self.render_startup_workspace_prompt(frame);
         }
 
-        if self.approval_bridge.current().is_some() {
+        if !self.current_tool_permission_requests.is_empty() {
             self.render_approval_modal(frame);
         }
 
@@ -1028,13 +1028,18 @@ impl OperitTui {
     }
 
     fn render_approval_modal(&mut self, frame: &mut Frame) {
-        let Some(request) = self.approval_bridge.current() else {
+        let pending_count = self.current_tool_permission_requests.len();
+        let Some(request) = self.current_tool_permission_requests.first().cloned() else {
             return;
         };
         let text = self.text();
         let popup = centered_rect(82, 78, frame.area());
         frame.render_widget(Clear, popup);
-        let elapsed = request.requested_at.elapsed().as_secs();
+        let now_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(request.requestedAtMillis);
+        let elapsed = now_millis.saturating_sub(request.requestedAtMillis) / 1000;
         let params = if request.tool.parameters.is_empty() {
             text.params_none().to_string()
         } else {
@@ -1046,8 +1051,13 @@ impl OperitTui {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        let title = if pending_count > 1 {
+            format!("{} (1/{})", text.approval_title(), pending_count)
+        } else {
+            text.approval_title().to_string()
+        };
         let modal_block = Block::default()
-            .title(text.approval_title())
+            .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::ACCENT_DIM));
         let inner = modal_block.inner(popup);
