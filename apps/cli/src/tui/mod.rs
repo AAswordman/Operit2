@@ -22,6 +22,8 @@ mod input;
 mod link_proxy_rs;
 #[path = "transcript/markdown.rs"]
 mod markdown;
+#[path = "core/outgoing_joins.rs"]
+mod outgoing_joins;
 #[path = "input/pending_queue.rs"]
 mod pending_queue;
 #[path = "view/render.rs"]
@@ -43,7 +45,8 @@ use app::{
 };
 use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
-use operit_node_runtime::NodeServices::PeerTransport;
+use operit_node_runtime::NodeServices::{PairingPrompt, PeerTransport};
+use operit_node_runtime::RuntimeRemoteLinkService::{RuntimeRemoteLinkService, SpaceJoinRequest};
 use operit_node_runtime::RuntimePeerService::RuntimePeerService;
 use operit_core_application::CoreApplication;
 use operit_providers::chat::enhance::ConversationService::ConversationService;
@@ -122,10 +125,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         .expect("TUI language cell lock must not be poisoned")
         .take()
         .expect("TUI language must be initialized by CoreApplication startup");
-    let network_event_task = spawn_network_ui_events(
-        core_application.nodeServices()?.peers(),
-        network_event_sender,
-    );
+    let network_peers = core_application.nodeServices()?.peers();
     let initial_chat_id = initial_chat_id_cell
         .lock()
         .expect("TUI initial chat cell lock must not be poisoned")
@@ -157,29 +157,53 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         network_event_receiver,
     )
     .await?;
-    let result = tui.run().await;
+    // Runtime peer/proxy futures are not Send. Keep the monitor on the local
+    // executor, independently of the terminal loop, and drop its in-flight
+    // operations before shutting down the Core.
+    let result = tokio::task::LocalSet::new()
+        .run_until(async {
+            let network_event_task = spawn_network_ui_events(
+                network_peers,
+                core_application.accessServices(),
+                network_event_sender.clone(),
+            );
+            let outgoing_join_task = outgoing_joins::spawn_outgoing_join_monitor(
+                core_application.accessServices(),
+                network_event_sender,
+            );
+            let result = tui.run().await;
+            outgoing_join_task.abort();
+            network_event_task.abort();
+            let _ = outgoing_join_task.await;
+            let _ = network_event_task.await;
+            result
+        })
+        .await;
     drop(tui);
-    network_event_task.abort();
     core_application.shutdown().await;
     result
 }
 
 /// Structured network events the watcher pushes to the TUI event loop.
 pub(crate) enum NetworkUiEvent {
-    /// The peer service signaled a change. Carries no data on purpose: the
-    /// link proxy futures are not `Send`, so the TUI event loop fetches the
-    /// pairing prompt and join request snapshots itself.
-    PeerChanges,
+    /// A background refresh reached a terminal join status. Applying this
+    /// event must not perform another remote call on the terminal loop.
+    OutgoingJoinSettled(SpaceJoinRequest),
+    /// Snapshots fetched in the background after peer changes or a settled join.
+    Snapshot {
+        prompts: Vec<PairingPrompt>,
+        requests: Option<Vec<SpaceJoinRequest>>,
+    },
 }
 
-/// Forwards peer-service change signals to the TUI event loop. The signal
-/// carries no payload; the TUI diffs fresh snapshots against what it has
-/// shown, so nothing polls on a timer.
+/// Fetches change-triggered snapshots off the terminal loop. Peer futures are
+/// not Send, so this watcher shares the local executor with the join monitor.
 fn spawn_network_ui_events(
     peers: Arc<dyn RuntimePeerService>,
+    network: RuntimeRemoteLinkService,
     events: mpsc::Sender<NetworkUiEvent>,
 ) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+    tokio::task::spawn_local(async move {
         let mut changes = peers.subscribePeerChanges();
         loop {
             match changes.recv().await {
@@ -189,7 +213,10 @@ fn spawn_network_ui_events(
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
-            if events.send(NetworkUiEvent::PeerChanges).is_err() {
+            if events
+                .send(outgoing_joins::network_snapshot(&network).await)
+                .is_err()
+            {
                 break;
             }
         }

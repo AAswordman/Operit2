@@ -51,6 +51,7 @@ use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
 use super::i18n::{TuiLanguage, TuiText};
 use super::link_proxy_rs::{TuiContentStreamEventInfo, TuiCore};
+use super::outgoing_joins::space_join_is_active;
 use super::pending_queue::PendingQueueMessage;
 use super::scrollbar::{
     pointer_hits_scrollbar, scroll_position_for_pointer, scrollbar_hit_part, ScrollbarHit,
@@ -73,7 +74,6 @@ use operit_store::NetworkControlStore::{NetworkControlIdentityAssignment, Networ
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const RUNTIME_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
-const OUTGOING_JOIN_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSIENT_STATUS_DURATION: Duration = Duration::from_secs(3);
 const MAX_PENDING_TERMINAL_EVENTS_PER_FRAME: usize = 64;
 
@@ -130,7 +130,6 @@ pub(super) struct OperitTui {
     /// Pairings this session started with `/network pair` and has not yet
     /// confirmed or cancelled; lets the follow-up commands resolve the id.
     pending_pairings: Vec<PendingPairing>,
-    last_outgoing_join_refresh_at: Option<Instant>,
     /// The list popup is currently the Y/N confirm for `/network leave`; any
     /// other popup open clears it so a stale confirm cannot fire elsewhere.
     leave_confirm_pending: bool,
@@ -661,7 +660,6 @@ impl OperitTui {
             seen_pairing_prompt_ids: BTreeSet::new(),
             seen_join_request_ids: BTreeSet::new(),
             pending_pairings: Vec::new(),
-            last_outgoing_join_refresh_at: None,
             leave_confirm_pending: false,
             network_snapshots_seeded: false,
             context_usage_label: String::new(),
@@ -797,8 +795,7 @@ impl OperitTui {
                 }
             }
             self.apply_toast_messages();
-            self.apply_network_events().await;
-            self.refresh_outgoing_joins_if_due().await;
+            self.apply_network_events();
             if let Err(error) = self.sync_compose_surfaces().await {
                 if Self::is_route_permission_error_message(&error) {
                     self.apply_route_permission_error(error);
@@ -827,6 +824,10 @@ impl OperitTui {
                     return Err(error);
                 }
             }
+            // Crossterm polls synchronously and local proxy futures can be
+            // immediately ready. Explicitly let the local network tasks run
+            // even when an idle frame contains no other yielding await.
+            tokio::task::yield_now().await;
         }
         Ok(())
     }
@@ -844,75 +845,49 @@ impl OperitTui {
         }
     }
 
-    /// Applies peer-change watcher signals: fetches fresh pairing prompt and
-    /// join request snapshots and opens the popups when ids beyond the
+    /// Applies background network results and opens popups when ids beyond the
     /// previous snapshot appear. The first fetch only seeds the snapshots so
     /// a TUI start does not replay requests that predate the session.
-    async fn apply_network_events(&mut self) {
-        while self
-            .network_event_receiver
-            .try_recv()
-            .map(|event| matches!(event, NetworkUiEvent::PeerChanges))
-            .unwrap_or(false)
-        {
-            self.refresh_network_snapshots().await;
-        }
-    }
-
-    /// Pulls the reviewer decision for every active outgoing join request,
-    /// mirroring the Flutter peer-dialog monitor: the target never pushes the
-    /// approval, so the applicant side has to poll. Failures (offline targets)
-    /// leave the request pending for the next tick; only a terminal status is
-    /// reported and it refreshes the network snapshots once.
-    async fn refresh_outgoing_joins_if_due(&mut self) {
-        let now = Instant::now();
-        let due = self
-            .last_outgoing_join_refresh_at
-            .map(|last| now.saturating_duration_since(last) >= OUTGOING_JOIN_REFRESH_INTERVAL)
-            .unwrap_or(true);
-        if !due {
-            return;
-        }
-        self.last_outgoing_join_refresh_at = Some(now);
-        let Ok(requests) = self.networkControl.outgoingDeviceSpaceJoins() else {
-            return;
-        };
-        for request in requests
-            .iter()
-            .filter(|request| space_join_is_active(&request.status))
-        {
-            let Ok(updated) = self
-                .networkControl
-                .refreshDeviceSpaceJoin(request.requestId.clone())
-                .await
-            else {
-                continue;
-            };
-            if !space_join_is_active(&updated.status) {
-                let status = updated.status;
-                let message = match status {
-                    SpaceJoinStatus::Joined => format!(
-                        "network join approved: joined {} with {}",
-                        updated.spaceName, updated.targetDeviceId
-                    ),
-                    SpaceJoinStatus::Rejected => {
-                        format!("network join rejected by {}", updated.targetDeviceId)
-                    }
-                    _ => format!(
-                        "network join {}: {} ({})",
-                        join_status_label(&status),
-                        updated.targetDeviceId,
-                        updated.spaceName
-                    ),
-                };
-                self.set_transient_status_message(message);
-                self.refresh_network_snapshots().await;
+    fn apply_network_events(&mut self) {
+        while let Ok(event) = self.network_event_receiver.try_recv() {
+            match event {
+                NetworkUiEvent::OutgoingJoinSettled(updated) => {
+                    let message = match updated.status {
+                        SpaceJoinStatus::Joined => format!(
+                            "network join approved: joined {} with {}",
+                            updated.spaceName, updated.targetDeviceId
+                        ),
+                        SpaceJoinStatus::Rejected => {
+                            format!("network join rejected by {}", updated.targetDeviceId)
+                        }
+                        _ => format!(
+                            "network join {}: {} ({})",
+                            join_status_label(&updated.status),
+                            updated.targetDeviceId,
+                            updated.spaceName
+                        ),
+                    };
+                    self.set_transient_status_message(message);
+                }
+                NetworkUiEvent::Snapshot { prompts, requests } => {
+                    self.apply_network_snapshots(prompts, requests);
+                }
             }
         }
     }
 
     async fn refresh_network_snapshots(&mut self) {
         let prompts = self.networkControl.pairingPrompts().unwrap_or_default();
+        let requests = self.networkControl.incomingDeviceSpaceJoins().await.ok();
+        self.apply_network_snapshots(prompts, requests);
+    }
+
+    /// Applies already-fetched data without waiting for network I/O.
+    fn apply_network_snapshots(
+        &mut self,
+        prompts: Vec<PairingPrompt>,
+        requests: Option<Vec<SpaceJoinRequest>>,
+    ) {
         let has_new_prompts = prompts
             .iter()
             .any(|prompt| !self.seen_pairing_prompt_ids.contains(&prompt.pairingId));
@@ -924,7 +899,7 @@ impl OperitTui {
             .map(|prompt| prompt.pairingId.clone())
             .collect();
 
-        let Ok(requests) = self.networkControl.incomingDeviceSpaceJoins().await else {
+        let Some(requests) = requests else {
             self.network_snapshots_seeded = true;
             return;
         };
@@ -940,7 +915,7 @@ impl OperitTui {
             .collect();
         self.network_snapshots_seeded = true;
         if self.device_manager.is_some() {
-            self.refresh_device_manager_snapshot().await;
+            self.apply_device_manager_snapshot(requests);
         }
     }
 
@@ -2901,6 +2876,15 @@ impl OperitTui {
     /// is open disappears from the topology, the window drops back to
     /// browsing instead of managing a ghost row.
     async fn refresh_device_manager_snapshot(&mut self) {
+        let requests = self
+            .networkControl
+            .incomingDeviceSpaceJoins()
+            .await
+            .unwrap_or_default();
+        self.apply_device_manager_snapshot(requests);
+    }
+
+    fn apply_device_manager_snapshot(&mut self, requests: Vec<SpaceJoinRequest>) {
         let selected_id = self
             .device_manager
             .as_ref()
@@ -2912,11 +2896,6 @@ impl OperitTui {
         let Ok(topology) = self.networkControl.deviceSpaceTopology() else {
             return;
         };
-        let requests = self
-            .networkControl
-            .incomingDeviceSpaceJoins()
-            .await
-            .unwrap_or_default();
         let Some(modal) = self.device_manager.as_mut() else {
             return;
         };
@@ -4686,15 +4665,6 @@ fn resolve_pending_pairing<'a>(
             Err("several pending pairings; name the pairing id from /network pair".to_string())
         }
     }
-}
-
-/// Join requests in these states still resolve to a decision; mirrors the
-/// runtime's own active-status rule for outgoing refreshes.
-fn space_join_is_active(status: &SpaceJoinStatus) -> bool {
-    matches!(
-        status,
-        SpaceJoinStatus::Pending | SpaceJoinStatus::Approving | SpaceJoinStatus::Approved
-    )
 }
 
 fn join_status_label(status: &SpaceJoinStatus) -> &'static str {
