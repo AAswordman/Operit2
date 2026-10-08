@@ -7,18 +7,19 @@ use crate::runtime_support::{
     RuntimeChatCallRequest, RuntimeChatSendRequest, RuntimeChatSlot, ToolRuntimeSupport,
 };
 use crate::tools::ToolResultDataClasses::{
-    stringResultData, AgentStatusResultData, CharacterCardInfo, CharacterCardListResultData,
-    ChatCallResultData, ChatCallTurnData, ChatCreationResultData, ChatDeleteResultData,
-    ChatFindResultData, ChatInfo, ChatListResultData, ChatMessageInfo, ChatMessagesResultData,
-    ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, JsNullable,
-    JsOptional, MessageSendResultData, ToolResultData,
+    stringResultData, AgentStatusResultData, ChatCallResultData, ChatCallTurnData,
+    ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData,
+    ChatMessageInfo, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData,
+    ChatTitleUpdateResultData, JsNullable, JsOptional, MessageSendResultData, ToolResultData,
 };
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
+    AITool, AsyncToolExecutor, ToolAccessSpec, ToolBoundary, ToolEffect, ToolInvocationFuture,
+    ToolValidationResult,
 };
 use operit_model::ChatHistory::ChatHistory;
-use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::ChatTurnOptions::{ChatTurnContinuation, ChatTurnOptions};
+use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::FunctionType::FunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
@@ -45,7 +46,6 @@ pub enum ChatManagerToolOperation {
     SendMessageToAi,
     SendMessageToAiStreaming,
     CallChatModel,
-    ListCharacterCards,
     GetChatMessages,
     GetChatMessagesRange,
 }
@@ -93,87 +93,49 @@ impl StandardChatManagerTool {
         }
     }
 
+    /// Creates a workspace conversation using an explicit source and opaque creation input.
     #[allow(non_snake_case)]
-    /// Creates a new chat and returns its persisted metadata.
-    pub fn createNewChat(&self, tool: &AITool) -> ToolResult {
-        let group = optionalParameterValue(tool, "group").filter(|value| !value.trim().is_empty());
-        let setAsCurrentChat = match parseOptionalBoolean(tool, "set_as_current_chat") {
-            Ok(value) => value.unwrap_or(true),
-            Err(error) => return toolError(tool, error),
-        };
-        let characterCardId = optionalParameterValue(tool, "character_card_id")
-            .filter(|value| !value.trim().is_empty());
-        let characterCardName = match resolveCharacterCardName(
-            self.runtimeSupport.as_ref(),
-            characterCardId.as_deref(),
-        ) {
-            Ok(value) => value,
-            Err(error) => return toolError(tool, error),
-        };
-
-        if setAsCurrentChat {
-            if let Err(error) =
-                self.runtimeSupport
-                    .createChatRuntime(characterCardName, group, true)
-            {
-                return toolError(tool, error);
-            }
-            return match ChatHistoryManager::default()
-                .and_then(|manager| manager.currentChatIdFlow())
-            {
-                Ok(Some(chatId)) => successData(
-                    tool,
-                    ToolResultData::ChatCreationResultData(ChatCreationResultData {
-                        chatId,
-                        createdAt: currentTimeMillis(),
-                    }),
-                ),
-                Ok(None) => toolError(
-                    tool,
-                    "Failed to create chat, unable to get current chat ID".to_string(),
-                ),
-                Err(error) => toolError(tool, format!("Error creating chat: {error}")),
-            };
-        }
-
-        let previousChatIds = match ChatHistoryManager::default() {
-            Ok(manager) => match manager.loadChatHistories() {
-                Ok(histories) => histories
-                    .into_iter()
-                    .map(|chat| chat.id)
-                    .collect::<Vec<_>>(),
-                Err(error) => return toolError(tool, format!("Error loading chats: {error}")),
-            },
-            Err(error) => return toolError(tool, format!("Error opening chat history: {error}")),
-        };
-
+    pub async fn createNewChat(&self, tool: &AITool) -> ToolResult {
         if let Err(error) =
-            self.runtimeSupport
-                .createChatRuntime(characterCardName, group, false)
+            validateChatParameterNames(tool, &["set_as_current_chat", "source_chat_id", "input"])
         {
             return toolError(tool, error);
         }
-
-        match ChatHistoryManager::default().and_then(|manager| manager.loadChatHistories()) {
-            Ok(histories) => {
-                let created = histories
-                    .into_iter()
-                    .find(|chat| !previousChatIds.iter().any(|id| id == &chat.id));
-                match created {
-                    Some(chat) => successData(
-                        tool,
-                        ToolResultData::ChatCreationResultData(ChatCreationResultData {
-                            chatId: chat.id,
-                            createdAt: currentTimeMillis(),
-                        }),
-                    ),
-                    None => toolError(
-                        tool,
-                        "Failed to create chat, unable to get new chat ID".to_string(),
-                    ),
-                }
+        let sourceChatId = match optionalParameterValue(tool, "source_chat_id") {
+            None => None,
+            Some(value) if value == "null" => None,
+            Some(value) if value.trim().is_empty() => {
+                return toolError(tool, "source_chat_id must not be blank".to_string())
             }
-            Err(error) => toolError(tool, format!("Error creating chat: {error}")),
+            Some(value) => Some(value),
+        };
+        let input = match optionalParameterValue(tool, "input") {
+            None => None,
+            Some(value) => match serde_json::from_str::<Value>(&value) {
+                Ok(Value::Null) => None,
+                Ok(value @ Value::Object(_)) => Some(value),
+                Ok(_) => return toolError(tool, "input must be a JSON object or null".to_string()),
+                Err(error) => return toolError(tool, error.to_string()),
+            },
+        };
+        let setAsCurrentChat = match parseOptionalBoolean(tool, "set_as_current_chat") {
+            Ok(Some(value)) => value,
+            Ok(None) => true,
+            Err(error) => return toolError(tool, error),
+        };
+        match self
+            .runtimeSupport
+            .createChatRuntime(setAsCurrentChat, sourceChatId, input)
+            .await
+        {
+            Ok(chatId) => successData(
+                tool,
+                ToolResultData::ChatCreationResultData(ChatCreationResultData {
+                    chatId,
+                    createdAt: currentTimeMillis(),
+                }),
+            ),
+            Err(error) => toolError(tool, error),
         }
     }
 
@@ -295,7 +257,7 @@ impl StandardChatManagerTool {
 
     #[allow(non_snake_case)]
     /// Switches the main runtime slot to a persisted chat.
-    pub fn switchChat(&self, tool: &AITool) -> ToolResult {
+    pub async fn switchChat(&self, tool: &AITool) -> ToolResult {
         let chatId = parameterValue(tool, "chat_id");
         if chatId.trim().is_empty() {
             return toolError(tool, "Invalid parameter: missing chat_id".to_string());
@@ -309,7 +271,7 @@ impl StandardChatManagerTool {
             Ok(None) => return toolError(tool, format!("Chat does not exist: {chatId}")),
             Err(error) => return toolError(tool, format!("Error loading chat: {error}")),
         };
-        if let Err(error) = self.runtimeSupport.switchMainChat(&chatId) {
+        if let Err(error) = self.runtimeSupport.switchMainChat(&chatId).await {
             return toolError(tool, error);
         }
         successData(
@@ -381,9 +343,9 @@ impl StandardChatManagerTool {
 
     #[allow(non_snake_case)]
     /// Sends a user message to the selected chat runtime and waits for a response.
-    pub fn sendMessageToAi(&self, tool: &AITool) -> ToolResult {
+    pub async fn sendMessageToAi(&self, tool: &AITool) -> ToolResult {
         let message = parameterValue(tool, "message");
-        if message.trim().is_empty() {
+        if message.trim().is_empty() && optionalParameterValue(tool, "continuation").is_none() {
             return toolError(tool, "Invalid parameter: missing message".to_string());
         }
         let runtimeSlot = match parseRuntimeSlot(optionalParameterValue(tool, "runtime").as_deref())
@@ -391,14 +353,32 @@ impl StandardChatManagerTool {
             Ok(value) => value,
             Err(error) => return toolError(tool, error),
         };
-        let roleCardId =
-            optionalParameterValue(tool, "role_card_id").filter(|value| !value.trim().is_empty());
-        if let Some(roleCardId) = roleCardId.as_deref() {
-            if let Err(error) =
-                resolveCharacterCardName(self.runtimeSupport.as_ref(), Some(roleCardId))
-            {
-                return toolError(tool, error);
-            }
+        if let Err(error) = validateChatParameterNames(
+            tool,
+            &[
+                "message",
+                "runtime",
+                "chat_id",
+                "participant_id",
+                "sender_name",
+                "persist_turn",
+                "notify_reply",
+                "hide_user_message",
+                "disable_warning",
+                "timeout_ms",
+                "attachments",
+                "reply_to_message_timestamp",
+                "continuation",
+            ],
+        ) {
+            return toolError(tool, error);
+        }
+        let participantId = optionalParameterValue(tool, "participant_id");
+        if participantId
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return toolError(tool, "participant_id must not be blank".to_string());
         }
         let chatId =
             optionalParameterValue(tool, "chat_id").filter(|value| !value.trim().is_empty());
@@ -419,51 +399,34 @@ impl StandardChatManagerTool {
             Ok(value) => value,
             Err(error) => return toolError(tool, error),
         };
-        let sentAt = currentTimeMillis();
+        let attachments = match parseSendAttachments(tool) {
+            Ok(value) => value, Err(error) => return toolError(tool, error),
+        };
+        let replyToMessageTimestamp = match parseReplyTimestamp(tool) {
+            Ok(value) => value, Err(error) => return toolError(tool, error),
+        };
+        if turnOptions.continuation.is_some() && (!message.is_empty() || !attachments.is_empty() || replyToMessageTimestamp.is_some() || proxySenderName.is_some()) {
+            return toolError(tool, "Continuation cannot resubmit text, attachments, reply target or sender name".to_string());
+        }
         let request = RuntimeChatSendRequest {
             slot: runtimeSlot,
-            roleCardId,
+            participantId,
             chatId: chatId.clone(),
             message: message.clone(),
             proxySenderName,
+            attachments,
+            replyToMessageTimestamp,
             turnOptions,
         };
-        let result = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())
-            .and_then(|runtime| runtime.block_on(self.runtimeSupport.sendChatMessage(request)));
-        if let Err(error) = result {
-            return toolError(tool, format!("Error sending message: {error}"));
+        match self.runtimeSupport.sendChatMessage(request).await {
+            Ok(result) => successData(tool, ToolResultData::MessageSendResultData(result)),
+            Err(error) => toolError(tool, error),
         }
-        let resolvedChatId = match chatId {
-            Some(chatId) => chatId,
-            None => match ChatHistoryManager::default()
-                .and_then(|manager| manager.currentChatIdFlow())
-            {
-                Ok(Some(chatId)) => chatId,
-                Ok(None) => return toolError(tool, "Unable to get current chat ID".to_string()),
-                Err(error) => {
-                    return toolError(tool, format!("Error loading current chat: {error}"))
-                }
-            },
-        };
-        let aiResponse = latestAssistantMessage(&resolvedChatId);
-        successData(
-            tool,
-            ToolResultData::MessageSendResultData(MessageSendResultData {
-                chatId: resolvedChatId,
-                message,
-                aiResponse: JsOptional::from_nullable_option(aiResponse),
-                receivedAt: JsOptional::Value(currentTimeMillis()),
-                sentAt,
-            }),
-        )
     }
 
     /// Calls a configured functional model without persisting a chat turn.
     #[allow(non_snake_case)]
-    pub fn callChatModel(&self, tool: &AITool) -> ToolResult {
+    pub async fn callChatModel(&self, tool: &AITool) -> ToolResult {
         let functionType = match parseFunctionType(parameterValue(tool, "function_type")) {
             Ok(value) => value,
             Err(error) => return toolError(tool, error),
@@ -486,44 +449,14 @@ impl StandardChatManagerTool {
             recordTokenUsage,
             enableThinking,
         };
-        let output = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())
-            .and_then(|runtime| runtime.block_on(self.runtimeSupport.callChatModel(request)))
-        {
+        let output = match self.runtimeSupport.callChatModel(request).await {
             Ok(value) => value,
-            Err(error) => return toolError(tool, format!("Error calling chat model: {error}")),
+            Err(error) => return toolError(tool, error),
         };
         successData(
             tool,
             ToolResultData::ChatCallResultData(parseChatCallOutput(&output)),
         )
-    }
-
-    #[allow(non_snake_case)]
-    /// Lists character cards available to chat sessions.
-    pub fn listCharacterCards(&self, tool: &AITool) -> ToolResult {
-        match self.runtimeSupport.listCharacterCards() {
-            Ok(cards) => successData(
-                tool,
-                ToolResultData::CharacterCardListResultData(CharacterCardListResultData {
-                    totalCount: cards.len(),
-                    cards: cards
-                        .into_iter()
-                        .map(|card| CharacterCardInfo {
-                            id: card.id,
-                            name: card.name,
-                            description: card.description,
-                            isDefault: card.isDefault,
-                            createdAt: card.createdAt,
-                            updatedAt: card.updatedAt,
-                        })
-                        .collect(),
-                }),
-            ),
-            Err(error) => toolError(tool, format!("Error listing character cards: {error}")),
-        }
     }
 
     #[allow(non_snake_case)]
@@ -586,7 +519,8 @@ impl StandardChatManagerTool {
                             content: message.displayText(),
                             sender: message.sender,
                             timestamp: message.timestamp,
-                            roleName: message.roleName,
+                            variantIndex: message.selectedVariantIndex,
+                            variantCount: message.variantCount,
                             provider: message.provider,
                             modelName: message.modelName,
                         })
@@ -690,7 +624,8 @@ impl StandardChatManagerTool {
                             content: message.displayText(),
                             sender: message.sender,
                             timestamp: message.timestamp,
-                            roleName: message.roleName,
+                            variantIndex: message.selectedVariantIndex,
+                            variantCount: message.variantCount,
                             provider: message.provider,
                             modelName: message.modelName,
                         })
@@ -702,17 +637,18 @@ impl StandardChatManagerTool {
     }
 }
 
-impl ToolExecutor for ChatManagerToolExecutor {
+impl AsyncToolExecutor for ChatManagerToolExecutor {
+    /// Validates the exact registered chat-tool request before asynchronous execution.
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
         validateChatTool(self.operation, tool)
     }
 
+    /// Declares the generic chat operation effect without consulting plugin domain storage.
     fn accessSpec(&self, _tool: &AITool) -> Result<ToolAccessSpec, String> {
         let effect = match self.operation {
             ChatManagerToolOperation::ListChats
             | ChatManagerToolOperation::FindChat
             | ChatManagerToolOperation::AgentStatus
-            | ChatManagerToolOperation::ListCharacterCards
             | ChatManagerToolOperation::GetChatMessages
             | ChatManagerToolOperation::GetChatMessagesRange => ToolEffect::READ,
             ChatManagerToolOperation::StartChatService
@@ -731,25 +667,31 @@ impl ToolExecutor for ChatManagerToolExecutor {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        let result = match self.operation {
-            ChatManagerToolOperation::StartChatService => self.tools.startChatService(tool),
-            ChatManagerToolOperation::StopChatService => self.tools.stopChatService(tool),
-            ChatManagerToolOperation::CreateNewChat => self.tools.createNewChat(tool),
-            ChatManagerToolOperation::ListChats => self.tools.listChats(tool),
-            ChatManagerToolOperation::FindChat => self.tools.findChat(tool),
-            ChatManagerToolOperation::AgentStatus => self.tools.agentStatus(tool),
-            ChatManagerToolOperation::SwitchChat => self.tools.switchChat(tool),
-            ChatManagerToolOperation::UpdateChatTitle => self.tools.updateChatTitle(tool),
-            ChatManagerToolOperation::DeleteChat => self.tools.deleteChat(tool),
-            ChatManagerToolOperation::SendMessageToAi => self.tools.sendMessageToAi(tool),
-            ChatManagerToolOperation::SendMessageToAiStreaming => self.tools.sendMessageToAi(tool),
-            ChatManagerToolOperation::CallChatModel => self.tools.callChatModel(tool),
-            ChatManagerToolOperation::ListCharacterCards => self.tools.listCharacterCards(tool),
-            ChatManagerToolOperation::GetChatMessages => self.tools.getChatMessages(tool),
-            ChatManagerToolOperation::GetChatMessagesRange => self.tools.getChatMessagesRange(tool),
-        };
-        vec![result]
+    /// Runs the selected generic chat operation on its actual asynchronous runtime path.
+    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool) -> ToolInvocationFuture<'a> {
+        Box::pin(async move {
+            let result = match self.operation {
+                ChatManagerToolOperation::StartChatService => self.tools.startChatService(tool),
+                ChatManagerToolOperation::StopChatService => self.tools.stopChatService(tool),
+                ChatManagerToolOperation::CreateNewChat => self.tools.createNewChat(tool).await,
+                ChatManagerToolOperation::ListChats => self.tools.listChats(tool),
+                ChatManagerToolOperation::FindChat => self.tools.findChat(tool),
+                ChatManagerToolOperation::AgentStatus => self.tools.agentStatus(tool),
+                ChatManagerToolOperation::SwitchChat => self.tools.switchChat(tool).await,
+                ChatManagerToolOperation::UpdateChatTitle => self.tools.updateChatTitle(tool),
+                ChatManagerToolOperation::DeleteChat => self.tools.deleteChat(tool),
+                ChatManagerToolOperation::SendMessageToAi => self.tools.sendMessageToAi(tool).await,
+                ChatManagerToolOperation::SendMessageToAiStreaming => {
+                    self.tools.sendMessageToAi(tool).await
+                }
+                ChatManagerToolOperation::CallChatModel => self.tools.callChatModel(tool).await,
+                ChatManagerToolOperation::GetChatMessages => self.tools.getChatMessages(tool),
+                ChatManagerToolOperation::GetChatMessagesRange => {
+                    self.tools.getChatMessagesRange(tool)
+                }
+            };
+            vec![result]
+        })
     }
 }
 
@@ -812,8 +754,8 @@ fn validateChatTool(operation: ChatManagerToolOperation, tool: &AITool) -> ToolV
         }
         ChatManagerToolOperation::SendMessageToAi
         | ChatManagerToolOperation::SendMessageToAiStreaming => {
-            if parameterValue(tool, "message").trim().is_empty() {
-                return invalid("message is required.");
+            if parameterValue(tool, "message").trim().is_empty() && optionalParameterValue(tool, "continuation").is_none() {
+                return invalid("message is required for an initial submit.");
             }
         }
         ChatManagerToolOperation::CallChatModel => {
@@ -827,8 +769,7 @@ fn validateChatTool(operation: ChatManagerToolOperation, tool: &AITool) -> ToolV
         ChatManagerToolOperation::StartChatService
         | ChatManagerToolOperation::StopChatService
         | ChatManagerToolOperation::CreateNewChat
-        | ChatManagerToolOperation::ListChats
-        | ChatManagerToolOperation::ListCharacterCards => {}
+        | ChatManagerToolOperation::ListChats => {}
     }
     ToolValidationResult {
         valid: true,
@@ -1139,11 +1080,25 @@ fn optionalParameterValue(tool: &AITool, name: &str) -> Option<String> {
         .map(|parameter| parameter.value.trim().to_string())
 }
 
+/// Validates exact neutral chat parameter identities and rejects duplicate or undeclared inputs.
+fn validateChatParameterNames(tool: &AITool, allowed: &[&str]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for parameter in &tool.parameters {
+        if !allowed.iter().any(|name| *name == parameter.name) {
+            return Err(format!("Unknown chat parameter: {}", parameter.name));
+        }
+        if !seen.insert(&parameter.name) {
+            return Err(format!("Duplicate chat parameter: {}", parameter.name));
+        }
+    }
+    Ok(())
+}
+
+/// Parses explicitly supplied booleans and never converts an invalid value into parameter absence.
 fn parseOptionalBoolean(tool: &AITool, name: &str) -> Result<Option<bool>, String> {
     match optionalParameterValue(tool, name) {
         Some(value) if value.eq_ignore_ascii_case("true") => Ok(Some(true)),
         Some(value) if value.eq_ignore_ascii_case("false") => Ok(Some(false)),
-        Some(value) if value.trim().is_empty() => Ok(None),
         Some(_) => Err(format!("Invalid parameter: {name} must be true/false")),
         None => Ok(None),
     }
@@ -1159,13 +1114,51 @@ fn parseRuntimeSlot(value: Option<&str>) -> Result<RuntimeChatSlot, String> {
     }
 }
 
+/// Decodes exact original attachment records instead of fabricating objects from count or filenames.
+fn parseSendAttachments(tool: &AITool) -> Result<Vec<AttachmentInfo>, String> {
+    match optionalParameterValue(tool, "attachments") {
+        None => Ok(Vec::new()),
+        Some(value) => {
+            let records: Vec<operit_plugin_sdk::js_sdk::chat::ChatSendAttachment> = serde_json::from_str(&value)
+                .map_err(|error| format!("attachments must be a complete attachment array: {error}"))?;
+            Ok(records.into_iter().map(|record| AttachmentInfo {
+                filePath: record.filePath, nodeId: record.nodeId, fileName: record.fileName,
+                mimeType: record.mimeType, fileSize: record.fileSize, content: record.content,
+            }).collect())
+        }
+    }
+}
+
+/// Decodes an explicitly supplied canonical reply target timestamp without treating invalid input as absence.
+fn parseReplyTimestamp(tool: &AITool) -> Result<Option<i64>, String> {
+    optionalParameterValue(tool, "reply_to_message_timestamp").map(|value| value.parse::<i64>()
+        .map_err(|error| format!("replyToMessageTimestamp must be an integer: {error}"))).transpose()
+}
+
+/// Decodes a concrete existing user-turn locator and rejects forged namespace or extra continuation fields.
+fn parseContinuation(tool: &AITool) -> Result<Option<ChatTurnContinuation>, String> {
+    optionalParameterValue(tool, "continuation").map(|value| {
+        let continuation: ChatTurnContinuation = serde_json::from_str(&value)
+            .map_err(|error| format!("Invalid continuation: {error}"))?;
+        if continuation.userMessageTimestamp <= 0 {
+            return Err("Continuation userMessageTimestamp must be positive".to_string());
+        }
+        Ok(continuation)
+    }).transpose()
+}
+
+/// Applies declared omitted-option semantics while preserving explicit malformed values as errors.
 fn parseTurnOptions(tool: &AITool) -> Result<ChatTurnOptions, String> {
     Ok(ChatTurnOptions {
-        persistTurn: parseOptionalBoolean(tool, "persist_turn")?.unwrap_or(true),
+        persistTurn: match parseOptionalBoolean(tool, "persist_turn")? { Some(value) => value, None => true },
         notifyReply: parseOptionalBoolean(tool, "notify_reply")?,
-        hideUserMessage: parseOptionalBoolean(tool, "hide_user_message")?.unwrap_or(false),
-        disableWarning: parseOptionalBoolean(tool, "disable_warning")?.unwrap_or(false),
+        hideUserMessage: match parseOptionalBoolean(tool, "hide_user_message")? { Some(value) => value, None => false },
+        disableWarning: match parseOptionalBoolean(tool, "disable_warning")? { Some(value) => value, None => false },
+        continuation: parseContinuation(tool)?,
         chatInputSubmitRequestedHandled: false,
+        nativeExecutionId: None,
+        outputObserver: None,
+        deferSequenceCompletion: false,
     })
 }
 
@@ -1276,6 +1269,7 @@ fn sortableChatValue(
     }
 }
 
+/// Projects only workspace conversation metadata without resolving plugin-owned membership.
 fn buildChatInfo(
     chat: &ChatHistory,
     messageCounts: &std::collections::HashMap<String, i32>,
@@ -1290,40 +1284,10 @@ fn buildChatInfo(
         isCurrent: currentChatId == Some(chat.id.as_str()),
         inputTokens: chat.inputTokens,
         outputTokens: chat.outputTokens,
-        characterCardName: JsOptional::from_nullable_option(chat.characterCardName.clone()),
     }
 }
 
-fn resolveCharacterCardName(
-    runtimeSupport: &dyn ToolRuntimeSupport,
-    cardId: Option<&str>,
-) -> Result<Option<String>, String> {
-    match cardId {
-        Some(cardId) => runtimeSupport
-            .characterCardName(cardId)
-            .map(Some)
-            .map_err(|_| "Invalid parameter: character_card_id not found".to_string()),
-        None => Ok(None),
-    }
-}
 
-fn latestAssistantMessage(chatId: &str) -> Option<String> {
-    ChatHistoryManager::default()
-        .and_then(|manager| {
-            manager.loadChatMessagesWithOptions(
-                chatId.to_string(),
-                Some("desc".to_string()),
-                Some(20),
-            )
-        })
-        .ok()
-        .and_then(|messages| {
-            messages
-                .into_iter()
-                .find(|message| message.sender != "user" && message.sender != "summary")
-                .map(|message| message.displayText())
-        })
-}
 
 fn successData(tool: &AITool, value: ToolResultData) -> ToolResult {
     ToolResult {

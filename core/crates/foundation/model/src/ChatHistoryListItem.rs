@@ -6,28 +6,23 @@ pub struct ChatHistoryListItem {
     pub id: String,
     pub title: String,
     pub updatedAt: String,
-    pub group: Option<String>,
     pub displayOrder: i64,
     pub workspaceId: Option<String>,
     pub workspaceName: Option<String>,
-    pub characterCardName: Option<String>,
-    pub characterGroupId: Option<String>,
     pub locked: bool,
     pub pinned: bool,
 }
 
 impl ChatHistoryListItem {
+    /// Projects only host-owned chat metadata for the history list.
     pub fn fromChatHistory(history: &ChatHistory) -> Self {
         Self {
             id: history.id.clone(),
             title: history.title.clone(),
             updatedAt: history.updatedAt.clone(),
-            group: history.group.clone(),
             displayOrder: history.displayOrder,
             workspaceId: history.workspaceId.clone(),
             workspaceName: history.workspaceName.clone(),
-            characterCardName: history.characterCardName.clone(),
-            characterGroupId: history.characterGroupId.clone(),
             locked: history.locked,
             pinned: history.pinned,
         }

@@ -1,4 +1,5 @@
 use crate::sqliteParams;
+use crate::PluginExtensions::{decodePluginExtensions, encodePluginExtensions};
 use crate::SqliteStore::{SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue};
 
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
@@ -10,15 +11,18 @@ pub struct MessageDao {
 }
 
 impl MessageDao {
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn new(store: SqliteStore) -> Self {
         Self { store }
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getTotalMessageCount(&self) -> Result<i32, SqliteStoreError> {
         self.store
             .queryScalar("SELECT COUNT(*) FROM messages", sqliteParams![])
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChat(&self, chatId: &str) -> Result<Vec<MessageEntity>, SqliteStoreError> {
         self.selectMessages(
             "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC",
@@ -26,6 +30,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn countMessagesForChatUpToTimestamp(
         &self,
         chatId: &str,
@@ -37,6 +42,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getLocatorPreviewsForChat(
         &self,
         chatId: &str,
@@ -105,6 +111,7 @@ impl MessageDao {
             .collect()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn searchLocatorPreviewsForChat(
         &self,
         chatId: &str,
@@ -194,6 +201,7 @@ impl MessageDao {
             .collect()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatFromTimestampAsc(
         &self,
         chatId: &str,
@@ -205,6 +213,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatWindowAsc(
         &self,
         chatId: &str,
@@ -217,6 +226,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatAsc(
         &self,
         chatId: &str,
@@ -228,6 +238,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatDesc(
         &self,
         chatId: &str,
@@ -265,6 +276,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatAfterTimestampExclusiveAsc(
         &self,
         chatId: &str,
@@ -277,6 +289,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatInRangeAsc(
         &self,
         chatId: &str,
@@ -306,6 +319,7 @@ impl MessageDao {
             .collect()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatBeforeTimestampDesc(
         &self,
         chatId: &str,
@@ -318,6 +332,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessagesForChatBeforeTimestampExclusiveDesc(
         &self,
         chatId: &str,
@@ -330,6 +345,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn existsMessagesBeforeTimestamp(
         &self,
         chatId: &str,
@@ -341,6 +357,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn existsMessagesAfterTimestamp(
         &self,
         chatId: &str,
@@ -352,6 +369,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getLatestSummaryTimestamp(&self, chatId: &str) -> Result<Option<i64>, SqliteStoreError> {
         self.optionalTimestamp(
             "SELECT timestamp FROM messages WHERE chatId = ?1 AND sender = 'summary' ORDER BY timestamp DESC LIMIT 1",
@@ -359,6 +377,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getLatestSummaryTimestampBefore(
         &self,
         chatId: &str,
@@ -370,6 +389,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getLatestSummaryTimestampUpTo(
         &self,
         chatId: &str,
@@ -381,6 +401,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn existsUserMessage(&self, chatId: &str) -> Result<bool, SqliteStoreError> {
         self.exists(
             "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = ?1 AND sender = 'user' LIMIT 1)",
@@ -388,6 +409,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMaxOrderIndex(&self, chatId: &str) -> Result<Option<i32>, SqliteStoreError> {
         self.store
             .queryOne(
@@ -398,11 +420,12 @@ impl MessageDao {
             .transpose()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn insertMessage(&self, message: MessageEntity) -> Result<i64, SqliteStoreError> {
         if message.messageId == 0 {
             self.store.execute(
                 insertMessageSql(false),
-                insertMessageParams(&message, false),
+                insertMessageParams(&message, false)?,
             )?;
             let rowId: i64 = self
                 .store
@@ -410,28 +433,30 @@ impl MessageDao {
             Ok(rowId)
         } else {
             self.store
-                .execute(insertMessageSql(true), insertMessageParams(&message, true))?;
+                .execute(insertMessageSql(true), insertMessageParams(&message, true)?)?;
             Ok(message.messageId)
         }
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn insertMessages(&self, messages: Vec<MessageEntity>) -> Result<(), SqliteStoreError> {
         self.store.transaction(|transaction| {
             for message in messages {
                 if message.messageId == 0 {
                     transaction.execute(
                         insertMessageSql(false),
-                        insertMessageParams(&message, false),
+                        insertMessageParams(&message, false)?,
                     )?;
                 } else {
                     transaction
-                        .execute(insertMessageSql(true), insertMessageParams(&message, true))?;
+                        .execute(insertMessageSql(true), insertMessageParams(&message, true)?)?;
                 }
             }
             Ok(())
         })
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn copyMessagesToChat(
         &self,
         sourceChatId: &str,
@@ -444,13 +469,13 @@ impl MessageDao {
                     chatId, sender, timestamp, orderIndex, roleName,
                     selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                     cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-                    completedAt, completedExecutionGeneration, displayMode, isFavorite
+                    completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions
                 )
                 SELECT
                     ?2, sender, timestamp, orderIndex, roleName,
                     selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
                     cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-                    completedAt, completedExecutionGeneration, displayMode, isFavorite
+                    completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions
                 FROM messages
                 WHERE chatId = ?1 AND (?3 IS NULL OR timestamp <= ?3)
                 "#,
@@ -459,6 +484,7 @@ impl MessageDao {
         Ok(())
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn updateMessage(&self, message: MessageEntity) -> Result<(), SqliteStoreError> {
         self.store.execute(
             r#"
@@ -497,6 +523,7 @@ impl MessageDao {
         Ok(())
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn deleteAllMessagesForChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
         self.store.execute(
             "DELETE FROM messages WHERE chatId = ?1",
@@ -505,6 +532,7 @@ impl MessageDao {
         Ok(())
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessageByTimestamp(
         &self,
         chatId: &str,
@@ -523,6 +551,7 @@ impl MessageDao {
             .transpose()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn deleteMessagesFrom(&self, chatId: &str, timestamp: i64) -> Result<(), SqliteStoreError> {
         self.store.execute(
             "DELETE FROM messages WHERE chatId = ?1 AND timestamp >= ?2",
@@ -531,6 +560,7 @@ impl MessageDao {
         Ok(())
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn deleteMessageByTimestamp(
         &self,
         chatId: &str,
@@ -543,6 +573,7 @@ impl MessageDao {
         Ok(())
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn getMessageCountsByChatId(&self) -> Result<Vec<ChatMessageCount>, SqliteStoreError> {
         self.store
             .queryRows(
@@ -559,6 +590,7 @@ impl MessageDao {
             .collect()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn updateSelectedVariantIndex(
         &self,
         chatId: &str,
@@ -571,6 +603,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn updateMessageFavorite(
         &self,
         chatId: &str,
@@ -583,6 +616,7 @@ impl MessageDao {
         )
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn searchChatIdsByContent(&self, query: &str) -> Result<Vec<String>, SqliteStoreError> {
         self.store
             .queryRows(
@@ -603,6 +637,7 @@ impl MessageDao {
             .collect()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     pub fn renameRoleName(&self, oldName: &str, newName: &str) -> Result<i32, SqliteStoreError> {
         let count = self.store.execute(
             "UPDATE messages SET roleName = ?2 WHERE roleName = ?1",
@@ -611,6 +646,7 @@ impl MessageDao {
         Ok(count)
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     fn selectMessages(
         &self,
         sql: &str,
@@ -623,11 +659,13 @@ impl MessageDao {
             .collect()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     fn exists(&self, sql: &str, params: Vec<SqliteValue>) -> Result<bool, SqliteStoreError> {
         let value: i32 = self.store.queryScalar(sql, params)?;
         Ok(value != 0)
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     fn optionalTimestamp(
         &self,
         sql: &str,
@@ -639,13 +677,15 @@ impl MessageDao {
             .transpose()
     }
 
+    /// Processes the exact persisted message record with explicit storage errors.
     fn execute(&self, sql: &str, params: Vec<SqliteValue>) -> Result<(), SqliteStoreError> {
         self.store.execute(sql, params)?;
         Ok(())
     }
 }
 
-fn mapMessageEntity(row: &SqliteRow) -> Result<MessageEntity, SqliteStoreError> {
+/// Processes the exact persisted message record with explicit storage errors.
+pub(crate) fn mapMessageEntity(row: &SqliteRow) -> Result<MessageEntity, SqliteStoreError> {
     Ok(MessageEntity {
         messageId: row.get("messageId")?,
         chatId: row.get("chatId")?,
@@ -666,36 +706,44 @@ fn mapMessageEntity(row: &SqliteRow) -> Result<MessageEntity, SqliteStoreError> 
         completedExecutionGeneration: row.get("completedExecutionGeneration")?,
         displayMode: row.get("displayMode")?,
         isFavorite: row.get("isFavorite")?,
+        pluginExtensions: decodePluginExtensions(&row.get::<_, String>("pluginExtensions")?)?,
     })
 }
 
-fn insertMessageSql(withMessageId: bool) -> &'static str {
+/// Processes the exact persisted message record with explicit storage errors.
+pub(crate) fn insertMessageSql(withMessageId: bool) -> &'static str {
     if withMessageId {
         r#"
-        INSERT OR REPLACE INTO messages (
+        INSERT INTO messages (
             messageId, chatId, sender, timestamp, orderIndex,
             roleName, selectedVariantIndex, provider, modelName, inputTokens,
             outputTokens, cachedInputTokens, sentAt, outputDurationMs,
-            waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite
+            waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+        ON CONFLICT(chatId, timestamp) DO UPDATE SET sender = excluded.sender, orderIndex = excluded.orderIndex, roleName = excluded.roleName, selectedVariantIndex = excluded.selectedVariantIndex, provider = excluded.provider, modelName = excluded.modelName, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, cachedInputTokens = excluded.cachedInputTokens, sentAt = excluded.sentAt, outputDurationMs = excluded.outputDurationMs, waitDurationMs = excluded.waitDurationMs, completedAt = excluded.completedAt, completedExecutionGeneration = excluded.completedExecutionGeneration, displayMode = excluded.displayMode, isFavorite = excluded.isFavorite
         "#
     } else {
         r#"
-        INSERT OR REPLACE INTO messages (
+        INSERT INTO messages (
             chatId, sender, timestamp, orderIndex,
             roleName, selectedVariantIndex, provider, modelName, inputTokens,
             outputTokens, cachedInputTokens, sentAt, outputDurationMs,
-            waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite
+            waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+        ON CONFLICT(chatId, timestamp) DO UPDATE SET sender = excluded.sender, orderIndex = excluded.orderIndex, roleName = excluded.roleName, selectedVariantIndex = excluded.selectedVariantIndex, provider = excluded.provider, modelName = excluded.modelName, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, cachedInputTokens = excluded.cachedInputTokens, sentAt = excluded.sentAt, outputDurationMs = excluded.outputDurationMs, waitDurationMs = excluded.waitDurationMs, completedAt = excluded.completedAt, completedExecutionGeneration = excluded.completedExecutionGeneration, displayMode = excluded.displayMode, isFavorite = excluded.isFavorite
         "#
     }
 }
 
-fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<SqliteValue> {
+/// Processes the exact persisted message record with explicit storage errors.
+pub(crate) fn insertMessageParams(
+    message: &MessageEntity,
+    withMessageId: bool,
+) -> Result<Vec<SqliteValue>, SqliteStoreError> {
     if withMessageId {
-        sqliteParams![
+        Ok(sqliteParams![
             message.messageId,
             message.chatId,
             message.sender,
@@ -715,9 +763,10 @@ fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<Sqli
             message.completedExecutionGeneration,
             message.displayMode,
             message.isFavorite,
-        ]
+            encodePluginExtensions(&message.pluginExtensions)?,
+        ])
     } else {
-        sqliteParams![
+        Ok(sqliteParams![
             message.chatId,
             message.sender,
             message.timestamp,
@@ -736,6 +785,7 @@ fn insertMessageParams(message: &MessageEntity, withMessageId: bool) -> Vec<Sqli
             message.completedExecutionGeneration,
             message.displayMode,
             message.isFavorite,
-        ]
+            encodePluginExtensions(&message.pluginExtensions)?,
+        ])
     }
 }

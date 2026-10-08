@@ -13,12 +13,15 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import '../../../../common/components/RetainedPage.dart';
+import '../../../../common/contributions/ToolPkgChatUiCatalog.dart';
 import '../../../../main/layout/SidebarDockController.dart';
+import '../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceOverviewModels.dart';
+import 'WorkspaceOverviewContributionCatalog.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
 import 'WorkspaceSession.dart';
@@ -101,26 +104,25 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       const <WorkspaceTerminalSessionInfo>[];
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
   final ValueNotifier<int> _browserSessionCount = ValueNotifier<int>(0);
-  List<core_proxy.ChatHistoryListItem> _workspaceOverviewHistories =
-      const <core_proxy.ChatHistoryListItem>[];
+  List<core_proxy.ChatHistoryListItem>? _workspaceOverviewHistories;
+  ({Object error, StackTrace stackTrace})? _workspaceOverviewHistoryError;
+  WorkspaceOverviewChatScope? _workspaceOverviewChatScope;
+  bool? _workspaceOverviewUseEnglish;
+  final WorkspaceOverviewContributionCatalog _workspaceOverviewContributions =
+      WorkspaceOverviewContributionCatalog();
   List<WorkspaceFileEntry> _workspaceOverviewMountedFolders =
       const <WorkspaceFileEntry>[];
-  Map<String, String> _workspaceOverviewCharacterAvatarsByName =
-      const <String, String>{};
   bool _workspaceOverviewMountedFoldersLoading = false;
   String? _workspaceOverviewMountedFoldersError;
   int _workspaceOverviewMountedFoldersLoadGeneration = 0;
+  int _workspaceOverviewHistoryWatchGeneration = 0;
   StreamSubscription<List<WorkspaceTerminalSessionInfo>>?
   _terminalSessionSubscription;
   StreamSubscription<List<core_proxy.ChatHistoryListItem>>?
   _workspaceOverviewHistorySubscription;
-  StreamSubscription<List<String>>? _workspaceOverviewCharacterIdsSubscription;
-  final Map<String, StreamSubscription<core_proxy.CharacterCard>>
-  _workspaceOverviewCharacterSubscriptions =
-      <String, StreamSubscription<core_proxy.CharacterCard>>{};
-  final Map<String, String> _workspaceOverviewCharacterNamesById =
-      <String, String>{};
+  StreamSubscription<void>? _workspaceOverviewCatalogSubscription;
 
+  /// Subscribes the mounted panel to workspace histories and catalog changes.
   @override
   void initState() {
     super.initState();
@@ -130,9 +132,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _browserSessionRegistry.addListener(_handleBrowserSessionRegistryChanged);
     _handleBrowserSessionRegistryChanged();
     _registerWebVisitControls();
+    _workspaceOverviewContributions.addListener(
+      _handleWorkspaceOverviewContributionsChanged,
+    );
+    _workspaceOverviewCatalogSubscription = ToolPkgCatalogChangeBus.listen(
+      _refreshWorkspaceOverviewContributions,
+    );
     _watchWorkspaceOverviewHistories();
-    _watchWorkspaceOverviewCharacterCards();
-    unawaited(_loadWorkspaceOverviewCharacters());
     unawaited(_refreshWorkspaceOverviewMountedFolders());
     unawaited(_refreshTerminalSessionEntries());
     _terminalSessionSubscription = _terminalSessions.watchSessions().listen(
@@ -148,6 +154,18 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
+  /// Reloads localized catalog display data when the host language changes.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final useEnglish = Localizations.localeOf(context).languageCode == 'en';
+    if (_workspaceOverviewUseEnglish != useEnglish) {
+      _workspaceOverviewUseEnglish = useEnglish;
+      _refreshWorkspaceOverviewContributions();
+    }
+  }
+
+  /// Rebinds subscriptions and projections when the actual chat or workspace changes.
   @override
   void didUpdateWidget(covariant WorkspacePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -159,11 +177,15 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       _syncDockedPluginTabs();
     }
     _registerWebVisitControls();
+    if (oldWidget.chatCore != widget.chatCore) {
+      _watchWorkspaceOverviewHistories();
+    }
     final workspaceBindingChanged =
         oldWidget.currentChatId != widget.currentChatId ||
         oldWidget.hasBoundWorkspace != widget.hasBoundWorkspace ||
         oldWidget.workspacePath != widget.workspacePath;
     if (workspaceBindingChanged) {
+      _refreshWorkspaceOverviewContributions();
       unawaited(_refreshWorkspaceOverviewMountedFolders());
     }
     if (!oldWidget.hasBoundWorkspace && widget.hasBoundWorkspace) {
@@ -171,6 +193,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
   }
 
+  /// Releases subscriptions and invalidates every asynchronous overview request.
   @override
   void dispose() {
     widget.sidebarDockController?.removeListener(_handleSidebarDockChanged);
@@ -178,12 +201,14 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _browserSessionRegistry.removeListener(
       _handleBrowserSessionRegistryChanged,
     );
+    ++_workspaceOverviewHistoryWatchGeneration;
+    ++_workspaceOverviewMountedFoldersLoadGeneration;
     unawaited(_workspaceOverviewHistorySubscription?.cancel());
-    unawaited(_workspaceOverviewCharacterIdsSubscription?.cancel());
-    for (final subscription
-        in _workspaceOverviewCharacterSubscriptions.values) {
-      unawaited(subscription.cancel());
-    }
+    unawaited(_workspaceOverviewCatalogSubscription?.cancel());
+    _workspaceOverviewContributions.removeListener(
+      _handleWorkspaceOverviewContributionsChanged,
+    );
+    _workspaceOverviewContributions.dispose();
     for (final entry in _webVisitCompleters.entries) {
       final completer = entry.value;
       if (!completer.isCompleted) {
@@ -704,198 +729,92 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _webVisitSessionRegistry.setControls(openWebVisitTab: _openWebVisitTab);
   }
 
-  /// Watches chat histories used by the workspace overview.
+  /// Watches actual history summaries and rejects events from a replaced chat core.
   void _watchWorkspaceOverviewHistories() {
+    final generation = ++_workspaceOverviewHistoryWatchGeneration;
+    unawaited(_workspaceOverviewHistorySubscription?.cancel());
+    _workspaceOverviewHistories = null;
+    _workspaceOverviewHistoryError = null;
+    _refreshWorkspaceOverviewContributions();
     _workspaceOverviewHistorySubscription = widget.chatCore
         .chatHistoryListItemsFlow()
         .listen(
           (histories) {
-            if (!mounted) {
+            if (!mounted ||
+                generation != _workspaceOverviewHistoryWatchGeneration) {
               return;
             }
-            setState(() {
-              _workspaceOverviewHistories =
-                  List<core_proxy.ChatHistoryListItem>.unmodifiable(histories);
-            });
+            _workspaceOverviewHistories =
+                List<core_proxy.ChatHistoryListItem>.unmodifiable(histories);
+            _workspaceOverviewHistoryError = null;
+            _refreshWorkspaceOverviewContributions();
           },
           onError: (Object error, StackTrace stackTrace) {
-            debugPrint(
-              'Failed to watch workspace overview histories: $error\n$stackTrace',
+            if (!mounted ||
+                generation != _workspaceOverviewHistoryWatchGeneration) {
+              return;
+            }
+            _workspaceOverviewHistories = null;
+            _workspaceOverviewHistoryError = (
+              error: error,
+              stackTrace: stackTrace,
             );
+            _refreshWorkspaceOverviewContributions();
           },
         );
   }
 
-  /// Watches character cards used by the workspace overview.
-  void _watchWorkspaceOverviewCharacterCards() {
-    _workspaceOverviewCharacterIdsSubscription = _coreClients
-        .preferencesCharacterCardManager
-        .characterCardListFlow()
-        .listen(
-          (cardIds) {
-            unawaited(_syncWorkspaceOverviewCharacterSubscriptions(cardIds));
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            _reportWorkspaceOverviewCharacterError(error, stackTrace);
-          },
-        );
-  }
-
-  /// Loads current character-card metadata for the workspace overview.
-  Future<void> _loadWorkspaceOverviewCharacters() async {
-    try {
-      final characterCardCoreProxy =
-          _coreClients.preferencesCharacterCardManager;
-      final cards = await characterCardCoreProxy.getAllCharacterCards();
-      if (!mounted) {
-        return;
-      }
-      await _applyWorkspaceOverviewCharacterSubscriptions(
-        cards
-            .map((card) => card.id.trim())
-            .where((id) => id.isNotEmpty)
-            .toSet(),
-      );
-      if (!mounted) {
-        return;
-      }
-      _replaceWorkspaceOverviewCharacters(cards);
-    } catch (error, stackTrace) {
-      _reportWorkspaceOverviewCharacterError(error, stackTrace);
+  /// Refreshes registered contributions using only the selected workspace summaries.
+  void _refreshWorkspaceOverviewContributions() {
+    if (!mounted) {
+      return;
     }
-  }
-
-  /// Synchronizes character-card subscriptions for workspace overview metadata.
-  Future<void> _syncWorkspaceOverviewCharacterSubscriptions(
-    List<String> cardIds,
-  ) async {
+    final historyError = _workspaceOverviewHistoryError;
+    if (historyError != null) {
+      _workspaceOverviewChatScope = null;
+      _workspaceOverviewContributions.reportError(
+        historyError.error,
+        historyError.stackTrace,
+      );
+      return;
+    }
+    final histories = _workspaceOverviewHistories;
+    final useEnglish = _workspaceOverviewUseEnglish;
+    if (histories == null || useEnglish == null) {
+      _workspaceOverviewChatScope = null;
+      _workspaceOverviewContributions.awaitHistories();
+      return;
+    }
+    final WorkspaceOverviewChatScope scope;
     try {
-      final desiredCardIds = cardIds
-          .map((id) => id.trim())
-          .where((id) => id.isNotEmpty)
-          .toSet();
-      await _applyWorkspaceOverviewCharacterSubscriptions(desiredCardIds);
-      final characterCardCoreProxy =
-          _coreClients.preferencesCharacterCardManager;
-      final cards = await Future.wait<core_proxy.CharacterCard>(
-        desiredCardIds.map(
-          (id) => characterCardCoreProxy.getCharacterCard(id: id),
+      scope = WorkspaceOverviewChatScope.fromHistories(
+        histories: histories,
+        currentChatId: widget.currentChatId,
+        hasBoundWorkspace: widget.hasBoundWorkspace,
+      );
+    } catch (error, stackTrace) {
+      _workspaceOverviewChatScope = null;
+      _workspaceOverviewContributions.reportError(error, stackTrace);
+      return;
+    }
+    _workspaceOverviewChatScope = scope;
+    unawaited(
+      _workspaceOverviewContributions.refresh(
+        catalog: ToolPkgChatUiCatalog(
+          clients: _coreClients,
+          useEnglish: useEnglish,
         ),
-      );
-      if (!mounted) {
-        return;
-      }
-      _replaceWorkspaceOverviewCharacters(cards);
-    } catch (error, stackTrace) {
-      _reportWorkspaceOverviewCharacterError(error, stackTrace);
-    }
+        chats: scope.chats,
+      ),
+    );
   }
 
-  /// Applies the active set of character-card stream subscriptions.
-  Future<void> _applyWorkspaceOverviewCharacterSubscriptions(
-    Set<String> desiredCardIds,
-  ) async {
-    final removedCardIds = _workspaceOverviewCharacterSubscriptions.keys
-        .where((id) => !desiredCardIds.contains(id))
-        .toList(growable: false);
-    for (final cardId in removedCardIds) {
-      await _workspaceOverviewCharacterSubscriptions.remove(cardId)!.cancel();
-      final previousName = _workspaceOverviewCharacterNamesById.remove(cardId);
-      if (previousName != null) {
-        _removeWorkspaceOverviewCharacter(previousName);
-      }
-    }
-
-    final characterCardCoreProxy = _coreClients.preferencesCharacterCardManager;
-    for (final cardId in desiredCardIds) {
-      if (_workspaceOverviewCharacterSubscriptions.containsKey(cardId)) {
-        continue;
-      }
-      _workspaceOverviewCharacterSubscriptions[cardId] = characterCardCoreProxy
-          .getCharacterCardFlow(id: cardId)
-          .listen(
-            _updateWorkspaceOverviewCharacter,
-            onError: (Object error, StackTrace stackTrace) {
-              _reportWorkspaceOverviewCharacterError(error, stackTrace);
-            },
-          );
-    }
-  }
-
-  /// Replaces workspace overview character metadata.
-  void _replaceWorkspaceOverviewCharacters(
-    List<core_proxy.CharacterCard> cards,
-  ) {
-    final avatarUrisByName = <String, String>{};
-    _workspaceOverviewCharacterNamesById.clear();
-    for (final card in cards) {
-      final cardId = card.id.trim();
-      final cardName = card.name.trim();
-      if (cardId.isEmpty || cardName.isEmpty) {
-        continue;
-      }
-      _workspaceOverviewCharacterNamesById[cardId] = cardName;
-      final avatarUri = card.avatarUri?.trim();
-      if (avatarUri != null && avatarUri.isNotEmpty) {
-        avatarUrisByName[cardName] = avatarUri;
-      }
-    }
-    setState(() {
-      _workspaceOverviewCharacterAvatarsByName =
-          Map<String, String>.unmodifiable(avatarUrisByName);
-    });
-  }
-
-  /// Applies one character-card update to workspace overview metadata.
-  void _updateWorkspaceOverviewCharacter(core_proxy.CharacterCard card) {
+  /// Rebuilds the mounted overview for explicit loading, success, and error states.
+  void _handleWorkspaceOverviewContributionsChanged() {
     if (!mounted) {
       return;
     }
-    final cardId = card.id.trim();
-    final cardName = card.name.trim();
-    if (cardId.isEmpty || cardName.isEmpty) {
-      return;
-    }
-    final avatarUrisByName = Map<String, String>.of(
-      _workspaceOverviewCharacterAvatarsByName,
-    );
-    final previousName = _workspaceOverviewCharacterNamesById[cardId];
-    if (previousName != null) {
-      avatarUrisByName.remove(previousName);
-    }
-    _workspaceOverviewCharacterNamesById[cardId] = cardName;
-    final avatarUri = card.avatarUri?.trim();
-    if (avatarUri != null && avatarUri.isNotEmpty) {
-      avatarUrisByName[cardName] = avatarUri;
-    }
-    setState(() {
-      _workspaceOverviewCharacterAvatarsByName =
-          Map<String, String>.unmodifiable(avatarUrisByName);
-    });
-  }
-
-  /// Removes one character-card entry from workspace overview metadata.
-  void _removeWorkspaceOverviewCharacter(String cardName) {
-    if (!mounted) {
-      return;
-    }
-    final avatarUrisByName = Map<String, String>.of(
-      _workspaceOverviewCharacterAvatarsByName,
-    )..remove(cardName);
-    setState(() {
-      _workspaceOverviewCharacterAvatarsByName =
-          Map<String, String>.unmodifiable(avatarUrisByName);
-    });
-  }
-
-  /// Reports workspace overview character-card subscription errors.
-  void _reportWorkspaceOverviewCharacterError(
-    Object error,
-    StackTrace stackTrace,
-  ) {
-    debugPrint(
-      'Failed to watch workspace overview characters: $error\n$stackTrace',
-    );
+    setState(() {});
   }
 
   /// Refreshes mounted folders shown by the workspace overview.
@@ -911,6 +830,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
 
     setState(() {
+      _workspaceOverviewMountedFolders = const <WorkspaceFileEntry>[];
       _workspaceOverviewMountedFoldersLoading = true;
       _workspaceOverviewMountedFoldersError = null;
     });
@@ -964,113 +884,18 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     return List<WorkspaceMountedFolder>.unmodifiable(mountedFolders);
   }
 
-  /// Creates a workspace overview snapshot with the current folder state.
-  WorkspaceOverviewUsage _workspaceOverviewSnapshot({
-    required String? workspaceName,
-    required int conversationCount,
-    required List<WorkspaceCharacterUsage> characterUsages,
-  }) {
-    final normalizedWorkspaceName = workspaceName?.trim();
-    final mountedFoldersError = _workspaceOverviewMountedFoldersError?.trim();
+  /// Keeps host counts independent of plugin-owned contribution usage records.
+  WorkspaceOverviewUsage _workspaceOverviewUsage() {
+    final workspaceName = _workspaceOverviewChatScope?.workspaceName?.trim();
     return WorkspaceOverviewUsage(
-      workspaceName:
-          normalizedWorkspaceName == null || normalizedWorkspaceName.isEmpty
+      workspaceName: workspaceName == null || workspaceName.isEmpty
           ? null
-          : normalizedWorkspaceName,
-      conversationCount: conversationCount,
-      characterUsages: List<WorkspaceCharacterUsage>.unmodifiable(
-        characterUsages,
-      ),
+          : workspaceName,
+      conversationCount: _workspaceOverviewChatScope?.chats.length,
+      contributions: _workspaceOverviewContributions.state,
       mountedFolders: _workspaceOverviewMountedFolderModels(),
       mountedFoldersLoading: _workspaceOverviewMountedFoldersLoading,
-      mountedFoldersError:
-          mountedFoldersError == null || mountedFoldersError.isEmpty
-          ? null
-          : mountedFoldersError,
-    );
-  }
-
-  /// Builds role usage for the workspace bound to the current chat.
-  WorkspaceOverviewUsage _workspaceOverviewUsage() {
-    final currentChatId = widget.currentChatId?.trim();
-    if (currentChatId == null || currentChatId.isEmpty) {
-      return _workspaceOverviewSnapshot(
-        workspaceName: null,
-        conversationCount: 0,
-        characterUsages: const <WorkspaceCharacterUsage>[],
-      );
-    }
-
-    core_proxy.ChatHistoryListItem? currentHistory;
-    for (final history in _workspaceOverviewHistories) {
-      if (history.id == currentChatId) {
-        currentHistory = history;
-        break;
-      }
-    }
-    if (currentHistory == null) {
-      return _workspaceOverviewSnapshot(
-        workspaceName: null,
-        conversationCount: 0,
-        characterUsages: const <WorkspaceCharacterUsage>[],
-      );
-    }
-
-    final currentWorkspaceId = currentHistory.workspaceId?.trim();
-    if (currentWorkspaceId == null || currentWorkspaceId.isEmpty) {
-      return _workspaceOverviewSnapshot(
-        workspaceName: currentHistory.workspaceName,
-        conversationCount: 0,
-        characterUsages: const <WorkspaceCharacterUsage>[],
-      );
-    }
-
-    var conversationCount = 0;
-    var order = 0;
-    final characterCountsByName = <String, int>{};
-    final firstOrderByName = <String, int>{};
-    for (final history in _workspaceOverviewHistories) {
-      final workspaceId = history.workspaceId?.trim();
-      if (workspaceId != currentWorkspaceId) {
-        continue;
-      }
-      conversationCount += 1;
-      final characterName = history.characterCardName?.trim();
-      if (characterName == null || characterName.isEmpty) {
-        continue;
-      }
-      characterCountsByName[characterName] =
-          (characterCountsByName[characterName] ?? 0) + 1;
-      firstOrderByName.putIfAbsent(characterName, () => order);
-      order += 1;
-    }
-
-    final usages = <WorkspaceCharacterUsage>[];
-    for (final entry in characterCountsByName.entries) {
-      usages.add(
-        WorkspaceCharacterUsage(
-          name: entry.key,
-          avatarUri: _workspaceOverviewCharacterAvatarsByName[entry.key],
-          conversationCount: entry.value,
-        ),
-      );
-    }
-    usages.sort((left, right) {
-      final countComparison = right.conversationCount.compareTo(
-        left.conversationCount,
-      );
-      if (countComparison != 0) {
-        return countComparison;
-      }
-      final leftOrder = firstOrderByName[left.name]!;
-      final rightOrder = firstOrderByName[right.name]!;
-      return leftOrder.compareTo(rightOrder);
-    });
-
-    return _workspaceOverviewSnapshot(
-      workspaceName: currentHistory.workspaceName,
-      conversationCount: conversationCount,
-      characterUsages: usages,
+      mountedFoldersError: _workspaceOverviewMountedFoldersError,
     );
   }
 
@@ -1233,7 +1058,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       return;
     }
     final terminal = await _selectTerminalType(terminalInfo);
-    if (terminal == null) {
+    if (!mounted || terminal == null) {
       return;
     }
     await launchWorkspaceTerminal(
@@ -2081,6 +1906,7 @@ class _CreateWorkspaceDialogState extends State<_CreateWorkspaceDialog> {
   }
 
   /// Releases the controller owned by the dialog state.
+  /// Releases subscriptions and invalidates every asynchronous overview request.
   @override
   void dispose() {
     _nameController.dispose();

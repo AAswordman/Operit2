@@ -226,6 +226,38 @@ fn isDataStoreEntry(entry: &str) -> bool {
     entry.starts_with(ENTRY_DATASTORE_PREFIX) && entry.ends_with(".preferences_pb")
 }
 
+/// Identifies exact legacy domain keys and declared DataStore namespaces that are read but never adopted.
+#[allow(non_snake_case)]
+fn isOperit1UnadoptedPreferenceKey(key: &str) -> bool {
+    matches!(
+        key,
+        "active_prompt_type"
+            | "active_prompt_id"
+            | "active_character_card_id"
+            | "active_character_group_id"
+            | "active_memory_space_id"
+            | "memory_space_list"
+            | "enable_memory_auto_update"
+            | "memory_settings"
+            | "shared_memory_store_list"
+    ) || ["character_card_", "character_group_", "prompt_tag_", "memory_space_", "shared_memory_store_"]
+        .iter()
+        .any(|prefix| key.starts_with(prefix))
+}
+
+/// Projects only adopted preferences through the real key and resource-path rewriter without modifying the legacy source map.
+#[allow(non_snake_case)]
+fn adoptedOperit1PreferenceEntries(
+    preferences: &HashMap<String, Operit1PreferenceValue>,
+    fileImportPlan: &SnapshotFileImportPlan,
+) -> Result<Vec<(String, String)>, String> {
+    preferences.iter()
+        .filter(|(key, _)| !isOperit1UnadoptedPreferenceKey(key))
+        .map(|(key, value)| value.toTargetPreferenceEntry(key, fileImportPlan))
+        .collect()
+}
+
+/// Maps only adopted general preferences; dedicated legacy domain payloads remain in the parsed source archive.
 #[allow(non_snake_case)]
 fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, PathBuf> {
     let mut mappings = BTreeMap::new();
@@ -276,10 +308,6 @@ fn datastorePreferenceMappings(paths: &RuntimeStorePaths) -> BTreeMap<String, Pa
     mappings.insert(
         "payload/files/datastore/github_auth_preferences.preferences_pb".to_string(),
         paths.runtime_storage_path(GITHUB_AUTH_PREFERENCES_PATH),
-    );
-    mappings.insert(
-        "payload/files/datastore/persona_card_chat_history.preferences_pb".to_string(),
-        paths.runtime_storage_path(PERSONA_CARD_CHAT_HISTORY_PREFERENCES_PATH),
     );
     mappings
 }

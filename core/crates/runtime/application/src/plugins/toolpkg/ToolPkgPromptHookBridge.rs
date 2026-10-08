@@ -17,8 +17,11 @@ use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
 use operit_providers::chat::hooks::PromptHookRegistry::{
     PromptEstimateFinalizeHook, PromptEstimateHistoryHook, PromptFinalizeHook, PromptHistoryHook,
     PromptHookContext, PromptHookMutation, PromptHookRegistry, PromptInputHook,
-    SystemPromptComposeHook, ToolPromptComposeHook,
+    SystemPromptComposeHook, ToolPromptComposeHook, ToolPromptHookFuture,
 };
+use operit_tools::ToolExecutionManager::ToolExecutionManager;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+use super::ToolPkgToolLifecycleBridge::ToolPkgToolLifecycleBridge;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 
@@ -228,13 +231,95 @@ prompt_bridge!(
     SYSTEM_PROMPT_COMPOSE_HOOKS,
     TOOLPKG_EVENT_SYSTEM_PROMPT_COMPOSE
 );
-prompt_bridge!(
-    ToolPromptComposeBridge,
-    ToolPromptComposeHook,
-    "builtin.toolpkg.tool-prompt-compose-bridge",
-    TOOL_PROMPT_COMPOSE_HOOKS,
-    TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE
-);
+impl ToolPromptComposeHook for ToolPromptComposeBridge {
+    /// Identifies the existing ToolPkg bridge for the real tool-prompt policy dispatcher.
+    fn id(&self) -> &str {
+        "builtin.toolpkg.tool-prompt-compose-bridge"
+    }
+
+    /// Awaits enabled owner-isolated policies and propagates any invoked handler failure.
+    fn on_event_async<'a>(&'a self, context: &'a PromptHookContext) -> ToolPromptHookFuture<'a> {
+        let executionContext = ToolExecutionManager::currentToolRuntimeContext();
+        Box::pin(async move {
+            let manager = RuntimePackageManager::readySnapshot(
+                self.runtime.tool_handler().getOrCreatePackageManager(),
+            ).await?;
+            ToolPkgToolLifecycleBridge::validateExecutionSnapshot(&manager, executionContext.as_ref())?;
+            let budget = ToolPkgPreHookTimeout::fromPreferences();
+            let mut current = context.clone();
+            let mut combined = PromptHookMutation::default();
+            let mut changed = false;
+            for container in manager.getEnabledToolPkgContainerRuntimes() {
+                for hook in container.toolPromptComposeHooks {
+                    let ownerContext = ToolPkgToolLifecycleBridge::executionContextForOwner(
+                        &manager, executionContext.as_ref(), &container.packageName,
+                    )?;
+                    let mut payload = prompt_context_to_value(&current);
+                    payload["metadata"]["executionContext"] = ownerContext;
+                    let timeoutMillis = budget.remainingTimeoutMillis().ok_or_else(|| format!(
+                        "Tool-prompt policy timed out before handler {}:{}", container.packageName, hook.id,
+                    ))?;
+                    let raw = manager.runToolPkgMainHookWithTimeoutMillis(
+                        &container.packageName, &hook.function, TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE,
+                        Some(&current.stage), Some(&hook.id), hook.functionSource.as_deref(),
+                        payload, None, None, None, timeoutMillis,
+                    ).await?;
+                    if budget.hasExpired() {
+                        return Err(format!("Tool-prompt policy timed out after handler {}:{}", container.packageName, hook.id));
+                    }
+                    if let Some(mutation) = decode_tool_prompt_policy_result(raw)? {
+                        apply_prompt_mutation(&mut current, mutation.clone());
+                        merge_prompt_mutation(&mut combined, mutation);
+                        changed = true;
+                    }
+                }
+            }
+            Ok(if changed { Some(combined) } else { None })
+        })
+    }
+}
+
+/// Strictly decodes an invoked tool policy without converting malformed fields into absent mutations.
+pub(super) fn decode_tool_prompt_policy_result(raw: Option<String>) -> Result<Option<PromptHookMutation>, String> {
+    let Some(raw) = raw else { return Ok(None); };
+    let value: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    match value {
+        Value::Null => Ok(None),
+        Value::String(prompt) => Ok(Some(PromptHookMutation {
+            tool_prompt: Some(prompt), ..PromptHookMutation::default()
+        })),
+        Value::Object(mut object) => {
+            let mut mutation = PromptHookMutation::default();
+            for (key, target) in [
+                ("rawInput", &mut mutation.raw_input),
+                ("processedInput", &mut mutation.processed_input),
+                ("systemPrompt", &mut mutation.system_prompt),
+                ("toolPrompt", &mut mutation.tool_prompt),
+            ] {
+                if let Some(value) = object.remove(key) {
+                    *target = Some(serde_json::from_value::<String>(value).map_err(|error| format!("Tool-prompt policy {key}: {error}"))?);
+                }
+            }
+            if let Some(value) = object.remove("availableTools") {
+                mutation.available_tools = Some(serde_json::from_value(value).map_err(|error| format!("Tool-prompt policy availableTools: {error}"))?);
+            }
+            if let Some(value) = object.remove("chatHistory") {
+                mutation.chat_history = Some(serde_json::from_value(value).map_err(|error| format!("Tool-prompt policy chatHistory: {error}"))?);
+            }
+            if let Some(value) = object.remove("preparedHistory") {
+                mutation.prepared_history = Some(serde_json::from_value(value).map_err(|error| format!("Tool-prompt policy preparedHistory: {error}"))?);
+            }
+            if let Some(value) = object.remove("metadata") {
+                mutation.metadata = serde_json::from_value(value).map_err(|error| format!("Tool-prompt policy metadata: {error}"))?;
+                if mutation.metadata.contains_key("executionContext") {
+                    return Err("Tool-prompt policy cannot replace its authenticated executionContext".to_string());
+                }
+            }
+            Ok(Some(mutation))
+        }
+        _ => Err("Tool-prompt policy result must be a string, object, explicit null or void".to_string()),
+    }
+}
 prompt_bridge!(
     PromptFinalizeBridge,
     PromptFinalizeHook,
@@ -649,5 +734,37 @@ fn apply_prompt_mutation(current: &mut PromptHookContext, mutation: PromptHookMu
     }
     if !mutation.metadata.is_empty() {
         current.metadata.extend(mutation.metadata);
+    }
+}
+
+#[cfg(test)]
+mod tool_policy_result_tests {
+    use super::decode_tool_prompt_policy_result;
+
+    /// Rejects malformed invoked policies instead of treating invalid output as permission to continue.
+    #[test]
+    fn rejects_malformed_policy_results() {
+        for raw in [
+            "not-json", "17", "true", "[]",
+            r#"{"toolPrompt":null}"#,
+            r#"{"availableTools":{}}"#,
+            r#"{"availableTools":[17]}"#,
+            r#"{"chatHistory":"invalid"}"#,
+            r#"{"preparedHistory":[{"kind":"invalid"}]}"#,
+            r#"{"metadata":null}"#,
+            r#"{"metadata":{"executionContext":null}}"#,
+        ] {
+            assert!(decode_tool_prompt_policy_result(Some(raw.to_string())).is_err(), "{raw}");
+        }
+    }
+
+    /// Distinguishes an explicit no-contribution result from valid exact JSON mutations.
+    #[test]
+    fn preserves_explicit_nonparticipation_and_exact_tool_mutations() {
+        assert!(decode_tool_prompt_policy_result(None).unwrap().is_none());
+        assert!(decode_tool_prompt_policy_result(Some("null".to_string())).unwrap().is_none());
+        let mutation = decode_tool_prompt_policy_result(Some(r#"{"toolPrompt":" exact prompt ","availableTools":[]}"#.to_string())).unwrap().unwrap();
+        assert_eq!(mutation.tool_prompt.as_deref(), Some(" exact prompt "));
+        assert_eq!(mutation.available_tools, Some(Vec::new()));
     }
 }

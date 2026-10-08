@@ -1,0 +1,15 @@
+/* Presentation views reuse the manager's host-provided Material palette and offline icons. */
+.presentation-page{min-width:0;max-width:100%;background:var(--surface)}
+.selection-toolbar{flex:none;padding:8px 16px 0}.selection-toolbar .field{margin:4px 0 8px}
+.selection-categories{margin-bottom:10px}.selection-check{display:grid;place-items:center;width:24px;flex:none;color:var(--primary)}
+.entity.selected{border-color:var(--primary);background:color-mix(in srgb,var(--primaryContainer) 24%,var(--surfaceContainer))}
+.presentation-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none;padding:12px 18px;border-top:1px solid var(--outlineVariant);background:var(--surface)}
+.attachment-body{position:relative}.attachment-body>.loading{min-height:120px}
+.picker-row{display:flex;align-items:center;gap:16px;width:100%;min-height:56px;border:0;border-radius:8px;text-align:left;padding:12px 16px;color:var(--onSurface);background:transparent}
+.picker-row>.icon{color:var(--onSurfaceVariant);flex:none}.picker-row>span{overflow-wrap:anywhere}
+.picker-row:hover:not(:disabled){background:color-mix(in srgb,var(--onSurface) 8%,transparent)}
+.attachment-content{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:8px 0;user-select:text}
+.presentation-backdrop{height:100%;padding:16px;background:var(--surface)}
+.preview-section{padding:8px 0}.preview-section h3{font-size:13px;font-weight:600;color:var(--onSurfaceVariant);margin:0 0 8px}
+.preview-section pre{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;font:inherit;margin:0}
+@media(max-width:600px){.selection-toolbar{padding:8px 12px 0}.presentation-footer{padding:10px 12px}.picker-row{padding:12px 8px}}

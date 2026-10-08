@@ -68,7 +68,7 @@ pub fn generate_js_tools_host_implementation(
                 .ok_or_else(|| {
                     format!("missing JavaScript binding for `{namespace}.{runtime_name}`")
                 })?;
-            let tool_variant = rust_variant_name(&binding.tool);
+            let tool_variant = binding.tool.as_deref().map(rust_variant_name);
             let signature = &method.sig;
             let arguments = method_arguments(signature)?;
             output.push_str(&format!(
@@ -81,12 +81,28 @@ pub fn generate_js_tools_host_implementation(
                     .replace("super :: JsNever", "operit_plugin_sdk :: js_sdk :: JsNever"),
             );
             output.push_str(" {\n");
-            output.push_str(&generated_method_body(
-                namespace,
-                &runtime_name,
-                &tool_variant,
-                &arguments,
-            ));
+            match tool_variant {
+                Some(tool_variant) => output.push_str(&generated_method_body(
+                    namespace,
+                    &runtime_name,
+                    &tool_variant,
+                    &arguments,
+                )),
+                None => {
+                    let body = match (*namespace, runtime_name.as_str()) {
+                        ("SoftwareSettings", "listModelSummaries" | "listTtsConfigs" | "readToolSourceCatalog" | "listThemeConfigs" | "getCurrentTtsConfigId") if arguments.is_empty() => format!("        invoke_software_settings_directory(self, \"{runtime_name}\")\n"),
+                        ("SoftwareSettings", "applyThemeConfig" | "setCurrentTtsConfigId") if arguments == ["id"] => format!("        invoke_software_settings_config(self, \"{runtime_name}\", id)\n"),
+                        ("Chat", "sendMessage") if arguments == ["request"] => "        invoke_chat_send(self, request)\n".to_string(),
+                        ("Chat", "sendMessageStreaming") if arguments == ["request"] => "        invoke_chat_stream(self, request)\n".to_string(),
+                        ("Chat", "cancel") if arguments == ["chatId"] => "        invoke_chat_cancel(self, chatId)\n".to_string(),
+                        ("Chat", "readExtension") if arguments == ["target"] => "        invoke_chat_extension_read(self, target)\n".to_string(),
+                        ("Chat", "writeExtension") if arguments == ["target", "value"] => "        invoke_chat_extension_write(self, target, value)\n".to_string(),
+                        ("Chat", "deleteExtension") if arguments == ["target"] => "        invoke_chat_extension_delete(self, target)\n".to_string(),
+                        _ => return Err(format!("Unsupported direct typed host signature: {namespace}.{runtime_name}").into()),
+                    };
+                    output.push_str(&body);
+                }
+            }
             output.push_str("    }\n\n");
         }
         output.push_str("}\n\n");
@@ -98,7 +114,7 @@ pub fn generate_js_tools_host_implementation(
 /// Describes one generated JavaScript Tools method binding.
 #[derive(Clone, Debug)]
 struct JsToolBindingSpec {
-    tool: String,
+    tool: Option<String>,
     api_variants: Vec<JsToolApiVariantSpec>,
 }
 
@@ -168,13 +184,64 @@ fn parse_rust_tool_bindings(
             .insert(
                 key.clone(),
                 JsToolBindingSpec {
-                    tool: tool.ok_or("JsToolBinding tool is missing")?,
+                    tool: Some(tool.ok_or("JsToolBinding tool is missing")?),
                     api_variants: Vec::new(),
                 },
             )
             .is_some()
         {
             return Err(format!("duplicate JsToolBinding for `{}.{}`", key.0, key.1).into());
+        }
+    }
+    let direct_const = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Const(item) if item.ident == "JS_DIRECT_HOST_BINDINGS" => Some(item),
+            _ => None,
+        })
+        .ok_or("JS_DIRECT_HOST_BINDINGS is missing")?;
+    let direct_expression = match &*direct_const.expr {
+        Expr::Reference(reference) => &*reference.expr,
+        expression => expression,
+    };
+    let Expr::Array(direct_entries) = direct_expression else {
+        return Err("JS_DIRECT_HOST_BINDINGS must reference an array literal".into());
+    };
+    for element in &direct_entries.elems {
+        let Expr::Struct(binding) = element else {
+            return Err("Direct host entries must be JsDirectHostBinding structs".into());
+        };
+        let mut namespace = None;
+        let mut method = None;
+        for field in &binding.fields {
+            let (syn::Member::Named(name), Expr::Lit(value)) = (&field.member, &field.expr) else {
+                return Err("Invalid direct host binding field".into());
+            };
+            let Lit::Str(value) = &value.lit else {
+                return Err("Direct host binding fields must be strings".into());
+            };
+            match name.to_string().as_str() {
+                "namespace" => namespace = Some(value.value()),
+                "method" => method = Some(value.value()),
+                _ => return Err("Unknown direct host binding field".into()),
+            }
+        }
+        let key = (
+            namespace.ok_or("Direct host namespace is missing")?,
+            method.ok_or("Direct host method is missing")?,
+        );
+        if bindings
+            .insert(
+                key.clone(),
+                JsToolBindingSpec {
+                    tool: None,
+                    api_variants: Vec::new(),
+                },
+            )
+            .is_some()
+        {
+            return Err(format!("duplicate direct host binding for {}.{}", key.0, key.1).into());
         }
     }
     let api_variant_const = file.items.iter().find_map(|item| match item {
@@ -423,9 +490,95 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
     return toolCall(toolName, __operitToolsBuildParameters(namespace, method, overloads, args));
 }
 
+/** Reads one declared SoftwareSettings directory through the existing typed host callback bridge. */
+function __operitReadSoftwareSettingsDirectory(method) {
+    return new Promise(function(resolve, reject) {
+        var callbackId = "__operit_directory_" + (++globalThis.__operitSoftwareDirectorySequence);
+        globalThis[callbackId] = function(result, isError) {
+            delete globalThis[callbackId];
+            try {
+                var value = JSON.parse(result);
+                if (isError) reject(new Error(value.message));
+                else resolve(value);
+            } catch (error) { reject(error); }
+        };
+        try { __operitNativeReadSoftwareSettingsDirectoryAsync(callbackId, method); }
+        catch (error) { delete globalThis[callbackId]; reject(error); }
+    });
+}
+globalThis.__operitSoftwareDirectorySequence = 0;
+
+/** Applies one declared ordinary configuration ID without an AI tool call or plugin-owner projection. */
+function __operitApplySoftwareSettingsConfig(method, id) {
+    if (typeof id !== 'string' || id.trim() === '' || id.trim() !== id) return Promise.reject(new Error('Configuration ID must be exact nonblank text'));
+    return new Promise(function(resolve, reject) {
+        var callbackId = "__operit_config_" + (++globalThis.__operitSoftwareConfigSequence);
+        /** Delivers the actual single native result and retains its original failure message. */
+        globalThis[callbackId] = function(result, isError) {
+            delete globalThis[callbackId];
+            try {
+                var value = JSON.parse(result);
+                if (isError) {
+                    if (value === null || typeof value !== 'object' || typeof value.message !== 'string') throw new Error('Malformed SoftwareSettings configuration error');
+                    reject(new Error(value.message));
+                } else resolve(value);
+            } catch (error) { reject(error); }
+        };
+        try { __operitNativeApplySoftwareSettingsConfigAsync(callbackId, method, id); }
+        catch (error) { delete globalThis[callbackId]; reject(error); }
+    });
+}
+globalThis.__operitSoftwareConfigSequence = 0;
+
+/** Validates complete JSON objects without coercing undefined values or non-finite numbers. */
+function __operitRequireChatJsonObject(value) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Chat extension value must be a JSON object');
+    /** Rejects every non-JSON property recursively before native serialization. */
+    function validate(entry) {
+        if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') return;
+        if (typeof entry === 'number' && Number.isFinite(entry)) return;
+        if (Array.isArray(entry)) {
+            for (var index = 0; index < entry.length; index++) {
+                if (!Object.prototype.hasOwnProperty.call(entry, index)) throw new Error('Chat extension contains a non-JSON array hole');
+                validate(entry[index]);
+            }
+            return;
+        }
+        if (typeof entry === 'object' && Object.getPrototypeOf(entry) === Object.prototype) {
+            Reflect.ownKeys(entry).forEach(function(key) {
+                if (typeof key !== 'string') throw new Error('Chat extension contains a non-JSON key');
+                var descriptor = Object.getOwnPropertyDescriptor(entry, key);
+                if (!descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) throw new Error('Chat extension contains a non-JSON property');
+                validate(descriptor.value);
+            });
+            return;
+        }
+        throw new Error('Chat extension contains a non-JSON value');
+    }
+    validate(value);
+}
+/** Invokes only the narrow typed native record binding; the engine supplies the authenticated owner. */
+function __operitChatExtension(method, target, value) {
+    return new Promise(function(resolve, reject) {
+        if (method === 'writeExtension') __operitRequireChatJsonObject(value);
+        var targetJson = JSON.stringify(target), valueJson = JSON.stringify(value);
+        if (typeof targetJson !== 'string' || typeof valueJson !== 'string') throw new Error('Chat extension arguments require JSON');
+        var callbackId = '__operit_chat_extension_' + (++globalThis.__operitChatExtensionSequence);
+        globalThis[callbackId] = function(result, isError) {
+            delete globalThis[callbackId];
+            try { var parsed = JSON.parse(result); if (isError) reject(new Error(parsed.message)); else resolve(parsed); }
+            catch (error) { reject(error); }
+        };
+        try { __operitNativeChatExtensionAsync(callbackId, method, targetJson, valueJson); }
+        catch (error) { delete globalThis[callbackId]; reject(error); }
+    });
+}
+globalThis.__operitChatExtensionSequence = 0;
+
 "#,
     );
     let mut initialized_namespaces = BTreeSet::new();
+    output.push_str(&fs::read_to_string(sdk_src.join("chat_runtime.js"))?);
     let mut chat_namespace_open = false;
     for ((namespace, method), overloads) in methods {
         let binding = bindings
@@ -467,6 +620,49 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
             })
             .collect::<Vec<_>>()
             .join(", ");
+        if binding.tool.is_none() {
+            if namespace == "SoftwareSettings" {
+                match (method.as_str(), canonical_signature.as_str()) {
+                    ("listModelSummaries" | "listTtsConfigs" | "readToolSourceCatalog" | "listThemeConfigs" | "getCurrentTtsConfigId", "") => {
+                        output.push_str(&format!("{expression}[\"{method}\"] = function() {{ if (arguments.length !== 0) return Promise.reject(new Error(\"SoftwareSettings.{method} requires exactly 0 arguments\")); return __operitReadSoftwareSettingsDirectory(\"{method}\"); }};\n"));
+                    }
+                    ("applyThemeConfig" | "setCurrentTtsConfigId", "id") => {
+                        output.push_str(&format!("{expression}[\"{method}\"] = function(id) {{ if (arguments.length !== 1) return Promise.reject(new Error(\"SoftwareSettings.{method} requires exactly 1 argument\")); return __operitApplySoftwareSettingsConfig(\"{method}\", id); }};\n"));
+                    }
+                    _ => return Err(format!("Unsupported direct SoftwareSettings signature: {method}").into()),
+                }
+            } else if namespace == "Chat" && matches!(method.as_str(), "sendMessage" | "sendMessageStreaming" | "cancel") {
+                if !chat_namespace_open {
+                    output.push_str("Tools[\"Chat\"] = __operitToolPkgApi.namespace(\"Tools.Chat\", {\n");
+                    chat_namespace_open = true;
+                }
+                let helper = match method.as_str() {
+                    "sendMessage" => "__operitChatSend",
+                    "sendMessageStreaming" => "__operitChatStream",
+                    "cancel" => "__operitChatCancel",
+                    _ => unreachable!("direct chat method was selected explicitly"),
+                };
+                output.push_str(&format!("\"{method}\": {helper},\n"));
+            } else if namespace == "Chat" {
+                let (arity, value) = match (method.as_str(), canonical_signature.as_str()) {
+                    ("readExtension" | "deleteExtension", "target") => (1, "null"),
+                    ("writeExtension", "target, value") => (2, "value"),
+                    _ => return Err(format!("Unsupported direct Chat signature: {method}").into()),
+                };
+                if !chat_namespace_open {
+                    output.push_str(
+                        "Tools[\"Chat\"] = __operitToolPkgApi.namespace(\"Tools.Chat\", {\n",
+                    );
+                    chat_namespace_open = true;
+                }
+                output.push_str(&format!("\"{method}\": function({canonical_signature}) {{ if (arguments.length !== {arity}) return Promise.reject(new Error(\"Chat.{method} requires exactly {arity} arguments\")); return __operitChatExtension(\"{method}\", target, {value}); }},\n"));
+            } else {
+                return Err(
+                    format!("Unsupported direct typed namespace: {namespace}.{method}").into(),
+                );
+            }
+            continue;
+        }
         if namespace == "Chat" {
             if !chat_namespace_open {
                 output
@@ -478,7 +674,10 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
                 output.push_str(&generated_js_function(
                     &namespace,
                     &method,
-                    &binding.tool,
+                    binding
+                        .tool
+                        .as_deref()
+                        .expect("builtin method has a tool binding"),
                     &canonical_signature,
                     &canonical_overloads,
                 ));
@@ -507,7 +706,10 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
                     let function = generated_js_function(
                         &namespace,
                         &method,
-                        &binding.tool,
+                        binding
+                            .tool
+                            .as_deref()
+                            .expect("builtin method has a tool binding"),
                         &signature,
                         &variant_overloads,
                     );
@@ -526,7 +728,10 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
             let function = generated_js_function(
                 &namespace,
                 &method,
-                &binding.tool,
+                binding
+                    .tool
+                    .as_deref()
+                    .expect("builtin method has a tool binding"),
                 &canonical_signature,
                 &canonical_overloads,
             );
@@ -646,11 +851,6 @@ fn generated_method_body(
     if namespace == "System.terminal" && method == "execStreaming" {
         return format!(
             "        invoke_terminal_streaming(\n            self,\n            BuiltinToolName::{tool_variant},\n            sessionId,\n            command,\n            options,\n        )\n"
-        );
-    }
-    if namespace == "Chat" && method == "sendMessageStreaming" {
-        return format!(
-            "        invoke_chat_streaming(\n            self,\n            BuiltinToolName::{tool_variant},\n            message,\n            chatId,\n            roleCardId,\n            senderName,\n            options,\n        )\n"
         );
     }
     let ignores_uninhabited_options = matches!(

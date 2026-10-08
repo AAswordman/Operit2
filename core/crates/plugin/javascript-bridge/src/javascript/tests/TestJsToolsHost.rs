@@ -729,6 +729,34 @@ macro_rules! impl_rejecting_js_tools_host {
 
         #[allow(non_snake_case)]
         impl operit_plugin_sdk::js_sdk::software_settings::SoftwareSettingsHost for $host {
+            /// Rejects an unused configured-model directory read explicitly in this test host.
+            fn listModelSummaries(&self) -> operit_plugin_sdk::js_sdk::JsFuture<Vec<operit_plugin_sdk::js_sdk::software_settings::SoftwareModelSummary>> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.listModelSummaries is not part of this test")
+            }
+            /// Rejects an unused speech directory read explicitly in this test host.
+            fn listTtsConfigs(&self) -> operit_plugin_sdk::js_sdk::JsFuture<Vec<operit_plugin_sdk::js_sdk::software_settings::SoftwareTtsConfig>> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.listTtsConfigs is not part of this test")
+            }
+            /// Rejects an undeclared named-theme directory read rather than returning an empty production-shaped catalog.
+            fn listThemeConfigs(&self) -> operit_plugin_sdk::js_sdk::JsFuture<Vec<operit_plugin_sdk::js_sdk::software_settings::SoftwareThemeConfig>> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.listThemeConfigs is not part of this test")
+            }
+            /// Rejects an undeclared ordinary appearance transaction explicitly in this isolated test host.
+            fn applyThemeConfig(&self, _id: String) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::software_settings::SoftwareThemeConfig> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.applyThemeConfig is not part of this test")
+            }
+            /// Rejects an undeclared canonical speech selection read instead of fabricating an active ID.
+            fn getCurrentTtsConfigId(&self) -> operit_plugin_sdk::js_sdk::JsFuture<String> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.getCurrentTtsConfigId is not part of this test")
+            }
+            /// Rejects an undeclared canonical speech selection mutation explicitly in this test host.
+            fn setCurrentTtsConfigId(&self, _id: String) -> operit_plugin_sdk::js_sdk::JsFuture<String> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.setCurrentTtsConfigId is not part of this test")
+            }
+            /// Rejects an unused tool-source directory read explicitly in this test host.
+            fn readToolSourceCatalog(&self) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::software_settings::SoftwareToolSourceCatalog> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.readToolSourceCatalog is not part of this test")
+            }
             /// Rejects environment reads in this test host.
             fn readEnvironmentVariable(&self, _key: String) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::EnvironmentVariableReadResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("SoftwareSettings.readEnvironmentVariable is not part of this test")
@@ -758,8 +786,21 @@ macro_rules! impl_rejecting_js_tools_host {
             }
 
             /// Rejects chat creation in this test host.
-            fn createNew(&self, _group: Option<String>, _setAsCurrentChat: Option<bool>, _characterCardId: Option<String>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::ChatCreationResultData> {
+            fn createNew(&self, _options: Option<operit_plugin_sdk::js_sdk::chat::ChatCreateOptions>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::ChatCreationResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.createNew is not part of this test")
+            }
+
+            /// Rejects unused authenticated record reads in this explicit test host.
+            fn readExtension(&self, _target: operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::JsNullable<operit_plugin_sdk::js_sdk::core::JsonObject>> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.readExtension is not part of this test")
+            }
+            /// Rejects unused authenticated record writes in this explicit test host.
+            fn writeExtension(&self, _target: operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget, _value: operit_plugin_sdk::js_sdk::core::JsonObject) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::core::JsonObject> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.writeExtension is not part of this test")
+            }
+            /// Rejects unused authenticated record deletion in this explicit test host.
+            fn deleteExtension(&self, _target: operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget) -> operit_plugin_sdk::js_sdk::JsFuture<bool> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.deleteExtension is not part of this test")
             }
 
             /// Rejects full chat listing in this test host.
@@ -797,19 +838,19 @@ macro_rules! impl_rejecting_js_tools_host {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.deleteChat is not part of this test")
             }
 
-            /// Rejects chat messages in this test host.
-            fn sendMessage(&self, _message: String, _chatId: Option<String>, _roleCardId: Option<String>, _senderName: Option<String>, _options: Option<operit_plugin_sdk::js_sdk::chat::ChatSendMessageOptions>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::MessageSendResultData> {
+            /// Rejects chat sends in this deliberately narrow test host.
+            fn sendMessage(&self, _request: operit_plugin_sdk::js_sdk::chat::ChatSendRequest) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::MessageSendResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.sendMessage is not part of this test")
             }
 
-            /// Rejects streaming chat messages in this test host.
-            fn sendMessageStreaming(&self, _message: String, _chatId: Option<String>, _roleCardId: Option<String>, _senderName: Option<String>, _options: Option<operit_plugin_sdk::js_sdk::chat::ChatSendMessageStreamingOptions>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::MessageSendResultData> {
-                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.sendMessageStreaming is not part of this test")
+            /// Rejects streaming without pretending to provide a working observation.
+            fn sendMessageStreaming(&self, _request: operit_plugin_sdk::js_sdk::chat::ChatSendRequest) -> operit_plugin_sdk::js_sdk::JsAsyncIterable<operit_plugin_sdk::js_sdk::chat::ChatSendEvent> {
+                operit_plugin_sdk::js_sdk::rejected_js_async_iterable(operit_plugin_sdk::js_sdk::JsHostError::new("Chat.sendMessageStreaming is not part of this test"))
             }
 
-            /// Rejects character card listing in this test host.
-            fn listCharacterCards(&self) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::CharacterCardListResultData> {
-                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.listCharacterCards is not part of this test")
+            /// Rejects chat cancellation in this deliberately narrow test host.
+            fn cancel(&self, _chatId: String) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::chat::ChatCancelResult> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.cancel is not part of this test")
             }
 
             /// Rejects message history reads in this test host.

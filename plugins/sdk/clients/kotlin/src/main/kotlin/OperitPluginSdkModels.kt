@@ -571,6 +571,7 @@ data class ToolPkgContainerRuntime(
     val chatInputHooks: List<ToolPkgFunctionHookRuntime>,
     val chatViewHooks: List<ToolPkgFunctionHookRuntime>,
     val chatMessageHooks: List<ToolPkgFunctionHookRuntime>,
+    val chatLifecycleHooks: List<ToolPkgFunctionHookRuntime>,
     val chatMessageMenuItems: List<ToolPkgChatMessageMenuItemRuntime>,
     val chatRuntimeHooks: List<ToolPkgFunctionHookRuntime>,
     val hostEventHooks: List<ToolPkgHostEventHookRuntime>,
@@ -624,6 +625,7 @@ fun decodeToolPkgContainerRuntime(value: Any?): ToolPkgContainerRuntime {
         chatInputHooks = (input["chatInputHooks"] as List<*>).map { item -> decodeToolPkgFunctionHookRuntime(item) } as List<ToolPkgFunctionHookRuntime>,
         chatViewHooks = (input["chatViewHooks"] as List<*>).map { item -> decodeToolPkgFunctionHookRuntime(item) } as List<ToolPkgFunctionHookRuntime>,
         chatMessageHooks = (input["chatMessageHooks"] as List<*>).map { item -> decodeToolPkgFunctionHookRuntime(item) } as List<ToolPkgFunctionHookRuntime>,
+        chatLifecycleHooks = (input["chatLifecycleHooks"] as List<*>).map { item -> decodeToolPkgFunctionHookRuntime(item) } as List<ToolPkgFunctionHookRuntime>,
         chatMessageMenuItems = (input["chatMessageMenuItems"] as List<*>).map { item -> decodeToolPkgChatMessageMenuItemRuntime(item) } as List<ToolPkgChatMessageMenuItemRuntime>,
         chatRuntimeHooks = (input["chatRuntimeHooks"] as List<*>).map { item -> decodeToolPkgFunctionHookRuntime(item) } as List<ToolPkgFunctionHookRuntime>,
         hostEventHooks = (input["hostEventHooks"] as List<*>).map { item -> decodeToolPkgHostEventHookRuntime(item) } as List<ToolPkgHostEventHookRuntime>,
@@ -677,6 +679,7 @@ fun ToolPkgContainerRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
     "chatInputHooks" to this.chatInputHooks.map { item -> item.toMessagePackValue() },
     "chatViewHooks" to this.chatViewHooks.map { item -> item.toMessagePackValue() },
     "chatMessageHooks" to this.chatMessageHooks.map { item -> item.toMessagePackValue() },
+    "chatLifecycleHooks" to this.chatLifecycleHooks.map { item -> item.toMessagePackValue() },
     "chatMessageMenuItems" to this.chatMessageMenuItems.map { item -> item.toMessagePackValue() },
     "chatRuntimeHooks" to this.chatRuntimeHooks.map { item -> item.toMessagePackValue() },
     "hostEventHooks" to this.hostEventHooks.map { item -> item.toMessagePackValue() },
@@ -923,6 +926,7 @@ fun ToolPkgNavigationActionHookRuntime.toMessagePackValue(): Map<String, Any?> =
 data class ToolPkgNavigationEntryRuntime(
     val id: String,
     val routeId: String,
+    val params: Any?,
     val surface: String,
     val title: LocalizedText,
     val action: ToolPkgNavigationActionHookRuntime?,
@@ -935,6 +939,7 @@ fun decodeToolPkgNavigationEntryRuntime(value: Any?): ToolPkgNavigationEntryRunt
     return ToolPkgNavigationEntryRuntime(
         id = input["id"] as String as String,
         routeId = input["routeId"] as String as String,
+        params = input["params"] as Any?,
         surface = input["surface"] as String as String,
         title = decodeLocalizedText(input["title"]) as LocalizedText,
         action = input["action"]?.let { decodeToolPkgNavigationActionHookRuntime(it) } as ToolPkgNavigationActionHookRuntime?,
@@ -947,6 +952,7 @@ fun decodeToolPkgNavigationEntryRuntime(value: Any?): ToolPkgNavigationEntryRunt
 fun ToolPkgNavigationEntryRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
     "id" to this.id,
     "routeId" to this.routeId,
+    "params" to this.params,
     "surface" to this.surface,
     "title" to this.title.toMessagePackValue(),
     "action" to this.action?.let { it.toMessagePackValue() },

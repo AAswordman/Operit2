@@ -2297,6 +2297,7 @@ dependencies = [
  "md-5",
  "operit-edge-contract",
  "operit-host-api",
+ "operit-host-native-storage",
  "operit-js-bridge",
  "operit-link",
  "operit-local-models",

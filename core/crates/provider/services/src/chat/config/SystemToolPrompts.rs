@@ -383,6 +383,7 @@ impl SystemToolPrompts {
     }
 
     #[allow(non_snake_case)]
+    /// Propagates registered tool-policy errors before exposing any prompt to the model.
     pub async fn generateToolsPromptEn(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
@@ -395,7 +396,7 @@ impl SystemToolPrompts {
         saf_bookmark_names: &[String],
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
-    ) -> String {
+    ) -> Result<String, String> {
         Self::generateToolsPromptEnForHost(
             chat_id,
             has_backend_image_recognition,
@@ -414,6 +415,7 @@ impl SystemToolPrompts {
     }
 
     #[allow(non_snake_case)]
+    /// Propagates registered tool-policy errors before exposing any prompt to the model.
     pub async fn generateToolsPromptEnForHost(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
@@ -427,7 +429,7 @@ impl SystemToolPrompts {
         host_environment: &HostEnvironmentDescriptor,
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
-    ) -> String {
+    ) -> Result<String, String> {
         let mut categories = Self::getAIAllCategoriesEnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
@@ -454,6 +456,7 @@ impl SystemToolPrompts {
     }
 
     #[allow(non_snake_case)]
+    /// Propagates registered tool-policy errors before exposing any prompt to the model.
     pub async fn generateToolsPromptCn(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
@@ -466,7 +469,7 @@ impl SystemToolPrompts {
         saf_bookmark_names: &[String],
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
-    ) -> String {
+    ) -> Result<String, String> {
         Self::generateToolsPromptCnForHost(
             chat_id,
             has_backend_image_recognition,
@@ -485,6 +488,7 @@ impl SystemToolPrompts {
     }
 
     #[allow(non_snake_case)]
+    /// Propagates registered tool-policy errors before exposing any prompt to the model.
     pub async fn generateToolsPromptCnForHost(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
@@ -498,7 +502,7 @@ impl SystemToolPrompts {
         host_environment: &HostEnvironmentDescriptor,
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
-    ) -> String {
+    ) -> Result<String, String> {
         let mut categories = Self::getAIAllCategoriesCnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
@@ -683,6 +687,7 @@ fn applyToolVisibility(
         .collect()
 }
 
+/// Renders only the actual tools retained by registered prompt policy hooks.
 async fn compose_tool_prompt(
     chat_id: Option<String>,
     use_english: bool,
@@ -690,7 +695,7 @@ async fn compose_tool_prompt(
     categories: Vec<SystemToolPromptCategory>,
     tool_visibility: &HashMap<String, bool>,
     hook_metadata: HashMap<String, Value>,
-) -> String {
+) -> Result<String, String> {
     let visible_categories = applyToolVisibility(categories, tool_visibility);
     let available_tools = buildToolHookPayload(&visible_categories);
     let mut metadata = HashMap::from([
@@ -702,8 +707,8 @@ async fn compose_tool_prompt(
     ]);
     metadata.extend(hook_metadata);
 
-    let before_context = PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
-        stage: "before_compose_tool_prompt".to_string(),
+    let build_context = PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
+        stage: "build_tool_prompt".to_string(),
         chat_id: chat_id.clone(),
         function_type: None,
         prompt_function_type: None,
@@ -719,31 +724,37 @@ async fn compose_tool_prompt(
         metadata,
         on_hook_timeout: None,
     })
-    .await;
-    let mut prompt = before_context
-        .tool_prompt
-        .clone()
-        .unwrap_or_else(|| renderToolPromptFromAvailableTools(&before_context.available_tools));
+    .await?;
+    let before_context = PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
+        stage: "before_compose_tool_prompt".to_string(),
+        ..build_context
+    })
+    .await?;
+    let mut prompt = match &before_context.tool_prompt {
+        Some(prompt) => prompt.clone(),
+        None => renderToolPromptFromAvailableTools(&before_context.available_tools),
+    };
     let filter_context = PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
         stage: "filter_tool_prompt_items".to_string(),
         tool_prompt: Some(prompt),
         ..before_context
     })
-    .await;
-    prompt = filter_context
-        .tool_prompt
-        .clone()
-        .unwrap_or_else(|| renderToolPromptFromAvailableTools(&filter_context.available_tools));
+    .await?;
+    prompt = match &filter_context.tool_prompt {
+        Some(prompt) => prompt.clone(),
+        None => renderToolPromptFromAvailableTools(&filter_context.available_tools),
+    };
     let after_context = PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
         stage: "after_compose_tool_prompt".to_string(),
         tool_prompt: Some(prompt),
         ..filter_context
     })
-    .await;
+    .await?;
     let after_available_tools = after_context.available_tools.clone();
-    after_context
-        .tool_prompt
-        .unwrap_or_else(|| renderToolPromptFromAvailableTools(&after_available_tools))
+    Ok(match after_context.tool_prompt {
+        Some(prompt) => prompt,
+        None => renderToolPromptFromAvailableTools(&after_available_tools),
+    })
 }
 
 #[allow(non_snake_case)]

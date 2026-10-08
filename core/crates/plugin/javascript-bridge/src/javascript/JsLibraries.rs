@@ -753,7 +753,8 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 getLang: function() {{ return readCallValue('__operit_package_lang', 'en'); }},
                 getCallerName: function() {{ return readCallValue('__operit_package_caller_name', undefined); }},
                 getChatId: function() {{ return readCallValue('__operit_package_chat_id', undefined); }},
-                getCallerCardId: function() {{ return readCallValue('__operit_package_caller_card_id', undefined); }},
+                /** Returns the opaque authenticated participant without a card alias or another namespace. */
+                getCallerParticipantId: function() {{ return readCallValue('__operit_package_caller_participant_id', undefined); }},
                 getEnv: function(key) {{
                     var value = __operitNativeGetEnvForCall(callId, __operitText(key).trim());
                     return value == null || value === '' ? undefined : __operitText(value);

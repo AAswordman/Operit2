@@ -86,6 +86,8 @@ pub struct ToolPkgNavigationEntryRuntime {
     pub id: String,
     #[serde(rename = "routeId")]
     pub routeId: String,
+    /// Preserves optional plugin-owned route input as JSON without host interpretation.
+    pub params: Option<Value>,
     pub surface: String,
     pub title: LocalizedText,
     pub action: Option<ToolPkgNavigationActionHookRuntime>,
@@ -272,6 +274,9 @@ pub struct ToolPkgRegisteredNavigationEntry {
     pub surface: String,
     #[serde(rename = "routeId", alias = "route", default)]
     pub routeId: Option<String>,
+    /// Retains the opaque JSON route input supplied by registerNavigationEntry.
+    #[serde(default)]
+    pub params: Option<Value>,
     #[serde(default)]
     pub action: Option<ToolPkgNavigationActionHookRuntime>,
     #[serde(default)]
@@ -445,6 +450,9 @@ pub struct ToolPkgMainRegistration {
     pub chatViewHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatMessageHooks", default)]
     pub chatMessageHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    /// Declares one lifecycle initializer for the package-owned conversation namespace.
+    #[serde(rename = "chatLifecycleHooks", default)]
+    pub chatLifecycleHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "chatMessageMenuItems", default)]
     pub chatMessageMenuItems: Vec<ToolPkgRegisteredChatMessageMenuItem>,
     #[serde(rename = "chatRuntimeHooks", default)]
@@ -549,6 +557,9 @@ pub struct ToolPkgContainerRuntime {
     pub chatViewHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageHooks")]
     pub chatMessageHooks: Vec<ToolPkgFunctionHookRuntime>,
+    /// Retains the actual exported creation handler validated at package registration.
+    #[serde(rename = "chatLifecycleHooks")]
+    pub chatLifecycleHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "chatMessageMenuItems")]
     pub chatMessageMenuItems: Vec<ToolPkgChatMessageMenuItemRuntime>,
     #[serde(rename = "chatRuntimeHooks")]
@@ -1212,7 +1223,33 @@ impl ToolPkgArchiveParser {
         for (index, entry) in registeredNavigationEntries.iter().enumerate() {
             let id = entry.id.trim().to_string();
             let routeId = entry.routeId.clone().unwrap_or_default().trim().to_string();
-            let surface = entry.surface.trim().to_ascii_lowercase();
+            let surface = entry.surface.clone();
+            requireToolPkgNavigationSurface(&surface).map_err(|error| {
+                format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].surface {error}")
+            })?;
+            if surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS {
+                if entry.action.is_some() {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].action is unsupported for {surface}"));
+                }
+                if routeId.is_empty() {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is required for {surface}"));
+                }
+            }
+            if surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS {
+                if !routeId.starts_with(&format!("toolpkg:{}:ui:", manifest.toolpkgId)) {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must belong to this package for chat_sidebar_tabs: {routeId}"));
+                }
+                let matching = uiRoutes.iter().filter(|route| route.routeId == routeId).collect::<Vec<_>>();
+                if matching.is_empty() {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route not found: {routeId}"));
+                }
+                if matching.len() != 1 {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is duplicated for chat_sidebar_tabs: {routeId}"));
+                }
+                if matching[0].runtime != TOOLPKG_RUNTIME_COMPOSE_DSL {
+                    return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must use compose_dsl for chat_sidebar_tabs: {routeId}"));
+                }
+            }
             if id.is_empty() {
                 return Err(format!(
                     "{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].id is required"
@@ -1229,21 +1266,16 @@ impl ToolPkgArchiveParser {
             if !routeId.is_empty()
                 && !uiRoutes
                     .iter()
-                    .any(|route| route.routeId.eq_ignore_ascii_case(&routeId))
+                    .any(|route| route.routeId == routeId)
             {
                 return Err(format!(
                     "{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route not found: {routeId}"
                 ));
             }
-            if surface != TOOLPKG_NAV_SURFACE_TOOLBOX
-                && surface != TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS
-                && surface != TOOLPKG_NAV_SURFACE_APP_BAR
-            {
-                return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].surface is unsupported: {surface}"));
-            }
             navigationEntries.push(ToolPkgNavigationEntryRuntime {
                 id,
                 routeId,
+                params: entry.params.clone(),
                 surface,
                 title: entry.title.clone(),
                 action: entry.action.clone(),
@@ -1276,6 +1308,13 @@ impl ToolPkgArchiveParser {
         let chatViewHooks = validateFunctionHooks(
             &mainRegistration.chatViewHooks,
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
+        )?;
+        if mainRegistration.chatLifecycleHooks.len() > 1 {
+            return Err(format!("Duplicate chat lifecycle hook owner: {}", manifest.toolpkgId));
+        }
+        let chatLifecycleHooks = validateFunctionHooks(
+            &mainRegistration.chatLifecycleHooks,
+            TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK,
         )?;
         let chatMessageHooks = validateFunctionHooks(
             &mainRegistration.chatMessageHooks,
@@ -1380,6 +1419,7 @@ impl ToolPkgArchiveParser {
             chatInputHooks,
             chatViewHooks,
             chatMessageHooks,
+            chatLifecycleHooks,
             chatMessageMenuItems,
             chatRuntimeHooks,
             hostEventHooks,
@@ -2258,6 +2298,7 @@ fn duplicateLabel(registryName: &str) -> &'static str {
         TOOLPKG_REGISTRATION_CHAT_INPUT_HOOK => "chat input hook",
         TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK => "chat view hook",
         TOOLPKG_REGISTRATION_CHAT_MESSAGE_HOOK => "chat message hook",
+        TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK => "chat lifecycle hook",
         TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM => "chat message menu item",
         TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK => "chat runtime hook",
         TOOLPKG_REGISTRATION_HOST_EVENT_HOOK => "host event hook",
@@ -2615,4 +2656,157 @@ mod public_api_tests {
         assert!(load_public_fixture(None, None, 1).is_err());
         assert!(load_public_fixture(Some("sdk/api.ts"), Some("export {}"), 2).is_err());
     }
+}
+
+
+#[cfg(test)]
+mod navigation_registration_tests {
+    use super::*;
+
+    /// Loads an indexed package through the real archive parser using declared registration metadata only.
+    fn load_navigation_entry(surface: &str, route: &str, params: Option<Value>, action: Option<ToolPkgNavigationActionHookRuntime>) -> Result<ToolPkgLoadResult, String> {
+        let manifest = serde_json::json!({ "toolpkg_id": "arbitrary_package", "api_version": "2.0.0", "main": "main.js" });
+        let sources = BTreeMap::from([
+            ("manifest.json".to_string(), manifest.to_string()),
+            ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+            ("ui/picker.js".to_string(), "exports.screen = function() {};".to_string()),
+        ]);
+        let index = ToolPkgEntryIndex {
+            entryNames: sources.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: sources.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        let registration = ToolPkgMainRegistration {
+            uiRoutes: vec![ToolPkgRegisteredUiRoute {
+                id: "picker".to_string(), routeId: "toolpkg:arbitrary_package:ui:picker".to_string(),
+                runtime: "compose_dsl".to_string(), screen: "ui/picker.js".to_string(), ..Default::default()
+            }],
+            navigationEntries: vec![ToolPkgRegisteredNavigationEntry {
+                id: "custom-attachment".to_string(), surface: surface.to_string(), routeId: Some(route.to_string()),
+                params, action, icon: Some("attachment".to_string()), order: 9, ..Default::default()
+            }],
+            ..Default::default()
+        };
+        ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| sources.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
+            |_, _| panic!("navigation unit input has no subpackages"),
+            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
+            |name, message| panic!("unexpected package error {name}: {message}"),
+        )
+    }
+
+    /// Preserves the full registered attachment descriptor when validating the package's own route.
+    #[test]
+    fn retains_attachment_surface_and_opaque_params_in_runtime() {
+        let params = serde_json::json!({ "opaque": ["9223372036854775807", null, true, { "nested": 2.5 }] });
+        let loaded = load_navigation_entry("chat_attachments", "toolpkg:arbitrary_package:ui:picker", Some(params.clone()), None).unwrap();
+        let entry = &loaded.containerRuntime.navigationEntries[0];
+        assert_eq!(entry.surface, "chat_attachments");
+        assert_eq!(entry.routeId, "toolpkg:arbitrary_package:ui:picker");
+        assert_eq!(entry.params.as_ref(), Some(&params));
+        assert_eq!(entry.icon.as_deref(), Some("attachment"));
+        assert_eq!(entry.order, 9);
+    }
+
+    /// Rejects missing, foreign, and differently cased routes rather than allowing another package's UI.
+    #[test]
+    fn rejects_unregistered_or_foreign_attachment_routes() {
+        for route in ["toolpkg:other_package:ui:picker", "toolpkg:arbitrary_package:ui:missing", "toolpkg:arbitrary_package:ui:PICKER"] {
+            let error = load_navigation_entry("chat_attachments", route, None, None).unwrap_err();
+            assert_eq!(error, format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route not found: {route}"));
+        }
+        assert_eq!(load_navigation_entry("chat_attachments", "", None, None).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route is required for chat_attachments"));
+    }
+
+    /// Rejects case and whitespace variants through the archive loader as well as the registration parser.
+    #[test]
+    fn archive_requires_exact_navigation_surface() {
+        for surface in ["CHAT_ATTACHMENTS", " chat_attachments", "chat_attachments ", "attachments"] {
+            assert_eq!(load_navigation_entry(surface, "toolpkg:arbitrary_package:ui:picker", None, None).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].surface is unsupported: {surface}"));
+        }
+    }
+
+    /// Rejects attachment actions in archive validation while retaining valid toolbox route-and-action entries.
+    #[test]
+    fn archive_rejects_attachment_actions_without_restricting_toolbox_actions() {
+        let action = ToolPkgNavigationActionHookRuntime { function: "existingAction".to_string(), functionSource: None };
+        let route = "toolpkg:arbitrary_package:ui:picker";
+        let error = load_navigation_entry("chat_attachments", route, None, Some(action.clone())).unwrap_err();
+        assert_eq!(error, format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].action is unsupported for chat_attachments"));
+        let loaded = load_navigation_entry("toolbox", route, None, Some(action)).unwrap();
+        assert_eq!(loaded.containerRuntime.navigationEntries[0].action.as_ref().unwrap().function, "existingAction");
+    }
+
+    /// Runs sidebar metadata through the real archive validation with explicit route inputs and no host or UI implementation.
+    fn load_sidebar_navigation(routes: Vec<ToolPkgRegisteredUiRoute>, entry: ToolPkgRegisteredNavigationEntry) -> Result<ToolPkgLoadResult, String> {
+        let manifest = serde_json::json!({ "toolpkg_id": "arbitrary_package", "api_version": "2.0.0", "main": "main.js" });
+        let sources = BTreeMap::from([
+            ("manifest.json".to_string(), manifest.to_string()),
+            ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+            ("ui/panel.js".to_string(), "exports.screen = function() {};".to_string()),
+        ]);
+        let index = ToolPkgEntryIndex {
+            entryNames: sources.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: sources.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        let registration = ToolPkgMainRegistration { uiRoutes: routes, navigationEntries: vec![entry], ..Default::default() };
+        ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| sources.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
+            |_, _| panic!("sidebar archive input declares no subpackages"),
+            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
+            |name, message| panic!("unexpected package error {name}: {message}"),
+        )
+    }
+
+    /// Supplies one actual Compose route and sidebar descriptor while keeping all plugin params opaque.
+    fn sidebar_archive_input() -> (ToolPkgRegisteredUiRoute, ToolPkgRegisteredNavigationEntry) {
+        let route = ToolPkgRegisteredUiRoute {
+            id: "panel".to_string(), routeId: "toolpkg:arbitrary_package:ui:panel".to_string(),
+            runtime: TOOLPKG_RUNTIME_COMPOSE_DSL.to_string(), screen: "ui/panel.js".to_string(), ..Default::default()
+        };
+        let entry = ToolPkgRegisteredNavigationEntry {
+            id: "panel-tab".to_string(), surface: TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS.to_string(), routeId: Some(route.routeId.clone()),
+            params: Some(serde_json::json!({ "opaque": ["9223372036854775807", null, true] })), icon: Some("Dashboard".to_string()), order: 27,
+            ..Default::default()
+        };
+        (route, entry)
+    }
+
+    /// Preserves the registered route, icon, order and opaque params in the actual archive runtime model.
+    #[test]
+    fn sidebar_archive_retains_owned_route_and_params() {
+        let (route, entry) = sidebar_archive_input();
+        let loaded = load_sidebar_navigation(vec![route], entry.clone()).unwrap();
+        let retained = &loaded.containerRuntime.navigationEntries[0];
+        assert_eq!(retained.surface, "chat_sidebar_tabs");
+        assert_eq!(retained.routeId, "toolpkg:arbitrary_package:ui:panel");
+        assert_eq!(retained.params, entry.params); assert_eq!(retained.icon, entry.icon); assert_eq!(retained.order, entry.order);
+        assert!(retained.action.is_none());
+    }
+
+    /// Rejects explicit foreign owners, missing route registrations and sidebar callbacks at archive validation.
+    #[test]
+    fn sidebar_archive_rejects_foreign_missing_and_action_routes() {
+        let (route, entry) = sidebar_archive_input();
+        for (requested, expected) in [
+            ("toolpkg:foreign:ui:panel", "route must belong to this package for chat_sidebar_tabs: toolpkg:foreign:ui:panel"),
+            ("toolpkg:arbitrary_package:ui:missing", "route not found: toolpkg:arbitrary_package:ui:missing"),
+        ] {
+            let mut invalid = entry.clone(); invalid.routeId = Some(requested.to_string());
+            assert_eq!(load_sidebar_navigation(vec![route.clone()], invalid).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].{expected}"));
+        }
+        let mut action = entry; action.action = Some(ToolPkgNavigationActionHookRuntime { function: "callback".to_string(), functionSource: None });
+        assert_eq!(load_sidebar_navigation(vec![route], action).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].action is unsupported for chat_sidebar_tabs"));
+    }
+
+    /// Requires a unique Compose route even when archive metadata bypasses main-script parsing.
+    #[test]
+    fn sidebar_archive_rejects_duplicate_and_unsupported_runtime_routes() {
+        let (route, entry) = sidebar_archive_input();
+        assert_eq!(load_sidebar_navigation(vec![route.clone(), route.clone()], entry.clone()).unwrap_err(), "Duplicate toolpkg ui route id: panel");
+        let mut invalid = route; invalid.runtime = "unsupported".to_string();
+        assert_eq!(load_sidebar_navigation(vec![invalid], entry).unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route must use compose_dsl for chat_sidebar_tabs: toolpkg:arbitrary_package:ui:panel"));
+    }
+
 }

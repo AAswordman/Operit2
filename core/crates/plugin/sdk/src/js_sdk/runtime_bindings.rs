@@ -41,10 +41,7 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "Chat", method: "getMessagesRange", tool: BuiltinToolName::GetChatMessagesRange },
     JsToolBinding { namespace: "Chat", method: "call", tool: BuiltinToolName::CallChatModel },
     JsToolBinding { namespace: "Chat", method: "listAll", tool: BuiltinToolName::ListChats },
-    JsToolBinding { namespace: "Chat", method: "listCharacterCards", tool: BuiltinToolName::ListCharacterCards },
     JsToolBinding { namespace: "Chat", method: "listChats", tool: BuiltinToolName::ListChats },
-    JsToolBinding { namespace: "Chat", method: "sendMessage", tool: BuiltinToolName::SendMessageToAi },
-    JsToolBinding { namespace: "Chat", method: "sendMessageStreaming", tool: BuiltinToolName::SendMessageToAiStreaming },
     JsToolBinding { namespace: "Chat", method: "startService", tool: BuiltinToolName::StartChatService },
     JsToolBinding { namespace: "Chat", method: "stopService", tool: BuiltinToolName::StopChatService },
     JsToolBinding { namespace: "Chat", method: "switchTo", tool: BuiltinToolName::SwitchChat },
@@ -184,4 +181,28 @@ pub const JS_TOOL_API_VARIANTS: &[JsToolApiVariant] = &[
         until: None,
         arguments: None,
     },
+];
+
+/// Binds a concrete Tools method directly to the existing typed host namespace rather than an AI executor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JsDirectHostBinding {
+    pub namespace: &'static str,
+    pub method: &'static str,
+}
+/// Contains narrow typed directory and owner-authenticated record methods without AI tool dispatch.
+#[rustfmt::skip]
+pub const JS_DIRECT_HOST_BINDINGS: &[JsDirectHostBinding] = &[
+    JsDirectHostBinding { namespace: "Chat", method: "sendMessage" },
+    JsDirectHostBinding { namespace: "Chat", method: "sendMessageStreaming" },
+    JsDirectHostBinding { namespace: "Chat", method: "cancel" },
+    JsDirectHostBinding { namespace: "Chat", method: "readExtension" },
+    JsDirectHostBinding { namespace: "Chat", method: "writeExtension" },
+    JsDirectHostBinding { namespace: "Chat", method: "deleteExtension" },
+    JsDirectHostBinding { namespace: "SoftwareSettings", method: "listModelSummaries" },
+    JsDirectHostBinding { namespace: "SoftwareSettings", method: "listTtsConfigs" },
+    JsDirectHostBinding { namespace: "SoftwareSettings", method: "listThemeConfigs" },
+    JsDirectHostBinding { namespace: "SoftwareSettings", method: "applyThemeConfig" },
+    JsDirectHostBinding { namespace: "SoftwareSettings", method: "getCurrentTtsConfigId" },
+    JsDirectHostBinding { namespace: "SoftwareSettings", method: "setCurrentTtsConfigId" },
+    JsDirectHostBinding { namespace: "SoftwareSettings", method: "readToolSourceCatalog" },
 ];

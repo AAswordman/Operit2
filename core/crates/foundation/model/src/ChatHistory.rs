@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::ChatMessage::ChatMessage;
 
 use serde::{Deserialize, Serialize};
@@ -6,20 +8,18 @@ use serde::{Deserialize, Serialize};
 pub struct ChatHistory {
     pub id: String,
     pub title: String,
+    pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub messages: Vec<ChatMessage>,
     pub createdAt: String,
     pub updatedAt: String,
     pub inputTokens: i64,
     pub outputTokens: i64,
     pub currentWindowSize: i64,
-    pub group: Option<String>,
     pub displayOrder: i64,
     pub workspaceId: Option<String>,
     pub workspaceName: Option<String>,
     pub workspacePrimaryPath: Option<String>,
     pub parentChatId: Option<String>,
-    pub characterCardName: Option<String>,
-    pub characterGroupId: Option<String>,
     pub locked: bool,
     pub pinned: bool,
 }

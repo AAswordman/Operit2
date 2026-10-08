@@ -6,7 +6,6 @@ import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
-import 'package:operit2/ui/features/settings/memory/MemoryOwnerControlsDialog.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/ChatToolPermissionPanel.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentInputMenuPopup.dart';
@@ -21,6 +20,7 @@ const _settings = ChatInputMenuSettings(
   pluginToggles: <InputMenuToggleDefinitionSnapshot>[],
 );
 
+/// Creates an explicit owning-chat permission request for the real host panel.
 RuntimeHostInteractionToolPermissionRequest _request(String id) =>
     RuntimeHostInteractionToolPermissionRequest(
       requestId: id,
@@ -33,6 +33,7 @@ RuntimeHostInteractionToolPermissionRequest _request(String id) =>
       requestedAtMillis: 1,
     );
 
+/// Mounts the real generic menu and permission widgets with host localizations.
 Widget _app(Widget child, {double textScale = 1}) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(
@@ -60,9 +61,8 @@ void main() {
         AgentInputMenuPopup(
           viewModel: viewModel,
           currentChatId: 'computer-chat',
-          currentCharacterCardName: null,
-          currentCharacterCardAvatarUri: null,
           onDismiss: () {},
+          isChatContextCurrent: () => true,
         ),
       ),
     );
@@ -78,7 +78,7 @@ void main() {
     );
     expect(
       bridge.calls.any((c) => c.methodName == 'chatMemoryAutoSaveStatus'),
-      isTrue,
+      isFalse,
     );
     await tester.tap(find.text('工具'));
     await tester.pumpAndSettle();
@@ -92,7 +92,9 @@ void main() {
     expect(args['permissionMode'], AiPermissionMode.readOnly.toJson());
     expect(args['enableMemoryAutoUpdate'], isNull);
     expect(args['disableStreamOutput'], isNull);
-    for (final call in bridge.calls) {
+    for (final call in bridge.calls.where(
+      (call) => call.target == 'core/chatRuntimeHolderMain',
+    )) {
       expect((call.args as Map<String, Object?>)['chatId'], 'computer-chat');
       expect(call.target, 'core/chatRuntimeHolderMain');
     }
@@ -104,13 +106,14 @@ void main() {
   ) async {
     final bridge = _MenuBridge();
     final viewModel = ChatViewModel(bridge: bridge);
+
+    /// Rebuilds the actual menu for the supplied chat without plugin-domain fields.
     Widget menu(String chatId) => _app(
       AgentInputMenuPopup(
         viewModel: viewModel,
         currentChatId: chatId,
-        currentCharacterCardName: null,
-        currentCharacterCardAvatarUri: null,
         onDismiss: () {},
+        isChatContextCurrent: () => true,
       ),
     );
     await tester.pumpWidget(menu('computer-chat'));
@@ -123,162 +126,13 @@ void main() {
     await tester.pumpWidget(menu('other-computer-chat'));
     await tester.pumpAndSettle();
     expect(bridge.calls, isNotEmpty);
-    for (final call in bridge.calls) {
+    for (final call in bridge.calls.where(
+      (call) => call.target == 'core/chatRuntimeHolderMain',
+    )) {
       expect(
         (call.args as Map<String, Object?>)['chatId'],
         'other-computer-chat',
       );
-    }
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
-  for (final textScale in [1.0, 1.6]) {
-    testWidgets('expanded memory menu stays compact at text scale $textScale', (
-      tester,
-    ) async {
-      await tester.binding.setSurfaceSize(const Size(360, 800));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      final bridge = _MenuBridge();
-      final viewModel = ChatViewModel(bridge: bridge);
-      await tester.pumpWidget(
-        _app(
-          AgentInputMenuPopup(
-            viewModel: viewModel,
-            currentChatId: 'computer-chat',
-            currentCharacterCardName: null,
-            currentCharacterCardAvatarUri: null,
-            onDismiss: () {},
-          ),
-          textScale: textScale,
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('记忆'));
-      await tester.pumpAndSettle();
-      expect(find.text('记忆设置'), findsNothing);
-      expect(find.text('手动更新记忆'), findsOneWidget);
-      expect(find.byType(ListTile), findsNothing);
-      for (final label in ['自动更新记忆库', '提供用户资料']) {
-        final row = find
-            .ancestor(of: find.text(label), matching: find.byType(InkWell))
-            .first;
-        expect(
-          find.descendant(of: row, matching: find.text('开')),
-          findsNothing,
-        );
-        expect(
-          find.descendant(of: row, matching: find.text('关')),
-          findsOneWidget,
-        );
-        if (textScale == 1) {
-          expect(tester.getSize(row).height, 32);
-        }
-      }
-      expect(find.textContaining('待处理'), findsNothing);
-      expect(find.text('沉淀、检索与历史重建'), findsNothing);
-      final action = find
-          .ancestor(of: find.text('手动更新记忆'), matching: find.byType(InkWell))
-          .first;
-      expect(
-        tester.getSize(action).height,
-        lessThanOrEqualTo(textScale == 1 ? 32 : 56),
-      );
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    });
-  }
-
-  testWidgets('chat memory menu does not expose a settings entry', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(360, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final bridge = _MenuBridge();
-    final viewModel = ChatViewModel(bridge: bridge);
-    await tester.pumpWidget(_app(_OverlayMenuHost(viewModel: viewModel)));
-    await tester.tap(find.text('打开菜单'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('记忆'));
-    await tester.pumpAndSettle();
-    expect(find.byType(AgentInputMenuPopup), findsOneWidget);
-    expect(find.text('记忆设置'), findsNothing);
-    expect(find.byType(MemoryOwnerControlsDialog), findsNothing);
-    expect(find.text('提供用户资料'), findsOneWidget);
-    expect(find.text('自动更新记忆库'), findsOneWidget);
-    expect(find.text('手动更新记忆'), findsOneWidget);
-    expect(
-      bridge.calls.any((call) => call.methodName == 'chatMemorySettings'),
-      isFalse,
-    );
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
-  testWidgets(
-    'queue information replaces the overlay without changing switches',
-    (tester) async {
-      final bridge = _MenuBridge();
-      final viewModel = ChatViewModel(bridge: bridge);
-      await tester.pumpWidget(_app(_OverlayMenuHost(viewModel: viewModel)));
-      await tester.tap(find.text('打开菜单'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('记忆'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('记忆状态说明'));
-      await tester.pumpAndSettle();
-      expect(find.byType(AgentInputMenuPopup), findsNothing);
-      expect(find.textContaining('待处理 1 条'), findsOneWidget);
-      expect(
-        bridge.calls.any(
-          (call) => call.methodName == 'saveChatInputMenuSettings',
-        ),
-        isFalse,
-      );
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
-
-  testWidgets('memory controls opened from chat never use local owner APIs', (
-    tester,
-  ) async {
-    final bridge = _MenuBridge();
-    final viewModel = ChatViewModel(bridge: bridge);
-    await tester.pumpWidget(
-      _app(
-        MemoryOwnerControlsDialog(
-          clients: viewModel.clients,
-          ownerKey: '',
-          chatCore: viewModel.chatCore,
-          chatId: 'computer-chat',
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('所属记忆库：computer-owner'), findsOneWidget);
-    await tester.tap(find.text('保存设置'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('检索'));
-    await tester.pumpAndSettle();
-    final button = find.text('重建向量缓存（使用已保存设置）');
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(
-      bridge.calls.any((c) => c.methodName == 'saveChatMemorySettings'),
-      isTrue,
-    );
-    expect(
-      bridge.calls.any((c) => c.methodName == 'saveChatMemorySearchConfig'),
-      isTrue,
-    );
-    expect(
-      bridge.calls.any((c) => c.methodName == 'rebuildChatMemoryEmbeddings'),
-      isTrue,
-    );
-    for (final call in bridge.calls) {
-      expect(call.target, 'core/chatRuntimeHolderMain');
-      expect((call.args as Map<String, Object?>)['chatId'], 'computer-chat');
     }
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -373,10 +227,12 @@ void main() {
   });
 }
 
+/// Serves real generic menu and permission contracts and rejects retired owner APIs.
 class _MenuBridge extends OperitRuntimeBridge {
   final calls = <CoreCallRequest>[];
   bool disableStream = true;
 
+  /// Records exact owning-chat calls and the actual empty plugin registry.
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     calls.add(request);
@@ -394,57 +250,13 @@ class _MenuBridge extends OperitRuntimeBridge {
           outputTokenCount: 789,
           maxContextLength: 64,
         ).toJson();
-      case 'chatMemoryAutoSaveStatus':
-        value = const MemoryAutoSaveStatus(
-          ownerKey: 'computer-owner',
-          pendingCandidates: 1,
-          pendingChats: 1,
-          processingCandidates: 0,
-          failedCandidates: 0,
-          nextRunAtMs: 0,
-          minutesUntilNextRun: 0,
-          lastError: '',
-        ).toJson();
-      case 'chatMemorySettings':
-        value = const MemorySettings(
-          autoSaveIntervalMinutes: 5,
-          nextAutoSaveRunAtMs: 0,
-          memoryExtractionCustomRules: '',
-          profileAutoUpdateEnabled: true,
-          profileAutoUpdateLocked: false,
-          cloudEmbeddingEnabled: true,
-          cloudEmbeddingEndpoint: '',
-          cloudEmbeddingApiKey: '',
-          cloudEmbeddingModel: '',
-        ).toJson();
-      case 'chatMemorySearchConfig':
-        value = const MemorySearchConfig(
-          scoreMode: MemoryScoreMode.balanced,
-          keywordWeight: 10,
-          tagWeight: 0,
-          vectorWeight: 0,
-          edgeWeight: 0.4,
-        ).toJson();
-      case 'chatMemoryBoundChats':
-        value = <Object?>[];
-      case 'chatMemoryRebuildProgress':
-        value = const MemoryRebuildProgress(
-          status: 'idle',
-          totalChats: 0,
-          completedChats: 0,
-          totalWindows: 0,
-          completedWindows: 0,
-          totalSourceMessages: 0,
-          processedSourceMessages: 0,
-          failedWindows: 0,
-          currentChatTitle: '',
-          lastError: '',
-        ).toJson();
-      case 'rebuildChatMemoryEmbeddings':
-        value = 0;
+      case 'getToolPkgPublicApiOwners':
+        expect((request.args as Map)['apiName'], 'chat.context.actions');
+        value = const <Object?>[];
+      case 'getToolPkgUiRoutes':
+      case 'getToolPkgNavigationEntries':
+        value = const <Object?>[];
       case 'saveChatInputMenuSettings':
-      case 'saveChatMemorySettings':
-      case 'saveChatMemorySearchConfig':
       case 'respondChatToolPermission':
         value = null;
       default:
@@ -455,59 +267,18 @@ class _MenuBridge extends OperitRuntimeBridge {
     return encodeCoreLink(<Object?>[0, value]);
   }
 
+  /// Rejects push operations outside the generic menu and permission test scope.
   @override
   Future<CorePushSink> push(CorePushRequest request) =>
       throw UnimplementedError();
+
+  /// Rejects snapshot operations outside the generic menu and permission test scope.
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) =>
       throw UnimplementedError();
+
+  /// Rejects stream operations outside the generic menu and permission test scope.
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) =>
       throw UnimplementedError();
-}
-
-class _OverlayMenuHost extends StatefulWidget {
-  const _OverlayMenuHost({required this.viewModel});
-  final ChatViewModel viewModel;
-
-  @override
-  State<_OverlayMenuHost> createState() => _OverlayMenuHostState();
-}
-
-class _OverlayMenuHostState extends State<_OverlayMenuHost> {
-  OverlayEntry? _entry;
-
-  void _dismiss() {
-    _entry?.remove();
-    _entry?.dispose();
-    _entry = null;
-  }
-
-  @override
-  void dispose() {
-    _dismiss();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => TextButton(
-    onPressed: () {
-      _entry = OverlayEntry(
-        builder: (_) => Positioned(
-          right: 12,
-          bottom: 60,
-          width: 300,
-          child: AgentInputMenuPopup(
-            viewModel: widget.viewModel,
-            currentChatId: 'computer-chat',
-            currentCharacterCardName: null,
-            currentCharacterCardAvatarUri: null,
-            onDismiss: _dismiss,
-          ),
-        ),
-      );
-      Overlay.of(context).insert(_entry!);
-    },
-    child: const Text('打开菜单'),
-  );
 }

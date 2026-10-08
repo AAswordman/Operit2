@@ -999,6 +999,7 @@ impl<'a> EmitContext<'a> {
             ),
             "JsNullable" => format!("{} | null", self.emit_first_argument(arguments, scope)),
             "JsFuture" => format!("Promise<{}>", self.emit_first_argument(arguments, scope)),
+            "JsAsyncIterable" => format!("AsyncIterable<{}>", self.emit_first_argument(arguments, scope)),
             "Arc" | "Box" | "Pin" => self.emit_first_argument(arguments, scope),
             "BTreeMap" | "HashMap" => format!(
                 "Record<{}, {}>",
@@ -1144,10 +1145,13 @@ impl<'a> EmitContext<'a> {
                     }
                 }
                 match &variant.fields {
-                    Fields::Unit => format!(
-                        "\"{}\"",
-                        renamed_identifier(&variant.attrs, &variant.ident.to_string())
-                    ),
+                    Fields::Unit => {
+                        let name = renamed_identifier(&variant.attrs, &variant.ident.to_string());
+                        match serde_tag(&item.attrs) {
+                            Some(tag) => format!("{{ {tag}: {name:?}; }}"),
+                            None => format!("{name:?}"),
+                        }
+                    },
                     Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
                         self.emit_union_member(&fields.unnamed[0].ty, scope)
                     }
@@ -1162,6 +1166,12 @@ impl<'a> EmitContext<'a> {
                     ),
                     Fields::Named(fields) => {
                         let mut value = String::from("{ ");
+                        if let Some(tag) = serde_tag(&item.attrs) {
+                            value.push_str(&format!(
+                                "{tag}: {:?}; ",
+                                renamed_identifier(&variant.attrs, &variant.ident.to_string())
+                            ));
+                        }
                         for field in &fields.named {
                             value.push_str(&field_name(field));
                             if is_optional_field(&field.ty) {
@@ -1645,6 +1655,29 @@ fn serde_rename(attrs: &[Attribute]) -> Option<String> {
     None
 }
 
+/// Reads an internally tagged enum discriminator from its authoritative serde schema.
+fn serde_tag(attrs: &[Attribute]) -> Option<String> {
+    for attribute in attrs {
+        if !attribute.path().is_ident("serde") {
+            continue;
+        }
+        let mut tag = None;
+        let _ = attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("tag") {
+                let value: LitStr = meta.value()?.parse()?;
+                tag = Some(value.value());
+            } else if meta.input.peek(syn::Token![=]) {
+                let _: syn::Expr = meta.value()?.parse()?;
+            }
+            Ok(())
+        });
+        if tag.is_some() {
+            return tag;
+        }
+    }
+    None
+}
+
 /// Reports whether serde flatten metadata exists on a Rust field.
 fn has_serde_flatten(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attribute| {
@@ -1745,6 +1778,46 @@ mod tests {
         emit_jsdoc(&mut output, &attrs, "  ");
 
         assert_eq!(output, "  /**\n   * Summary.\n   *\n   * Details.\n   */\n");
+    }
+
+    /// Emits the authoritative serde discriminator and required revision index for internally tagged object variants.
+    #[test]
+    fn emits_internally_tagged_chat_extension_targets() {
+        let item: ItemEnum = syn::parse_quote! {
+            #[serde(tag = "kind", deny_unknown_fields)]
+            pub enum ChatExtensionTarget {
+                #[serde(rename = "chat")]
+                Chat { chatId: String },
+                #[serde(rename = "message")]
+                Message { chatId: String, messageTimestamp: i64, variantIndex: i32 },
+            }
+        };
+        let spec = ModuleSpec {
+            rust_file: "js_sdk/chat.rs",
+            additional_rust_file: None,
+            ts_file: "chat.d.ts",
+        };
+        let context = EmitContext::new(&[], &spec, TypeCatalog::new());
+        assert_eq!(context.emit_enum_union(&item, &[]), "{ kind: \"chat\"; chatId: string; } | { kind: \"message\"; chatId: string; messageTimestamp: number; variantIndex: number; }");
+    }
+
+    /// Preserves unit-variant discriminators and the exact public async iterable return shape.
+    #[test]
+    fn emits_tagged_units_and_async_iterables() {
+        let item: ItemEnum = syn::parse_quote! {
+            #[serde(tag = "kind")]
+            pub enum ChatInitialTurn {
+                #[serde(rename = "record_only")]
+                RecordOnly,
+                #[serde(rename = "execute")]
+                Execute { participantId: Option<String> },
+            }
+        };
+        let spec = ModuleSpec { rust_file: "js_sdk/chat.rs", additional_rust_file: None, ts_file: "chat.d.ts" };
+        let context = EmitContext::new(&[], &spec, TypeCatalog::new());
+        assert_eq!(context.emit_enum_union(&item, &[]), "{ kind: \"record_only\"; } | { kind: \"execute\"; participantId?: string; }");
+        let stream: Type = syn::parse_quote! { JsAsyncIterable<String> };
+        assert_eq!(context.emit_type(&stream, &[]), "AsyncIterable<string>");
     }
 
     /// Verifies that ordinary Rust composition fields retain interface and open-object semantics.

@@ -3,15 +3,14 @@
 part of 'TtsSettingsPanel.dart';
 
 class _TtsSectionData {
+  /// Contains only independent TTS configurations and the actual provider catalog.
   const _TtsSectionData({
     required this.configs,
     required this.providerCatalogEntries,
-    required this.characterBoundConfigIds,
   });
 
   final List<core_proxy.TtsConfig> configs;
   final List<core_proxy.TtsProviderCatalogEntry> providerCatalogEntries;
-  final Set<String> characterBoundConfigIds;
 }
 
 class _SttSectionData {
@@ -173,18 +172,15 @@ String _ttsConfigModelVoiceText(core_proxy.TtsConfig config) {
   return '$model · $voice';
 }
 
+/// Protects the independent current configuration without reverse actor-usage lookup.
 String? _ttsConfigDeleteBlockedReason(
   core_proxy.TtsConfig config,
   String currentConfigId,
-  Set<String> characterBoundConfigIds,
   AppLocalizations l10n,
 ) {
   final id = config.id.trim();
   if (id == currentConfigId.trim()) {
     return l10n.settingsTtsCurrentConfigCannotDelete;
-  }
-  if (characterBoundConfigIds.contains(id)) {
-    return l10n.settingsTtsConfigUsedByCharacter;
   }
   return null;
 }
@@ -193,16 +189,10 @@ String? _ttsConfigDeleteBlockedReason(
 String? _ttsProviderGroupDeleteBlockedReason(
   _TtsProviderGroup group,
   String currentConfigId,
-  Set<String> characterBoundConfigIds,
   AppLocalizations l10n,
 ) {
   for (final config in group.configs) {
-    final reason = _ttsConfigDeleteBlockedReason(
-      config,
-      currentConfigId,
-      characterBoundConfigIds,
-      l10n,
-    );
+    final reason = _ttsConfigDeleteBlockedReason(config, currentConfigId, l10n);
     if (reason != null) {
       return reason;
     }

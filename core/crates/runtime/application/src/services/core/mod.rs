@@ -8,6 +8,8 @@ pub mod MessageCoordinationDelegate;
 pub mod MessageProcessingDelegate;
 #[path = "TokenStatisticsDelegate.rs"]
 pub mod TokenStatisticsDelegate;
+#[path = "ChatTurnTransport.rs"]
+pub(crate) mod ChatTurnTransport;
 
-#[path = "ChatMemoryOwnerResolver.rs"]
-pub(crate) mod ChatMemoryOwnerResolver;
+#[path = "ChatSendStream.rs"]
+pub(crate) mod ChatSendStream;

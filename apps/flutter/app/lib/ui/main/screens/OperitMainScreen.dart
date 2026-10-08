@@ -53,13 +53,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   _drawerHistoriesSubscription;
   StreamSubscription<String?>? _drawerCurrentChatSubscription;
   StreamSubscription<List<String>>? _drawerActiveStreamingChatIdsSubscription;
-  StreamSubscription<List<core_proxy.CharacterGroupCard>>?
-  _drawerCharacterGroupsSubscription;
-  StreamSubscription<List<String>>? _drawerCharacterCardIdsSubscription;
-  final Map<String, StreamSubscription<core_proxy.CharacterCard>>
-  _drawerCharacterCardSubscriptions =
-      <String, StreamSubscription<core_proxy.CharacterCard>>{};
-  final Map<String, String> _drawerCharacterCardNamesById = <String, String>{};
   late final ValueNotifier<bool> _drawerOpenState;
   bool _isTabletSidebarExpanded = false;
   bool _isNavigatingBack = false;
@@ -185,8 +178,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       return;
     }
     _watchDrawerConversations();
-    _watchDrawerCharacterGroups();
-    _watchDrawerCharacterCards();
   }
 
   @override
@@ -216,11 +207,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _drawerHistoriesSubscription?.cancel();
     _drawerCurrentChatSubscription?.cancel();
     _drawerActiveStreamingChatIdsSubscription?.cancel();
-    _drawerCharacterGroupsSubscription?.cancel();
-    _drawerCharacterCardIdsSubscription?.cancel();
-    for (final subscription in _drawerCharacterCardSubscriptions.values) {
-      subscription.cancel();
-    }
     _drawerConversationState.dispose();
     _drawerOpenState.dispose();
     _routerState.dispose();
@@ -341,50 +327,34 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     }
   }
 
-  /// Loads drawer conversations and their character avatar metadata.
+  /// Loads only canonical conversations and generic runtime selection state.
   Future<void> _loadDrawerConversations() async {
     final currentState = _drawerConversationState.value;
     _drawerConversationState.value = DrawerConversationState(
       histories: currentState.histories,
       activeStreamingChatIds: currentState.activeStreamingChatIds,
-      characterGroupNamesById: currentState.characterGroupNamesById,
-      characterCardAvatarUrisByName: currentState.characterCardAvatarUrisByName,
       currentChatId: currentState.currentChatId,
       loading: true,
     );
     try {
-      final characterGroupCoreProxy =
-          _clients.preferencesCharacterGroupCardManager;
-      final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
       final results = await Future.wait<Object?>(<Future<Object?>>[
         _clients.chatRuntimeHolderMain.chatHistoryListItemsFlow().first,
         _clients.chatRuntimeHolderMain.currentChatIdFlow().first,
-        characterGroupCoreProxy.allCharacterGroupCardsFlow().first,
-        characterCardCoreProxy.getAllCharacterCards(),
         _clients.chatRuntimeHolderMain.activeStreamingChatIds(),
       ]);
       final histories = results[0] as List<core_proxy.ChatHistoryListItem>;
       final currentChatId = results[1] as String?;
-      final characterGroups = results[2] as List<core_proxy.CharacterGroupCard>;
-      final characterCards = results[3] as List<core_proxy.CharacterCard>;
-      final activeStreamingChatIds = results[4] as List<String>;
+      final activeStreamingChatIds = results[2] as List<String>;
       if (!mounted) {
         return;
       }
-      _replaceDrawerCharacterCardAvatars(characterCards);
       _drawerConversationState.value = DrawerConversationState(
         histories: List<core_proxy.ChatHistoryListItem>.unmodifiable(histories),
         activeStreamingChatIds: Set<String>.unmodifiable(
           activeStreamingChatIds,
         ),
-        characterGroupNamesById: _characterGroupNameMap(characterGroups),
-        characterCardAvatarUrisByName:
-            _drawerConversationState.value.characterCardAvatarUrisByName,
         currentChatId: currentChatId,
         loading: false,
-      );
-      await _syncDrawerCharacterCardSubscriptions(
-        characterCards.map((card) => card.id).toList(growable: false),
       );
     } catch (error, stackTrace) {
       debugPrint('Failed to load drawer conversations: $error\n$stackTrace');
@@ -395,8 +365,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       _drawerConversationState.value = DrawerConversationState(
         histories: state.histories,
         activeStreamingChatIds: state.activeStreamingChatIds,
-        characterGroupNamesById: state.characterGroupNamesById,
-        characterCardAvatarUrisByName: state.characterCardAvatarUrisByName,
         currentChatId: state.currentChatId,
         errorMessage: error.toString(),
         loading: false,
@@ -419,9 +387,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                 histories,
               ),
               activeStreamingChatIds: state.activeStreamingChatIds,
-              characterGroupNamesById: state.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               loading: false,
             );
@@ -437,9 +402,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               activeStreamingChatIds: state.activeStreamingChatIds,
-              characterGroupNamesById: state.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: error.toString(),
               loading: false,
@@ -459,9 +421,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               activeStreamingChatIds: state.activeStreamingChatIds,
-              characterGroupNamesById: state.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
               currentChatId: chatId,
               errorMessage: state.errorMessage,
               loading: state.loading,
@@ -478,9 +437,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               activeStreamingChatIds: state.activeStreamingChatIds,
-              characterGroupNamesById: state.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: error.toString(),
               loading: state.loading,
@@ -500,9 +456,6 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               activeStreamingChatIds: Set<String>.unmodifiable(activeChatIds),
-              characterGroupNamesById: state.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: state.errorMessage,
               loading: state.loading,
@@ -519,236 +472,12 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             _drawerConversationState.value = DrawerConversationState(
               histories: state.histories,
               activeStreamingChatIds: state.activeStreamingChatIds,
-              characterGroupNamesById: state.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
               currentChatId: state.currentChatId,
               errorMessage: error.toString(),
               loading: state.loading,
             );
           },
         );
-  }
-
-  void _watchDrawerCharacterGroups() {
-    _drawerCharacterGroupsSubscription?.cancel();
-    _drawerCharacterGroupsSubscription = _clients
-        .preferencesCharacterGroupCardManager
-        .allCharacterGroupCardsFlow()
-        .listen(
-          (groups) {
-            if (!mounted) {
-              return;
-            }
-            final state = _drawerConversationState.value;
-            _drawerConversationState.value = DrawerConversationState(
-              histories: state.histories,
-              activeStreamingChatIds: state.activeStreamingChatIds,
-              characterGroupNamesById: _characterGroupNameMap(groups),
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
-              currentChatId: state.currentChatId,
-              errorMessage: state.errorMessage,
-              loading: state.loading,
-            );
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            debugPrint(
-              'Failed to watch drawer character groups: $error\n$stackTrace',
-            );
-            if (!mounted) {
-              return;
-            }
-            final state = _drawerConversationState.value;
-            _drawerConversationState.value = DrawerConversationState(
-              histories: state.histories,
-              activeStreamingChatIds: state.activeStreamingChatIds,
-              characterGroupNamesById: state.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  state.characterCardAvatarUrisByName,
-              currentChatId: state.currentChatId,
-              errorMessage: error.toString(),
-              loading: state.loading,
-            );
-          },
-        );
-  }
-
-  /// Watches the character-card collection used to supply drawer avatars.
-  void _watchDrawerCharacterCards() {
-    final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
-    _drawerCharacterCardIdsSubscription?.cancel();
-    _drawerCharacterCardIdsSubscription = characterCardCoreProxy
-        .characterCardListFlow()
-        .listen(
-          (cardIds) {
-            unawaited(_syncDrawerCharacterCardSubscriptions(cardIds));
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            _reportDrawerCharacterCardError(error, stackTrace);
-          },
-        );
-  }
-
-  /// Synchronizes per-card avatar subscriptions with the current card list.
-  Future<void> _syncDrawerCharacterCardSubscriptions(
-    List<String> cardIds,
-  ) async {
-    try {
-      final desiredCardIds = cardIds
-          .map((id) => id.trim())
-          .where((id) => id.isNotEmpty)
-          .toSet();
-      final removedCardIds = _drawerCharacterCardSubscriptions.keys
-          .where((id) => !desiredCardIds.contains(id))
-          .toList(growable: false);
-      for (final cardId in removedCardIds) {
-        await _drawerCharacterCardSubscriptions.remove(cardId)!.cancel();
-        final previousName = _drawerCharacterCardNamesById.remove(cardId);
-        if (previousName != null) {
-          _removeDrawerCharacterCardAvatar(previousName);
-        }
-      }
-
-      final characterCardCoreProxy = _clients.preferencesCharacterCardManager;
-      for (final cardId in desiredCardIds) {
-        if (_drawerCharacterCardSubscriptions.containsKey(cardId)) {
-          continue;
-        }
-        _drawerCharacterCardSubscriptions[cardId] = characterCardCoreProxy
-            .getCharacterCardFlow(id: cardId)
-            .listen(
-              _updateDrawerCharacterCardAvatar,
-              onError: (Object error, StackTrace stackTrace) {
-                _reportDrawerCharacterCardError(error, stackTrace);
-              },
-            );
-      }
-
-      final cards = await Future.wait<core_proxy.CharacterCard>(
-        desiredCardIds.map(
-          (id) => characterCardCoreProxy.getCharacterCardFlow(id: id).first,
-        ),
-      );
-      if (!mounted) {
-        return;
-      }
-      _replaceDrawerCharacterCardAvatars(cards);
-    } catch (error, stackTrace) {
-      _reportDrawerCharacterCardError(error, stackTrace);
-    }
-  }
-
-  /// Replaces all drawer avatar metadata with the supplied character cards.
-  void _replaceDrawerCharacterCardAvatars(
-    List<core_proxy.CharacterCard> cards,
-  ) {
-    final avatarUrisByName = <String, String>{};
-    _drawerCharacterCardNamesById.clear();
-    for (final card in cards) {
-      final id = card.id.trim();
-      final name = card.name.trim();
-      if (id.isEmpty || name.isEmpty) {
-        continue;
-      }
-      _drawerCharacterCardNamesById[id] = name;
-      final avatarUri = card.avatarUri?.trim();
-      if (avatarUri != null && avatarUri.isNotEmpty) {
-        avatarUrisByName[name] = avatarUri;
-      }
-    }
-    final state = _drawerConversationState.value;
-    _drawerConversationState.value = DrawerConversationState(
-      histories: state.histories,
-      activeStreamingChatIds: state.activeStreamingChatIds,
-      characterGroupNamesById: state.characterGroupNamesById,
-      characterCardAvatarUrisByName: avatarUrisByName,
-      currentChatId: state.currentChatId,
-      errorMessage: state.errorMessage,
-      loading: state.loading,
-    );
-  }
-
-  /// Applies a single character-card avatar update to drawer state.
-  void _updateDrawerCharacterCardAvatar(core_proxy.CharacterCard card) {
-    if (!mounted) {
-      return;
-    }
-    final cardId = card.id.trim();
-    final cardName = card.name.trim();
-    if (cardId.isEmpty || cardName.isEmpty) {
-      return;
-    }
-    final avatarUrisByName = Map<String, String>.of(
-      _drawerConversationState.value.characterCardAvatarUrisByName,
-    );
-    final previousName = _drawerCharacterCardNamesById[cardId];
-    if (previousName != null) {
-      avatarUrisByName.remove(previousName);
-    }
-    _drawerCharacterCardNamesById[cardId] = cardName;
-    final avatarUri = card.avatarUri?.trim();
-    if (avatarUri != null && avatarUri.isNotEmpty) {
-      avatarUrisByName[cardName] = avatarUri;
-    }
-    final state = _drawerConversationState.value;
-    _drawerConversationState.value = DrawerConversationState(
-      histories: state.histories,
-      activeStreamingChatIds: state.activeStreamingChatIds,
-      characterGroupNamesById: state.characterGroupNamesById,
-      characterCardAvatarUrisByName: avatarUrisByName,
-      currentChatId: state.currentChatId,
-      errorMessage: state.errorMessage,
-      loading: state.loading,
-    );
-  }
-
-  /// Removes a deleted character-card avatar from drawer state.
-  void _removeDrawerCharacterCardAvatar(String cardName) {
-    if (!mounted) {
-      return;
-    }
-    final avatarUrisByName = Map<String, String>.of(
-      _drawerConversationState.value.characterCardAvatarUrisByName,
-    )..remove(cardName);
-    final state = _drawerConversationState.value;
-    _drawerConversationState.value = DrawerConversationState(
-      histories: state.histories,
-      activeStreamingChatIds: state.activeStreamingChatIds,
-      characterGroupNamesById: state.characterGroupNamesById,
-      characterCardAvatarUrisByName: avatarUrisByName,
-      currentChatId: state.currentChatId,
-      errorMessage: state.errorMessage,
-      loading: state.loading,
-    );
-  }
-
-  /// Publishes a character avatar loading error to the drawer state.
-  void _reportDrawerCharacterCardError(Object error, StackTrace stackTrace) {
-    debugPrint('Failed to watch drawer character cards: $error\n$stackTrace');
-    if (!mounted) {
-      return;
-    }
-    final state = _drawerConversationState.value;
-    _drawerConversationState.value = DrawerConversationState(
-      histories: state.histories,
-      activeStreamingChatIds: state.activeStreamingChatIds,
-      characterGroupNamesById: state.characterGroupNamesById,
-      characterCardAvatarUrisByName: state.characterCardAvatarUrisByName,
-      currentChatId: state.currentChatId,
-      errorMessage: error.toString(),
-      loading: false,
-    );
-  }
-
-  Map<String, String> _characterGroupNameMap(
-    List<core_proxy.CharacterGroupCard> groups,
-  ) {
-    return <String, String>{
-      for (final group in groups)
-        if (group.id.trim().isNotEmpty && group.name.trim().isNotEmpty)
-          group.id.trim(): group.name.trim(),
-    };
   }
 
   void _navigateToNavigationEntry(NavigationEntrySpec entry) {

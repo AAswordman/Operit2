@@ -10,11 +10,11 @@ where
     F: FnMut(usize),
 {
     match bridge {
-        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV27 => {
+        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV28 => {
             buildChatArchiveFromOperit1RoomV10Database(connection, fileImportPlan, onMessageParsed)
         }
-        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV27
-        | Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27 => {
+        Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV28
+        | Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV28 => {
             buildChatArchiveFromOperit1RoomV20Database(connection, fileImportPlan, onMessageParsed)
         }
     }
@@ -71,18 +71,16 @@ where
         chats.push(OperitArchivedChat {
             id: chat.id,
             title: chat.title,
+            pluginExtensions: std::collections::BTreeMap::new(),
             messages,
             createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,
             updatedAt: epochMillisToLocalDateTimeString(chat.updatedAt)?,
             inputTokens: chat.inputTokens,
             outputTokens: chat.outputTokens,
             currentWindowSize: chat.currentWindowSize,
-            group: chat.group,
             displayOrder: chat.displayOrder,
             workspaceId: fileImportPlan.rewriteChatWorkspace(chat.workspace)?,
             parentChatId: chat.parentChatId,
-            characterCardName: chat.characterCardName,
-            characterGroupId: None,
             locked: chat.locked,
             pinned: false,
         });
@@ -141,18 +139,16 @@ where
         chats.push(OperitArchivedChat {
             id: chat.id,
             title: chat.title,
+            pluginExtensions: std::collections::BTreeMap::new(),
             messages,
             createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,
             updatedAt: epochMillisToLocalDateTimeString(chat.updatedAt)?,
             inputTokens: chat.inputTokens,
             outputTokens: chat.outputTokens,
             currentWindowSize: chat.currentWindowSize,
-            group: chat.group,
             displayOrder: chat.displayOrder,
             workspaceId: fileImportPlan.rewriteChatWorkspace(chat.workspace)?,
             parentChatId: chat.parentChatId,
-            characterCardName: chat.characterCardName,
-            characterGroupId: chat.characterGroupId,
             locked: chat.locked,
             pinned: chat.pinned,
         });
@@ -233,6 +229,7 @@ fn migrateOperit1MessageTimestampIdentities(
     Ok(())
 }
 
+/// Preserves the complete legacy Room source row while target projection deliberately omits its domain bindings.
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]
 struct Operit1ChatRow {
@@ -283,6 +280,7 @@ where
         messages.push(OperitArchivedMessage {
             baseMessage: ChatMessage {
                 sender,
+                pluginExtensions: std::collections::BTreeMap::new(),
                 parts,
                 timestamp,
                 roleName: sqliteRowString(row, 4, "messages.roleName")?,
@@ -340,6 +338,7 @@ where
         messages.push(OperitArchivedMessage {
             baseMessage: ChatMessage {
                 sender: sender.clone(),
+                pluginExtensions: std::collections::BTreeMap::new(),
                 parts: parseOperit1MessageParts(
                     &sender,
                     sqliteRowString(row, 1, "messages.content")?,
@@ -399,6 +398,7 @@ fn readOperit1RoomV20MessageVariants(
     rows.iter()
         .map(|row| {
             Ok(OperitArchivedMessageVariant {
+                pluginExtensions: std::collections::BTreeMap::new(),
                 variantIndex: sqliteRowI32(row, 0, "message_variants.variantIndex")?,
                 parts: parseOperit1MessageParts(
                     sender,

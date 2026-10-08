@@ -196,9 +196,6 @@ class _PhoneLayoutState extends State<PhoneLayout>
                 appearance: appearance,
                 histories: drawerState.histories,
                 activeStreamingChatIds: drawerState.activeStreamingChatIds,
-                characterGroupNamesById: drawerState.characterGroupNamesById,
-                characterCardAvatarUrisByName:
-                    drawerState.characterCardAvatarUrisByName,
                 currentChatId: drawerState.currentChatId,
                 errorMessage: drawerState.errorMessage,
                 loading: drawerState.loading,

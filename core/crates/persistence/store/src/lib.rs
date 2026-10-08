@@ -53,3 +53,9 @@ pub mod db;
 pub mod repository;
 #[cfg(feature = "full")]
 pub mod sync;
+
+#[path = "PluginExtensions.rs"]
+pub(crate) mod PluginExtensions;
+
+#[path = "ChatExecutionLease.rs"]
+pub mod ChatExecutionLease;

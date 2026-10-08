@@ -51,3 +51,7 @@ pub mod ToolPkgInputMenuToggleBridge;
 
 #[path = "ToolPkgChatComposerSlotBridge.rs"]
 pub mod ToolPkgChatComposerSlotBridge;
+
+/// Exposes the strict awaited generic chat creation lifecycle bridge.
+#[path = "ToolPkgChatLifecycleHookBridge.rs"]
+pub mod ToolPkgChatLifecycleHookBridge;

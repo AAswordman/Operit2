@@ -691,6 +691,7 @@ class ToolPkgContainerRuntime {
     required this.chatInputHooks,
     required this.chatViewHooks,
     required this.chatMessageHooks,
+    required this.chatLifecycleHooks,
     required this.chatMessageMenuItems,
     required this.chatRuntimeHooks,
     required this.hostEventHooks,
@@ -743,6 +744,7 @@ class ToolPkgContainerRuntime {
     chatInputHooks: (value['chatInputHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     chatViewHooks: (value['chatViewHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     chatMessageHooks: (value['chatMessageHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    chatLifecycleHooks: (value['chatLifecycleHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     chatMessageMenuItems: (value['chatMessageMenuItems'] as List<Object?>).map((item) => ToolPkgChatMessageMenuItemRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     chatRuntimeHooks: (value['chatRuntimeHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     hostEventHooks: (value['hostEventHooks'] as List<Object?>).map((item) => ToolPkgHostEventHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
@@ -795,6 +797,7 @@ class ToolPkgContainerRuntime {
     'chatInputHooks': chatInputHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'chatViewHooks': chatViewHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'chatMessageHooks': chatMessageHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'chatLifecycleHooks': chatLifecycleHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'chatMessageMenuItems': chatMessageMenuItems.map((item) => item.toMessagePackValue()).toList(growable: false),
     'chatRuntimeHooks': chatRuntimeHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'hostEventHooks': hostEventHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
@@ -845,6 +848,7 @@ class ToolPkgContainerRuntime {
   final List<ToolPkgFunctionHookRuntime> chatInputHooks;
   final List<ToolPkgFunctionHookRuntime> chatViewHooks;
   final List<ToolPkgFunctionHookRuntime> chatMessageHooks;
+  final List<ToolPkgFunctionHookRuntime> chatLifecycleHooks;
   final List<ToolPkgChatMessageMenuItemRuntime> chatMessageMenuItems;
   final List<ToolPkgFunctionHookRuntime> chatRuntimeHooks;
   final List<ToolPkgHostEventHookRuntime> hostEventHooks;
@@ -1149,6 +1153,7 @@ class ToolPkgNavigationEntryRuntime {
   const ToolPkgNavigationEntryRuntime({
     required this.id,
     required this.routeId,
+    required this.params,
     required this.surface,
     required this.title,
     required this.action,
@@ -1160,6 +1165,7 @@ class ToolPkgNavigationEntryRuntime {
   factory ToolPkgNavigationEntryRuntime.fromMessagePackValue(Map<String, Object?> value) => ToolPkgNavigationEntryRuntime(
     id: value['id'] as String,
     routeId: value['routeId'] as String,
+    params: value['params'],
     surface: value['surface'] as String,
     title: LocalizedText.fromMessagePackValue(value['title'] as Map<String, Object?>),
     action: value['action'] == null ? null : ToolPkgNavigationActionHookRuntime.fromMessagePackValue(value['action'] as Map<String, Object?>),
@@ -1171,6 +1177,7 @@ class ToolPkgNavigationEntryRuntime {
   Map<String, Object?> toMessagePackValue() => <String, Object?>{
     'id': id,
     'routeId': routeId,
+    'params': params,
     'surface': surface,
     'title': title.toMessagePackValue(),
     'action': action == null ? null : action!.toMessagePackValue(),
@@ -1180,6 +1187,7 @@ class ToolPkgNavigationEntryRuntime {
 
   final String id;
   final String routeId;
+  final Object? params;
   final String surface;
   final LocalizedText title;
   final ToolPkgNavigationActionHookRuntime? action;

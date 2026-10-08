@@ -203,7 +203,8 @@ impl SystemPromptConfig {
     }
 
     #[allow(non_snake_case)]
-    pub async fn getSystemPrompt(options: SystemPromptOptions) -> String {
+    /// Stops prompt construction on a registered tool-policy failure.
+    pub async fn getSystemPrompt(options: SystemPromptOptions) -> Result<String, String> {
         let package_system_visible = options.tool_exposure_mode == ToolExposureMode::FULL
             && options.enable_tools
             && options
@@ -291,7 +292,7 @@ impl SystemPromptConfig {
                         &options.tool_visibility,
                         options.hook_metadata.clone(),
                     )
-                    .await
+                    .await?
                 )
             };
         let available_tools_cn =
@@ -315,7 +316,7 @@ impl SystemPromptConfig {
                         &options.tool_visibility,
                         options.hook_metadata.clone(),
                     )
-                    .await
+                    .await?
                 )
             };
 
@@ -400,13 +401,14 @@ impl SystemPromptConfig {
             prompt.push_str(getAttachmentGuidelines(options.use_english));
         }
 
-        collapse_blank_lines(&prompt)
+        Ok(collapse_blank_lines(&prompt))
     }
 
     #[allow(non_snake_case)]
+    /// Propagates tool-policy failure through custom system-prompt construction.
     pub async fn getSystemPromptWithCustomPrompts(
         options: SystemPromptWithCustomOptions,
-    ) -> String {
+    ) -> Result<String, String> {
         let mut metadata = HashMap::from([
             (
                 "workspacePath".to_string(),
@@ -518,7 +520,7 @@ impl SystemPromptConfig {
 
         let base_prompt = match before_context.system_prompt.clone() {
             Some(prompt) => prompt,
-            None => Self::getSystemPrompt(options.base.clone()).await,
+            None => Self::getSystemPrompt(options.base.clone()).await?,
         };
         let mut composed_prompt =
             Self::applyCustomPrompts(&base_prompt, &options.custom_intro_prompt);
@@ -555,7 +557,7 @@ impl SystemPromptConfig {
                 ..compose_context
             })
             .await;
-        after_context.system_prompt.unwrap_or_default()
+        Ok(after_context.system_prompt.unwrap_or_default())
     }
 }
 
@@ -741,7 +743,7 @@ mod tests {
     /// Verifies native tool-call prompts never advertise the text XML protocol.
     #[tokio::test(flavor = "current_thread")]
     async fn nativeToolCallPromptExcludesXmlToolSyntax() {
-        let prompt = SystemPromptConfig::getSystemPrompt(packagePromptOptions(true)).await;
+        let prompt = SystemPromptConfig::getSystemPrompt(packagePromptOptions(true)).await.expect("Tool-prompt policies must succeed in this test");
 
         assert!(prompt.contains("call the use_package function"));
         assert!(!prompt.contains("<tool"));
@@ -751,7 +753,7 @@ mod tests {
     /// Verifies text-protocol prompts retain the XML package invocation syntax.
     #[tokio::test(flavor = "current_thread")]
     async fn xmlToolPromptIncludesPackageInvocationSyntax() {
-        let prompt = SystemPromptConfig::getSystemPrompt(packagePromptOptions(false)).await;
+        let prompt = SystemPromptConfig::getSystemPrompt(packagePromptOptions(false)).await.expect("Tool-prompt policies must succeed in this test");
 
         assert!(prompt.contains("<tool name=\"use_package\">"));
         assert!(prompt.contains("<param name=\"package_name\">"));
@@ -765,7 +767,7 @@ mod tests {
                 custom_system_prompt_template: "Custom instructions".into(),
                 ..SystemPromptOptions::default()
             })
-            .await;
+            .await.expect("Tool-prompt policies must succeed in this test");
             assert!(prompt.contains("node_id"));
             assert!(prompt.contains("switch_core"));
             assert!(prompt.contains("/app/data/temp/clean_on_exit"));
@@ -787,7 +789,7 @@ mod tests {
                 workspace_path: Some("/app/workspaces/test".into()),
                 ..SystemPromptOptions::default()
             })
-            .await;
+            .await.expect("Tool-prompt policies must succeed in this test");
             if use_english {
                 assert!(prompt.contains("automatically replicated bidirectionally"));
                 assert!(prompt.contains("Synchronization is eventual"));
@@ -814,7 +816,7 @@ mod tests {
             ],
             ..SystemPromptOptions::default()
         })
-        .await;
+        .await.expect("Tool-prompt policies must succeed in this test");
 
         assert!(prompt.contains("/app/workspaces/test"));
         assert!(prompt.contains("/mnt/windows/d/Code/stm32"));
@@ -851,7 +853,7 @@ mod tests {
                     let mut options = workspacePromptOptions(use_english);
                     options.tool_exposure_mode = mode.clone();
                     options.use_tool_call_api = use_tool_call_api;
-                    let prompt = SystemPromptConfig::getSystemPrompt(options).await;
+                    let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
                     assert!(prompt.contains("/Users/test/My Projects/main"));
                     assert!(prompt.contains("/Users/test/My Projects/library"));
                     assert!(prompt.contains(if use_english {
@@ -877,7 +879,7 @@ mod tests {
         ] {
             let mut options = workspacePromptOptions(true);
             options.custom_system_prompt_template = template.into();
-            let prompt = SystemPromptConfig::getSystemPrompt(options).await;
+            let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
             assert!(prompt.contains("Custom instructions."));
             assert!(prompt.contains("/Users/test/My Projects/main"));
             assert_eq!(prompt.matches("TERMINAL WORKSPACE PATHS").count(), 1);
@@ -892,14 +894,14 @@ mod tests {
             options.custom_system_prompt_template = template.into();
             options.enable_tools = false;
             assert!(!SystemPromptConfig::getSystemPrompt(options)
-                .await
+                .await.expect("Tool-prompt policies must succeed in this test")
                 .contains("/Users/test/My Projects"));
         }
         for path in [None, Some(" ".into())] {
             let mut options = workspacePromptOptions(true);
             options.workspace_path = path;
             assert!(!SystemPromptConfig::getSystemPrompt(options)
-                .await
+                .await.expect("Tool-prompt policies must succeed in this test")
                 .contains("TERMINAL WORKSPACE PATHS"));
         }
     }
@@ -908,7 +910,7 @@ mod tests {
     async fn workspacePromptDoesNotGuessUnresolvedTerminalPaths() {
         let mut options = workspacePromptOptions(true);
         options.workspace_path_mappings.clear();
-        let prompt = SystemPromptConfig::getSystemPrompt(options).await;
+        let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
         assert!(prompt.contains("No absolute host path mapping is available"));
         assert!(!prompt.contains("Terminal absolute path:"));
     }
@@ -917,7 +919,7 @@ mod tests {
     async fn workspacePromptDistinguishesOhosNativeAndVrootPaths() {
         let mut options = workspacePromptOptions(true);
         options.host_environment.platform = super::HostPlatform::Ohos;
-        let prompt = SystemPromptConfig::getSystemPrompt(options).await;
+        let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
         assert!(prompt.contains("Native terminal: `/Users/test/My Projects/main`"));
         assert!(
             prompt.contains("QEMU-vroot terminal: `/mnt/host-root/Users/test/My Projects/main`")
@@ -928,7 +930,7 @@ mod tests {
     async fn workspacePromptDoesNotTreatBrowserStorageAsVmDirectories() {
         let mut options = workspacePromptOptions(true);
         options.host_environment.platform = super::HostPlatform::Web;
-        let prompt = SystemPromptConfig::getSystemPrompt(options).await;
+        let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
         assert!(prompt.contains("Workspace VFS storage is not mounted into that VM"));
         assert!(!prompt.contains("/Users/test/My Projects"));
     }
@@ -938,7 +940,7 @@ mod tests {
         let mut options = workspacePromptOptions(true);
         options.host_environment.platform = super::HostPlatform::Windows;
         options.workspace_path_mappings[0].physicalPath = "D:/My Projects/main".into();
-        let prompt = SystemPromptConfig::getSystemPrompt(options).await;
+        let prompt = SystemPromptConfig::getSystemPrompt(options).await.expect("Tool-prompt policies must succeed in this test");
         assert!(prompt.contains("Terminal absolute path: `D:/My Projects/main`"));
     }
 }

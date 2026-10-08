@@ -1,6 +1,7 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
 import type { ComposeMaterial3GeneratedUiFactoryRegistry } from "./compose-dsl.material3.generated";
+import type { ToolPkg } from "./toolpkg";
 
 /**
  * Options for deriving a theme color token with adjusted opacity.
@@ -443,7 +444,7 @@ export type ComposeCommonPropsPadding = number | ComposePadding;
 /**
  * Completion mode returned by a row click handler.
  */
-export type RowPropsOnClickOutput = void | Promise<void>;
+export type RowPropsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Label content accepted by a text field.
@@ -463,7 +464,7 @@ export type ButtonPropsOnClickOutput = void | Promise<void>;
 /**
  * Completion mode returned by an icon-button click handler.
  */
-export type IconButtonPropsOnClickOutput = void | Promise<void>;
+export type IconButtonPropsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Completion mode returned by a clickable surface.
@@ -3482,7 +3483,7 @@ export type ComposeNodeFactory<TProps = Record<string, unknown>> = (arg0?: TProp
 /**
  * Completion returned by dialog actions.
  */
-export type ComposeDialogActionOutput = void | Promise<void>;
+export type ComposeDialogActionOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Dialog text supplied as a literal or a node slot.

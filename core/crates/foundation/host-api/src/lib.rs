@@ -1880,6 +1880,8 @@ pub trait RuntimeSqliteTransaction {
     fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>>;
     fn lastInsertRowId(&self) -> HostResult<i64>;
     fn commit(self: Box<Self>) -> HostResult<()>;
+    /// Aborts this transaction explicitly and reports any rollback failure.
+    fn rollback(self: Box<Self>) -> HostResult<()>;
 }
 
 pub trait RuntimeSqliteHost: Send + Sync {

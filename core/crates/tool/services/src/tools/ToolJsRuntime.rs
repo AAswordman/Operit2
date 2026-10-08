@@ -69,43 +69,44 @@ impl JsPackageRuntime for PackageManagerJsRuntime {
         Ok(language.to_string())
     }
 
-    /// Returns one registered package definition.
-    fn package(&self, package_name: &str) -> Option<operit_plugin_sdk::package::ToolPackage> {
-        self.package_manager
-            .lock()
-            .expect("package manager mutex poisoned")
-            .getPackageTools(package_name)
-    }
-
-    /// Returns the active conditional state id for one package.
-    fn active_package_state_id(&self, package_name: &str) -> Option<String> {
-        self.package_manager
-            .lock()
-            .expect("package manager mutex poisoned")
-            .getActivePackageStateId(package_name)
-    }
-
-    /// Resolves ToolPkg runtime metadata for one executable subpackage.
-    fn resolve_toolpkg_subpackage(
+    /// Selects one enabled executable declaration and its exact owning runtime under one short-lived lock.
+    fn select_tool(
         &self,
         package_name: &str,
-    ) -> Option<operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgSubpackageRuntime> {
-        self.package_manager
+        function_name: &str,
+    ) -> Result<operit_plugin_sdk::javascript::JsPackageToolSelection, String> {
+        let manager = self
+            .package_manager
             .lock()
-            .expect("package manager mutex poisoned")
-            .resolveToolPkgSubpackageRuntimeInternal(package_name)
+            .map_err(|error| error.to_string())?;
+        manager.packageRegistryReadiness().require_ready()?;
+        let package = manager
+            .getEffectivePackageTools(package_name)
+            .ok_or_else(|| format!("Package not registered: {package_name}"))?;
+        if !manager.isPackageEnabled(package_name) {
+            return Err(format!("Package is disabled: {package_name}"));
+        }
+        let definition =
+            operit_plugin_sdk::javascript::select_registered_package_tool(package, function_name)?;
+        Ok(operit_plugin_sdk::javascript::JsPackageToolSelection {
+            definition,
+            active_state_id: manager.getActivePackageStateId(package_name),
+            toolpkg_runtime: manager.resolveToolPkgSubpackageRuntimeInternal(package_name),
+        })
     }
 
-    /// Returns the shared ToolPkg engine for one explicitly owned execution context.
+    /// Creates the owned package engine outside the registry lock so native context authentication can inspect the real catalog.
     fn toolpkg_execution_engine(
         &self,
         context_key: &str,
         container_package_name: &str,
     ) -> Arc<dyn JsExecutionEngine> {
-        self.package_manager
+        let manager = self
+            .package_manager
             .lock()
             .expect("package manager mutex poisoned")
-            .getToolPkgExecutionEngine(context_key, container_package_name)
+            .clone();
+        manager.getToolPkgExecutionEngine(context_key, container_package_name)
     }
 }
 
@@ -181,9 +182,8 @@ pub fn materializeToolPkgResource(
     let relativeDirectory = storageDirectory
         .strip_prefix(operit_util::RuntimeStorageLayout::RUNTIME_ROOT_PATH_PREFIX)
         .expect("ToolPkg exports must belong to runtime storage");
-    let exportRoot = crate::files::PathMapper::PathMapper::joinVfsPath(
-        "/app/data", relativeDirectory,
-    )?;
+    let exportRoot =
+        crate::files::PathMapper::PathMapper::joinVfsPath("/app/data", relativeDirectory)?;
     crate::files::PathMapper::PathMapper::joinVfsPath(&exportRoot, safeName)
 }
 
@@ -268,20 +268,24 @@ pub async fn invokeToolPkgIpc(
             "ToolPkg IPC main context key is invalid: {targetContextKey}"
         ));
     }
-    let packageManager = toolHandler.getOrCreatePackageManager();
+    let manager =
+        RuntimePackageManager::readySnapshot(toolHandler.getOrCreatePackageManager()).await?;
     let mut publicMethod = None;
     let (engine, scriptPath, script) = {
-        let manager = packageManager
-            .lock()
-            .expect("package manager mutex poisoned");
         let containerRuntime = manager
             .getToolPkgContainerRuntime(&packageTarget)
             .ok_or_else(|| format!("ToolPkg container not found: {packageTarget}"))?;
+        if !manager.isPackageEnabled(&packageTarget) {
+            return Err(format!("ToolPkg package is disabled: {packageTarget}"));
+        }
         if let Some(callerName) = request.dependency_caller.as_deref() {
             if !isMainTarget || callerName == packageTarget {
-                return Err("Dependency APIs require a distinct prerequisite main runtime".to_string());
+                return Err(
+                    "Dependency APIs require a distinct prerequisite main runtime".to_string(),
+                );
             }
-            let caller = manager.getToolPkgContainerRuntime(callerName)
+            let caller = manager
+                .getToolPkgContainerRuntime(callerName)
                 .ok_or_else(|| format!("Dependency caller not found: {callerName}"))?;
             publicMethod = Some(validateDependencyCall(
                 &caller,
@@ -359,12 +363,25 @@ pub async fn invokeToolPkgIpc(
             params.remove("__operit_inline_function_name");
             params.remove("__operit_inline_function_source");
             if let Some(source) = method.functionSource {
-                params.insert("__operit_inline_function_name".to_string(), Value::String(method.function.clone()));
-                params.insert("__operit_inline_function_source".to_string(), Value::String(source));
+                params.insert(
+                    "__operit_inline_function_name".to_string(),
+                    Value::String(method.function.clone()),
+                );
+                params.insert(
+                    "__operit_inline_function_source".to_string(),
+                    Value::String(source),
+                );
             }
             params.insert("payload".to_string(), request.payload.clone());
-            params.insert("callerPackage".to_string(), Value::String(request.dependency_caller.clone()
-                .ok_or_else(|| "Public API caller is required".to_string())?));
+            params.insert(
+                "callerPackage".to_string(),
+                Value::String(
+                    request
+                        .dependency_caller
+                        .clone()
+                        .ok_or_else(|| "Public API caller is required".to_string())?,
+                ),
+            );
             method.function
         }
         None => TOOLPKG_IPC_DISPATCH_FUNCTION_NAME.to_string(),
@@ -396,22 +413,44 @@ fn validateDependencyCall(
     if !callerEnabled || !providerEnabled {
         return Err("Dependency caller and provider must both be enabled".to_string());
     }
-    let requirement = caller.requires.iter().find(|item| item.id == provider.packageName)
-        .ok_or_else(|| format!("{} does not declare dependency {}", caller.packageName, provider.packageName))?;
-    for (bound, minimum) in [(&requirement.minVersion, true), (&requirement.maxVersion, false)] {
+    let requirement = caller
+        .requires
+        .iter()
+        .find(|item| item.id == provider.packageName)
+        .ok_or_else(|| {
+            format!(
+                "{} does not declare dependency {}",
+                caller.packageName, provider.packageName
+            )
+        })?;
+    for (bound, minimum) in [
+        (&requirement.minVersion, true),
+        (&requirement.maxVersion, false),
+    ] {
         if let Some(bound) = bound {
             let comparison = operit_util::GithubReleaseUtil::GithubReleaseUtil::compareVersions(
-                &provider.version, bound,
+                &provider.version,
+                bound,
             )?;
             if (minimum && comparison < 0) || (!minimum && comparison > 0) {
-                return Err(format!("Dependency version mismatch: {}", provider.packageName));
+                return Err(format!(
+                    "Dependency version mismatch: {}",
+                    provider.packageName
+                ));
             }
         }
     }
     if provider.publicApi.is_none() {
-        return Err(format!("{} does not publish public_api", provider.packageName));
+        return Err(format!(
+            "{} does not publish public_api",
+            provider.packageName
+        ));
     }
-    provider.publicApis.iter().find(|item| item.id == method).cloned()
+    provider
+        .publicApis
+        .iter()
+        .find(|item| item.id == method)
+        .cloned()
         .ok_or_else(|| format!("Public API not found: {}/{method}", provider.packageName))
 }
 
@@ -480,7 +519,12 @@ mod dependency_api_tests {
             }],
             ..Default::default()
         };
-        assert_eq!(validateDependencyCall(&caller, &provider, true, true, "run").unwrap().function, "runExport");
+        assert_eq!(
+            validateDependencyCall(&caller, &provider, true, true, "run")
+                .unwrap()
+                .function,
+            "runExport"
+        );
         assert!(validateDependencyCall(&caller, &provider, false, true, "run").is_err());
         assert!(validateDependencyCall(&caller, &provider, true, false, "run").is_err());
         assert!(validateDependencyCall(&caller, &provider, true, true, "private").is_err());

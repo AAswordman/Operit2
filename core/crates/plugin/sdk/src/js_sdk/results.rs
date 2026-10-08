@@ -862,7 +862,7 @@ pub struct ChatCreationResultData {
     pub createdAt: i64,
 }
 #[derive(Clone, Serialize, Deserialize)]
-/// Summarizes a chat, its activity, token use, current status, and bound character card.
+/// Summarizes a workspace conversation's activity, token use, and current status.
 pub struct ChatInfo {
     ///Chat ID
     #[serde(rename = "id")]
@@ -888,10 +888,6 @@ pub struct ChatInfo {
     ///Total output tokens used
     #[serde(rename = "outputTokens")]
     pub outputTokens: i64,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    ///Bound character card name (if any)
-    #[serde(rename = "characterCardName")]
-    pub characterCardName: JsOptional<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 /// Contains the available chats and identifies the currently active chat.
@@ -972,8 +968,66 @@ pub struct ChatDeleteResultData {
     #[serde(rename = "deletedAt")]
     pub deletedAt: i64,
 }
-#[derive(Clone, Serialize, Deserialize)]
-/// Records a sent chat message and its optional final AI reply.
+/// Identifies the terminal state of the actual originating generation rather than a hook decision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageSendStatus {
+    /// Indicates that generation completed and required persistence succeeded.
+    #[serde(rename = "completed")]
+    Completed,
+    /// Indicates that the originating generation was cancelled.
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+/// Locates one exact assistant revision committed by the originating generation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct ChatCommittedMessage {
+    /// Identifies the real persisted message record, never a wall-clock receipt timestamp.
+    pub messageTimestamp: i64,
+    /// Identifies the exact persisted revision; zero is the base message.
+    pub variantIndex: i32,
+}
+
+/// Distinguishes real persistence, nonpersistent output and input ownership decisions without inventing locators.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MessageSendOutcome {
+    /// Carries actual committed identities captured on this turn's persistence path.
+    #[serde(rename = "committed")]
+    Committed {
+        /// Describes completion or cancellation of this generation.
+        status: MessageSendStatus,
+        /// Identifies the original committed user message, including a continuation's existing row.
+        userMessageTimestamp: Option<i64>,
+        /// Locates the actual committed assistant revision or explicitly contains null.
+        assistant: Option<ChatCommittedMessage>,
+    },
+    /// Carries output that deliberately did not persist a turn and therefore has no record locator.
+    #[serde(rename = "not_persisted")]
+    NotPersisted {
+        /// Describes completion or cancellation of the nonpersistent generation.
+        status: MessageSendStatus,
+    },
+    /// Indicates that an input hook prevented submission and no generation was completed.
+    #[serde(rename = "blocked")]
+    Blocked {
+        /// Preserves the hook's explicit explanation.
+        message: Option<String>,
+    },
+    /// Indicates that a plugin took ownership of input, not that its planned turns have completed.
+    #[serde(rename = "consumed")]
+    Consumed {
+        /// Preserves the plugin's explicit input-ownership metadata.
+        metadata: BTreeMap<String, serde_json::Value>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Records only the originating send's terminal result and exact commit receipts.
 pub struct MessageSendResultData {
     ///The ID of the chat the message was sent to
     #[serde(rename = "chatId")]
@@ -992,6 +1046,9 @@ pub struct MessageSendResultData {
     ///Sent timestamp
     #[serde(rename = "sentAt")]
     pub sentAt: i64,
+    /// Reports actual persistence or input ownership without looking up unrelated recent messages.
+    pub outcome: MessageSendOutcome,
+
 }
 #[derive(Clone, Serialize, Deserialize)]
 /// Contains the output of one non-persistent functional model call.
@@ -1035,7 +1092,7 @@ impl ChatCallResultData {
     }
 }
 #[derive(Clone, Serialize, Deserialize)]
-/// Describes one chat message together with its role, provider, model, and timestamp.
+/// Describes one chat message's protocol sender, content, provider, model, and timestamp.
 pub struct ChatMessageInfo {
     #[serde(rename = "sender")]
     pub sender: String,
@@ -1043,8 +1100,10 @@ pub struct ChatMessageInfo {
     pub content: String,
     #[serde(rename = "timestamp")]
     pub timestamp: i64,
-    #[serde(rename = "roleName")]
-    pub roleName: String,
+    /// Identifies the exact selected persisted revision; zero selects the base message.
+    pub variantIndex: i32,
+    /// Reports the genuine number of persisted message revisions.
+    pub variantCount: i32,
     #[serde(rename = "provider")]
     pub provider: String,
     #[serde(rename = "modelName")]
@@ -2018,7 +2077,7 @@ impl MemoryQueryResultData {
 }
 impl ChatListResultData {
     #[allow(non_snake_case)]
-    /// Formats chat summaries, marks the current chat, and includes token and card metadata.
+    /// Formats workspace conversation summaries, current status, and token statistics.
     pub fn toString(&self) -> String {
         let mut sb = String::new();
         sb.push_str(&format!("Chat List ({} total):\n", self.totalCount));
@@ -2034,11 +2093,6 @@ impl ChatListResultData {
                 sb.push_str(&format!("ID: {}{}\n", chat.id, currentMarker));
                 sb.push_str(&format!("Title: {}\n", chat.title));
                 sb.push_str(&format!("Message Count: {}\n", chat.messageCount));
-                if let Some(characterCardName) = chat.characterCardName.as_value() {
-                    if !characterCardName.trim().is_empty() {
-                        sb.push_str(&format!("Character Card: {characterCardName}\n"));
-                    }
-                }
                 sb.push_str(&format!(
                     "Token Statistics: Input {} / Output {}\n",
                     chat.inputTokens, chat.outputTokens

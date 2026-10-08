@@ -8,7 +8,7 @@ use serde_json::Value;
 use operit_plugin_sdk::execution_result::{JsExecutionError, JsExecutionResult};
 use operit_plugin_sdk::javascript::{
     JsExecutionCompletion, JsExecutionEngine, JsPackageExecutor, JsPackageRuntime,
-    JsPackageToolCallRequest, JsPackageToolCallResult,
+    JsPackageToolCallRequest, JsPackageToolCallResult, JsPackageToolSelection,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgManager::ToolPkgExecutionEngineFactory;
 
@@ -89,11 +89,10 @@ impl JsToolManager {
     #[allow(non_snake_case)]
     async fn withExecutionEngineForPackage<T>(
         &self,
-        packageName: &str,
+        selection: &JsPackageToolSelection,
         block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<T>,
     ) -> T {
-        let toolPkgRuntime = self.packageRuntime.resolve_toolpkg_subpackage(packageName);
-        if let Some(runtime) = toolPkgRuntime {
+        if let Some(runtime) = selection.toolpkg_runtime.as_ref() {
             let contextKey = format!("toolpkg_main:{}", runtime.containerPackageName);
             let engine = self
                 .packageRuntime
@@ -131,6 +130,7 @@ impl JsToolManager {
     fn buildRuntimeParams(
         &self,
         packageName: &str,
+        selection: &JsPackageToolSelection,
         params: BTreeMap<String, Value>,
     ) -> Result<BTreeMap<String, Value>, String> {
         let mut runtimeParams = params;
@@ -139,14 +139,17 @@ impl JsToolManager {
             "__operit_package_lang".to_string(),
             Value::String(packageLanguage),
         );
-        if let Some(stateId) = self.packageRuntime.active_package_state_id(packageName) {
-            runtimeParams.insert("__operit_package_state".to_string(), Value::String(stateId));
+        if let Some(stateId) = selection.active_state_id.as_ref() {
+            runtimeParams.insert(
+                "__operit_package_state".to_string(),
+                Value::String(stateId.clone()),
+            );
         }
 
         for key in [
             "__operit_package_caller_name",
             "__operit_package_chat_id",
-            "__operit_package_caller_card_id",
+            "__operit_package_caller_participant_id",
         ] {
             let value = runtimeParams
                 .get(key)
@@ -173,7 +176,7 @@ impl JsToolManager {
             Value::String("sandbox".to_string()),
         );
 
-        if let Some(runtime) = self.packageRuntime.resolve_toolpkg_subpackage(packageName) {
+        if let Some(runtime) = selection.toolpkg_runtime.as_ref() {
             runtimeParams.insert(
                 "__operit_execution_context_key".to_string(),
                 Value::String(format!("toolpkg_main:{}", runtime.containerPackageName)),
@@ -192,11 +195,11 @@ impl JsToolManager {
             );
             runtimeParams.insert(
                 "__operit_ui_package_name".to_string(),
-                Value::String(runtime.containerPackageName),
+                Value::String(runtime.containerPackageName.clone()),
             );
             runtimeParams.insert(
                 "__operit_script_screen".to_string(),
-                Value::String(runtime.entryPath),
+                Value::String(runtime.entryPath.clone()),
             );
         } else {
             runtimeParams.remove("__operit_toolpkg_subpackage_id");
@@ -213,25 +216,17 @@ impl JsToolManager {
         &self,
         request: &JsPackageToolCallRequest,
         packageName: &str,
-        functionName: &str,
+        selection: &JsPackageToolSelection,
     ) -> Result<BTreeMap<String, Value>, ToolParameterConversionException> {
-        let packageTools = self.packageRuntime.package(packageName);
-        let toolDefinition = packageTools
-            .as_ref()
-            .and_then(|package| package.tools.iter().find(|item| item.name == functionName));
-
-        let missingRequiredParameters = toolDefinition
-            .map(|definition| {
-                definition
-                    .parameters
-                    .iter()
-                    .filter(|parameter| {
-                        parameter.required && !request.parameters.contains_key(&parameter.name)
-                    })
-                    .map(|parameter| parameter.name.clone())
-                    .collect::<Vec<_>>()
+        let definition = &selection.definition;
+        let missingRequiredParameters = definition
+            .parameters
+            .iter()
+            .filter(|parameter| {
+                parameter.required && !request.parameters.contains_key(&parameter.name)
             })
-            .unwrap_or_default();
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
 
         if !missingRequiredParameters.is_empty() {
             return Err(ToolParameterConversionException {
@@ -244,15 +239,30 @@ impl JsToolManager {
 
         let mut converted = BTreeMap::new();
         for (parameterName, rawValue) in &request.parameters {
-            let parameterType = toolDefinition
-                .and_then(|definition| {
-                    definition
-                        .parameters
-                        .iter()
-                        .find(|item| item.name == *parameterName)
-                })
-                .map(|item| item.parameter_type.to_ascii_lowercase())
-                .unwrap_or_else(|| "string".to_string());
+            let parameterType = match definition
+                .parameters
+                .iter()
+                .find(|item| item.name == *parameterName)
+            {
+                Some(parameter) => parameter.parameter_type.as_str(),
+                None if matches!(
+                    parameterName.as_str(),
+                    "__operit_package_caller_name"
+                        | "__operit_package_chat_id"
+                        | "__operit_package_caller_participant_id"
+                ) =>
+                {
+                    "string"
+                }
+                None => {
+                    return Err(ToolParameterConversionException {
+                        message: format!(
+                            "Unknown tool parameter: {}:{parameterName}",
+                            request.tool_name
+                        ),
+                    })
+                }
+            };
             let value = self.convertToolParameterValue(
                 &request.tool_name,
                 parameterName,
@@ -262,7 +272,7 @@ impl JsToolManager {
             converted.insert(parameterName.clone(), value);
         }
 
-        self.buildRuntimeParams(packageName, converted)
+        self.buildRuntimeParams(packageName, selection, converted)
             .map_err(|message| ToolParameterConversionException { message })
     }
 
@@ -343,26 +353,20 @@ impl JsToolManager {
                 "Invalid tool name format: {toolName}. Expected format: packageName.functionName"
             )));
         };
-        let script = self
+        let selection = self
             .packageRuntime
-            .package(&packageName)
-            .and_then(|package| package.tools.first().map(|tool| tool.script.clone()));
-        let Some(script) = script else {
-            return Err(JsExecutionError::invalid_request(format!(
-                "Package not found: {packageName}"
-            )));
+            .select_tool(&packageName, &functionName)
+            .map_err(JsExecutionError::invalid_request)?;
+        let request = JsPackageToolCallRequest {
+            tool_name: format!("{packageName}:{functionName}"),
+            parameters: params,
         };
-        let params = params
-            .into_iter()
-            .map(|(key, value)| (key, Value::String(value)))
-            .collect::<BTreeMap<_, _>>();
-        let runtimeParams = match self.buildRuntimeParams(&packageName, params) {
-            Ok(runtimeParams) => runtimeParams,
-            Err(error) => return Err(JsExecutionError::runtime(error)),
-        };
-        self.withExecutionEngineForPackage(&packageName, |engine| {
+        let runtimeParams = self
+            .convertToolParameters(&request, &packageName, &selection)
+            .map_err(|error| JsExecutionError::invalid_request(error.message))?;
+        self.withExecutionEngineForPackage(&selection, |engine| {
             engine.execute_script_function(
-                &script,
+                &selection.definition.script,
                 &functionName,
                 &runtimeParams,
                 &BTreeMap::new(),
@@ -378,7 +382,6 @@ impl JsToolManager {
     /// Executes a JavaScript package tool through the SDK execution contract.
     pub async fn executeScript(
         &self,
-        script: &str,
         request: &JsPackageToolCallRequest,
     ) -> JsPackageToolCallResult {
         let Some((packageName, functionName)) = Self::parsePackageToolName(&request.tool_name)
@@ -389,15 +392,19 @@ impl JsToolManager {
             );
         };
 
-        let runtimeParams = match self.convertToolParameters(request, &packageName, &functionName) {
+        let selection = match self.packageRuntime.select_tool(&packageName, &functionName) {
+            Ok(selection) => selection,
+            Err(error) => return Self::failure(&request.tool_name, error),
+        };
+        let runtimeParams = match self.convertToolParameters(request, &packageName, &selection) {
             Ok(value) => value,
             Err(error) => return Self::failure(&request.tool_name, error.message),
         };
 
         let result = self
-            .withExecutionEngineForPackage(&packageName, |engine| {
+            .withExecutionEngineForPackage(&selection, |engine| {
                 engine.execute_script_function(
-                    script,
+                    &selection.definition.script,
                     &functionName,
                     &runtimeParams,
                     &BTreeMap::new(),
@@ -421,13 +428,11 @@ impl JsPackageExecutor for JsToolManager {
     /// Executes one package tool through this manager's bound runtime context.
     fn execute_package_tool(
         &self,
-        script: &str,
         request: &JsPackageToolCallRequest,
     ) -> JsExecutionCompletion<JsPackageToolCallResult> {
         let manager = self.clone();
-        let script = script.to_string();
         let request = request.clone();
-        Box::pin(async move { manager.executeScript(&script, &request).await })
+        Box::pin(async move { manager.executeScript(&request).await })
     }
 }
 
@@ -469,6 +474,19 @@ mod tests {
     crate::impl_rejecting_js_tools_host!(TestJsExecutionHost);
 
     impl JsExecutionHost for TestJsExecutionHost {
+        /// Retains the explicit manager test host when an engine supplies a real package context.
+        fn for_toolpkg_execution_context(
+            &self,
+            context: &operit_plugin_sdk::javascript::ToolPkgExecutionContext,
+        ) -> Result<Arc<dyn JsExecutionHost>, String> {
+            if context.container_package_name.trim().is_empty()
+                || context.context_key.trim().is_empty()
+            {
+                return Err("Invalid manager test execution context".to_string());
+            }
+            Ok(Arc::new(*self))
+        }
+
         /// Returns an empty catalog for tests that do not install runtime tools.
         fn get_tool_catalog(&self) -> Result<Value, String> {
             Ok(serde_json::json!({ "tools": [] }))
@@ -1251,32 +1269,29 @@ mod tests {
             Ok("en".to_string())
         }
 
-        /// Returns one package definition from the SDK package manager.
-        fn package(&self, package_name: &str) -> Option<ToolPackage> {
-            self.package_manager
-                .lock()
-                .expect("test package manager mutex poisoned")
-                .package(package_name)
-        }
-
-        /// Returns the selected package state from the SDK package manager.
-        fn active_package_state_id(&self, package_name: &str) -> Option<String> {
-            self.package_manager
-                .lock()
-                .expect("test package manager mutex poisoned")
-                .activePackageStateId(package_name)
-        }
-
-        /// Resolves one ToolPkg subpackage from the SDK package manager.
-        fn resolve_toolpkg_subpackage(
+        /// Selects a real test declaration and its SDK runtime metadata under one registry lock.
+        fn select_tool(
             &self,
             package_name: &str,
-        ) -> Option<ToolPkgSubpackageRuntime> {
-            self.package_manager
+            function_name: &str,
+        ) -> Result<JsPackageToolSelection, String> {
+            let manager = self
+                .package_manager
                 .lock()
-                .expect("test package manager mutex poisoned")
-                .toolPkgManager()
-                .resolveToolPkgSubpackageRuntimeInternal(package_name)
+                .map_err(|error| error.to_string())?;
+            let package = manager
+                .package(package_name)
+                .ok_or_else(|| format!("Package not registered: {package_name}"))?;
+            Ok(JsPackageToolSelection {
+                definition: operit_plugin_sdk::javascript::select_registered_package_tool(
+                    package,
+                    function_name,
+                )?,
+                active_state_id: manager.activePackageStateId(package_name),
+                toolpkg_runtime: manager
+                    .toolPkgManager()
+                    .resolveToolPkgSubpackageRuntimeInternal(package_name),
+            })
         }
 
         /// Returns the shared execution engine for one explicitly owned ToolPkg context.

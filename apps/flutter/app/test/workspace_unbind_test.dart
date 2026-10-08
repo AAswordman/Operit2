@@ -44,7 +44,7 @@ void main() {
           workspaceUsage: WorkspaceOverviewUsage(
             workspaceName: name,
             conversationCount: 1,
-            characterUsages: const [],
+            contributions: const WorkspaceContributionsReady([]),
             mountedFolders: const [],
             mountedFoldersLoading: false,
             mountedFoldersError: null,

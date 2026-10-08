@@ -147,10 +147,6 @@ class _TabletLayoutState extends State<TabletLayout> {
                           histories: drawerState.histories,
                           activeStreamingChatIds:
                               drawerState.activeStreamingChatIds,
-                          characterGroupNamesById:
-                              drawerState.characterGroupNamesById,
-                          characterCardAvatarUrisByName:
-                              drawerState.characterCardAvatarUrisByName,
                           currentChatId: drawerState.currentChatId,
                           errorMessage: drawerState.errorMessage,
                           loading: drawerState.loading,
@@ -161,15 +157,23 @@ class _TabletLayoutState extends State<TabletLayout> {
                         );
                       },
                     )
-                  : CollapsedDrawerContent(
+                  : ValueListenableBuilder<DrawerConversationState>(
                       key: const ValueKey<String>('collapsedSidebarContent'),
-                      navigationEntries: widget.navigationEntries,
-                      pluginEntries: widget.pluginSidebarEntries,
-                      selectedRouteId: widget.selectedRouteId,
-                      appearance: appearance,
-                      onNavigationEntrySelected:
-                          widget.onNavigationEntrySelected,
-                      onConversationActivated: widget.onConversationActivated,
+                      valueListenable: widget.drawerConversationState,
+                      builder: (context, drawerState, _) {
+                        return CollapsedDrawerContent(
+                          key: const ValueKey<String>('collapsedDrawerContent'),
+                          navigationEntries: widget.navigationEntries,
+                          pluginEntries: widget.pluginSidebarEntries,
+                          selectedRouteId: widget.selectedRouteId,
+                          appearance: appearance,
+                          currentChatId: drawerState.currentChatId,
+                          onNavigationEntrySelected:
+                              widget.onNavigationEntrySelected,
+                          onConversationActivated:
+                              widget.onConversationActivated,
+                        );
+                      },
                     ),
             ),
           ),

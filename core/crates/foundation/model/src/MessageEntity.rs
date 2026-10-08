@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::ChatMessage::ChatMessage;
@@ -12,6 +14,7 @@ pub struct MessageEntity {
     pub timestamp: i64,
     pub orderIndex: i32,
     pub roleName: String,
+    pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub selectedVariantIndex: i32,
     pub provider: String,
     pub modelName: String,
@@ -35,6 +38,7 @@ impl MessageEntity {
             parts,
             timestamp: self.timestamp,
             roleName: self.roleName.clone(),
+            pluginExtensions: self.pluginExtensions.clone(),
             selectedVariantIndex: self.selectedVariantIndex,
             variantCount: 1,
             provider: self.provider.clone(),
@@ -58,6 +62,7 @@ impl MessageEntity {
         }
     }
 
+    /// Converts a runtime message and its independent extensions into a persisted base record.
     pub fn fromChatMessage(
         chatId: String,
         message: ChatMessage,
@@ -71,6 +76,7 @@ impl MessageEntity {
             timestamp: message.timestamp,
             orderIndex,
             roleName: message.roleName,
+            pluginExtensions: message.pluginExtensions,
             selectedVariantIndex: message.selectedVariantIndex,
             provider: message.provider,
             modelName: message.modelName,

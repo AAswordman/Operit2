@@ -123,7 +123,7 @@ fn parseCapturedRegistration(
     captured: ToolPkgMainRegistrationCapture,
     toolPkgId: &str,
 ) -> Result<ToolPkgMainRegistration, String> {
-    Ok(ToolPkgMainRegistration {
+    let registration = ToolPkgMainRegistration {
         marketOrigin: parseMarketOrigin(captured.marketOrigin, toolPkgId)?,
         publicApis: parseRegisteredItems(&captured.publicApis, "public_api", toolPkgId)?,
         toolboxUiModules: parseRegisteredItems(
@@ -179,6 +179,11 @@ fn parseCapturedRegistration(
         chatViewHooks: parseRegisteredItems(
             &captured.chatViewHooks,
             TOOLPKG_REGISTRATION_CHAT_VIEW_HOOK,
+            toolPkgId,
+        )?,
+        chatLifecycleHooks: parseRegisteredItems(
+            &captured.chatLifecycleHooks,
+            TOOLPKG_REGISTRATION_CHAT_LIFECYCLE_HOOK,
             toolPkgId,
         )?,
         chatMessageHooks: parseRegisteredItems(
@@ -261,7 +266,38 @@ fn parseCapturedRegistration(
             TOOLPKG_REGISTRATION_MANIFEST_EXTENSION,
             toolPkgId,
         )?,
-    })
+    };
+    if registration.chatLifecycleHooks.len() > 1 {
+        return Err(format!("Duplicate chat lifecycle hook owner: {toolPkgId}"));
+    }
+    validateSidebarTabRoutes(&registration, toolPkgId)?;
+    Ok(registration)
+}
+
+/// Requires sidebar tabs to reference exactly one package-owned Compose DSL route in the actual captured registration.
+#[allow(non_snake_case)]
+fn validateSidebarTabRoutes(registration: &ToolPkgMainRegistration, toolPkgId: &str) -> Result<(), String> {
+    let routes = registration.uiRoutes.iter().map(|route| (route.routeId.clone(), route.runtime.as_str()))
+        .chain(registration.toolboxUiModules.iter().map(|module| (buildToolPkgRouteId(toolPkgId, module.id.trim()), module.runtime.as_str())))
+        .collect::<Vec<_>>();
+    for (index, entry) in registration.navigationEntries.iter().enumerate() {
+        if entry.surface != TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS { continue; }
+        let routeId = entry.routeId.as_deref().ok_or_else(|| format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is required for chat_sidebar_tabs"))?;
+        if !routeId.starts_with(&format!("toolpkg:{toolPkgId}:ui:")) {
+            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must belong to this package for chat_sidebar_tabs: {routeId}"));
+        }
+        let matching = routes.iter().filter(|(route, _)| route == routeId).collect::<Vec<_>>();
+        if matching.is_empty() {
+            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route not found: {routeId}"));
+        }
+        if matching.len() != 1 {
+            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is duplicated for chat_sidebar_tabs: {routeId}"));
+        }
+        if matching[0].1 != TOOLPKG_RUNTIME_COMPOSE_DSL {
+            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must use compose_dsl for chat_sidebar_tabs: {routeId}"));
+        }
+    }
+    Ok(())
 }
 
 /// Normalizes the marketplace origin captured during main-script initialization.
@@ -405,9 +441,21 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredNavigationEntry {
         }
     }
 
-    /// Validates that a navigation entry has an id and a route or action.
+    /// Validates exact surfaces and requires attachment and sidebar-tab routes without action callbacks.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
+        requireToolPkgNavigationSurface(&self.surface).map_err(|error| {
+            format!("{registryName}[{index}].surface {error}")
+        })?;
+        if self.surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || self.surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS {
+            if self.action.is_some() {
+                return Err(format!("{registryName}[{index}].action is unsupported for {}", self.surface));
+            }
+            let route = self.routeId.as_deref().ok_or_else(|| {
+                format!("{registryName}[{index}].route is required for {}", self.surface)
+            })?;
+            requireNotBlank(route, "route", registryName, index)?;
+        }
         if self
             .routeId
             .as_deref()
@@ -660,4 +708,134 @@ mod tests {
             "calculateInputTokens"
         );
     }
+
+    /// Preserves opaque attachment-route JSON through the actual captured-registration parser.
+    #[test]
+    fn parses_attachment_surface_and_opaque_params() {
+        let input = serde_json::json!({
+            "id": "attachment", "surface": "chat_attachments", "route": "plugin-owned-route",
+            "title": "Attachment", "icon": "attachment", "order": 12,
+            "params": { "screen": "plugin-view", "ids": ["9223372036854775807"], "nested": [null, true, 1.5] }
+        });
+        let entries = parseRegisteredItems::<ToolPkgRegisteredNavigationEntry>(
+            &[input.to_string()], TOOLPKG_REGISTRATION_NAVIGATION_ENTRY, "sample",
+        ).unwrap();
+        assert_eq!(entries[0].surface, TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS);
+        assert_eq!(entries[0].routeId.as_deref(), Some("plugin-owned-route"));
+        assert_eq!(entries[0].params.as_ref(), Some(&input["params"]));
+        assert_eq!(entries[0].icon.as_deref(), Some("attachment"));
+        assert_eq!(entries[0].order, 12);
+    }
+
+    /// Rejects unsupported surface spellings instead of silently normalizing them.
+    #[test]
+    fn rejects_inexact_navigation_surfaces() {
+        for surface in ["", "Toolbox", "CHAT_ATTACHMENTS", "chat_attachments ", " chat_attachments", "attachment"] {
+            let input = serde_json::json!({ "id": "entry", "surface": surface, "route": "route" });
+            let error = parseRegisteredItems::<ToolPkgRegisteredNavigationEntry>(
+                &[input.to_string()], TOOLPKG_REGISTRATION_NAVIGATION_ENTRY, "sample",
+            ).unwrap_err();
+            assert_eq!(error, format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].surface is unsupported: {surface}"));
+        }
+    }
+
+    /// Requires a route for an attachment entry without supplying an action or default params.
+    #[test]
+    fn requires_attachment_route_and_keeps_params_optional() {
+        let invalid = serde_json::json!({ "id": "entry", "surface": "chat_attachments" });
+        let error = parseRegisteredItems::<ToolPkgRegisteredNavigationEntry>(
+            &[invalid.to_string()], TOOLPKG_REGISTRATION_NAVIGATION_ENTRY, "sample",
+        ).unwrap_err();
+        assert_eq!(error, format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route is required for chat_attachments"));
+        let valid = serde_json::json!({ "id": "entry", "surface": "chat_attachments", "route": "route" });
+        let entries = parseRegisteredItems::<ToolPkgRegisteredNavigationEntry>(
+            &[valid.to_string()], TOOLPKG_REGISTRATION_NAVIGATION_ENTRY, "sample",
+        ).unwrap();
+        assert!(entries[0].params.is_none());
+    }
+
+    /// Rejects route-plus-action attachment entries while preserving action callbacks on every preexisting surface.
+    #[test]
+    fn rejects_attachment_actions_and_retains_existing_surface_actions() {
+        let invalid = serde_json::json!({ "id": "entry", "surface": "chat_attachments", "route": "registered-route", "action": { "function": "existingAction" } });
+        let error = parseRegisteredItems::<ToolPkgRegisteredNavigationEntry>(
+            &[invalid.to_string()], TOOLPKG_REGISTRATION_NAVIGATION_ENTRY, "sample",
+        ).unwrap_err();
+        assert_eq!(error, format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].action is unsupported for chat_attachments"));
+        for surface in ["toolbox", "main_sidebar_plugins", "app_bar"] {
+            let valid = serde_json::json!({ "id": "entry", "surface": surface, "action": { "function": "existingAction" } });
+            let entries = parseRegisteredItems::<ToolPkgRegisteredNavigationEntry>(
+                &[valid.to_string()], TOOLPKG_REGISTRATION_NAVIGATION_ENTRY, "sample",
+            ).unwrap();
+            assert_eq!(entries[0].action.as_ref().unwrap().function, "existingAction");
+        }
+    }
+
+    /// Supplies captured route and navigation JSON to the actual registration parser without a JavaScript or host substitute.
+    fn sidebar_capture(routes: Vec<Value>, entry: Value) -> ToolPkgMainRegistrationCapture {
+        ToolPkgMainRegistrationCapture {
+            uiRoutes: routes.into_iter().map(|route| route.to_string()).collect(),
+            navigationEntries: vec![entry.to_string()],
+            ..Default::default()
+        }
+    }
+
+    /// Preserves two independent package tab registrations and every localized title, icon, order and opaque JSON field.
+    #[test]
+    fn parses_sidebar_tabs_for_two_arbitrary_packages() {
+        for package in ["com.example.alpha", "org.example.beta"] {
+            let route = buildToolPkgRouteId(package, "panel");
+            let params = serde_json::json!({ "opaque": ["9223372036854775807", null, true, 1.5] });
+            let captured = sidebar_capture(
+                vec![serde_json::json!({ "id": "panel", "route": route, "runtime": "compose_dsl", "screen": "ui/panel.js" })],
+                serde_json::json!({ "id": "panel-tab", "surface": "chat_sidebar_tabs", "route": route,
+                    "title": { "en": "Independent panel", "zh": "独立面板" }, "icon": "Dashboard", "order": 23, "params": params }),
+            );
+            let registration = parseCapturedRegistration(captured, package).unwrap();
+            let entry = &registration.navigationEntries[0];
+            assert_eq!(entry.routeId.as_deref(), Some(route.as_str()));
+            assert_eq!(entry.params, Some(params));
+            assert_eq!(entry.title.resolve(true), "Independent panel");
+            assert_eq!(entry.title.resolve(false), "独立面板");
+            assert_eq!(entry.icon.as_deref(), Some("Dashboard"));
+            assert_eq!(entry.order, 23);
+            assert!(entry.action.is_none());
+        }
+    }
+
+    /// Rejects sidebar actions and missing routes through typed captured metadata before producing a runtime registration.
+    #[test]
+    fn sidebar_capture_requires_routes_without_actions() {
+        let missing = sidebar_capture(vec![], serde_json::json!({ "id": "tab", "surface": "chat_sidebar_tabs" }));
+        assert_eq!(parseCapturedRegistration(missing, "sample").unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route is required for chat_sidebar_tabs"));
+        let action = sidebar_capture(vec![], serde_json::json!({ "id": "tab", "surface": "chat_sidebar_tabs", "route": "toolpkg:sample:ui:panel", "action": { "function": "callback" } }));
+        assert_eq!(parseCapturedRegistration(action, "sample").unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].action is unsupported for chat_sidebar_tabs"));
+    }
+
+    /// Rejects foreign and undeclared route ownership even when the captured JSON claims a valid sidebar surface.
+    #[test]
+    fn sidebar_capture_rejects_foreign_and_missing_routes() {
+        let own_route = serde_json::json!({ "id": "panel", "route": "toolpkg:sample:ui:panel", "runtime": "compose_dsl", "screen": "ui/panel.js" });
+        for route in ["toolpkg:other:ui:panel", "toolpkg:sample:ui:missing", "toolpkg:sample:ui:PANEL"] {
+            let captured = sidebar_capture(vec![own_route.clone()], serde_json::json!({ "id": "tab", "surface": "chat_sidebar_tabs", "route": route }));
+            let error = parseCapturedRegistration(captured, "sample").unwrap_err();
+            let expected = if route == "toolpkg:other:ui:panel" {
+                format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route must belong to this package for chat_sidebar_tabs: {route}")
+            } else { format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route not found: {route}") };
+            assert_eq!(error, expected);
+        }
+    }
+
+    /// Rejects duplicate declarations and non-Compose route runtimes before a sidebar can be embedded by the host.
+    #[test]
+    fn sidebar_capture_requires_one_compose_route() {
+        let route = serde_json::json!({ "id": "panel", "route": "toolpkg:sample:ui:panel", "runtime": "compose_dsl", "screen": "ui/panel.js" });
+        let entry = serde_json::json!({ "id": "tab", "surface": "chat_sidebar_tabs", "route": "toolpkg:sample:ui:panel" });
+        let duplicate = sidebar_capture(vec![route.clone(), route.clone()], entry.clone());
+        assert_eq!(parseCapturedRegistration(duplicate, "sample").unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route is duplicated for chat_sidebar_tabs: toolpkg:sample:ui:panel"));
+        let mut unsupported = route; unsupported["runtime"] = Value::String("unsupported".to_string());
+        let invalid = sidebar_capture(vec![unsupported], entry);
+        assert_eq!(parseCapturedRegistration(invalid, "sample").unwrap_err(), format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[0].route must use compose_dsl for chat_sidebar_tabs: toolpkg:sample:ui:panel"));
+    }
+
 }

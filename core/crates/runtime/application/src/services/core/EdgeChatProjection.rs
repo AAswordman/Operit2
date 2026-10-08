@@ -169,11 +169,8 @@ pub fn compactEdgeHistories(histories: Vec<ChatHistoryListItem>) -> Vec<ChatHist
         item.id = bounded(&item.id, EDGE_ID_LIMIT);
         item.title = bounded(&item.title, 192);
         item.updatedAt = bounded(&item.updatedAt, 32);
-        item.group = None;
         item.workspaceId = None;
         item.workspaceName = None;
-        item.characterCardName = None;
-        item.characterGroupId = None;
         item
     }).collect()
 }

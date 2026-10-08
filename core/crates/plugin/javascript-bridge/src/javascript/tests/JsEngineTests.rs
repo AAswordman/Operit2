@@ -97,19 +97,19 @@ pub(super) fn newTestJsEngineState(
         .expect("test JavaScript state must initialize")
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct TestPluginConfigExecutionHost {
     gatedToolCalls: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<JsToolCallResult>>>>,
     edgePortCalls: Arc<Mutex<Vec<Value>>>,
     gatedToolStarted: Arc<tokio::sync::Notify>,
-    toolPkgTextResourceReads: AtomicUsize,
-    registrationConfigReads: AtomicUsize,
-    packageManagerLock: Mutex<()>,
-    environment: Mutex<BTreeMap<String, String>>,
+    toolPkgTextResourceReads: Arc<AtomicUsize>,
+    registrationConfigReads: Arc<AtomicUsize>,
+    packageManagerLock: Arc<Mutex<()>>,
+    environment: Arc<Mutex<BTreeMap<String, String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     toolPkgIpcThreadName: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
-    toolPkgIpcTarget: Mutex<Option<(super::JsEngine, String)>>,
+    toolPkgIpcTarget: Arc<Mutex<Option<(super::JsEngine, String)>>>,
 }
 
 /// Resolves ToolPkg modules from a fixed test resource map.
@@ -132,6 +132,18 @@ impl ToolPkgTextResourceHost for StaticToolPkgTextResourceHost {
 crate::impl_rejecting_js_tools_host!(TestPluginConfigExecutionHost);
 
 impl JsExecutionHost for TestPluginConfigExecutionHost {
+    /// Retains shared host fixtures while accepting only concrete engine-owned package contexts.
+    fn for_toolpkg_execution_context(
+        &self,
+        context: &ToolPkgExecutionContext,
+    ) -> Result<Arc<dyn JsExecutionHost>, String> {
+        if context.container_package_name.trim().is_empty() || context.context_key.trim().is_empty()
+        {
+            return Err("Invalid test execution context".to_string());
+        }
+        Ok(Arc::new(self.clone()))
+    }
+
     /// Returns an empty catalog for tests that do not install runtime tools.
     fn get_tool_catalog(&self) -> Result<Value, String> {
         Ok(serde_json::json!({ "tools": [] }))
@@ -2703,6 +2715,7 @@ fn registration_mode_blocks_resource_and_wasm_calls() {
             }
             ToolPkg.registerNavigationEntry({
                 id: 'registration-capability-check',
+                surface: 'toolbox',
                 resourceError: resourceError,
                 wasmError: wasmError
             });
@@ -2750,6 +2763,7 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
             exports.registerToolPkg = function() {
                 ToolPkg.registerNavigationEntry({
                     id: 'config-check',
+                    surface: 'toolbox',
                     directory: directory,
                     aliasDirectory: ToolPkg.getConfigDir('named_alias')
                 });
@@ -3024,8 +3038,9 @@ async fn completion_retains_detached_promise_context_until_host_event() {
         "toolPkgId".to_string(),
         Value::String("workflow".to_string()),
     );
-    let output = engine.execute_script_function(
-        r#"exports.main = function() {
+    let output = engine
+        .execute_script_function(
+            r#"exports.main = function() {
             globalThis.detachedRuns = 0;
             toolCall('gate', {}).then(function() {
                 globalThis.detachedRuns++;
@@ -3037,10 +3052,18 @@ async fn completion_retains_detached_promise_context_until_host_event() {
                 });
             });
             return 'primary';
-        };"#, "main", &params,
-        &BTreeMap::from([("CALL_OWNER".to_string(), "original".to_string())]),
-        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, 2, None,
-    ).await;
+        };"#,
+            "main",
+            &params,
+            &BTreeMap::from([("CALL_OWNER".to_string(), "original".to_string())]),
+            Some(Arc::new(move |value| {
+                sender.send(value).unwrap();
+            })),
+            true,
+            2,
+            None,
+        )
+        .await;
     assert_eq!(
         expect_js_output(output, "primary completion"),
         "\"primary\""
@@ -3380,4 +3403,67 @@ async fn bridge_roundtrip_benchmark() {
         );
         engine.destroy();
     }
+}
+
+/// Creates an actual immutable SDK execution context without authenticating any owner through JavaScript data.
+fn chatExtensionFixtureContext(owner: &str) -> ToolPkgExecutionContext {
+    ToolPkgExecutionContext {
+        context_key: format!("toolpkg_main:{owner}"),
+        container_package_name: owner.to_string(),
+        api_version: "2.0.0".to_string(),
+        text_resource_host: Arc::new(StaticToolPkgTextResourceHost {
+            resources: BTreeMap::new(),
+        }),
+    }
+}
+
+/// Keeps two real engine context identities isolated when tool parameters attempt to forge a namespace.
+#[test]
+fn chat_extension_owner_ignores_forged_tool_parameters() {
+    let contextA = chatExtensionFixtureContext("org.example.owner-a");
+    let contextB = chatExtensionFixtureContext("org.example.owner-b");
+    let request = JsToolCallRequest {
+        tool_type: "Chat".to_string(),
+        tool_name: "writeExtension".to_string(),
+        parameters: BTreeMap::from([
+            (
+                "owner".to_string(),
+                Value::String(contextB.container_package_name.clone()),
+            ),
+            (
+                "namespace".to_string(),
+                Value::String(contextB.container_package_name.clone()),
+            ),
+            (
+                "pluginId".to_string(),
+                Value::String(contextB.container_package_name.clone()),
+            ),
+        ]),
+    };
+    assert_eq!(
+        super::chatExtensionExecutionOwner(Some(&contextA)).unwrap(),
+        "org.example.owner-a"
+    );
+    assert_eq!(
+        super::chatExtensionExecutionOwner(Some(&contextB)).unwrap(),
+        "org.example.owner-b"
+    );
+    assert_ne!(
+        super::chatExtensionExecutionOwner(Some(&contextA)).unwrap(),
+        request.parameters["owner"].as_str().unwrap()
+    );
+}
+
+/// Rejects missing native execution identity even when JavaScript can supply a nonempty owner string.
+#[test]
+fn chat_extension_owner_requires_real_execution_context() {
+    assert_eq!(
+        super::chatExtensionExecutionOwner(None).unwrap_err(),
+        "Chat extensions require a real ToolPkg execution owner"
+    );
+    let mut context = chatExtensionFixtureContext("org.example.owner-a");
+    context.context_key.clear();
+    assert!(super::chatExtensionExecutionOwner(Some(&context)).is_err());
+    let context = chatExtensionFixtureContext(" ");
+    assert!(super::chatExtensionExecutionOwner(Some(&context)).is_err());
 }

@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -23,11 +23,12 @@ pub struct CoreRouteResumeContext {
     pub workspacePath: Option<String>,
     pub promptFunctionType: PromptFunctionType,
     pub enableThinking: bool,
-    pub enableMemoryAutoUpdate: bool,
-    pub roleCardId: String,
-    pub roleName: String,
-    pub groupOrchestrationMode: bool,
-    pub groupParticipantNamesText: Option<String>,
+    /// Identifies the participant selected by the authenticated configuration descriptor.
+    pub participantId: String,
+    /// Identifies the registered snapshot owner, injected solely by the runtime.
+    pub extensionOwner: String,
+    /// Preserves the opaque actor, voice, and profile snapshot for this continuation.
+    pub messageExtension: serde_json::Map<String, serde_json::Value>,
     pub proxySenderName: Option<String>,
     pub notifyReplyOverride: Option<bool>,
     pub chatProviderIdOverride: Option<String>,
@@ -45,54 +46,6 @@ pub type CoreRouteChangeHandler = Arc<
         + Send
         + Sync,
 >;
-
-/// Runtime-owned character card tool-access result consumed by tools.
-#[derive(Clone, Debug, Default)]
-pub struct ResolvedCharacterCardToolAccess {
-    pub customEnabled: bool,
-    pub effectiveBuiltinToolVisibility: HashMap<String, bool>,
-    pub allowedPackageNames: HashSet<String>,
-    pub allowedSkillNames: HashSet<String>,
-    pub allowedMcpServerNames: HashSet<String>,
-    pub canUsePackageSystem: bool,
-    pub hasAnyAllowedExternalSource: bool,
-}
-
-impl ResolvedCharacterCardToolAccess {
-    /// Returns whether a built-in tool is visible under the resolved access rules.
-    #[allow(non_snake_case)]
-    pub fn isBuiltinToolAllowed(&self, toolName: &str) -> bool {
-        if !self.customEnabled {
-            return self
-                .effectiveBuiltinToolVisibility
-                .get(toolName)
-                .copied()
-                .unwrap_or(true);
-        }
-        match toolName {
-            "package_proxy" => self.hasAnyAllowedExternalSource,
-            _ => self
-                .effectiveBuiltinToolVisibility
-                .get(toolName)
-                .copied()
-                .unwrap_or(false),
-        }
-    }
-
-    /// Returns whether an external package, skill, or MCP source is visible.
-    #[allow(non_snake_case)]
-    pub fn isExternalSourceAllowed(&self, sourceName: &str) -> bool {
-        if !self.customEnabled {
-            return true;
-        }
-        if !self.canUsePackageSystem {
-            return false;
-        }
-        self.allowedPackageNames.contains(sourceName)
-            || self.allowedSkillNames.contains(sourceName)
-            || self.allowedMcpServerNames.contains(sourceName)
-    }
-}
 
 /// Bundled package asset exposed by the runtime crate.
 #[derive(Clone, Copy)]
@@ -129,27 +82,6 @@ pub struct RuntimeSkillCatalogEntry {
     pub description: String,
 }
 
-/// Character card metadata exposed to tools.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[allow(non_snake_case)]
-pub struct RuntimeCharacterCardInfo {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub isDefault: bool,
-    pub createdAt: i64,
-    pub updatedAt: i64,
-}
-
-/// Character memory binding data exposed to memory tools.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[allow(non_snake_case)]
-pub struct RuntimeCharacterMemoryBinding {
-    pub id: String,
-    pub memoryBindingMode: String,
-    pub sharedMemoryId: Option<String>,
-}
-
 /// Operation supported by the structured file edit interface.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeStructuredEditAction {
@@ -173,15 +105,59 @@ pub enum RuntimeChatSlot {
     FLOATING,
 }
 
+/// Contains native-generated correlation identities scoped to the authenticated calling package.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct ChatTurnHandle {
+    pub sequenceId: String,
+    pub executionId: String,
+    pub chatId: String,
+}
+
+/// Reports whether the exact native execution accepted a cancellation request.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct ChatTurnCancelResultData {
+    pub executionId: String,
+    pub cancelRequested: bool,
+}
+
+/// Describes the native aggregate state rather than a plugin-local planner status.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatSequenceStatus {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+/// Finalizes only the exact records accumulated by native commits in one admitted sequence.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[allow(non_snake_case)]
+#[serde(deny_unknown_fields)]
+pub struct ChatSequenceFinishResultData {
+    pub sequenceId: String,
+    pub chatId: String,
+    pub status: ChatSequenceStatus,
+    pub userMessageTimestamp: Option<i64>,
+    pub assistants: Vec<operit_plugin_sdk::js_sdk::results::ChatCommittedMessage>,
+    pub error: Option<String>,
+}
+
+
 /// Parameters for sending a chat message through the parent runtime.
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]
 pub struct RuntimeChatSendRequest {
     pub slot: RuntimeChatSlot,
-    pub roleCardId: Option<String>,
+    pub participantId: Option<String>,
     pub chatId: Option<String>,
     pub message: String,
     pub proxySenderName: Option<String>,
+    pub attachments: Vec<operit_model::AttachmentInfo::AttachmentInfo>,
+    pub replyToMessageTimestamp: Option<i64>,
     pub turnOptions: ChatTurnOptions,
 }
 
@@ -266,14 +242,61 @@ pub trait ToolRuntimeSupport: Send + Sync {
         resumeContext: CoreRouteResumeContext,
     ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
 
-    /// Resolves role-card tool access for the active invocation context.
+    /// Reads complete configured model summaries directly from the canonical configuration manager.
     #[allow(non_snake_case)]
-    fn resolveCharacterCardToolAccess(
+    fn listModelSummaries(
         &self,
-        roleCardId: Option<&str>,
-        packageManager: &RuntimePackageManager,
-        globalToolVisibility: Option<HashMap<String, bool>>,
-    ) -> ResolvedCharacterCardToolAccess;
+    ) -> Result<Vec<operit_plugin_sdk::js_sdk::software_settings::SoftwareModelSummary>, String>;
+    /// Reads complete configured speech records directly from the canonical configuration manager.
+    #[allow(non_snake_case)]
+    fn listTtsConfigs(
+        &self,
+    ) -> Result<Vec<operit_plugin_sdk::js_sdk::software_settings::SoftwareTtsConfig>, String>;
+    /// Lists complete independent named appearance snapshots from the ordinary canonical preference manager.
+    #[allow(non_snake_case)]
+    fn listThemeConfigs(&self) -> Result<Vec<operit_plugin_sdk::js_sdk::software_settings::SoftwareThemeConfig>, String>;
+    /// Applies one exact existing named appearance snapshot and its active ID in the canonical transaction.
+    #[allow(non_snake_case)]
+    fn applyThemeConfig(&self, id: String) -> Result<operit_plugin_sdk::js_sdk::software_settings::SoftwareThemeConfig, String>;
+    /// Reads the actual current canonical speech ID without resolving any plugin-owned usage.
+    #[allow(non_snake_case)]
+    fn getCurrentTtsConfigId(&self) -> Result<String, String>;
+    /// Selects only the exact existing canonical speech ID and propagates validation or persistence errors.
+    #[allow(non_snake_case)]
+    fn setCurrentTtsConfigId(&self, id: String) -> Result<String, String>;
+    /// Filters the hidden model-facing catalog using actual registered tool-prompt hooks and execution context.
+    #[allow(non_snake_case)]
+    fn filterToolCatalog<'a>(
+        &'a self,
+        entries: Vec<crate::tools::climode::CliToolModeSupport::HiddenToolCatalogEntry>,
+        context: crate::ToolExecutionManager::ToolRuntimeContext,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        Vec<crate::tools::climode::CliToolModeSupport::HiddenToolCatalogEntry>,
+                        String,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    >;
+
+    /// Reads actual tool source registries after the one initial registry load has completed.
+    #[allow(non_snake_case)]
+    fn readToolSourceCatalog<'a>(
+        &'a self,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        operit_plugin_sdk::js_sdk::software_settings::SoftwareToolSourceCatalog,
+                        String,
+                    >,
+                > + Send
+                + 'a,
+        >,
+    >;
 
     /// Reads one stored environment variable.
     #[allow(non_snake_case)]
@@ -353,23 +376,58 @@ pub trait ToolRuntimeSupport: Send + Sync {
 
     /// Switches the parent-owned main chat runtime to a chat id.
     #[allow(non_snake_case)]
-    fn switchMainChat(&self, chatId: &str) -> Result<(), String>;
+    fn switchMainChat<'a>(
+        &'a self,
+        chatId: &'a str,
+    ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
 
-    /// Creates a chat through the parent-owned chat runtime.
+    /// Creates a workspace conversation with explicit source and opaque creation input.
     #[allow(non_snake_case)]
-    fn createChatRuntime(
-        &self,
-        characterCardName: Option<String>,
-        group: Option<String>,
+    fn createChatRuntime<'a>(
+        &'a self,
         setAsCurrentChat: bool,
-    ) -> Result<(), String>;
+        sourceChatId: Option<String>,
+        input: Option<serde_json::Value>,
+    ) -> ToolRuntimeSupportFuture<'a, Result<String, String>>;
+
+    /// Reads one authenticated owner's object extension directly from an existing record.
+    fn readChatExtension(
+        &self,
+        owner: &str,
+        target: &operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget,
+    ) -> Result<Option<operit_plugin_sdk::js_sdk::core::JsonObject>, String>;
+
+    /// Replaces one authenticated owner's object extension directly on an existing record.
+    fn writeChatExtension(
+        &self,
+        owner: &str,
+        target: &operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget,
+        value: operit_plugin_sdk::js_sdk::core::JsonObject,
+    ) -> Result<operit_plugin_sdk::js_sdk::core::JsonObject, String>;
+
+    /// Deletes one authenticated owner's extension directly from an existing record.
+    fn deleteChatExtension(
+        &self,
+        owner: &str,
+        target: &operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget,
+    ) -> Result<bool, String>;
+
+    /// Admits one authenticated message and returns its bounded semantic observation before generation awaits.
+    fn openPluginChatMessage(
+        &self, owner: &str, request: operit_plugin_sdk::js_sdk::chat::ChatSendRequest, observeParts: bool,
+    ) -> Result<operit_plugin_sdk::js_sdk::JsAsyncIterable<operit_plugin_sdk::js_sdk::chat::ChatSendEvent>, String>;
+
+    /// Captures and requests cancellation of this owner's current execution before any asynchronous model access.
+    fn requestPluginChatCancellation(
+        &self, owner: &str, chatId: &str,
+    ) -> Result<operit_plugin_sdk::js_sdk::chat::ChatCancelResult, String>;
 
     /// Sends a message through the parent-owned chat runtime.
     #[allow(non_snake_case)]
     fn sendChatMessage<'a>(
         &'a self,
         request: RuntimeChatSendRequest,
-    ) -> ToolRuntimeSupportFuture<'a, Result<(), String>>;
+    ) -> ToolRuntimeSupportFuture<'a, Result<operit_plugin_sdk::js_sdk::results::MessageSendResultData, String>>;
 
     /// Calls a functional model without adding messages to chat history.
     #[allow(non_snake_case)]
@@ -377,27 +435,6 @@ pub trait ToolRuntimeSupport: Send + Sync {
         &'a self,
         request: RuntimeChatCallRequest,
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>>;
-
-    /// Lists character cards through parent-owned preferences.
-    #[allow(non_snake_case)]
-    fn listCharacterCards(&self) -> Result<Vec<RuntimeCharacterCardInfo>, String>;
-
-    /// Resolves a character card name by id.
-    #[allow(non_snake_case)]
-    fn characterCardName(&self, cardId: &str) -> Result<String, String>;
-
-    /// Resolves memory binding metadata by character card id.
-    #[allow(non_snake_case)]
-    fn characterMemoryBinding(&self, cardId: &str)
-        -> Result<RuntimeCharacterMemoryBinding, String>;
-
-    /// Rejects memory owner keys that are not a registered character card or shared store.
-    #[allow(non_snake_case)]
-    fn assertMemoryOwnerExists(&self, ownerKey: &str) -> Result<(), String>;
-
-    /// Loads memory search settings for an owner scope.
-    #[allow(non_snake_case)]
-    fn loadMemorySearchSettings(&self, ownerScope: &str) -> Result<(), String>;
 
     /// Applies structured edits to file content.
     #[allow(non_snake_case)]

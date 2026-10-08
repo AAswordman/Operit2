@@ -4,31 +4,26 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use operit_model::FunctionType::FunctionType;
-use operit_model::MemorySearchConfig::MemorySearchConfig;
 use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
-use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
     decodeToolPkgHookResult, ToolPkgAiProviderRegistration,
 };
 use operit_providers::runtime_support::{
-    ProviderCharacterPromptContext, ProviderFunctionModelBinding, ProviderMemoryAutoSaveMessage,
+    ChatConfigurationDisplayResult, ChatConfigurationPurpose, ChatConfigurationRequest,
+    ChatConfigurationResult, ProviderFunctionModelBinding,
     ProviderMessageTiming, ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
     ProviderRuntimeSupportFuture, ProviderToolPkgAiProviderRegistration,
 };
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::skill_runtime::SkillRepository::SkillRepository;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
-use crate::data::preferences::MemorySearchSettingsPreferences::MemorySearchSettingsPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
-use crate::data::preferences::SharedMemoryStoreManager::SharedMemoryStoreManager;
+use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry;
-use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
-use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
 /// Creates runtime-backed services required by provider crates.
 pub struct ProviderRuntimeSupportService;
@@ -40,6 +35,169 @@ impl ProviderRuntimeSupportService {
     }
 }
 
+/// Holds one uniquely registered configuration owner and its immutable ready catalog.
+#[derive(Clone)]
+pub struct ChatConfigurationApi {
+    manager: RuntimePackageManager,
+    ownerPackage: String,
+    recordSupport: Arc<dyn operit_tools::runtime_support::ToolRuntimeSupport>,
+}
+
+impl ChatConfigurationApi {
+    /// Selects only the unique enabled resolve registration without requiring association APIs.
+    pub async fn ready(toolHandler: &AIToolHandler) -> Result<Self, String> {
+        let manager =
+            RuntimePackageManager::readySnapshot(toolHandler.getOrCreatePackageManager()).await?;
+        let mut candidates = Vec::new();
+        for runtime in manager.getEnabledToolPkgContainerRuntimes() {
+            for declaration in &runtime.publicApis {
+                if declaration.id == "chat.configuration.resolve" {
+                    candidates.push(runtime.packageName.clone());
+                }
+            }
+        }
+        Ok(Self {
+            ownerPackage: selectChatConfigurationOwner(candidates)?,
+            manager,
+            recordSupport: toolHandler.runtimeSupport(),
+        })
+    }
+
+    /// Returns the authenticated catalog owner for Core record operations and snapshot validation.
+    pub fn extensionOwner(&self) -> &str {
+        &self.ownerPackage
+    }
+
+    /// Resolves presentation from a real conversation without requiring an executable profile or snapshot.
+    pub async fn resolveDisplay(
+        &self,
+        mut request: ChatConfigurationRequest,
+    ) -> Result<ChatConfigurationDisplayResult, String> {
+        request.requirePurpose(ChatConfigurationPurpose::Display)?;
+        self.readConversationExtension(&mut request)?;
+        decodeDisplayConfigurationResult(self.invokeRegisteredResolve(request).await?, &self.ownerPackage)
+    }
+
+    /// Resolves an existing execution after reading only this owner's canonical extension.
+    pub async fn resolve(
+        &self,
+        mut request: ChatConfigurationRequest,
+    ) -> Result<ChatConfigurationResult, String> {
+        request.requirePurpose(ChatConfigurationPurpose::Execution)?;
+        self.readConversationExtension(&mut request)?;
+        self.invokeResolve(request).await
+    }
+
+    /// Reads only the exact authenticated owner's extension from the canonical persisted chat record.
+    fn readConversationExtension(&self, request: &mut ChatConfigurationRequest) -> Result<(), String> {
+        let chatId = request
+            .chatId
+            .as_deref()
+            .ok_or("Persisted configuration resolve requires chatId")?;
+        requireChatId(chatId)?;
+        let target = operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget::Chat {
+            chatId: chatId.to_string(),
+        };
+        request.chatExtension = self
+            .recordSupport
+            .readChatExtension(&self.ownerPackage, &target)?
+            .map(|value| value.into_iter().collect());
+        Ok(())
+    }
+
+    /// Resolves display data for a creation draft without requiring a nonexistent conversation or execution participant.
+    pub async fn resolveDraft(
+        &self,
+        mut request: ChatConfigurationRequest,
+        chatExtension: Option<operit_providers::runtime_support::JsonObject>,
+    ) -> Result<ChatConfigurationDisplayResult, String> {
+        request.requirePurpose(ChatConfigurationPurpose::Display)?;
+        if let Some(chatId) = request.chatId.as_deref() {
+            requireChatId(chatId)?;
+        }
+        request.chatExtension = chatExtension;
+        decodeDisplayConfigurationResult(self.invokeRegisteredResolve(request).await?, &self.ownerPackage)
+    }
+
+    /// Invokes the exact selected declaration and injects its authenticated owner after successful decoding.
+    async fn invokeResolve(
+        &self,
+        request: ChatConfigurationRequest,
+    ) -> Result<ChatConfigurationResult, String> {
+        request.requirePurpose(ChatConfigurationPurpose::Execution)?;
+        decodeConfigurationResult(self.invokeRegisteredResolve(request).await?, &self.ownerPackage)
+    }
+
+    /// Invokes one immutable selected registration without choosing a second owner or reinterpreting its result.
+    async fn invokeRegisteredResolve(&self, request: ChatConfigurationRequest) -> Result<Value, String> {
+        self
+            .manager
+            .invokeToolPkgPublicApi(
+                &self.ownerPackage,
+                "chat.configuration.resolve",
+                serde_json::to_value(request).map_err(|error| error.to_string())?,
+            )
+            .await
+    }
+}
+
+/// Rejects plugin-supplied runtime identity and validates display JSON without any execution-profile interpretation.
+fn decodeDisplayConfigurationResult(raw: Value, owner: &str) -> Result<ChatConfigurationDisplayResult, String> {
+    if owner.trim().is_empty() {
+        return Err("Display configuration owner is not authenticated".to_string());
+    }
+    if raw.as_object().is_some_and(|object| object.contains_key("extensionOwner")) {
+        return Err("Display configuration extensionOwner is assigned only by the runtime".to_string());
+    }
+    let mut result: ChatConfigurationDisplayResult = serde_json::from_value(raw).map_err(|error| error.to_string())?;
+    result.extensionOwner=owner.to_string();
+    result.validate()?;
+    Ok(result)
+}
+
+/// Rejects plugin-supplied runtime identity and validates the exact selected owner's execution snapshot.
+fn decodeConfigurationResult(raw: Value, owner: &str) -> Result<ChatConfigurationResult, String> {
+    if owner.trim().is_empty() {
+        return Err("Chat configuration owner is not authenticated".to_string());
+    }
+    if raw
+        .as_object()
+        .is_some_and(|object| object.contains_key("extensionOwner"))
+    {
+        return Err(
+            "Chat configuration extensionOwner is assigned only by the runtime".to_string(),
+        );
+    }
+    let mut result: ChatConfigurationResult =
+        serde_json::from_value(raw).map_err(|error| error.to_string())?;
+    result.extensionOwner = owner.to_string();
+    result.validate()?;
+    Ok(result)
+}
+
+/// Resolves a unique registered configuration owner without naming any plugin domain.
+fn selectChatConfigurationOwner(mut candidates: Vec<String>) -> Result<String, String> {
+    match candidates.len() {
+        0 => Err("No enabled plugin registers chat.configuration.resolve".to_string()),
+        1 => Ok(candidates.remove(0)),
+        _ => {
+            candidates.sort();
+            Err(format!(
+                "Duplicate chat.configuration.resolve registrations: {}",
+                candidates.join(", ")
+            ))
+        }
+    }
+}
+
+/// Rejects empty conversation identities before canonical record operations.
+fn requireChatId(chatId: &str) -> Result<(), String> {
+    if chatId.trim().is_empty() {
+        return Err("Chat configuration chatId is empty".to_string());
+    }
+    Ok(())
+}
+
 /// Bridges provider-owned interfaces to runtime-owned managers and registries.
 struct RuntimeProviderSupport {
     tool_handler: AIToolHandler,
@@ -48,7 +206,14 @@ struct RuntimeProviderSupport {
 impl ProviderRuntimeSupport for RuntimeProviderSupport {
     /// Returns the root directory used by runtime data.
     fn dataDir(&self) -> Result<PathBuf, String> {
-        Ok(ApiPreferences::data_dir())
+        let context = self.tool_handler.getContext();
+        let storage = context
+            .runtimeStorageHost
+            .as_ref()
+            .ok_or("Provider runtime has no storage host")?;
+        storage
+            .runtimeRootDir()
+            .ok_or_else(|| "Provider runtime storage host has no data root".to_string())
     }
 
     /// Returns the current thinking quality level.
@@ -77,129 +242,31 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
             .map_err(|error| error.to_string())
     }
 
-    /// Loads memory search settings for an owner key.
-    fn memorySearchConfig(&self, ownerKey: &str) -> Result<MemorySearchConfig, String> {
-        MemorySearchSettingsPreferences::new(ownerKey)
-            .load()
-            .map_err(|error| error.to_string())
-    }
-
+    /// Returns the application preference controlling profile-document prompt visibility.
     fn disableUserPreferenceDescription(&self) -> Result<bool, String> {
-        Ok(crate::data::preferences::ApiPreferences::ApiPreferences::getInstance()
-            .disableUserPreferenceDescriptionFlow().first().map_err(|e|e.to_string())?)
+        Ok(
+            crate::data::preferences::ApiPreferences::ApiPreferences::getInstance()
+                .disableUserPreferenceDescriptionFlow()
+                .first()
+                .map_err(|e| e.to_string())?,
+        )
     }
 
-    /// Resolves the owner key selected by one character card.
-    fn memoryOwnerKeyForCharacterCard(&self, roleCardId: &str) -> Result<String, String> {
-        let card = CharacterCardManager::getInstance()
-            .getCharacterCard(roleCardId)
-            .map_err(|error| error.to_string())?;
-        if CharacterCardMemoryBindingMode::normalize(Some(&card.memoryBindingMode))
-            == CharacterCardMemoryBindingMode::SHARED
-        {
-            let sharedId = card
-                .sharedMemoryId
-                .as_deref()
-                .ok_or_else(|| "shared memory binding requires sharedMemoryId".to_string())?;
-            sharedMemoryOwnerKey(sharedId)
-        } else {
-            characterMemoryOwnerKey(&card.id)
-        }
+    /// Returns the deliberate application-default speech configuration.
+    fn defaultTtsConfigId(&self) -> Result<String, String> {
+        TtsConfigManager::new(RuntimeStorePaths::default()).getCurrentTtsConfigId()
     }
 
-    /// Lists character and shared memory owners visible to the runtime.
-    fn memoryAutoSaveOwnerKeys(&self) -> Result<Vec<String>, String> {
-        let mut ownerKeys = Vec::new();
-        for card in CharacterCardManager::getInstance()
-            .getAllCharacterCards()
-            .map_err(|error| error.to_string())?
-        {
-            ownerKeys.push(self.memoryOwnerKeyForCharacterCard(&card.id)?);
-        }
-        for store in SharedMemoryStoreManager::getInstance().getAllSharedMemoryStores()? {
-            ownerKeys.push(sharedMemoryOwnerKey(&store.id)?);
-        }
-        ownerKeys.sort();
-        ownerKeys.dedup();
-        Ok(ownerKeys)
-    }
-
-    /// Loads hydrated messages before one trigger timestamp for provider background work.
-    fn memoryAutoSaveMessagesBefore(
+    /// Resolves a persisted chat context using authenticated calls on one ready registration snapshot.
+    fn resolveChatConfiguration(
         &self,
-        chatId: &str,
-        maxTimestampInclusive: i64,
-        limit: usize,
-    ) -> Result<Vec<ProviderMemoryAutoSaveMessage>, String> {
-        let manager = ChatHistoryManager::getInstance(RuntimeStorePaths::default())
-            .map_err(|error| error.to_string())?;
-        manager
-            .loadChatMessagesDescUpTo(chatId.to_string(), maxTimestampInclusive, limit as i32)
-            .map_err(|error| error.to_string())
-            .map(|messages| {
-                messages
-                    .into_iter()
-                    .map(|message| {
-                        let content = message.displayText();
-                        ProviderMemoryAutoSaveMessage {
-                            timestamp: message.timestamp,
-                            sender: message.sender,
-                            content,
-                        }
-                    })
-                    .collect()
-            })
-    }
-
-    /// Loads hydrated messages for explicitly selected timestamps.
-    fn memoryAutoSaveMessagesByTimestamps(
-        &self,
-        chatId: &str,
-        timestamps: &[i64],
-    ) -> Result<Vec<ProviderMemoryAutoSaveMessage>, String> {
-        let manager = ChatHistoryManager::getInstance(RuntimeStorePaths::default())
-            .map_err(|error| error.to_string())?;
-        manager
-            .loadChatMessages(chatId)
-            .map_err(|error| error.to_string())
-            .map(|messages| {
-                messages
-                    .into_iter()
-                    .filter(|message| timestamps.contains(&message.timestamp))
-                    .map(|message| {
-                        let content = message.displayText();
-                        ProviderMemoryAutoSaveMessage {
-                            timestamp: message.timestamp,
-                            sender: message.sender,
-                            content,
-                        }
-                    })
-                    .collect()
-            })
-    }
-
-    /// Resolves character prompt data for a selected role card.
-    fn characterPromptContext(
-        &self,
-        roleCardId: &str,
-        promptFunctionType: PromptFunctionType,
-    ) -> Result<ProviderCharacterPromptContext, String> {
-        let manager = CharacterCardManager::getInstance();
-        let activeCard = manager
-            .getCharacterCard(roleCardId)
-            .map_err(|error| error.to_string())?;
-        let introPrompt = manager
-            .combinePrompts(&activeCard.id, Vec::new(), promptFunctionType)
-            .map_err(|error| error.to_string())?;
-        let aiName = if activeCard.name.trim().is_empty() {
-            "Operit".to_string()
-        } else {
-            activeCard.name.clone()
-        };
-        Ok(ProviderCharacterPromptContext {
-            activeCard,
-            introPrompt,
-            aiName,
+        request: ChatConfigurationRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ChatConfigurationResult, String>> + Send + '_>,
+    > {
+        Box::pin(async move {
+            let api = ChatConfigurationApi::ready(&self.tool_handler).await?;
+            api.resolve(request).await
         })
     }
 
@@ -366,4 +433,81 @@ fn providerRegistrationToProvider(
         calculateInputTokensFunctionName: registration.calculateInputTokensFunctionName,
         calculateInputTokensFunctionSource: registration.calculateInputTokensFunctionSource,
     }
+}
+
+#[cfg(test)]
+mod chat_configuration_contract_tests {
+    use super::{decodeConfigurationResult, decodeDisplayConfigurationResult, requireChatId, selectChatConfigurationOwner};
+
+    /// Selects arbitrary uniquely registered owners without a built-in identity whitelist.
+    #[test]
+    fn accepts_arbitrary_unique_owner() {
+        assert_eq!(
+            selectChatConfigurationOwner(vec!["org.example.dynamic.profile".into()]).unwrap(),
+            "org.example.dynamic.profile"
+        );
+    }
+
+    /// Preserves errors for missing and duplicate actual declarations.
+    #[test]
+    fn rejects_missing_and_duplicate_owners() {
+        assert_eq!(
+            selectChatConfigurationOwner(Vec::new()).unwrap_err(),
+            "No enabled plugin registers chat.configuration.resolve"
+        );
+        assert_eq!(
+            selectChatConfigurationOwner(vec!["owner-a".into(), "owner-b".into()]).unwrap_err(),
+            "Duplicate chat.configuration.resolve registrations: owner-a, owner-b"
+        );
+    }
+
+    /// Injects only the exact selected registration owner while preserving the plugin's complete opaque execution snapshot.
+    #[test]
+    fn injects_owner_without_exposing_it_to_javascript_results() {
+        let profile = serde_json::json!({
+            "id":"participant", "name":"Participant", "avatarUri":null,
+            "introPrompt":"intro", "userPreferencesText":"preferences", "openingStatement":"opening",
+            "modelBinding":{"providerId":"provider", "modelId":"model"}, "ttsConfigId":"voice",
+            "toolAccess":{"enabled":true, "allowedBuiltinTools":["tool"], "allowedPackages":[], "allowedSkills":[], "allowedMcpServers":[]},
+            "resources":[{"key":"opaque/resource", "readable":true, "writable":false}]
+        });
+        let raw = serde_json::json!({
+            "contextKey":"opaque/context", "profile":profile, "participants":[profile],
+            "messageExtension":{"actor":{"id":"participant"}, "voice":"voice", "revision":"7"}
+        });
+        for owner in ["org.example.owner-a", "org.example.owner-b"] {
+            let configuration = decodeConfigurationResult(raw.clone(), owner).unwrap();
+            assert_eq!(configuration.extensionOwner, owner);
+            assert_eq!(
+                configuration.messageExtension,
+                raw["messageExtension"].as_object().unwrap().clone()
+            );
+            assert_eq!(serde_json::to_value(configuration).unwrap(), raw);
+        }
+    }
+
+    /// Rejects forged runtime identities before validating any plugin-authored descriptor.
+    #[test]
+    fn rejects_forged_owner_and_unauthenticated_dispatch() {
+        assert_eq!(
+            decodeConfigurationResult(serde_json::json!({"extensionOwner":"other"}), "real-owner")
+                .unwrap_err(),
+            "Chat configuration extensionOwner is assigned only by the runtime"
+        );
+        assert!(decodeConfigurationResult(serde_json::json!({}), " ").is_err());
+        assert!(requireChatId(" ").is_err());
+    }
+    /// Authenticates a presentation descriptor independently of every execution binding.
+    #[test]
+    fn display_decode_authenticates_owner_and_never_accepts_execution_profile() {
+        let raw=serde_json::json!({"contextKey":"opaque","identity":{"title":"Display","avatarUri":null},"participants":[],"initialMessages":[]});
+        let display=decodeDisplayConfigurationResult(raw.clone(),"arbitrary.owner").unwrap();
+        assert_eq!(display.extensionOwner,"arbitrary.owner");
+        assert_eq!(serde_json::to_value(display).unwrap(),raw);
+        assert!(decodeConfigurationResult(raw.clone(),"arbitrary.owner").is_err());
+        let mut forged=raw.clone();forged["extensionOwner"]=serde_json::json!("forged.owner");
+        assert!(decodeDisplayConfigurationResult(forged,"arbitrary.owner").is_err());
+        assert!(decodeDisplayConfigurationResult(raw," ").is_err());
+    }
+
 }

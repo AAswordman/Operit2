@@ -14,12 +14,8 @@ pub mod AttachmentInfo;
 pub mod BillingMode;
 #[path = "CharacterCard.rs"]
 pub mod CharacterCard;
-#[path = "CharacterCardChatStats.rs"]
-pub mod CharacterCardChatStats;
 #[path = "CharacterGroupCard.rs"]
 pub mod CharacterGroupCard;
-#[path = "CharacterGroupChatStats.rs"]
-pub mod CharacterGroupChatStats;
 #[path = "ChatDisplayWindowState.rs"]
 pub mod ChatDisplayWindowState;
 #[path = "ChatEntity.rs"]
@@ -126,9 +122,7 @@ pub use ApiKeyInfo::*;
 pub use AttachmentInfo::*;
 pub use BillingMode::*;
 pub use CharacterCard::*;
-pub use CharacterCardChatStats::*;
 pub use CharacterGroupCard::*;
-pub use CharacterGroupChatStats::*;
 pub use ChatDisplayWindowState::*;
 pub use ChatEntity::*;
 pub use ChatHistory::*;
@@ -177,3 +171,6 @@ pub use TtsCatalog::*;
 pub use TtsConfig::*;
 pub use Workspace::*;
 pub use WorkspaceRenameResult::*;
+
+#[path = "PluginExtensionTarget.rs"]
+pub mod PluginExtensionTarget;

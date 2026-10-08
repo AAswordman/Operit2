@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -8,17 +10,15 @@ use super::ChatMessage::ChatMessage;
 pub struct ChatEntity {
     pub id: String,
     pub title: String,
+    pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub createdAt: i64,
     pub updatedAt: i64,
     pub inputTokens: i64,
     pub outputTokens: i64,
     pub currentWindowSize: i64,
-    pub group: Option<String>,
     pub displayOrder: i64,
     pub workspaceId: Option<String>,
     pub parentChatId: Option<String>,
-    pub characterCardName: Option<String>,
-    pub characterGroupId: Option<String>,
     pub locked: bool,
     pub pinned: bool,
 }
@@ -29,17 +29,15 @@ impl ChatEntity {
         Self {
             id,
             title,
+            pluginExtensions: BTreeMap::new(),
             createdAt: timestamp,
             updatedAt: timestamp,
             inputTokens: 0,
             outputTokens: 0,
             currentWindowSize: 0,
-            group: None,
             displayOrder: -timestamp,
             workspaceId: None,
             parentChatId: None,
-            characterCardName: None,
-            characterGroupId: None,
             locked: false,
             pinned: false,
         }
@@ -56,20 +54,18 @@ impl ChatEntity {
         ChatHistory {
             id: self.id.clone(),
             title: self.title.clone(),
+            pluginExtensions: self.pluginExtensions.clone(),
             messages,
             createdAt: self.createdAt.to_string(),
             updatedAt: self.updatedAt.to_string(),
             inputTokens: self.inputTokens,
             outputTokens: self.outputTokens,
             currentWindowSize: self.currentWindowSize,
-            group: self.group.clone(),
             displayOrder: self.displayOrder,
             workspaceId: self.workspaceId.clone(),
             workspaceName: None,
             workspacePrimaryPath: None,
             parentChatId: self.parentChatId.clone(),
-            characterCardName: self.characterCardName.clone(),
-            characterGroupId: self.characterGroupId.clone(),
             locked: self.locked,
             pinned: self.pinned,
         }
@@ -80,6 +76,7 @@ impl ChatEntity {
         Self {
             id: chatHistory.id.clone(),
             title: chatHistory.title.clone(),
+            pluginExtensions: chatHistory.pluginExtensions.clone(),
             createdAt: chatHistory
                 .createdAt
                 .parse::<i64>()
@@ -91,12 +88,9 @@ impl ChatEntity {
             inputTokens: chatHistory.inputTokens,
             outputTokens: chatHistory.outputTokens,
             currentWindowSize: chatHistory.currentWindowSize,
-            group: chatHistory.group.clone(),
             displayOrder: chatHistory.displayOrder,
             workspaceId: chatHistory.workspaceId.clone(),
             parentChatId: chatHistory.parentChatId.clone(),
-            characterCardName: chatHistory.characterCardName.clone(),
-            characterGroupId: chatHistory.characterGroupId.clone(),
             locked: chatHistory.locked,
             pinned: chatHistory.pinned,
         }

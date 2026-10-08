@@ -138,6 +138,12 @@ impl ToolPkgConfigScope {
 
 /// Defines the fixed Rust execution contract required by package JavaScript.
 pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
+    /// Binds a host instance to an engine-owned authenticated ToolPkg execution context.
+    fn for_toolpkg_execution_context(
+        &self,
+        context: &ToolPkgExecutionContext,
+    ) -> Result<Arc<dyn JsExecutionHost>, String>;
+
     /// Returns the current executable tool catalog with parameter schemas.
     fn get_tool_catalog(&self) -> Result<serde_json::Value, String>;
 
@@ -229,7 +235,6 @@ pub trait JsPackageExecutor: Send + Sync {
     /// Executes one package tool through the bound execution context.
     fn execute_package_tool(
         &self,
-        script: &str,
         request: &JsPackageToolCallRequest,
     ) -> JsExecutionCompletion<JsPackageToolCallResult>;
 }
@@ -272,19 +277,68 @@ pub struct JsPackageToolCallResult {
     pub error: Option<String>,
 }
 
+/// Captures an exact executable declaration together with its immutable runtime selection.
+#[derive(Clone, Debug)]
+pub struct JsPackageToolSelection {
+    /// Contains the selected registered declaration, including its authoritative script and parameter schema.
+    pub definition: crate::package::PackageTool,
+    /// Contains the selected conditional state when the registered package uses one.
+    pub active_state_id: Option<String>,
+    /// Contains the actual registered owning ToolPkg context for a subpackage.
+    pub toolpkg_runtime: Option<ToolPkgSubpackageRuntime>,
+}
+
+/// Selects an exact executable declaration, rejecting unknown, duplicate, advisory and empty-script entries.
+pub fn select_registered_package_tool(
+    package: ToolPackage,
+    function_name: &str,
+) -> Result<crate::package::PackageTool, String> {
+    let package_name = package.name.clone();
+    let mut matches = package
+        .tools
+        .into_iter()
+        .filter(|tool| tool.name == function_name);
+    let definition = matches
+        .next()
+        .ok_or_else(|| format!("Tool not registered: {package_name}:{function_name}"))?;
+    if matches.next().is_some() {
+        return Err(format!(
+            "Duplicate tool registration: {package_name}:{function_name}"
+        ));
+    }
+    if definition.advice {
+        return Err(format!(
+            "Tool is advisory and cannot execute: {package_name}:{function_name}"
+        ));
+    }
+    if definition.script.trim().is_empty() {
+        return Err(format!(
+            "Registered tool script is empty: {package_name}:{function_name}"
+        ));
+    }
+    let mut parameters = std::collections::HashSet::new();
+    for parameter in &definition.parameters {
+        if !parameters.insert(&parameter.name) {
+            return Err(format!(
+                "Duplicate tool parameter: {package_name}:{function_name}:{}",
+                parameter.name
+            ));
+        }
+    }
+    Ok(definition)
+}
+
 /// Supplies package state and ToolPkg engines to a JavaScript bridge.
 pub trait JsPackageRuntime: Send + Sync {
     /// Returns the language code exposed to package JavaScript.
     fn package_language(&self) -> Result<String, String>;
 
-    /// Returns one registered package definition.
-    fn package(&self, package_name: &str) -> Option<ToolPackage>;
-
-    /// Returns the active conditional state id for one package.
-    fn active_package_state_id(&self, package_name: &str) -> Option<String>;
-
-    /// Resolves ToolPkg runtime metadata for one executable subpackage.
-    fn resolve_toolpkg_subpackage(&self, package_name: &str) -> Option<ToolPkgSubpackageRuntime>;
+    /// Selects one enabled executable declaration and its owning context from a single registry snapshot.
+    fn select_tool(
+        &self,
+        package_name: &str,
+        function_name: &str,
+    ) -> Result<JsPackageToolSelection, String>;
 
     /// Returns the shared ToolPkg engine for one explicitly owned execution context.
     fn toolpkg_execution_engine(
@@ -323,6 +377,9 @@ pub struct ToolPkgMainRegistrationCapture {
     pub chatViewHooks: Vec<String>,
     #[serde(rename = "chatMessageHooks", default)]
     pub chatMessageHooks: Vec<String>,
+    /// Captures real package-owned lifecycle handler definitions for the strict registration parser.
+    #[serde(rename = "chatLifecycleHooks", default)]
+    pub chatLifecycleHooks: Vec<String>,
     #[serde(rename = "chatMessageMenuItems", default)]
     pub chatMessageMenuItems: Vec<String>,
     #[serde(rename = "chatRuntimeHooks", default)]

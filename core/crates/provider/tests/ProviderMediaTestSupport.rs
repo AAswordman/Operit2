@@ -7,14 +7,12 @@ use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::ImagePoolManager::ImagePoolManager;
 
 use crate::runtime_support::{
-    ProviderCharacterPromptContext, ProviderFunctionModelBinding, ProviderMemoryAutoSaveMessage,
+    ChatConfigurationRequest, ChatConfigurationResult, ProviderFunctionModelBinding,
     ProviderMessageTiming, ProviderPackageInfo, ProviderRuntimeContext, ProviderRuntimeSupport,
     ProviderToolPkgAiProviderRegistration,
 };
 use operit_model::FunctionType::FunctionType;
-use operit_model::MemorySearchConfig::MemorySearchConfig;
 use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
-use operit_model::PromptFunctionType::PromptFunctionType;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -105,47 +103,24 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
         Ok(())
     }
 
-    /// Returns no memory configuration in the isolated test runtime.
-    fn memorySearchConfig(&self, _ownerKey: &str) -> Result<MemorySearchConfig, String> {
-        Err("test runtime does not expose memory configuration".to_string())
+    /// Does not disable profile text in the isolated media formatting fixture.
+    fn disableUserPreferenceDescription(&self) -> Result<bool, String> {
+        Ok(false)
     }
 
-    /// Returns no memory owner in the isolated test runtime.
-    fn memoryOwnerKeyForCharacterCard(&self, _roleCardId: &str) -> Result<String, String> {
-        Err("test runtime does not expose memory owners".to_string())
+    /// Rejects speech configuration lookup in this isolated nonproduction media fixture.
+    fn defaultTtsConfigId(&self) -> Result<String, String> {
+        Err("Media formatting tests do not resolve speech configuration".to_string())
     }
 
-    /// Returns no memory owners in the isolated test runtime.
-    fn memoryAutoSaveOwnerKeys(&self) -> Result<Vec<String>, String> {
-        Ok(Vec::new())
-    }
-
-    /// Returns no chat messages in the isolated test runtime.
-    fn memoryAutoSaveMessagesBefore(
+    /// Rejects configuration execution because this fixture intentionally tests no plugin runtime.
+    fn resolveChatConfiguration(
         &self,
-        _chatId: &str,
-        _maxTimestampInclusive: i64,
-        _limit: usize,
-    ) -> Result<Vec<ProviderMemoryAutoSaveMessage>, String> {
-        Ok(Vec::new())
-    }
-
-    /// Returns no selected messages in the isolated test runtime.
-    fn memoryAutoSaveMessagesByTimestamps(
-        &self,
-        _chatId: &str,
-        _timestamps: &[i64],
-    ) -> Result<Vec<ProviderMemoryAutoSaveMessage>, String> {
-        Ok(Vec::new())
-    }
-
-    /// Returns no character prompt in the isolated test runtime.
-    fn characterPromptContext(
-        &self,
-        _roleCardId: &str,
-        _promptFunctionType: PromptFunctionType,
-    ) -> Result<ProviderCharacterPromptContext, String> {
-        Err("test runtime does not expose character prompts".to_string())
+        _request: ChatConfigurationRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ChatConfigurationResult, String>> + Send + '_>,
+    > {
+        Box::pin(async { Err("Media formatting tests do not invoke chat plugins".to_string()) })
     }
 
     /// Returns no visible skill packages in the isolated test runtime.

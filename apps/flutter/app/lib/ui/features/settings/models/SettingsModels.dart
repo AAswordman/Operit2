@@ -4,13 +4,12 @@ import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
 
+/// Defines host-owned settings; plugin editors register their own navigation.
 enum SettingsCategory {
   profile,
   model,
   localModels,
   tts,
-  characters,
-  memory,
   tools,
   workspace,
   globalBehavior,
@@ -62,18 +61,6 @@ class SettingsCategorySpec {
         subtitle: 'TTS 与 STT 供应商',
         description: '管理语音合成与语音识别供应商，并分别选择当前配置。',
         icon: Icons.record_voice_over_outlined,
-      ),
-      SettingsCategory.characters => SettingsCategorySpec(
-        title: l10n.settingsCategoryCharactersTitle,
-        subtitle: l10n.settingsCategoryCharactersSubtitle,
-        description: l10n.settingsCategoryCharactersDescription,
-        icon: Icons.badge_outlined,
-      ),
-      SettingsCategory.memory => SettingsCategorySpec(
-        title: l10n.settingsCategoryMemoryTitle,
-        subtitle: l10n.settingsCategoryMemorySubtitle,
-        description: l10n.settingsCategoryMemoryDescription,
-        icon: Icons.account_tree_outlined,
       ),
       SettingsCategory.tools => SettingsCategorySpec(
         title: l10n.settingsCategoryToolsTitle,

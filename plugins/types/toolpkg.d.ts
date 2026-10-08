@@ -1,5 +1,6 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
+import type { Chat } from "./chat";
 import type { ComposeDslScreen } from "./compose-dsl";
 import type { ToolParams } from "./core";
 
@@ -583,7 +584,7 @@ export namespace ToolPkg {
   /**
    * Enumerates every hook event that a ToolPkg plugin may register.
    */
-  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | CoreCommandEventName | HostEventName | HookEventNameVariant20 | EdgeEventName;
+  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | ChatLifecycleEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | CoreCommandEventName | HostEventName | HookEventNameVariant20 | EdgeEventName;
 
   /**
    * Accepts a JSON result, no result, or asynchronous completion from a generic hook.
@@ -871,6 +872,52 @@ export namespace ToolPkg {
   }
 
   /**
+   * Identifies the actual chat and selected execution participant without exposing plugin context rules.
+   */
+  export interface ExecutionContext extends JsonObject {
+    /**
+     * Identifies the real conversation, or explicitly marks a non-chat invocation.
+     */
+    chatId: string | null;
+    /**
+     * Identifies the selected execution participant as an opaque plugin key.
+     */
+    participantId: string | null;
+  }
+
+  /**
+   * Exposes only the receiving registered package's immutable namespace for an actual tool-policy turn.
+   */
+  export interface ToolExecutionContext extends JsonObject {
+    /**
+     * Identifies the actual conversation, or an explicitly non-chat execution.
+     */
+    chatId: string | null;
+    /**
+     * Identifies the actual selected participant without interpreting its plugin-owned identity.
+     */
+    participantId: string | null;
+    /**
+     * Identifies the authenticated registered package receiving this projection.
+     */
+    extensionOwner: string;
+    /**
+     * Carries only this owner's frozen message object; null explicitly means no contribution.
+     */
+    messageExtension: JsonObject | null;
+  }
+
+  /**
+   * Carries a required isolated snapshot while retaining ordinary prompt metadata fields.
+   */
+  export interface ToolHookMetadata extends JsonObject {
+    /**
+     * Carries the actual native tool context, or explicitly marks a non-chat host invocation.
+     */
+    executionContext: ToolExecutionContext | null;
+  }
+
+  /**
    * Carries contextual metadata shared across prompt hooks.
    */
   export interface HookMetadata extends JsonObject {
@@ -878,12 +925,20 @@ export namespace ToolPkg {
      * Captures the character prompt currently active for this hook.
      */
     activePrompt?: ActivePromptSnapshot;
+    /**
+     * Carries the exact execution participant selected for this prompt request.
+     */
+    executionContext?: ExecutionContext;
   }
 
   /**
    * Carries tool request, permission, execution, and result data.
    */
   export interface ToolLifecycleEventPayload extends JsonObject {
+    /**
+     * Carries the actual tool batch context; null explicitly identifies a non-chat host call.
+     */
+    runtimeContext: ToolExecutionContext | null;
     /**
      * Identifies the tool associated with this event or prompt entry.
      */
@@ -952,6 +1007,14 @@ export namespace ToolPkg {
    * Describes one tool entry made available to the model.
    */
   export interface ToolPromptItem extends JsonObject {
+    /**
+     * Preserves an opaque identity when filtering a host-owned hidden catalog.
+     */
+    catalogEntryId?: string;
+    /**
+     * Identifies the exact registered source selected by an activation entry.
+     */
+    activationSource?: string;
     /**
      * Groups this tool under a model-facing category.
      */
@@ -1121,6 +1184,68 @@ export namespace ToolPkg {
   }
 
   /**
+   * Carries the actual tool-prompt policy state and its required owner-isolated execution snapshot.
+   */
+  export interface ToolPromptHookEventPayload extends JsonObject {
+    /**
+     * Names the current prompt or summary processing stage.
+     */
+    stage?: string;
+    /**
+     * Identifies the conversation associated with the event.
+     */
+    chatId?: string;
+    /**
+     * Identifies the host function participating in prompt construction.
+     */
+    functionType?: string;
+    /**
+     * Identifies the prompt-building function active for this hook.
+     */
+    promptFunctionType?: string;
+    /**
+     * Requests English prompt text from the host pipeline.
+     */
+    useEnglish?: boolean;
+    /**
+     * Contains user input before prompt processing.
+     */
+    rawInput?: string;
+    /**
+     * Contains user input after the current processing stage.
+     */
+    processedInput?: string;
+    /**
+     * Contains conversation turns available at this hook stage.
+     */
+    chatHistory?: PromptTurn[];
+    /**
+     * Contains conversation turns after host preparation.
+     */
+    preparedHistory?: PromptTurn[];
+    /**
+     * Contains the system prompt assembled at this hook stage.
+     */
+    systemPrompt?: string;
+    /**
+     * Contains the model-facing tool prompt at this hook stage.
+     */
+    toolPrompt?: string;
+    /**
+     * Contains model configuration active for this request.
+     */
+    modelParameters?: JsonObject[];
+    /**
+     * Lists the tools currently available for model invocation.
+     */
+    availableTools?: ToolPromptItem[];
+    /**
+     * Carries structured context for later hook stages.
+     */
+    metadata: ToolHookMetadata;
+  }
+
+  /**
    * Carries the current summary-generation state to summary hooks.
    */
   export interface SummaryGenerateEventPayload extends JsonObject {
@@ -1193,13 +1318,18 @@ export namespace ToolPkg {
   }
 
   /**
+   * Selects an explicit interception decision with an exact wire discriminator.
+   */
+  export type ToolLifecycleAction = "allow" | "block";
+
+  /**
    * Enumerates immediate and asynchronous results accepted from a tool lifecycle hook.
    */
   export interface ToolLifecycleHookObjectResult {
     /**
      * Selects whether the intercepted tool call may continue.
      */
-    action?: string;
+    action: ToolLifecycleAction;
     /**
      * Explains why the intercepted tool call was blocked.
      */
@@ -1528,6 +1658,11 @@ export namespace ToolPkg {
   }
 
   /**
+   * Keeps complete canonical attachment fields compatible with the hook's JSON-object envelope.
+   */
+  export type ChatInputAttachment = Chat.SendAttachment & JsonObject;
+
+  /**
    * Carries chat input data supplied when the event is dispatched.
    */
   export interface ChatInputEventPayload extends JsonObject {
@@ -1535,6 +1670,22 @@ export namespace ToolPkg {
      * Identifies the conversation associated with the event.
      */
     chatId?: string;
+    /**
+     * Identifies the actual runtime slot supported by the current Chat send contract.
+     */
+    runtime: Chat.Runtime | null;
+    /**
+     * Preserves the originating request's completion-notification policy.
+     */
+    notifyReply: boolean;
+    /**
+     * Carries complete host attachments for authoritative submit events; count-only notifications contain null.
+     */
+    attachments: ChatInputAttachment[] | null;
+    /**
+     * Identifies the exact persisted reply target, or null when no reply was requested.
+     */
+    replyToMessageTimestamp: number | null;
     /**
      * Contains text produced, replaced, or inspected by this operation.
      */
@@ -1939,6 +2090,112 @@ export namespace ToolPkg {
   }
 
   /**
+   * Identifies the sole synchronous chat creation lifecycle event.
+   */
+  export type ChatLifecycleEventName = "before_create";
+
+  /**
+   * Identifies whether the draft creates a new conversation or branches from an existing message.
+   */
+  export type ChatCreationKind = "new" | "branch";
+
+  /**
+   * Contains only generic, not yet persisted conversation draft identity.
+   */
+  export interface ChatCreationChat {
+    /**
+     * Identifies the actual allocated draft.
+     */
+    id: string;
+    /**
+     * Contains the draft's generic title.
+     */
+    title: string;
+    /**
+     * Identifies its workspace or explicitly contains null.
+     */
+    workspaceId: string | null;
+    /**
+     * Identifies its parent conversation or explicitly contains null.
+     */
+    parentChatId: string | null;
+  }
+
+  /**
+   * Supplies the isolated lifecycle input for exactly one real registered package owner.
+   */
+  export interface ChatLifecycleEventPayload {
+    /**
+     * Contains the exact before-create lifecycle discriminator.
+     */
+    eventName: ChatLifecycleEventName;
+    /**
+     * Distinguishes new conversation and branch drafts.
+     */
+    creationKind: ChatCreationKind;
+    /**
+     * Contains only generic allocated draft fields, before resolution or persistence.
+     */
+    chat: ChatCreationChat;
+    /**
+     * Identifies the source conversation or explicitly contains null.
+     */
+    sourceChatId: string | null;
+    /**
+     * Identifies the source message timestamp or explicitly contains null.
+     */
+    sourceMessageTimestamp: number | null;
+    /**
+     * Contains explicitly supplied opaque plugin input or null.
+     */
+    input: JsonObject | null;
+    /**
+     * Contains only this registered owner's source namespace, never the complete extension map.
+     */
+    sourceExtension: JsonObject | null;
+  }
+
+  /**
+   * Combines existing ToolPkg execution metadata with the strict isolated creation payload.
+   */
+  export interface ChatLifecycleHookEvent extends HookEventBase<ChatLifecycleEventName, ChatLifecycleEventPayload> {
+  }
+
+  /**
+   * Requires an explicit extension object or null; null and undefined are not valid top-level results.
+   */
+  export interface ChatLifecycleHookResult {
+    /**
+     * Contains this plugin's new namespace data; the host supplies its authenticated owner key.
+     */
+    extension: JsonObject | null;
+  }
+
+  /**
+   * Allows only the strict lifecycle result, immediately or after awaited asynchronous completion.
+   */
+  export type ChatLifecycleHookReturn = ChatLifecycleHookResult | Promise<ChatLifecycleHookResult>;
+
+  /**
+   * Handles creation synchronously with respect to configuration resolution and database commit.
+   */
+  export type ChatLifecycleHookHandler = (arg0: ChatLifecycleHookEvent) => ChatLifecycleHookReturn;
+
+  /**
+   * Declares at most one creation handler per actual package owner.
+   */
+  export interface ChatLifecycleHookRegistration {
+    /**
+     * Identifies this registration within its real package owner.
+     */
+    id: string;
+    /**
+     * References an exported or durable module-backed lifecycle handler.
+     */
+    function: ChatLifecycleHookHandler;
+  }
+
+  /**
    * Combines shared dispatch metadata with the typed payload for a chat message hook.
    */
   export interface ChatMessageHookEvent extends HookEventBase<ChatMessageEventName, ChatMessageEventPayload> {
@@ -1997,7 +2254,7 @@ export namespace ToolPkg {
   /**
    * Combines shared dispatch metadata with the typed payload for a tool prompt compose hook.
    */
-  export interface ToolPromptComposeHookEvent extends HookEventBase<ToolPromptComposeEventName, PromptHookEventPayload> {
+  export interface ToolPromptComposeHookEvent extends HookEventBase<ToolPromptComposeEventName, ToolPromptHookEventPayload> {
   }
 
   /**
@@ -2438,7 +2695,7 @@ export namespace ToolPkg {
   /**
    * Enumerates supported navigation surface values.
    */
-  export type NavigationSurface = "toolbox" | "main_sidebar_plugins" | "app_bar";
+  export type NavigationSurface = "toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs";
 
   /**
    * Describes a plugin action exposed through a host navigation surface.
@@ -2449,15 +2706,20 @@ export namespace ToolPkg {
      */
     id: string;
     /**
-     * Provides the path used to open this UI contribution.
+     * Provides this package's registered UI route; required for chat_attachments and chat_sidebar_tabs.
+     * Sidebar tabs require a uniquely owned Compose DSL route registered before the navigation entry.
      */
     route?: string;
+    /**
+     * Carries opaque plugin-owned route input without host domain interpretation.
+     */
+    params?: JsonValue;
     /**
      * Selects the host navigation surface containing this entry.
      */
     surface: NavigationSurface;
     /**
-     * Identifies the operation associated with this event or hook result.
+     * Supplies navigation callbacks on other surfaces; action is unsupported for chat_attachments and chat_sidebar_tabs.
      */
     action?: NavigationEntryActionHookHandler;
     /**
@@ -3692,6 +3954,10 @@ export namespace ToolPkg {
      */
     registerChatMessageHook(definition: ChatMessageHookRegistration): void;
     /**
+     * Registers the sole awaited before-create hook for this package's own extension namespace.
+     */
+    registerChatLifecycleHook(definition: ChatLifecycleHookRegistration): void;
+    /**
      * Registers a context-menu item for chat messages.
      * @since ToolPkg API 2.0.0
      */
@@ -3803,6 +4069,10 @@ declare global {
    * Registers a callback for chat input changes and submissions. The global binding delegates to the active ToolPkg registry.
    */
   function registerToolPkgChatInputHook(definition: ToolPkg.ChatInputHookRegistration): void;
+  /**
+   * Registers the same strictly isolated chat creation lifecycle handler through the global alias.
+   */
+  function registerToolPkgChatLifecycleHook(definition: ToolPkg.ChatLifecycleHookRegistration): void;
   /**
    * Registers a callback for persisted chat message notifications. The global binding delegates to the active ToolPkg registry.
    */

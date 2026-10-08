@@ -47,6 +47,7 @@ zip.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true
+operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 
 [build-dependencies]
 serde.workspace = true

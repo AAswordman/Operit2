@@ -5,7 +5,6 @@ use std::sync::Arc;
 use operit_host_api::{TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_host_api::HostManager::HostManager;
 use operit_model::TtsConfig::{
@@ -17,7 +16,6 @@ use operit_util::TtsCleaner::TtsCleaner;
 /// Coordinates generated audio playback and host TTS playback controls.
 pub struct TtsPlaybackService {
     ttsPlaybackHost: Option<Arc<dyn TtsPlaybackHost>>,
-    characterCardManager: CharacterCardManager,
     ttsConfigManager: TtsConfigManager,
 }
 
@@ -27,7 +25,6 @@ impl TtsPlaybackService {
         let paths = RuntimeStorePaths::default();
         Ok(Self {
             ttsPlaybackHost: context.ttsPlaybackHost.clone(),
-            characterCardManager: CharacterCardManager::new(paths.clone()),
             ttsConfigManager: TtsConfigManager::new(paths),
         })
     }
@@ -49,39 +46,7 @@ impl TtsPlaybackService {
         })
     }
 
-    /// Speaks text with the TTS configuration bound to a character card.
-    pub fn speakForCharacter(
-        &self,
-        characterCardId: &str,
-        text: &str,
-        interrupt: bool,
-    ) -> Result<TtsHostPlaybackResult, String> {
-        let characterCardId = characterCardId.trim();
-        if characterCardId.is_empty() {
-            return Err("character card id is empty".to_string());
-        }
-        let cleanedText = TtsCleaner::clean(text);
-        if cleanedText.is_empty() {
-            return Err("tts text is empty".to_string());
-        }
-        let card = self
-            .characterCardManager
-            .getCharacterCard(characterCardId)
-            .map_err(|error| error.to_string())?;
-        let config = match card.ttsConfigId.as_ref().map(|value| value.trim()) {
-            Some(configId) if !configId.is_empty() => self
-                .ttsConfigManager
-                .getTtsConfig(configId)
-                .map_err(|error| error.to_string())?,
-            _ => self
-                .ttsConfigManager
-                .getCurrentTtsConfig()
-                .map_err(|error| error.to_string())?,
-        };
-        self.speakWithResolvedConfig(config, cleanedText, interrupt)
-    }
-
-    /// Speaks text with a selected TTS configuration.
+    /// Speaks text with the exact configuration selected by a resolved chat profile.
     pub fn speakWithConfig(
         &self,
         ttsConfigId: &str,

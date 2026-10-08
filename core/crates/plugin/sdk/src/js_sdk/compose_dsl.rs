@@ -1,5 +1,6 @@
 //! Types and host contracts for constructing Compose UI trees in plugin runtime modules.
 use super::compose_dsl_material3_generated::*;
+use super::toolpkg::ToolPkgJsonValue;
 use super::{JsDate, JsFuture, JsOptional};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -392,6 +393,10 @@ pub enum RowPropsOnClickOutput {
     Variant1(()),
     /// The click handler continues asynchronously.
     Variant2(JsFuture<()>),
+    /// Returns a generic JSON result through the Compose action response.
+    Variant3(ToolPkgJsonValue),
+    /// Resolves a generic JSON result through the Compose action response.
+    Variant4(JsFuture<ToolPkgJsonValue>),
 }
 /// Label content accepted by a text field.
 pub enum TextFieldPropsLabel {
@@ -420,6 +425,10 @@ pub enum IconButtonPropsOnClickOutput {
     Variant1(()),
     /// The click handler continues asynchronously.
     Variant2(JsFuture<()>),
+    /// Returns a generic JSON result through the Compose action response.
+    Variant3(ToolPkgJsonValue),
+    /// Resolves a generic JSON result through the Compose action response.
+    Variant4(JsFuture<ToolPkgJsonValue>),
 }
 /// Completion mode returned by a clickable surface.
 pub enum SurfacePropsOnClickOutput {
@@ -2753,6 +2762,10 @@ pub enum ComposeDialogActionOutput {
     Variant1(()),
     /// Completes asynchronously.
     Variant2(JsFuture<()>),
+    /// Returns a generic JSON result through the Compose action response.
+    Variant3(ToolPkgJsonValue),
+    /// Resolves a generic JSON result through the Compose action response.
+    Variant4(JsFuture<ToolPkgJsonValue>),
 }
 /// Dialog text supplied as a literal or a node slot.
 pub enum ComposeDialogText {

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
+
+/// Contains a JSON object with complete values preserved by the native JSON parser.
+pub type JsonObject = BTreeMap<String, serde_json::Value>;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 /// Stores a scalar or JSON value assigned to an arbitrary tool parameter.
@@ -118,6 +121,29 @@ pub enum ToolResult {
     Number(NumberResult),
     /// Contains another JSON-compatible result.
     Dynamic(DynamicToolResult),
+}
+/// Describes one real executable tool parameter returned by the global catalog.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCatalogParameter {
+    pub name: String,
+    pub r#type: String,
+    pub description: String,
+    pub required: bool,
+    pub default: JsAny,
+}
+/// Describes one executable tool in the existing global catalog, not a source-directory entry.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCatalogEntry {
+    pub name: String,
+    pub description: String,
+    pub parameters: Vec<ToolCatalogParameter>,
+    pub category: String,
+    pub source: String,
+}
+/// Describes the real global executable catalog envelope.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCatalog {
+    pub tools: Vec<ToolCatalogEntry>,
 }
 /// Resolves a statically known tool name to its declared result type.
 pub struct ToolReturnType<T>(PhantomData<T>);

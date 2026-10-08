@@ -16,11 +16,9 @@ use crate::dao::MessagePartDao::MessagePartDao;
 use crate::dao::MessageVariantDao::MessageVariantDao;
 use crate::db::AppDatabase::{AppDatabase, AppDatabaseError};
 use crate::repository::WorkspacePreferenceStore::WorkspacePreferenceStore;
-use crate::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
 use crate::sqliteParams;
+use crate::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
 use crate::SqliteStore::SqliteStore;
-use operit_model::CharacterCardChatStats::CharacterCardChatStats;
-use operit_model::CharacterGroupChatStats::CharacterGroupChatStats;
 use operit_model::ChatEntity::ChatEntity;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
@@ -138,18 +136,20 @@ fn deleteMessageVariantRevision(
     let messageTimestamp = baseMessage.timestamp;
     store.transaction(|transaction| {
         if variantIndex == 0 {
-            let promotedMessage = targetVariant.applyTo(
+            let mut promotedMessage = targetVariant.applyTo(
                 baseMessage.toChatMessage(Vec::new()),
                 Vec::new(),
                 variants.len() as i32,
             );
+            let extensionRow = transaction.queryOne("SELECT pluginExtensions FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3", sqliteParams![chatId, messageTimestamp, targetVariant.variantIndex])?.ok_or_else(|| crate::SqliteStore::SqliteStoreError::Message("Promoted variant no longer exists".to_string()))?;
+            promotedMessage.pluginExtensions = crate::PluginExtensions::decodePluginExtensions(&crate::SqliteStore::SqliteRowGet::get::<_, String>(&extensionRow, 0)?)?;
             transaction.execute(
                 r#"
                 UPDATE messages
                 SET roleName = ?3, provider = ?4, modelName = ?5,
                     inputTokens = ?6, outputTokens = ?7, cachedInputTokens = ?8,
                     sentAt = ?9, outputDurationMs = ?10, waitDurationMs = ?11,
-                    completedAt = ?12
+                    completedAt = ?12, pluginExtensions = ?13
                 WHERE chatId = ?1 AND timestamp = ?2
                 "#,
                 sqliteParams![
@@ -159,6 +159,7 @@ fn deleteMessageVariantRevision(
                     promotedMessage.cachedInputTokens, promotedMessage.sentAt,
                     promotedMessage.outputDurationMs, promotedMessage.waitDurationMs,
                     promotedMessage.completedAt,
+                    crate::PluginExtensions::encodePluginExtensions(&promotedMessage.pluginExtensions)?,
                 ],
             )?;
             transaction.execute(
@@ -274,7 +275,6 @@ impl ChatHistoryManager {
         let syncStore = SqlChatSyncStore::new(paths.clone(), &database)?;
         let bindingStore =
             CoreNodeBindingStore::default().map_err(ChatHistoryManagerError::IllegalState)?;
-        Self::ensureChatBindings(&chatDao, &bindingStore)?;
         let workspaceStoreForFlow = workspaceStore.clone();
         let chatHistoriesFlow = chatDao.getAllChats()?.map(move |chatEntities| {
             attachWorkspaceNames(&workspaceStoreForFlow, chatEntities)
@@ -309,24 +309,6 @@ impl ChatHistoryManager {
             currentChatIdDataStore,
             currentChatIdFlow,
         })
-    }
-
-    /// Materializes local Core bindings for chat rows created before Binding support existed.
-    fn ensureChatBindings(
-        chatDao: &ChatDao,
-        bindingStore: &CoreNodeBindingStore,
-    ) -> ChatHistoryManagerResult<()> {
-        for chat in chatDao.getAllChatsDirectly()? {
-            if !bindingStore
-                .contains(&chat.id)
-                .map_err(ChatHistoryManagerError::IllegalState)?
-            {
-                bindingStore
-                    .createLocal(&chat.id)
-                    .map_err(ChatHistoryManagerError::IllegalState)?;
-            }
-        }
-        Ok(())
     }
 
     /// Hydrates message entities with selected variants into chat messages.
@@ -387,7 +369,12 @@ impl ChatHistoryManager {
                     let selectedVariant = messageVariants
                         .iter()
                         .find(|variant| variant.variantIndex == messageEntity.selectedVariantIndex)
-                        .expect("selected variant must exist for message");
+                        .ok_or_else(|| {
+                            ChatHistoryManagerError::IllegalState(format!(
+                                "Selected variant {} does not exist for message {}",
+                                messageEntity.selectedVariantIndex, messageEntity.timestamp
+                            ))
+                        })?;
                     let selectedParts = partsByRevision
                         .remove(&(messageEntity.timestamp, selectedVariant.variantIndex))
                         .ok_or_else(|| {
@@ -557,74 +544,21 @@ impl ChatHistoryManager {
             .collect())
     }
 
-    /// Reads chat counts grouped by character card.
-    pub fn characterCardStatsFlow(&self) -> ChatHistoryManagerResult<Vec<CharacterCardChatStats>> {
-        Ok(self.chatDao.getCharacterCardChatStats()?)
-    }
-
-    /// Reads chat counts grouped by character group.
-    pub fn characterGroupStatsFlow(
-        &self,
-    ) -> ChatHistoryManagerResult<Vec<CharacterGroupChatStats>> {
-        Ok(self.chatDao.getCharacterGroupChatStats()?)
-    }
-
-    /// Loads chat histories bound to a character card.
-    pub fn getChatHistoriesByCharacterCard(
-        &self,
-        characterCardName: String,
-        isDefault: bool,
-    ) -> ChatHistoryManagerResult<Vec<ChatHistory>> {
-        let chats = if isDefault {
-            self.chatDao
-                .getChatsByCharacterCardOrNull(&characterCardName)?
-        } else {
-            self.chatDao.getChatsByCharacterCard(&characterCardName)?
-        };
-        Ok(chats
-            .into_iter()
-            .map(|chat| self.toChatHistory(chat))
-            .collect())
-    }
-
     /// Reads the persisted current chat id.
     pub fn currentChatIdFlow(&self) -> ChatHistoryManagerResult<Option<String>> {
         Ok(self.currentChatIdFlow.first()?)
     }
 
+    /// Saves host metadata and message edits without overwriting live namespaces or deleting independent variants.
     fn saveChatHistoryInternal(&self, history: ChatHistory) -> ChatHistoryManagerResult<()> {
-        let chatEntity = ChatEntity::fromChatHistory(&history);
-        self.chatDao.insertChat(chatEntity.clone())?;
-        self.messagePartDao.deleteAllPartsForChat(&chatEntity.id)?;
-        self.messageDao.deleteAllMessagesForChat(&chatEntity.id)?;
-        self.messageVariantDao
-            .deleteAllVariantsForChat(&chatEntity.id)?;
-
-        let mut messageEntities = Vec::new();
-        let mut partEntities = Vec::new();
-        for (index, message) in history.messages.into_iter().enumerate() {
-            let message = ChatMessage {
-                selectedVariantIndex: 0,
-                variantCount: 1,
-                ..message
-            };
-            partEntities.extend(messagePartEntities(
-                &chatEntity.id,
-                message.timestamp,
-                0,
-                &message.parts,
-            ));
-            messageEntities.push(MessageEntity::fromChatMessage(
-                chatEntity.id.clone(),
-                message,
-                index as i32,
-                0,
-            ));
-        }
-        self.messageDao.insertMessages(messageEntities)?;
-        for ((timestamp, variantIndex), parts) in groupMessagePartEntities(partEntities) {
-            self.messagePartDao
-                .replaceParts(&chatEntity.id, timestamp, variantIndex, parts)?;
+        if self.chatDao.getChatById(&history.id)?.is_some() {
+            self.chatDao
+                .updateChats(vec![ChatEntity::fromChatHistory(&history)])?;
+            for message in history.messages {
+                self.updateMessage(history.id.clone(), message)?;
+            }
+        } else {
+            self.syncStore.commitChatDraft(&history, None)?;
         }
         Ok(())
     }
@@ -761,10 +695,6 @@ impl ChatHistoryManager {
             .toChatHistory()
             .map_err(ChatHistoryManagerError::IllegalArgument)?;
         let chatEntity = ChatEntity::fromChatHistory(&history);
-        self.chatDao.insertChat(chatEntity)?;
-        self.messagePartDao.deleteAllPartsForChat(&chatId)?;
-        self.messageDao.deleteAllMessagesForChat(&chatId)?;
-        self.messageVariantDao.deleteAllVariantsForChat(&chatId)?;
 
         let mut variants = Vec::new();
         let mut partEntities = Vec::new();
@@ -792,13 +722,8 @@ impl ChatHistoryManager {
                 MessageEntity::fromChatMessage(chatId.clone(), baseMessage, index as i32, 0)
             })
             .collect::<Vec<_>>();
-        self.messageDao.insertMessages(messages)?;
-        self.messageVariantDao.insertVariants(variants)?;
-        for ((timestamp, variantIndex), parts) in groupMessagePartEntities(partEntities) {
-            self.messagePartDao
-                .replaceParts(&chatId, timestamp, variantIndex, parts)?;
-        }
-        self.recordChatSnapshot(&chatId)?;
+        self.syncStore
+            .commitImportedChatRecords(chatEntity, messages, variants, partEntities)?;
         if createBinding {
             self.createBinding(&chatId)?;
         }
@@ -1004,83 +929,25 @@ impl ChatHistoryManager {
         self.persistMessageLocked(&chatId, message)
     }
 
-    /// Persists reordered chats and their group assignments.
-    pub fn updateChatOrderAndGroup(
-        &self,
-        updatedHistories: Vec<ChatHistory>,
-    ) -> ChatHistoryManagerResult<()> {
-        let timestamp = currentTimeMillis();
-        let entitiesToUpdate = updatedHistories
-            .into_iter()
-            .map(|history| {
-                if let Some(mut originalEntity) = self.chatDao.getChatById(&history.id)? {
-                    originalEntity.displayOrder = history.displayOrder;
-                    originalEntity.group = history.group;
-                    originalEntity.updatedAt = timestamp;
-                    Ok(originalEntity)
-                } else {
-                    Ok(ChatEntity::fromChatHistory(&ChatHistory {
-                        updatedAt: timestamp.to_string(),
-                        ..history
-                    }))
-                }
-            })
-            .collect::<Result<Vec<_>, ChatHistoryManagerError>>()?;
-        let updatedIds = entitiesToUpdate
-            .iter()
-            .map(|entity| entity.id.clone())
-            .collect::<Vec<_>>();
-        self.chatDao.updateChats(entitiesToUpdate)?;
-        for chatId in updatedIds {
+    /// Reorders only real chat identifiers and rejects duplicates or nonexistent rows before any write.
+    pub fn updateChatOrder(&self, chatIds: Vec<String>) -> ChatHistoryManagerResult<()> {
+        let mut seen = HashSet::new();
+        let mut entities = Vec::new();
+        for (index, chatId) in chatIds.iter().enumerate() {
+            if !seen.insert(chatId.clone()) {
+                return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                    "Duplicate chat id in order: {chatId}"
+                )));
+            }
+            let mut entity = self.chatDao.getChatById(chatId)?.ok_or_else(|| {
+                ChatHistoryManagerError::IllegalArgument(format!("Chat does not exist: {chatId}"))
+            })?;
+            entity.displayOrder = index as i64;
+            entities.push(entity);
+        }
+        self.chatDao.updateChats(entities)?;
+        for chatId in chatIds {
             self.recordChatMetadata(&chatId)?;
-        }
-        Ok(())
-    }
-
-    /// Renames a chat group within an optional character-card scope.
-    pub fn updateGroupName(
-        &self,
-        oldName: String,
-        newName: String,
-        characterCardName: Option<String>,
-    ) -> ChatHistoryManagerResult<()> {
-        match characterCardName {
-            Some(characterCardName) => {
-                self.chatDao
-                    .updateGroupNameForCharacter(&oldName, &newName, &characterCardName)?;
-            }
-            None => self.chatDao.updateGroupName(&oldName, &newName)?,
-        }
-        Ok(())
-    }
-
-    /// Deletes a chat group or clears matching group assignments.
-    pub fn deleteGroup(
-        &self,
-        groupName: String,
-        deleteChats: bool,
-        characterCardName: Option<String>,
-    ) -> ChatHistoryManagerResult<()> {
-        let timestamp = currentTimeMillis();
-        if deleteChats {
-            match characterCardName {
-                Some(characterCardName) => {
-                    self.chatDao
-                        .deleteChatsInGroupForCharacter(&groupName, &characterCardName)?;
-                }
-                None => self.chatDao.deleteChatsInGroup(&groupName)?,
-            }
-        } else {
-            match characterCardName {
-                Some(characterCardName) => {
-                    self.chatDao.removeGroupFromChatsForCharacter(
-                        &groupName,
-                        &characterCardName,
-                        timestamp,
-                    )?;
-                }
-                None => self.chatDao.removeGroupFromChats(&groupName, timestamp)?,
-            }
         }
         Ok(())
     }
@@ -1329,6 +1196,11 @@ impl ChatHistoryManager {
         messageTimestamp: i64,
         selectedVariantIndex: i32,
     ) -> ChatHistoryManagerResult<()> {
+        if selectedVariantIndex < 0 {
+            return Err(ChatHistoryManagerError::IllegalArgument(
+                "Variant index must be nonnegative".to_string(),
+            ));
+        }
         self.messageDao
             .getMessageByTimestamp(&chatId, messageTimestamp)?
             .ok_or_else(|| {
@@ -1383,21 +1255,6 @@ impl ChatHistoryManager {
     pub fn updateChatTitle(&self, chatId: String, title: String) -> ChatHistoryManagerResult<()> {
         self.chatDao
             .updateChatTitle(&chatId, title, currentTimeMillis())?;
-        self.recordChatMetadata(&chatId)?;
-        Ok(())
-    }
-
-    /// Updates the character-card binding stored on a chat.
-    pub fn updateChatCharacterCardName(
-        &self,
-        chatId: String,
-        characterCardName: Option<String>,
-    ) -> ChatHistoryManagerResult<()> {
-        self.chatDao.updateChatCharacterCardName(
-            &chatId,
-            characterCardName,
-            currentTimeMillis(),
-        )?;
         self.recordChatMetadata(&chatId)?;
         Ok(())
     }
@@ -1471,58 +1328,67 @@ impl ChatHistoryManager {
         Ok(chat.is_some())
     }
 
-    /// Creates a new chat metadata row and binding.
-    pub fn createNewChat(
+    /// Builds an unpersisted chat draft with explicit plugin namespace objects.
+    pub fn newChatDraft(
         &self,
-        title: Option<String>,
-        group: Option<String>,
-        characterCardName: Option<String>,
-        characterGroupId: Option<String>,
+        title: String,
+        pluginExtensions: BTreeMap<String, serde_json::Value>,
+        workspaceId: Option<String>,
+        parentChatId: Option<String>,
     ) -> ChatHistoryManagerResult<ChatHistory> {
-        self.createChatWithId(Uuid::new_v4().to_string(), title, group, characterCardName, characterGroupId, true)
+        crate::PluginExtensions::validatePluginExtensions(&pluginExtensions)?;
+        if let Some(workspaceId) = &workspaceId {
+            if self.workspaceStore.getById(workspaceId)?.is_none() {
+                return Err(ChatHistoryManagerError::IllegalArgument(format!(
+                    "Workspace does not exist: {workspaceId}"
+                )));
+            }
+        }
+        let mut entity = ChatEntity::create(title);
+        entity.pluginExtensions = pluginExtensions;
+        entity.workspaceId = workspaceId;
+        entity.parentChatId = parentChatId;
+        Ok(entity.toChatHistory(Vec::new()))
+    }
+
+    /// Commits a resolved draft and initial messages or a true source branch in one SQLite transaction.
+    pub fn commitChatDraft(
+        &self,
+        draft: ChatHistory,
+        source: Option<(&str, Option<i64>)>,
+    ) -> ChatHistoryManagerResult<ChatHistory> {
+        self.syncStore.commitChatDraft(&draft, source)?;
+        self.createBinding(&draft.id)?;
+        self.loadChatHistory(draft.id.clone())?.ok_or_else(|| {
+            ChatHistoryManagerError::IllegalState("Committed draft chat was not found".to_string())
+        })
     }
 
     /// Materializes metadata on the executor after Space has installed the
     /// Binding. Reconnects reuse the same chat without changing UI selection.
     pub fn ensureRoutedChat(&self, chatId: String) -> ChatHistoryManagerResult<()> {
-        self.bindingStore.binding(&chatId).map_err(ChatHistoryManagerError::IllegalState)?;
+        self.bindingStore
+            .binding(&chatId)
+            .map_err(ChatHistoryManagerError::IllegalState)?;
         if self.chatDao.getChatById(&chatId)?.is_none() {
-            self.createChatWithId(chatId, Some("Edge Chat".into()), None, None, None, false)?;
+            self.createChatWithId(chatId, "Edge Chat".into(), false)?;
         }
         Ok(())
     }
 
+    /// Creates only executor routing metadata using a real host-supplied chat id.
     fn createChatWithId(
-        &self, chatId: String, title: Option<String>, group: Option<String>,
-        characterCardName: Option<String>, characterGroupId: Option<String>,
+        &self,
+        chatId: String,
+        title: String,
         createBinding: bool,
     ) -> ChatHistoryManagerResult<ChatHistory> {
-        let timestamp = currentTimeMillis();
-        let finalTitle = title.unwrap_or_else(|| "New Chat".to_string());
-        let chatEntity = ChatEntity {
-            id: chatId,
-            title: finalTitle,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            inputTokens: 0,
-            outputTokens: 0,
-            currentWindowSize: 0,
-            group,
-            displayOrder: -timestamp,
-            workspaceId: None,
-            parentChatId: None,
-            characterCardName,
-            characterGroupId,
-            locked: false,
-            pinned: false,
-        };
-        self.chatDao.insertChat(chatEntity.clone())?;
-        let history = chatEntity.toChatHistory(Vec::new());
-        self.recordChatMetadata(&history.id)?;
+        let draft = ChatEntity::new(chatId, title, currentTimeMillis()).toChatHistory(Vec::new());
+        self.syncStore.commitChatDraft(&draft, None)?;
         if createBinding {
-            self.createBinding(&history.id)?;
+            self.createBinding(&draft.id)?;
         }
-        Ok(history)
+        Ok(draft)
     }
 
     /// Updates the workspace id bound to a chat.
@@ -1558,10 +1424,7 @@ impl ChatHistoryManager {
     }
 
     /// Loads the workspace bound to a chat.
-    pub fn getWorkspaceForChat(
-        &self,
-        chatId: &str,
-    ) -> ChatHistoryManagerResult<Option<Workspace>> {
+    pub fn getWorkspaceForChat(&self, chatId: &str) -> ChatHistoryManagerResult<Option<Workspace>> {
         let chat = self.chatDao.getChatById(chatId)?.ok_or_else(|| {
             ChatHistoryManagerError::IllegalArgument(format!("Chat does not exist: {chatId}"))
         })?;
@@ -1655,9 +1518,7 @@ impl ChatHistoryManager {
             ))
         })?;
         let originalLen = workspace.folders.len();
-        workspace
-            .folders
-            .retain(|folder| folder.name != folderName);
+        workspace.folders.retain(|folder| folder.name != folderName);
         if workspace.folders.len() == originalLen {
             return Err(ChatHistoryManagerError::IllegalArgument(format!(
                 "workspace folder not found: {folderName}"
@@ -1683,18 +1544,6 @@ impl ChatHistoryManager {
             )));
         }
         self.workspaceStore.delete(&workspaceId)?;
-        Ok(())
-    }
-
-    /// Updates the group name assigned to a chat.
-    pub fn updateChatGroup(
-        &self,
-        chatId: String,
-        group: Option<String>,
-    ) -> ChatHistoryManagerResult<()> {
-        self.chatDao
-            .updateChatGroup(&chatId, group, currentTimeMillis())?;
-        self.recordChatMetadata(&chatId)?;
         Ok(())
     }
 
@@ -1796,62 +1645,6 @@ impl ChatHistoryManager {
             .collect())
     }
 
-    /// Creates a branch chat from a parent chat at a message timestamp.
-    pub fn createBranch(
-        &self,
-        parentChatId: String,
-        upToMessageTimestamp: Option<i64>,
-    ) -> ChatHistoryManagerResult<ChatHistory> {
-        let parentChat = self.chatDao.getChatById(&parentChatId)?.ok_or_else(|| {
-            ChatHistoryManagerError::IllegalArgument(format!(
-                "Parent chat {parentChatId} does not exist"
-            ))
-        })?;
-        let timestamp = currentTimeMillis();
-        let branchEntity = ChatEntity {
-            id: Uuid::new_v4().to_string(),
-            title: parentChat.title,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            inputTokens: parentChat.inputTokens,
-            outputTokens: parentChat.outputTokens,
-            currentWindowSize: parentChat.currentWindowSize,
-            group: parentChat.group,
-            displayOrder: -timestamp,
-            workspaceId: parentChat.workspaceId,
-            parentChatId: Some(parentChatId.clone()),
-            characterCardName: parentChat.characterCardName,
-            characterGroupId: parentChat.characterGroupId,
-            locked: false,
-            pinned: false,
-        };
-        self.chatDao.insertChat(branchEntity.clone())?;
-        let copiedMessageCount = self
-            .messageDao
-            .countMessagesForChatUpToTimestamp(&parentChatId, upToMessageTimestamp)?;
-        if copiedMessageCount > 0 {
-            self.messageDao.copyMessagesToChat(
-                &parentChatId,
-                &branchEntity.id,
-                upToMessageTimestamp,
-            )?;
-            self.messageVariantDao.copyVariantsToChat(
-                &parentChatId,
-                &branchEntity.id,
-                upToMessageTimestamp,
-            )?;
-            self.messagePartDao.copyPartsToChat(
-                &parentChatId,
-                &branchEntity.id,
-                upToMessageTimestamp,
-            )?;
-        }
-        let branchHistory = branchEntity.toChatHistory(Vec::new());
-        self.recordChatSnapshot(&branchHistory.id)?;
-        self.createBinding(&branchHistory.id)?;
-        Ok(branchHistory)
-    }
-
     /// Loads branch chats for a parent chat id.
     pub fn getBranches(&self, parentChatId: String) -> ChatHistoryManagerResult<Vec<ChatHistory>> {
         Ok(self
@@ -1868,35 +1661,6 @@ impl ChatHistoryManager {
         parentChatId: String,
     ) -> ChatHistoryManagerResult<Vec<ChatHistory>> {
         self.getBranches(parentChatId)
-    }
-
-    /// Clears a character-card binding from matching chats.
-    pub fn clearCharacterCardBinding(
-        &self,
-        characterCardName: String,
-    ) -> ChatHistoryManagerResult<()> {
-        self.chatDao
-            .clearCharacterCardBinding(&characterCardName, currentTimeMillis())?;
-        Ok(())
-    }
-
-    /// Reassigns chats from one character card binding to another.
-    pub fn reassignChatsToCharacterCard(
-        &self,
-        sourceCharacterCardName: Option<String>,
-        targetCharacterCardName: String,
-    ) -> ChatHistoryManagerResult<i32> {
-        let updated = if let Some(sourceCharacterCardName) = sourceCharacterCardName {
-            self.chatDao.renameCharacterCardBinding(
-                &sourceCharacterCardName,
-                &targetCharacterCardName,
-                currentTimeMillis(),
-            )?
-        } else {
-            self.chatDao
-                .assignCharacterCardToUnbound(&targetCharacterCardName, currentTimeMillis())?
-        };
-        Ok(updated)
     }
 
     /// Returns the latest summary-message timestamp in a chat.
@@ -2091,167 +1855,6 @@ impl ChatHistoryManager {
         self.hydrateMessagesForChat(&chatId, messageEntities)
     }
 
-    /// Reassigns chats from one character group to another.
-    pub fn reassignChatsToCharacterGroup(
-        &self,
-        sourceCharacterGroupId: Option<String>,
-        targetCharacterGroupId: String,
-    ) -> ChatHistoryManagerResult<i32> {
-        let updated = if let Some(sourceCharacterGroupId) = sourceCharacterGroupId {
-            self.chatDao.renameCharacterGroupBinding(
-                &sourceCharacterGroupId,
-                &targetCharacterGroupId,
-                currentTimeMillis(),
-            )?
-        } else {
-            self.chatDao
-                .assignCharacterGroupToUnbound(&targetCharacterGroupId, currentTimeMillis())?
-        };
-        Ok(updated)
-    }
-
-    /// Updates the character group binding stored on a chat.
-    pub fn updateChatCharacterGroupId(
-        &self,
-        chatId: String,
-        characterGroupId: Option<String>,
-    ) -> ChatHistoryManagerResult<()> {
-        self.chatDao
-            .updateChatCharacterGroupId(&chatId, characterGroupId, currentTimeMillis())?;
-        self.recordChatMetadata(&chatId)?;
-        Ok(())
-    }
-
-    /// Updates character card and group bindings for a chat together.
-    pub fn updateChatCharacterBinding(
-        &self,
-        chatId: String,
-        characterCardName: Option<String>,
-        characterGroupId: Option<String>,
-    ) -> ChatHistoryManagerResult<()> {
-        self.chatDao.updateChatCharacterBinding(
-            &chatId,
-            characterCardName,
-            characterGroupId,
-            currentTimeMillis(),
-        )?;
-        self.recordChatMetadata(&chatId)?;
-        Ok(())
-    }
-
-    /// Clears a character group binding from matching chats.
-    pub fn clearCharacterGroupBinding(
-        &self,
-        characterGroupId: String,
-    ) -> ChatHistoryManagerResult<i32> {
-        Ok(self
-            .chatDao
-            .clearCharacterGroupBinding(&characterGroupId, currentTimeMillis())?)
-    }
-
-    /// Deletes chats bound to a character card and updates current chat state.
-    pub fn deleteChatsByCharacterCardBinding(
-        &self,
-        sourceCharacterCardName: Option<String>,
-    ) -> ChatHistoryManagerResult<i32> {
-        let currentChatId = self.currentChatIdFlow()?;
-        let currentChat = currentChatId
-            .as_ref()
-            .map(|chatId| self.chatDao.getChatById(chatId))
-            .transpose()?
-            .flatten();
-        let deletedCount = if let Some(sourceCharacterCardName) = sourceCharacterCardName.clone() {
-            self.chatDao
-                .deleteUnlockedChatsByCharacterCardName(&sourceCharacterCardName)?
-        } else {
-            self.chatDao.deleteUnlockedUnboundChats()?
-        };
-        let currentChatShouldBeCleared = currentChat
-            .map(|chat| {
-                !chat.locked
-                    && if let Some(sourceCharacterCardName) = sourceCharacterCardName {
-                        chat.characterCardName == Some(sourceCharacterCardName)
-                    } else {
-                        chat.characterCardName.is_none() && chat.characterGroupId.is_none()
-                    }
-            })
-            .unwrap_or(false);
-        if currentChatShouldBeCleared {
-            self.clearCurrentChatId()?;
-        }
-        Ok(deletedCount)
-    }
-
-    /// Assigns a character-card binding to a set of chats.
-    pub fn assignCharacterCardToChats(
-        &self,
-        chatIds: Vec<String>,
-        targetCharacterCardName: Option<String>,
-    ) -> ChatHistoryManagerResult<i32> {
-        if chatIds.is_empty() {
-            return Ok(0);
-        }
-        Ok(self.chatDao.updateCharacterCardForChats(
-            chatIds,
-            targetCharacterCardName,
-            currentTimeMillis(),
-        )?)
-    }
-
-    /// Assigns a character-group binding to a set of chats.
-    pub fn assignCharacterGroupToChats(
-        &self,
-        chatIds: Vec<String>,
-        targetCharacterGroupId: Option<String>,
-    ) -> ChatHistoryManagerResult<i32> {
-        if chatIds.is_empty() {
-            return Ok(0);
-        }
-        Ok(self.chatDao.updateCharacterGroupForChats(
-            chatIds,
-            targetCharacterGroupId,
-            currentTimeMillis(),
-        )?)
-    }
-
-    /// Clears character-group bindings from a set of chats.
-    pub fn clearCharacterGroupBindingForChats(
-        &self,
-        chatIds: Vec<String>,
-    ) -> ChatHistoryManagerResult<i32> {
-        if chatIds.is_empty() {
-            return Ok(0);
-        }
-        Ok(self
-            .chatDao
-            .clearCharacterGroupForChats(chatIds, currentTimeMillis())?)
-    }
-
-    /// Assigns a chat-list group name to a set of chats.
-    pub fn assignGroupToChats(
-        &self,
-        chatIds: Vec<String>,
-        groupName: Option<String>,
-    ) -> ChatHistoryManagerResult<i32> {
-        if chatIds.is_empty() {
-            return Ok(0);
-        }
-        Ok(self
-            .chatDao
-            .updateGroupForChats(chatIds, groupName, currentTimeMillis())?)
-    }
-
-    /// Renames character-card references stored on chats.
-    pub fn renameCharacterCardInChats(
-        &self,
-        oldName: String,
-        newName: String,
-    ) -> ChatHistoryManagerResult<i32> {
-        Ok(self
-            .chatDao
-            .renameCharacterCardBinding(&oldName, &newName, currentTimeMillis())?)
-    }
-
     /// Renames role names stored in message rows.
     pub fn renameRoleNameInMessages(
         &self,
@@ -2370,8 +1973,7 @@ fn attachWorkspaceNames(
                 .and_then(|workspaceId| workspaces.get(workspaceId));
             let mut history = chatEntity.toChatHistory(Vec::new());
             history.workspaceName = workspace.map(|item| item.name.clone());
-            history.workspacePrimaryPath =
-                workspace.map(|item| item.primaryFolder().path.clone());
+            history.workspacePrimaryPath = workspace.map(|item| item.primaryFolder().path.clone());
             history
         })
         .collect())
@@ -2380,3 +1982,10 @@ fn attachWorkspaceNames(
 #[cfg(test)]
 #[path = "ChatHistoryManagerTests.rs"]
 mod tests;
+
+#[path = "ChatHistoryExtensions.rs"]
+mod plugin_extensions;
+
+#[cfg(test)]
+#[path = "ChatHistoryExtensionTests.rs"]
+mod extension_tests;

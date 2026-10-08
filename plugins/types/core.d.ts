@@ -1,6 +1,11 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
 /**
+ * Contains a JSON object with complete values preserved by the native JSON parser.
+ */
+export type JsonObject = Record<string, unknown>;
+
+/**
  * Stores a scalar or JSON value assigned to an arbitrary tool parameter.
  */
 export type ToolParamsAdditionalValue = string | number | boolean | unknown;
@@ -114,6 +119,35 @@ export interface DynamicToolResult extends BaseResult {
  * Holds any scalar or JSON-compatible result returned by a tool invocation.
  */
 export type ToolResult = StringResult | BooleanResult | NumberResult | DynamicToolResult;
+
+/**
+ * Describes one real executable tool parameter returned by the global catalog.
+ */
+export interface ToolCatalogParameter {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  default: any;
+}
+
+/**
+ * Describes one executable tool in the existing global catalog, not a source-directory entry.
+ */
+export interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  parameters: ToolCatalogParameter[];
+  category: string;
+  source: string;
+}
+
+/**
+ * Describes the real global executable catalog envelope.
+ */
+export interface ToolCatalog {
+  tools: ToolCatalogEntry[];
+}
 
 /**
  * Resolves a statically known tool name to its declared result type.

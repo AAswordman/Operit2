@@ -21,6 +21,7 @@ import '../../../ChatLayoutMetrics.dart';
 import '../agent/AgentInputMenuPopup.dart';
 import '../agent/AgentModelSelectorPopup.dart';
 import '../common/ChatAttachmentImagePreview.dart';
+import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
@@ -36,8 +37,6 @@ class ClassicChatInputSection extends StatefulWidget {
     this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
-    required this.currentCharacterCardName,
-    required this.currentCharacterCardAvatarUri,
     required this.onSendMessage,
     required this.onQueueMessage,
     required this.onCancelMessage,
@@ -55,7 +54,7 @@ class ClassicChatInputSection extends StatefulWidget {
     this.onInsertAttachment,
     this.onAttachImage,
     this.onTakePhoto,
-    this.onAttachMemory,
+    this.onPluginAttachment,
     this.onAttachFile,
     this.onAttachFiles,
     this.onPasteImages,
@@ -73,8 +72,6 @@ class ClassicChatInputSection extends StatefulWidget {
   final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
-  final String? currentCharacterCardName;
-  final String? currentCharacterCardAvatarUri;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
   final VoidCallback onCancelMessage;
@@ -92,7 +89,7 @@ class ClassicChatInputSection extends StatefulWidget {
   final ValueChanged<AttachmentInfo>? onInsertAttachment;
   final VoidCallback? onAttachImage;
   final VoidCallback? onTakePhoto;
-  final VoidCallback? onAttachMemory;
+  final ChatAttachmentCompletion? onPluginAttachment;
   final VoidCallback? onAttachFile;
   final ValueChanged<List<String>>? onAttachFiles;
   final ValueChanged<List<PastedImageAttachmentPayload>>? onPasteImages;
@@ -113,6 +110,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   final GlobalKey _mentionPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _inputMenuPopupEntry;
+  int _inputMenuContextGeneration = 0;
   OverlayEntry? _mentionPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
   bool _draggingFiles = false;
@@ -129,10 +127,15 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     });
   }
 
-  /// Rebinds listeners when the input controller changes.
+  /// Rebinds input listeners and expires menu requests when their chat changes.
   @override
   void didUpdateWidget(covariant ClassicChatInputSection oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _inputMenuContextGeneration++;
+      _dismissInputMenuPopup();
+    }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleInputChanged);
       widget.controller.addListener(_handleInputChanged);
@@ -240,6 +243,16 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   /// Shows the input settings popup above the classic settings strip.
   void _showInputMenuPopup() {
     final overlay = Overlay.of(context);
+    final viewModel = widget.viewModel;
+    final chatId = widget.currentChatId;
+    final generation = ++_inputMenuContextGeneration;
+
+    /// Keeps detached presentations owned by this exact live composer context.
+    bool isChatContextCurrent() =>
+        mounted &&
+        generation == _inputMenuContextGeneration &&
+        widget.viewModel == viewModel &&
+        widget.currentChatId == chatId;
     _inputMenuPopupEntry = OverlayEntry(
       builder: (context) {
         final placement = _popupPlacement(
@@ -255,11 +268,10 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
           maxHeight: placement.maxHeight,
           onDismiss: _dismissInputMenuPopup,
           child: AgentInputMenuPopup(
-            viewModel: widget.viewModel,
-            currentChatId: widget.currentChatId,
-            currentCharacterCardName: widget.currentCharacterCardName,
-            currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+            viewModel: viewModel,
+            currentChatId: chatId,
             onDismiss: _dismissInputMenuPopup,
+            isChatContextCurrent: isChatContextCurrent,
             leadingChildren: <Widget>[
               AgentModelMenuSection(
                 viewModel: widget.viewModel,
@@ -291,10 +303,13 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
           width: placement.width,
           maxHeight: placement.maxHeight,
           onDismiss: _dismissAttachmentPopup,
-          child: _ClassicAttachmentPopupPanel(
+          child: ChatAttachmentMenuPopup(
+            clients: widget.viewModel.clients,
+            chatId: widget.currentChatId,
+            onDismiss: _dismissAttachmentPopup,
+            onAttachmentResult: widget.onPluginAttachment,
             onAttachImage: _runAttachmentAction(widget.onAttachImage),
             onTakePhoto: _runAttachmentAction(widget.onTakePhoto),
-            onAttachMemory: _runAttachmentAction(widget.onAttachMemory),
             onAttachFile: _runAttachmentAction(widget.onAttachFile),
             onAttachScreenContent: _runAttachmentAction(
               widget.onAttachScreenContent,
@@ -409,6 +424,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   /// Releases listeners, viewport observation, and open popup entries.
   @override
   void dispose() {
+    _inputMenuContextGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
     _dismissInputMenuPopup();
@@ -994,161 +1010,6 @@ class _ClassicPopupPlacement {
   final double bottom;
   final double width;
   final double maxHeight;
-}
-
-class _ClassicAttachmentPopupPanel extends StatelessWidget {
-  const _ClassicAttachmentPopupPanel({
-    required this.onAttachImage,
-    required this.onTakePhoto,
-    required this.onAttachMemory,
-    required this.onAttachFile,
-    required this.onAttachScreenContent,
-    required this.onAttachNotifications,
-    required this.onAttachLocation,
-    required this.onAttachPackage,
-  });
-
-  final VoidCallback? onAttachImage;
-  final VoidCallback? onTakePhoto;
-  final VoidCallback? onAttachMemory;
-  final VoidCallback? onAttachFile;
-  final VoidCallback? onAttachScreenContent;
-  final VoidCallback? onAttachNotifications;
-  final VoidCallback? onAttachLocation;
-  final VoidCallback onAttachPackage;
-
-  /// Builds the classic attachment action popup.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final l10n = AppLocalizations.of(context)!;
-    final items = <_ClassicAttachmentPanelItem>[
-      _ClassicAttachmentPanelItem(
-        icon: Icons.image,
-        label: l10n.attachmentPhoto,
-        onTap: onAttachImage,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.photo_camera,
-        label: l10n.attachmentCamera,
-        onTap: onTakePhoto,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.memory,
-        label: l10n.attachmentMemory,
-        onTap: onAttachMemory,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.description,
-        label: l10n.attachmentFile,
-        onTap: onAttachFile,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.screenshot_monitor,
-        label: l10n.attachmentScreenContent,
-        onTap: onAttachScreenContent,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.notifications,
-        label: l10n.attachmentNotifications,
-        onTap: onAttachNotifications,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.location_on,
-        label: l10n.attachmentLocation,
-        onTap: onAttachLocation,
-      ),
-      _ClassicAttachmentPanelItem(
-        icon: Icons.auto_awesome,
-        label: l10n.attachmentPackage,
-        onTap: onAttachPackage,
-      ),
-    ];
-    return Material(
-      color: colorScheme.surfaceContainer,
-      elevation: 4,
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            for (final item in items)
-              _ClassicAttachmentPanelItemButton(
-                item: item,
-                iconColor: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                textStyle: theme.textTheme.bodyMedium,
-                textColor: colorScheme.onSurface,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ClassicAttachmentPanelItem {
-  const _ClassicAttachmentPanelItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-}
-
-class _ClassicAttachmentPanelItemButton extends StatelessWidget {
-  const _ClassicAttachmentPanelItemButton({
-    required this.item,
-    required this.iconColor,
-    required this.textStyle,
-    required this.textColor,
-  });
-
-  final _ClassicAttachmentPanelItem item;
-  final Color iconColor;
-  final TextStyle? textStyle;
-  final Color textColor;
-
-  /// Builds one attachment popup action row.
-  @override
-  Widget build(BuildContext context) {
-    final enabled = item.onTap != null;
-    final disabledColor = Theme.of(context).disabledColor;
-    return InkWell(
-      onTap: item.onTap,
-      child: SizedBox(
-        height: 36,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                item.icon,
-                size: 16,
-                color: enabled ? iconColor : disabledColor,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  item.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle?.copyWith(
-                    color: enabled ? textColor : disabledColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _ClassicAttachmentPackageSelectorDialog extends StatefulWidget {

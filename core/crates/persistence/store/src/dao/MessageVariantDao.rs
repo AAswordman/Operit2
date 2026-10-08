@@ -1,4 +1,5 @@
 use crate::sqliteParams;
+use crate::PluginExtensions::{decodePluginExtensions, encodePluginExtensions};
 use crate::SqliteStore::{
     toSqliteValue, SqliteRow, SqliteRowGet, SqliteStore, SqliteStoreError, SqliteValue,
 };
@@ -8,7 +9,7 @@ use operit_model::MessageVariantEntity::MessageVariantEntity;
 const SELECT_VARIANT_COLUMNS: &str = r#"
     SELECT variantId, chatId, messageTimestamp, variantIndex, roleName,
         provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-        sentAt, outputDurationMs, waitDurationMs, completedAt
+        sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions
     FROM message_variants
 "#;
 
@@ -18,10 +19,12 @@ pub struct MessageVariantDao {
 }
 
 impl MessageVariantDao {
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn new(store: SqliteStore) -> Self {
         Self { store }
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn getVariantsForChat(
         &self,
         chatId: &str,
@@ -36,6 +39,7 @@ impl MessageVariantDao {
         )
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn getVariantsForMessages(
         &self,
         chatId: &str,
@@ -58,6 +62,7 @@ impl MessageVariantDao {
         self.selectVariants(&sql, params)
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn getVariantsForMessage(
         &self,
         chatId: &str,
@@ -73,6 +78,7 @@ impl MessageVariantDao {
         )
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn getVariantForMessage(
         &self,
         chatId: &str,
@@ -92,21 +98,23 @@ impl MessageVariantDao {
             .transpose()
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn insertVariant(&self, variant: MessageVariantEntity) -> Result<i64, SqliteStoreError> {
         if variant.variantId == 0 {
             self.store.execute(
                 insertVariantSql(false),
-                insertVariantParams(&variant, false),
+                insertVariantParams(&variant, false)?,
             )?;
             self.store
                 .queryScalar("SELECT last_insert_rowid()", sqliteParams![])
         } else {
             self.store
-                .execute(insertVariantSql(true), insertVariantParams(&variant, true))?;
+                .execute(insertVariantSql(true), insertVariantParams(&variant, true)?)?;
             Ok(variant.variantId)
         }
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn insertVariants(
         &self,
         variants: Vec<MessageVariantEntity>,
@@ -116,17 +124,18 @@ impl MessageVariantDao {
                 if variant.variantId == 0 {
                     transaction.execute(
                         insertVariantSql(false),
-                        insertVariantParams(&variant, false),
+                        insertVariantParams(&variant, false)?,
                     )?;
                 } else {
                     transaction
-                        .execute(insertVariantSql(true), insertVariantParams(&variant, true))?;
+                        .execute(insertVariantSql(true), insertVariantParams(&variant, true)?)?;
                 }
             }
             Ok(())
         })
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn copyVariantsToChat(
         &self,
         sourceChatId: &str,
@@ -138,12 +147,12 @@ impl MessageVariantDao {
                 INSERT INTO message_variants (
                     chatId, messageTimestamp, variantIndex, roleName, provider,
                     modelName, inputTokens, outputTokens, cachedInputTokens, sentAt,
-                    outputDurationMs, waitDurationMs, completedAt
+                    outputDurationMs, waitDurationMs, completedAt, pluginExtensions
                 )
                 SELECT
                     ?2, messageTimestamp, variantIndex, roleName, provider,
                     modelName, inputTokens, outputTokens, cachedInputTokens, sentAt,
-                    outputDurationMs, waitDurationMs, completedAt
+                    outputDurationMs, waitDurationMs, completedAt, pluginExtensions
                 FROM message_variants
                 WHERE chatId = ?1 AND (?3 IS NULL OR messageTimestamp <= ?3)
                 "#,
@@ -152,6 +161,7 @@ impl MessageVariantDao {
         Ok(())
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn updateVariant(&self, variant: MessageVariantEntity) -> Result<(), SqliteStoreError> {
         self.store.execute(
             r#"
@@ -182,6 +192,7 @@ impl MessageVariantDao {
         Ok(())
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn deleteVariant(
         &self,
         chatId: &str,
@@ -195,6 +206,7 @@ impl MessageVariantDao {
         Ok(())
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn deleteVariantsForMessage(
         &self,
         chatId: &str,
@@ -207,6 +219,7 @@ impl MessageVariantDao {
         Ok(())
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn deleteVariantsFrom(
         &self,
         chatId: &str,
@@ -219,6 +232,7 @@ impl MessageVariantDao {
         Ok(())
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     pub fn deleteAllVariantsForChat(&self, chatId: &str) -> Result<(), SqliteStoreError> {
         self.store.execute(
             "DELETE FROM message_variants WHERE chatId = ?1",
@@ -227,6 +241,7 @@ impl MessageVariantDao {
         Ok(())
     }
 
+    /// Processes the exact persisted variant record with explicit storage errors.
     fn selectVariants(
         &self,
         sql: &str,
@@ -240,7 +255,10 @@ impl MessageVariantDao {
     }
 }
 
-fn mapMessageVariantEntity(row: &SqliteRow) -> Result<MessageVariantEntity, SqliteStoreError> {
+/// Processes the exact persisted variant record with explicit storage errors.
+pub(crate) fn mapMessageVariantEntity(
+    row: &SqliteRow,
+) -> Result<MessageVariantEntity, SqliteStoreError> {
     Ok(MessageVariantEntity {
         variantId: row.get(0)?,
         chatId: row.get(1)?,
@@ -256,34 +274,42 @@ fn mapMessageVariantEntity(row: &SqliteRow) -> Result<MessageVariantEntity, Sqli
         outputDurationMs: row.get(11)?,
         waitDurationMs: row.get(12)?,
         completedAt: row.get(13)?,
+        pluginExtensions: decodePluginExtensions(&row.get::<_, String>(14)?)?,
     })
 }
 
-fn insertVariantSql(withVariantId: bool) -> &'static str {
+/// Processes the exact persisted variant record with explicit storage errors.
+pub(crate) fn insertVariantSql(withVariantId: bool) -> &'static str {
     if withVariantId {
         r#"
-        INSERT OR REPLACE INTO message_variants (
+        INSERT INTO message_variants (
             variantId, chatId, messageTimestamp, variantIndex, roleName,
             provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-            sentAt, outputDurationMs, waitDurationMs, completedAt
+            sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ON CONFLICT(chatId, messageTimestamp, variantIndex) DO UPDATE SET roleName = excluded.roleName, provider = excluded.provider, modelName = excluded.modelName, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, cachedInputTokens = excluded.cachedInputTokens, sentAt = excluded.sentAt, outputDurationMs = excluded.outputDurationMs, waitDurationMs = excluded.waitDurationMs, completedAt = excluded.completedAt
         "#
     } else {
         r#"
-        INSERT OR REPLACE INTO message_variants (
+        INSERT INTO message_variants (
             chatId, messageTimestamp, variantIndex, roleName,
             provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-            sentAt, outputDurationMs, waitDurationMs, completedAt
+            sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        ON CONFLICT(chatId, messageTimestamp, variantIndex) DO UPDATE SET roleName = excluded.roleName, provider = excluded.provider, modelName = excluded.modelName, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, cachedInputTokens = excluded.cachedInputTokens, sentAt = excluded.sentAt, outputDurationMs = excluded.outputDurationMs, waitDurationMs = excluded.waitDurationMs, completedAt = excluded.completedAt
         "#
     }
 }
 
-fn insertVariantParams(variant: &MessageVariantEntity, withVariantId: bool) -> Vec<SqliteValue> {
+/// Processes the exact persisted variant record with explicit storage errors.
+pub(crate) fn insertVariantParams(
+    variant: &MessageVariantEntity,
+    withVariantId: bool,
+) -> Result<Vec<SqliteValue>, SqliteStoreError> {
     if withVariantId {
-        sqliteParams![
+        Ok(sqliteParams![
             variant.variantId,
             variant.chatId,
             variant.messageTimestamp,
@@ -298,9 +324,10 @@ fn insertVariantParams(variant: &MessageVariantEntity, withVariantId: bool) -> V
             variant.outputDurationMs,
             variant.waitDurationMs,
             variant.completedAt,
-        ]
+            encodePluginExtensions(&variant.pluginExtensions)?,
+        ])
     } else {
-        sqliteParams![
+        Ok(sqliteParams![
             variant.chatId,
             variant.messageTimestamp,
             variant.variantIndex,
@@ -314,6 +341,7 @@ fn insertVariantParams(variant: &MessageVariantEntity, withVariantId: bool) -> V
             variant.outputDurationMs,
             variant.waitDurationMs,
             variant.completedAt,
-        ]
+            encodePluginExtensions(&variant.pluginExtensions)?,
+        ])
     }
 }

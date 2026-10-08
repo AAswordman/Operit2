@@ -5,28 +5,34 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../../../../../../core/application/PluginHotReload.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../common/CharacterAvatar.dart';
+import '../../../../../../common/contributions/ChatUiContributionModels.dart';
+import '../../../../../../common/contributions/ContributionPresentationResult.dart';
+import '../../../../../../common/contributions/ToolPkgChatUiCatalog.dart';
 import '../../../../../../common/icons/MaterialIconNameResolver.dart';
+import '../../../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
+import '../../../../../packages/screens/ToolPkgUiLauncherScreen.dart';
+import '../../../../viewmodel/ChatSelectionTransition.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
 class AgentInputMenuPopup extends StatefulWidget {
+  /// Creates the shared menu with a lifecycle guard owned by its real composer.
   const AgentInputMenuPopup({
     super.key,
     required this.viewModel,
     required this.currentChatId,
-    required this.currentCharacterCardName,
-    required this.currentCharacterCardAvatarUri,
     required this.onDismiss,
+    required this.isChatContextCurrent,
     this.leadingChildren = const <Widget>[],
   });
 
   final ChatViewModel viewModel;
   final String? currentChatId;
-  final String? currentCharacterCardName;
-  final String? currentCharacterCardAvatarUri;
   final VoidCallback onDismiss;
+  final bool Function() isChatContextCurrent;
   final List<Widget> leadingChildren;
 
   @override
@@ -38,122 +44,230 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   Timer? _pluginChangeTimer;
   String? _settingsSignature;
   bool _checkingPluginChangeVersion = false;
-  bool _memoryExpanded = false;
-  bool _memoryBusy = false;
-  Timer? _memoryTimer;
-  core_proxy.MemoryAutoSaveStatus? _queue;
-  bool _pollingMemory = false;
   bool _toolsExpanded = false;
   bool _behaviorExpanded = false;
   bool _pluginsExpanded = false;
+  Future<List<core_proxy.ToolPkgNavigationEntry>>? _pluginEntriesFuture;
+  StreamSubscription<void>? _pluginCatalogSubscription;
+  String? _pluginLanguageCode;
+  bool _openingPluginEntry = false;
 
+  /// Starts menu observers and listens to mutations of the existing UI catalog.
   @override
   void initState() {
     super.initState();
     _settingsFuture = _loadSettings();
     _startPluginChangeObserver();
-    unawaited(_pollMemory());
-    _memoryTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _pollMemory(),
+    _pluginCatalogSubscription = ToolPkgCatalogChangeBus.listen(
+      _reloadPluginEntries,
     );
+    PluginHotReload.revision.addListener(_reloadPluginEntries);
   }
 
+  /// Reloads localized plugin navigation entries when the host locale changes.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final languageCode = Localizations.localeOf(context).languageCode;
+    if (_pluginLanguageCode != languageCode) {
+      _pluginLanguageCode = languageCode;
+      _pluginEntriesFuture = _loadPluginEntries(languageCode);
+    }
+  }
+
+  /// Keeps menu data scoped to the current chat and runtime client.
   @override
   void didUpdateWidget(covariant AgentInputMenuPopup oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentChatId != widget.currentChatId ||
         oldWidget.viewModel != widget.viewModel) {
       _settingsSignature = null;
-      _queue = null;
       _settingsFuture = _loadSettings();
-      unawaited(_pollMemory());
+      if (oldWidget.viewModel != widget.viewModel) {
+        _reloadPluginEntries();
+      }
     }
   }
 
+  /// Releases both chat observers and plugin catalog listeners with the popup.
   @override
   void dispose() {
     _pluginChangeTimer?.cancel();
-    _memoryTimer?.cancel();
+    unawaited(_pluginCatalogSubscription?.cancel());
+    PluginHotReload.revision.removeListener(_reloadPluginEntries);
     super.dispose();
   }
 
-  Future<void> _pollMemory() async {
-    if (_pollingMemory || widget.currentChatId == null) return;
-    _pollingMemory = true;
+  /// Reads toolbox entries from the actual registry without selecting a package.
+  Future<List<core_proxy.ToolPkgNavigationEntry>> _loadPluginEntries(
+    String languageCode,
+  ) async {
+    final entries = await widget.viewModel.clients.application
+        .packageManager()
+        .getToolPkgNavigationEntries(useEnglish: languageCode == 'en');
+    return List<core_proxy.ToolPkgNavigationEntry>.unmodifiable(
+      entries.where((entry) => entry.surface == 'toolbox'),
+    );
+  }
+
+  /// Refreshes registered menu actions after package or hot-reload changes.
+  void _reloadPluginEntries() {
+    if (!mounted) {
+      return;
+    }
+    final languageCode = _pluginLanguageCode;
+    if (languageCode == null) {
+      return;
+    }
+    setState(() {
+      _pluginEntriesFuture = _loadPluginEntries(languageCode);
+    });
+  }
+
+  /// Invokes the declared action or opens the exact catalog-owned Compose route.
+  Future<void> _openPluginEntry(core_proxy.ToolPkgNavigationEntry entry) async {
+    if (_openingPluginEntry) {
+      return;
+    }
+    final clients = widget.viewModel.clients;
+    final viewModel = widget.viewModel;
+    final chatId = widget.currentChatId;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+    final languageCode = Localizations.localeOf(context).languageCode;
+    setState(() => _openingPluginEntry = true);
     try {
-      final chatId = widget.currentChatId!;
-      final viewModel = widget.viewModel;
-      final status = await viewModel.chatCore.chatMemoryAutoSaveStatus(
-        chatId: chatId,
-      );
-      if (!mounted ||
-          widget.currentChatId != chatId ||
-          widget.viewModel != viewModel) {
+      final manager = clients.application.packageManager();
+      final action = entry.action;
+      if (action != null) {
+        await manager.runToolPkgNavigationEntryAction(
+          containerPackageName: entry.containerPackageName,
+          entryId: entry.entryId,
+          functionName: action.functionName,
+          inlineFunctionSource: action.functionSource,
+          eventPayload: <String, Object?>{
+            'entryId': entry.entryId,
+            'routeId': entry.routeId,
+            'surface': entry.surface,
+            'title': entry.title,
+            'description': entry.description,
+            'chatId': chatId,
+          },
+        );
+        if (mounted &&
+            widget.viewModel == viewModel &&
+            widget.currentChatId == chatId) {
+          widget.onDismiss();
+        }
         return;
       }
-      if (mounted) {
-        setState(() {
-          _queue = status;
-        });
+      final routes = await manager.getToolPkgUiRoutes(
+        runtime: 'compose_dsl',
+        useEnglish: languageCode == 'en',
+      );
+      final matchingRoutes = routes.where(
+        (route) =>
+            route.containerPackageName == entry.containerPackageName &&
+            route.routeId == entry.routeId,
+      );
+      if (matchingRoutes.length != 1) {
+        throw StateError(
+          'A menu entry must resolve to exactly one registered Compose route: '
+          '${entry.containerPackageName}/${entry.routeId}',
+        );
       }
-    } catch (error) {
-      debugPrint('Memory queue status: $error');
-    } finally {
-      _pollingMemory = false;
-    }
-  }
-
-  Future<void> _manualMemory() async {
-    if (_memoryBusy || widget.currentChatId == null) return;
-    setState(() => _memoryBusy = true);
-    try {
-      await widget.viewModel.updateMemory(widget.currentChatId!);
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('记忆提取完成')));
+      final route = matchingRoutes.single;
+      final plugin = await manager.getToolPkgContainerRuntime(
+        containerPackageName: route.containerPackageName,
+      );
+      if (plugin == null) {
+        throw StateError(
+          'Menu route container is not registered: ${route.containerPackageName}',
+        );
       }
-      await _pollMemory();
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('记忆提取失败：$error')));
+      if (!mounted ||
+          widget.viewModel != viewModel ||
+          widget.currentChatId != chatId ||
+          !navigator.mounted) {
+        return;
       }
-    } finally {
-      if (mounted) setState(() => _memoryBusy = false);
-    }
-  }
-
-  void _showMemoryInfo(String title, String description) {
-    final dialog = showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(description),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
+      widget.onDismiss();
+      await navigator.push<void>(
+        MaterialPageRoute<void>(
+          builder: (context) => ToolPkgUiLauncherScreen(
+            clients: clients,
+            plugin: plugin,
+            initialRouteId: route.routeId,
+            initialModuleSpec: route.moduleSpec,
           ),
-        ],
-      ),
-    );
-    // This menu is a root OverlayEntry, not a route. Remove it before the
-    // dialog is painted or it will remain above the navigator's modal barrier.
-    widget.onDismiss();
-    unawaited(dialog);
+        ),
+      );
+    } catch (error) {
+      if (messenger.mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('插件入口打开失败：$error')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _openingPluginEntry = false);
+      }
+    }
   }
 
-  String get _memoryQueueDescription {
-    final queue = _queue;
-    if (queue == null) return '暂无队列状态。自动提取会定期检查当前记忆库。';
-    return '待处理 ${queue.pendingCandidates} 条 · ${queue.pendingChats} 个聊天\n'
-        '处理中 ${queue.processingCandidates} · 失败 ${queue.failedCandidates}\n'
-        '下次检查：约 ${queue.minutesUntilNextRun} 分钟后\n\n'
-        '自动检查需要至少 5 个候选；不足时继续等待。手动更新不受此门槛限制。'
-        '${queue.lastError.isEmpty ? '' : '\n\n${queue.lastError}'}';
+  /// Renders registered actions with their localized title and Material icon.
+  Widget _buildPluginEntries() {
+    return FutureBuilder<List<core_proxy.ToolPkgNavigationEntry>>(
+      future: _pluginEntriesFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text('插件入口加载失败：${snapshot.error}'),
+                TextButton(
+                  onPressed: _reloadPluginEntries,
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          );
+        }
+        final entries = snapshot.data;
+        if (entries == null) {
+          return const Padding(
+            padding: EdgeInsets.all(12),
+            child: LinearProgressIndicator(),
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            for (final entry in entries)
+              ListTile(
+                dense: true,
+                enabled: !_openingPluginEntry,
+                leading: entry.icon == null
+                    ? null
+                    : Icon(
+                        MaterialIconNameResolver.resolve(entry.icon!),
+                        size: 20,
+                      ),
+                title: Text(entry.title),
+                subtitle: entry.description.isEmpty
+                    ? null
+                    : Text(
+                        entry.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                trailing: const Icon(Icons.open_in_new, size: 16),
+                onTap: () => _openPluginEntry(entry),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   void _startPluginChangeObserver() {
@@ -162,6 +276,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     });
   }
 
+  /// Refreshes native settings and registered toggle metadata for this chat.
   Future<void> _checkPluginChangeVersion() async {
     if (_checkingPluginChangeVersion) {
       return;
@@ -178,7 +293,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
           widget.viewModel != viewModel) {
         return;
       }
-      final signature = jsonEncode(settings.toJson());
+      final signature = jsonEncode(_menuData(settings).toJson());
       if (_settingsSignature != signature) {
         _settingsSignature = signature;
         setState(() {
@@ -192,6 +307,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     }
   }
 
+  /// Reads native composer settings without consuming retired plugin-domain flags.
   Future<_AgentInputMenuData> _loadSettings() async {
     final settings = await widget.viewModel.chatCore.chatInputMenuSettings(
       chatId: widget.currentChatId,
@@ -199,47 +315,31 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     return _menuData(settings);
   }
 
+  /// Selects only host-owned behavior and actual registered plugin contributions.
   _AgentInputMenuData _menuData(core_proxy.ChatInputMenuSettings settings) {
     return _AgentInputMenuData(
-      enableMemoryAutoUpdate: settings.enableMemoryAutoUpdate,
       permissionMode: settings.permissionMode,
       disableStreamOutput: settings.disableStreamOutput,
-      disableUserPreferenceDescription:
-          settings.disableUserPreferenceDescription,
       pluginToggles: settings.pluginToggles,
     );
   }
 
+  /// Updates only native fields; null fields remain unchanged under the Core contract.
   Future<void> _saveSettings({
-    bool? enableMemoryAutoUpdate,
     core_proxy.AiPermissionMode? permissionMode,
     bool? disableStreamOutput,
-    bool? disableUserPreferenceDescription,
   }) => widget.viewModel.chatCore.saveChatInputMenuSettings(
     chatId: widget.currentChatId,
-    enableMemoryAutoUpdate: enableMemoryAutoUpdate,
+    enableMemoryAutoUpdate: null,
     permissionMode: permissionMode,
     disableStreamOutput: disableStreamOutput,
-    disableUserPreferenceDescription: disableUserPreferenceDescription,
+    disableUserPreferenceDescription: null,
   );
 
   void _reloadSettings() {
     setState(() {
       _settingsFuture = _loadSettings();
     });
-  }
-
-  Future<void> _setUserMarkdownEnabled(
-    _AgentInputMenuData data,
-    bool enabled,
-  ) async {
-    await _saveSettings(disableUserPreferenceDescription: !enabled);
-    _reloadSettings();
-  }
-
-  Future<void> _toggleMemoryAutoUpdate(_AgentInputMenuData data) async {
-    await _saveSettings(enableMemoryAutoUpdate: !data.enableMemoryAutoUpdate);
-    _reloadSettings();
   }
 
   Future<void> _setPermissionMode(_ToolPermissionMode mode) async {
@@ -309,55 +409,11 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                     _ChatSessionSummarySection(
                       viewModel: widget.viewModel,
                       currentChatId: widget.currentChatId,
-                      currentCharacterCardName: widget.currentCharacterCardName,
-                      currentCharacterCardAvatarUri:
-                          widget.currentCharacterCardAvatarUri,
                       onDismiss: widget.onDismiss,
+                      isChatContextCurrent: widget.isChatContextCurrent,
                     ),
                     const Divider(height: 1),
                     ...widget.leadingChildren,
-                    _MenuSection(
-                      icon: Icons.data_object_outlined,
-                      title: '记忆',
-                      value: data.memorySummary,
-                      expanded: _memoryExpanded,
-                      onTap: () {
-                        setState(() {
-                          _memoryExpanded = !_memoryExpanded;
-                        });
-                      },
-                      onInfoTap: () =>
-                          _showMemoryInfo('记忆状态', _memoryQueueDescription),
-                      children: <Widget>[
-                        _SwitchRow(
-                          icon: Icons.assignment_ind_outlined,
-                          title: '提供用户资料',
-                          value: data.disableUserPreferenceDescription
-                              ? '关'
-                              : '开',
-                          checked: !data.disableUserPreferenceDescription,
-                          onTap: () => _setUserMarkdownEnabled(
-                            data,
-                            data.disableUserPreferenceDescription,
-                          ),
-                        ),
-                        _SwitchRow(
-                          icon: data.enableMemoryAutoUpdate
-                              ? Icons.save
-                              : Icons.save_outlined,
-                          title: '自动更新记忆库',
-                          value: data.enableMemoryAutoUpdate ? '开' : '关',
-                          checked: data.enableMemoryAutoUpdate,
-                          onTap: () => _toggleMemoryAutoUpdate(data),
-                        ),
-                        _ActionRow(
-                          icon: Icons.save_outlined,
-                          title: _memoryBusy ? '正在更新记忆…' : '手动更新记忆',
-                          enabled: !_memoryBusy && widget.currentChatId != null,
-                          onTap: _manualMemory,
-                        ),
-                      ],
-                    ),
                     _MenuSection(
                       icon: Icons.security_outlined,
                       title: '工具',
@@ -401,30 +457,30 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                         ),
                       ],
                     ),
-                    if (data.pluginToggles.isNotEmpty)
-                      _MenuSection(
-                        icon: Icons.extension_outlined,
-                        title: '插件',
-                        value: data.pluginSummary,
-                        expanded: _pluginsExpanded,
-                        onTap: () {
-                          setState(() {
-                            _pluginsExpanded = !_pluginsExpanded;
-                          });
-                        },
-                        children: <Widget>[
-                          for (final toggle in data.pluginToggles)
-                            _SwitchRow(
-                              icon: Icons.hub,
-                              materialIconName: toggle.icon,
-                              title: toggle.title ?? toggle.id,
-                              value: toggle.isChecked ? '开' : '关',
-                              checked: toggle.isChecked,
-                              enabled: toggle.isEnabled,
-                              onTap: () => _togglePlugin(toggle),
-                            ),
-                        ],
-                      ),
+                    _MenuSection(
+                      icon: Icons.extension_outlined,
+                      title: '插件',
+                      value: data.pluginSummary,
+                      expanded: _pluginsExpanded,
+                      onTap: () {
+                        setState(() {
+                          _pluginsExpanded = !_pluginsExpanded;
+                        });
+                      },
+                      children: <Widget>[
+                        for (final toggle in data.pluginToggles)
+                          _SwitchRow(
+                            icon: Icons.hub,
+                            materialIconName: toggle.icon,
+                            title: toggle.title ?? toggle.id,
+                            value: toggle.isChecked ? '开' : '关',
+                            checked: toggle.isChecked,
+                            enabled: toggle.isEnabled,
+                            onTap: () => _togglePlugin(toggle),
+                          ),
+                        _buildPluginEntries(),
+                      ],
+                    ),
                   ],
                 ),
               );
@@ -437,19 +493,18 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
 }
 
 class _ChatSessionSummarySection extends StatefulWidget {
+  /// Retains the real chat owner while the surrounding overlay is dismissed.
   const _ChatSessionSummarySection({
     required this.viewModel,
     required this.currentChatId,
-    required this.currentCharacterCardName,
-    required this.currentCharacterCardAvatarUri,
     required this.onDismiss,
+    required this.isChatContextCurrent,
   });
 
   final ChatViewModel viewModel;
   final String? currentChatId;
-  final String? currentCharacterCardName;
-  final String? currentCharacterCardAvatarUri;
   final VoidCallback onDismiss;
+  final bool Function() isChatContextCurrent;
 
   /// Creates the state for the current chat summary section.
   @override
@@ -466,11 +521,20 @@ class _ChatSessionSummarySectionState
   int _inputTokenCount = 0;
   int _outputTokenCount = 0;
   bool _statsExpanded = false;
+  Future<ChatUiContext>? _contextActionsFuture;
+  StreamSubscription<void>? _contextCatalogSubscription;
+  bool _presentingContextAction = false;
 
+  /// Loads plugin actions and native statistics for this exact menu context.
   @override
   void initState() {
     super.initState();
     _maxContextLengthFuture = _loadSummary();
+    _contextActionsFuture = _loadChatUiContext();
+    _contextCatalogSubscription = ToolPkgCatalogChangeBus.listen(
+      _reloadChatUiContext,
+    );
+    PluginHotReload.revision.addListener(_reloadChatUiContext);
     _summaryTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_pollingSummary) return;
       _pollingSummary = true;
@@ -493,6 +557,7 @@ class _ChatSessionSummarySectionState
     });
   }
 
+  /// Replaces context futures when the actual chat or runtime owner changes.
   @override
   void didUpdateWidget(covariant _ChatSessionSummarySection oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -502,21 +567,183 @@ class _ChatSessionSummarySectionState
       _inputTokenCount = 0;
       _outputTokenCount = 0;
       _maxContextLengthFuture = _loadSummary();
+      _contextActionsFuture = _loadChatUiContext();
     }
   }
 
-  void _showCharacterCardSelector() {
-    final dialogFuture = showDialog<void>(
-      context: context,
-      builder: (context) => _CharacterCardSelectorDialog(
-        viewModel: widget.viewModel,
-        currentChatId: widget.currentChatId,
-      ),
-    );
-    widget.onDismiss();
-    unawaited(dialogFuture);
+  /// Loads presentation actions from the actual enabled public API owners.
+  Future<ChatUiContext> _loadChatUiContext() => ToolPkgChatUiCatalog(
+    clients: widget.viewModel.clients,
+  ).loadContext(chatId: widget.currentChatId);
+
+  /// Refreshes context after a durable plugin action or package catalog change.
+  void _reloadChatUiContext() {
+    if (!mounted) return;
+    setState(() => _contextActionsFuture = _loadChatUiContext());
   }
 
+  /// Refreshes the captured runtime descriptor only after its own valid completion.
+  Future<void> _presentChatUiAction(ChatUiAction action) async {
+    if (_presentingContextAction || !widget.isChatContextCurrent()) return;
+    final viewModel = widget.viewModel;
+    final clients = viewModel.clients;
+    final chatCore = viewModel.chatCore;
+    final chatId = widget.currentChatId;
+    final ownerIsCurrent = widget.isChatContextCurrent;
+    final dismissMenu = widget.onDismiss;
+    final presentationContext = Navigator.of(
+      context,
+      rootNavigator: true,
+    ).overlay!.context;
+    final messenger = ScaffoldMessenger.of(context);
+    final initialChatId = Completer<String?>();
+    StreamSubscription<String?>? selectionSubscription;
+    Object? selectionError;
+    StackTrace? selectionStackTrace;
+    var selectionChanged = ChatSelectionTransition.requests.value != null;
+    setState(() => _presentingContextAction = true);
+
+    /// Expires this invocation when any pending chat selection starts.
+    void onSelectionTransition() {
+      if (ChatSelectionTransition.requests.value != null) {
+        selectionChanged = true;
+      }
+    }
+
+    /// Validates the real composer, root host and every observed selection event.
+    bool ownsCurrentContext() =>
+        !selectionChanged && ownerIsCurrent() && presentationContext.mounted;
+
+    /// Surfaces broken selection observation instead of publishing stale metadata.
+    void requireSelectionObservation() {
+      final error = selectionError;
+      if (error != null) {
+        Error.throwWithStackTrace(error, selectionStackTrace!);
+      }
+    }
+
+    ChatSelectionTransition.requests.addListener(onSelectionTransition);
+    try {
+      selectionSubscription = viewModel.watchCurrentChatId().listen(
+        (currentChatId) {
+          if (currentChatId != chatId) selectionChanged = true;
+          if (!initialChatId.isCompleted) {
+            initialChatId.complete(currentChatId);
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          selectionError = error;
+          selectionStackTrace = stackTrace;
+          if (!initialChatId.isCompleted) {
+            initialChatId.completeError(error, stackTrace);
+          }
+        },
+        onDone: () {
+          final error = StateError('The chat selection observer closed.');
+          selectionError = error;
+          selectionStackTrace = StackTrace.current;
+          if (!initialChatId.isCompleted) {
+            initialChatId.completeError(error, selectionStackTrace);
+          }
+        },
+      );
+      dismissMenu();
+      await initialChatId.future;
+      requireSelectionObservation();
+      if (!ownsCurrentContext() || !presentationContext.mounted) return;
+      final result = await action.present(
+        context: presentationContext,
+        clients: clients,
+        hostState: <String, Object?>{'chatId': chatId},
+      );
+      if (result?.status != ContributionPresentationStatus.completed ||
+          !ownsCurrentContext()) {
+        return;
+      }
+      requireSelectionObservation();
+      final currentChatId = await chatCore.currentChatIdFlow().first;
+      if (currentChatId != chatId || !ownsCurrentContext()) return;
+      requireSelectionObservation();
+      // A new-session active choice has no existing runtime descriptor to publish.
+      if (chatId != null) {
+        await chatCore.chatConfiguration(chatId: chatId);
+      }
+      if (!ownsCurrentContext()) return;
+      requireSelectionObservation();
+      ToolPkgCatalogChangeBus.notifyCatalogChanged();
+    } catch (error) {
+      if (ownsCurrentContext() && messenger.mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('插件操作失败：$error')));
+      }
+    } finally {
+      ChatSelectionTransition.requests.removeListener(onSelectionTransition);
+      await selectionSubscription?.cancel();
+      if (mounted) setState(() => _presentingContextAction = false);
+    }
+  }
+
+  /// Renders only the display fields and actions supplied by registered owners.
+  Widget _buildContextActions() => FutureBuilder<ChatUiContext>(
+    future: _contextActionsFuture,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Padding(
+          padding: EdgeInsets.all(12),
+          child: LinearProgressIndicator(),
+        );
+      }
+      if (snapshot.hasError) {
+        return Padding(
+          padding: const EdgeInsets.all(12),
+          child: Text('会话插件加载失败：${snapshot.error}'),
+        );
+      }
+      final data = snapshot.requireData;
+      final identity = data.identity;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (identity != null)
+            ListTile(
+              dense: true,
+              leading: SizedBox(
+                width: 32,
+                height: 32,
+                child: ClipOval(
+                  child: CharacterAvatarImage(
+                    avatarUri: identity.avatarUri,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+              title: Text(
+                identity.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              enabled: !_presentingContextAction,
+              onTap: () => _presentChatUiAction(identity.action),
+            ),
+          for (final selector in data.selectors)
+            ListTile(
+              dense: true,
+              leading: selector.icon == null
+                  ? null
+                  : Icon(
+                      MaterialIconNameResolver.resolve(selector.icon!),
+                      size: 20,
+                    ),
+              title: Text(selector.title),
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              enabled: !_presentingContextAction,
+              onTap: () => _presentChatUiAction(selector.action),
+            ),
+        ],
+      );
+    },
+  );
+
+  /// Reads native token statistics without consulting any plugin domain records.
   Future<double> _loadSummary() async {
     final chatId = widget.currentChatId;
     final viewModel = widget.viewModel;
@@ -535,168 +762,129 @@ class _ChatSessionSummarySectionState
     return summary.maxContextLength;
   }
 
+  /// Stops overlay observers without cancelling the already detached presentation.
   @override
   void dispose() {
     _summaryTimer?.cancel();
+    unawaited(_contextCatalogSubscription?.cancel());
+    PluginHotReload.revision.removeListener(_reloadChatUiContext);
     super.dispose();
   }
 
-  /// Builds the current character and token summary rows.
+  /// Builds registered chat context actions and native token statistics.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    return FutureBuilder<double>(
-      future: _maxContextLengthFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
-        }
-        final maxContextLength = snapshot.data;
-        final maxContextTokens = maxContextLength == null
-            ? null
-            : (maxContextLength * 1024).round();
-        final contextUsagePercentage = maxContextTokens == null
-            ? null
-            : _contextUsagePercentage(maxContextTokens);
-        final totalTokenCount = _inputTokenCount + _outputTokenCount;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            InkWell(
-              onTap: _showCharacterCardSelector,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 48),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      SizedBox(
-                        width: 32,
-                        height: 32,
-                        child: ClipOval(
-                          child: CharacterAvatarImage(
-                            avatarUri: widget.currentCharacterCardAvatarUri,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Text(
-                              '当前角色卡',
-                              style: textTheme.labelSmall?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            Text(
-                              widget.currentCharacterCardName ?? '未绑定',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurface,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(
-                        Icons.chevron_right,
-                        size: 20,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            InkWell(
-              onTap: () {
-                setState(() {
-                  _statsExpanded = !_statsExpanded;
-                });
-              },
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 40),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: <Widget>[
-                      Icon(
-                        Icons.data_usage_outlined,
-                        size: 17,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 12),
-                      Text('统计', style: textTheme.bodySmall),
-                      const Spacer(),
-                      Text(
-                        contextUsagePercentage == null
-                            ? '加载中...'
-                            : '${contextUsagePercentage.toStringAsFixed(0)}%',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Icon(
-                        _statsExpanded
-                            ? Icons.keyboard_arrow_up
-                            : Icons.keyboard_arrow_down,
-                        size: 20,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            if (_statsExpanded)
-              ColoredBox(
-                color: colorScheme.surface.withValues(alpha: 0.42),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(40, 6, 12, 8),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      _ChatStatValueRow(
-                        label: '上下文窗口',
-                        value: _contextWindowLabel(
-                          currentWindowSize: _currentWindowSize,
-                          maxContextTokens: maxContextTokens,
-                        ),
-                      ),
-                      _ChatStatValueRow(
-                        label: '输入 Token',
-                        value: _formatTokenCount(_inputTokenCount),
-                      ),
-                      _ChatStatValueRow(
-                        label: '输出 Token',
-                        value: _formatTokenCount(_outputTokenCount),
-                      ),
-                      _ChatStatValueRow(
-                        label: '总 Token',
-                        value: _formatTokenCount(totalTokenCount),
-                        highlighted: true,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _buildContextActions(),
+        _buildNativeStatistics(colorScheme, textTheme),
+      ],
     );
   }
+
+  /// Reports native statistics failures separately from plugin-owned selectors.
+  Widget _buildNativeStatistics(ColorScheme colorScheme, TextTheme textTheme) =>
+      FutureBuilder<double>(
+        future: _maxContextLengthFuture,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text('统计加载失败：${snapshot.error}'),
+            );
+          }
+          final maxContextLength = snapshot.data;
+          final maxContextTokens = maxContextLength == null
+              ? null
+              : (maxContextLength * 1024).round();
+          final contextUsagePercentage = maxContextTokens == null
+              ? null
+              : _contextUsagePercentage(maxContextTokens);
+          final totalTokenCount = _inputTokenCount + _outputTokenCount;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _statsExpanded = !_statsExpanded;
+                  });
+                },
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 40),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(
+                          Icons.data_usage_outlined,
+                          size: 17,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 12),
+                        Text('统计', style: textTheme.bodySmall),
+                        const Spacer(),
+                        Text(
+                          contextUsagePercentage == null
+                              ? '加载中...'
+                              : '${contextUsagePercentage.toStringAsFixed(0)}%',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          _statsExpanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: 20,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (_statsExpanded)
+                ColoredBox(
+                  color: colorScheme.surface.withValues(alpha: 0.42),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(40, 6, 12, 8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        _ChatStatValueRow(
+                          label: '上下文窗口',
+                          value: _contextWindowLabel(
+                            currentWindowSize: _currentWindowSize,
+                            maxContextTokens: maxContextTokens,
+                          ),
+                        ),
+                        _ChatStatValueRow(
+                          label: '输入 Token',
+                          value: _formatTokenCount(_inputTokenCount),
+                        ),
+                        _ChatStatValueRow(
+                          label: '输出 Token',
+                          value: _formatTokenCount(_outputTokenCount),
+                        ),
+                        _ChatStatValueRow(
+                          label: '总 Token',
+                          value: _formatTokenCount(totalTokenCount),
+                          highlighted: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      );
 
   /// Calculates the current context usage percentage for the summary row.
   double _contextUsagePercentage(int maxContextTokens) {
@@ -723,308 +911,6 @@ class _ChatSessionSummarySectionState
     return value.toString().replaceAllMapped(
       RegExp(r'(?<=\d)(?=(\d{3})+$)'),
       (match) => ',',
-    );
-  }
-}
-
-class _CharacterCardSelectorDialog extends StatefulWidget {
-  const _CharacterCardSelectorDialog({
-    required this.viewModel,
-    required this.currentChatId,
-  });
-
-  final ChatViewModel viewModel;
-  final String? currentChatId;
-
-  /// Creates the state for the character card selector dialog.
-  @override
-  State<_CharacterCardSelectorDialog> createState() =>
-      _CharacterCardSelectorDialogState();
-}
-
-class _CharacterCardSelectorDialogState
-    extends State<_CharacterCardSelectorDialog> {
-  StreamSubscription<core_proxy.ActivePrompt>? _activePromptSubscription;
-  Future<List<core_proxy.CharacterCard>>? _cardsFuture;
-  core_proxy.ActivePrompt? _activePrompt;
-  String? _switchingCharacterCardId;
-
-  /// Starts loading cards and observing the active prompt.
-  @override
-  void initState() {
-    super.initState();
-    _cardsFuture = _loadCharacterCards();
-    _activePromptSubscription = widget.viewModel.chatCore
-        .chatActivePromptFlow(chatId: widget.currentChatId)
-        .listen((prompt) {
-          if (mounted) {
-            setState(() {
-              _activePrompt = prompt;
-            });
-          }
-        });
-    unawaited(_loadActivePrompt());
-  }
-
-  /// Loads the character cards shown in the selector dialog.
-  Future<List<core_proxy.CharacterCard>> _loadCharacterCards() {
-    return widget.viewModel.chatCore.chatCharacterCards(
-      chatId: widget.currentChatId,
-    );
-  }
-
-  /// Reads the active prompt for the initial selection marker.
-  Future<void> _loadActivePrompt() async {
-    final prompt = await widget.viewModel.chatCore
-        .chatActivePromptFlow(chatId: widget.currentChatId)
-        .first;
-    if (mounted) {
-      setState(() {
-        _activePrompt = prompt;
-      });
-    }
-  }
-
-  /// Switches the runtime to the selected character card and closes the dialog.
-  Future<void> _selectCharacterCard(core_proxy.CharacterCard card) async {
-    if (_switchingCharacterCardId != null) {
-      return;
-    }
-    setState(() {
-      _switchingCharacterCardId = card.id;
-    });
-    try {
-      await widget.viewModel.chatCore.switchChatCharacterCardTarget(
-        chatId: widget.currentChatId,
-        characterCardId: card.id,
-      );
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _switchingCharacterCardId = null;
-        });
-      }
-    }
-  }
-
-  /// Returns the active card id when the runtime targets a character card.
-  String? get _activeCharacterCardId {
-    final prompt = _activePrompt;
-    return prompt?.tag == 'CharacterCard' ? prompt?.id : null;
-  }
-
-  /// Stops the active prompt subscription when the dialog closes.
-  @override
-  void dispose() {
-    unawaited(_activePromptSubscription?.cancel());
-    super.dispose();
-  }
-
-  /// Builds the character card selector dialog.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 360,
-          minHeight: 420,
-          maxHeight: 420,
-        ),
-        child: FutureBuilder<List<core_proxy.CharacterCard>>(
-          future: _cardsFuture,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
-            }
-            final cards = snapshot.data;
-            if (cards == null) {
-              return const SizedBox.expand(
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              );
-            }
-            return Column(
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-                  child: Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          '切换角色卡',
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '${cards.length} 个',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      IconButton(
-                        tooltip: '关闭',
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close, size: 18),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1),
-                if (cards.isEmpty)
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.topLeft,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
-                        child: Text(
-                          '暂无角色卡',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  Expanded(
-                    child: Scrollbar(
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                        itemCount: cards.length,
-                        separatorBuilder: (context, index) => Divider(
-                          height: 1,
-                          color: colorScheme.outlineVariant.withValues(
-                            alpha: 0.45,
-                          ),
-                        ),
-                        itemBuilder: (context, index) {
-                          final card = cards[index];
-                          return _CharacterCardOption(
-                            card: card,
-                            active: card.id == _activeCharacterCardId,
-                            switching: card.id == _switchingCharacterCardId,
-                            enabled: _switchingCharacterCardId == null,
-                            onTap: () => _selectCharacterCard(card),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-class _CharacterCardOption extends StatelessWidget {
-  const _CharacterCardOption({
-    required this.card,
-    required this.active,
-    required this.switching,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final core_proxy.CharacterCard card;
-  final bool active;
-  final bool switching;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  /// Builds one selectable character card row.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final titleColor = enabled
-        ? colorScheme.onSurface
-        : colorScheme.onSurfaceVariant.withValues(alpha: 0.65);
-    final descriptionColor = enabled
-        ? colorScheme.onSurfaceVariant
-        : colorScheme.onSurfaceVariant.withValues(alpha: 0.5);
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
-        child: Row(
-          children: <Widget>[
-            SizedBox(
-              width: 28,
-              height: 28,
-              child: ClipOval(
-                child: CharacterAvatarImage(
-                  avatarUri: card.avatarUri,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Text(
-                    card.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: active ? colorScheme.primary : titleColor,
-                      fontWeight: active ? FontWeight.w700 : FontWeight.w600,
-                    ),
-                  ),
-                  if (card.description.isNotEmpty)
-                    Text(
-                      card.description,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: textTheme.labelSmall?.copyWith(
-                        color: descriptionColor,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: switching
-                  ? const Padding(
-                      padding: EdgeInsets.all(2),
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      active ? Icons.check : Icons.circle_outlined,
-                      size: active ? 18 : 16,
-                      color: active
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.45,
-                            ),
-                    ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -1066,28 +952,25 @@ class _ChatStatValueRow extends StatelessWidget {
 }
 
 class _AgentInputMenuData {
+  /// Creates menu state without carrying plugin-owned preference flags.
   const _AgentInputMenuData({
-    required this.enableMemoryAutoUpdate,
     required this.permissionMode,
     required this.disableStreamOutput,
-    required this.disableUserPreferenceDescription,
     required this.pluginToggles,
   });
 
-  final bool enableMemoryAutoUpdate;
   final core_proxy.AiPermissionMode permissionMode;
   final bool disableStreamOutput;
-  final bool disableUserPreferenceDescription;
   final List<core_proxy.InputMenuToggleDefinitionSnapshot> pluginToggles;
 
-  String get memorySummary {
-    return switch ((disableUserPreferenceDescription, enableMemoryAutoUpdate)) {
-      (true, false) => '关',
-      (false, false) => '用户资料',
-      (true, true) => '记忆库更新',
-      (false, true) => '用户资料 · 记忆库更新',
-    };
-  }
+  /// Encodes only native composer settings and registered plugin toggle metadata.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'permissionMode': permissionMode.toJson(),
+    'disableStreamOutput': disableStreamOutput,
+    'pluginToggles': pluginToggles
+        .map((toggle) => toggle.toJson())
+        .toList(growable: false),
+  };
 
   _ToolPermissionMode get toolPermissionMode {
     return switch (permissionMode) {
@@ -1124,7 +1007,6 @@ class _MenuSection extends StatelessWidget {
     required this.value,
     required this.expanded,
     required this.onTap,
-    this.onInfoTap,
     required this.children,
   });
 
@@ -1133,7 +1015,6 @@ class _MenuSection extends StatelessWidget {
   final String value;
   final bool expanded;
   final VoidCallback onTap;
-  final VoidCallback? onInfoTap;
   final List<Widget> children;
 
   /// Builds a compact group without nesting another card inside the menu.
@@ -1172,8 +1053,6 @@ class _MenuSection extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (onInfoTap != null)
-                    _MenuInfoButton(title: '记忆状态', onTap: onInfoTap!),
                   const SizedBox(width: 6),
                   Icon(
                     expanded
@@ -1277,79 +1156,6 @@ class _SwitchRow extends StatelessWidget {
                     value: checked,
                     onChanged: enabled ? (_) => onTap() : null,
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuInfoButton extends StatelessWidget {
-  const _MenuInfoButton({required this.title, required this.onTap});
-
-  final String title;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => IconButton(
-    tooltip: '$title说明',
-    onPressed: onTap,
-    padding: EdgeInsets.zero,
-    constraints: const BoxConstraints.tightFor(width: 24, height: 28),
-    style: IconButton.styleFrom(
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    ),
-    icon: Icon(
-      Icons.info_outline,
-      size: 16,
-      color: Theme.of(
-        context,
-      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-    ),
-  );
-}
-
-class _ActionRow extends StatelessWidget {
-  const _ActionRow({
-    required this.icon,
-    required this.title,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 32),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Icon(icon, size: 16, color: theme.colorScheme.onSurfaceVariant),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: enabled
-                        ? theme.colorScheme.onSurface
-                        : theme.colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.45,
-                          ),
                   ),
                 ),
               ),

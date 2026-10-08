@@ -65,6 +65,14 @@ impl ParsedOperit1Snapshot {
                 detectedDomains.push(name);
             }
         }
+        if self.archive.entries.keys().any(|entry| isOperit1LegacyMemoryEntry(entry))
+            || self.archive.datastorePreferences.get(ENTRY_USER_PREFERENCES)
+                .is_some_and(|preferences| preferences.keys().any(|key| {
+                    key == KEY_ACTIVE_MEMORY_SPACE_ID || key == KEY_MEMORY_SPACE_LIST || key.starts_with(KEY_MEMORY_SPACE_PREFIX)
+                }))
+        {
+            detectedDomains.push("memory".to_string());
+        }
         if importedFileCount > 0 || importedExternalFileCount > 0 {
             detectedDomains.push("user_files".to_string());
         }
@@ -154,7 +162,8 @@ impl ParsedOperit1Snapshot {
             .entries
             .keys()
             .filter(|entry| entry.starts_with(prefix))
-            .filter(|entry| !isArchiveDataStoreEntry(entry))
+            .filter(|entry| !entry.starts_with(ENTRY_DATASTORE_PREFIX))
+            .filter(|entry| !isOperit1LegacyMemoryEntry(entry))
             .count() as i32
     }
 }

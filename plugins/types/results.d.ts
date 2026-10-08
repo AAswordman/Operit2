@@ -649,7 +649,7 @@ export interface ChatCreationResultData {
 }
 
 /**
- * Summarizes a chat, its activity, token use, current status, and bound character card.
+ * Summarizes a workspace conversation's activity, token use, and current status.
  */
 export interface ChatInfo {
   /**
@@ -684,10 +684,6 @@ export interface ChatInfo {
    * Total output tokens used
    */
   outputTokens: number;
-  /**
-   * Bound character card name (if any)
-   */
-  characterCardName?: string | null;
 }
 
 /**
@@ -707,7 +703,7 @@ export interface ChatListResultData {
    */
   chats: ChatInfo[];
   /**
-   * Formats chat summaries, marks the current chat, and includes token and card metadata.
+   * Formats workspace conversation summaries, current status, and token statistics.
    */
   toString(): string;
 }
@@ -815,7 +811,31 @@ export interface ChatDeleteResultData {
 }
 
 /**
- * Records a sent chat message and its optional final AI reply.
+ * Identifies the terminal state of the actual originating generation rather than a hook decision.
+ */
+export type MessageSendStatus = "completed" | "cancelled";
+
+/**
+ * Locates one exact assistant revision committed by the originating generation.
+ */
+export interface ChatCommittedMessage {
+  /**
+   * Identifies the real persisted message record, never a wall-clock receipt timestamp.
+   */
+  messageTimestamp: number;
+  /**
+   * Identifies the exact persisted revision; zero is the base message.
+   */
+  variantIndex: number;
+}
+
+/**
+ * Distinguishes real persistence, nonpersistent output and input ownership decisions without inventing locators.
+ */
+export type MessageSendOutcome = { type: "committed"; status: MessageSendStatus; userMessageTimestamp?: number; assistant?: ChatCommittedMessage; } | { type: "not_persisted"; status: MessageSendStatus; } | { type: "blocked"; message?: string; } | { type: "consumed"; metadata: Record<string, unknown>; };
+
+/**
+ * Records only the originating send's terminal result and exact commit receipts.
  */
 export interface MessageSendResultData {
   /**
@@ -838,6 +858,10 @@ export interface MessageSendResultData {
    * Sent timestamp
    */
   sentAt: number;
+  /**
+   * Reports actual persistence or input ownership without looking up unrelated recent messages.
+   */
+  outcome: MessageSendOutcome;
   /**
    * Formats bounded previews of the sent message and optional AI reply.
    */
@@ -897,13 +921,20 @@ export interface ChatCallTurnData {
 }
 
 /**
- * Describes one chat message together with its role, provider, model, and timestamp.
+ * Describes one chat message's protocol sender, content, provider, model, and timestamp.
  */
 export interface ChatMessageInfo {
   sender: string;
   content: string;
   timestamp: number;
-  roleName: string;
+  /**
+   * Identifies the exact selected persisted revision; zero selects the base message.
+   */
+  variantIndex: number;
+  /**
+   * Reports the genuine number of persisted message revisions.
+   */
+  variantCount: number;
   provider: string;
   modelName: string;
 }

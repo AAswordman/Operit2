@@ -90,7 +90,7 @@ function parseGoalReviewResult(text: string): GoalReviewResult {
 
 /** Sends one follow-up message without blocking the persisted-message hook. */
 function sendGoalFollowup(chatId: string, message: string): void {
-  void Tools.Chat.sendMessage(message, chatId).catch((error) => {
+  void Tools.Chat.sendMessage({ kind: "submit", chatId, runtime: "main", input: { text: message, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
     const detail = error instanceof Error ? error.message : String(error);
     void Tools.System.toast(`Goal follow-up failed: ${detail}`);
   });

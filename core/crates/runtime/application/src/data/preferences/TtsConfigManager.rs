@@ -4,7 +4,6 @@ use operit_store::PreferencesDataStore::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use uuid::Uuid;
 
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use operit_local_models::LocalEngineManifest::LocalPlatformTarget;
 use operit_local_models::LocalModelManifest::{LocalModelDriver, LocalModelKind};
 use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
@@ -381,16 +380,6 @@ impl TtsConfigManager {
             .filter(|value| !value.is_empty());
         if currentConfigId.as_deref() == Some(id.as_str()) {
             return Err("current tts config cannot be deleted".to_string());
-        }
-        let cardManager = CharacterCardManager::new(self.paths.clone());
-        let cards = cardManager
-            .getAllCharacterCards()
-            .map_err(|error| error.to_string())?;
-        if let Some(card) = cards
-            .iter()
-            .find(|card| card.ttsConfigId.as_deref() == Some(id.as_str()))
-        {
-            return Err(format!("tts config is used by character card: {}", card.id));
         }
         let mut list = self
             .ttsConfigListFlow()

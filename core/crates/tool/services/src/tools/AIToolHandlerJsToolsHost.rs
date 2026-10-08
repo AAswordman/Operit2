@@ -2,15 +2,16 @@ use std::collections::BTreeMap;
 
 use operit_plugin_sdk::javascript::{JsExecutionHost, JsToolCallRequest, JsToolCallResultData};
 use operit_plugin_sdk::js_sdk::chat::*;
+use operit_plugin_sdk::js_sdk::core::JsonObject;
 use operit_plugin_sdk::js_sdk::files::*;
 use operit_plugin_sdk::js_sdk::edge::*;
 use operit_plugin_sdk::js_sdk::memory::*;
 use operit_plugin_sdk::js_sdk::network::*;
 use operit_plugin_sdk::js_sdk::results::*;
-use operit_plugin_sdk::js_sdk::software_settings::SoftwareSettingsHost;
+use operit_plugin_sdk::js_sdk::software_settings::*;
 use operit_plugin_sdk::js_sdk::system::*;
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
-use operit_plugin_sdk::js_sdk::{JsAny, JsFuture, JsHostError};
+use operit_plugin_sdk::js_sdk::{JsAny, JsAsyncIterable, JsFuture, JsHostError, rejected_js_async_iterable};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -270,7 +271,7 @@ fn invoke_terminal_streaming(
     let mut host = host.clone();
     Box::pin(async move {
         host.notifyToolCallRequested(&tool);
-        let interception = host.checkToolInterception(&tool).await;
+        let interception = host.checkToolInterception(&tool).await.map_err(JsHostError::new)?;
         if let operit_tools::tools::AIToolHook::AIToolHookDecision::Block(_) = interception {
             let result = AIToolHandler::toolInterceptionResult(&tool, interception);
             host.notifyToolExecutionResult(&tool, &result);
@@ -313,45 +314,178 @@ fn invoke_terminal_streaming(
     })
 }
 
-/// Executes the current chat streaming binding without pretending to synthesize stream events.
-fn invoke_chat_streaming(
-    host: &AIToolHandler,
-    name: BuiltinToolName,
-    message: String,
-    chat_id: Option<String>,
-    role_card_id: Option<String>,
-    sender_name: Option<String>,
-    options: Option<ChatSendMessageStreamingOptions>,
-) -> JsFuture<MessageSendResultData> {
-    let (base_options, waifu, callback) = match options {
-        Some(options) => (
-            Some(options.base_send_message_options),
-            options.waifu,
-            options.onIntermediateResult,
-        ),
-        None => (None, None, None),
-    };
-    if callback.is_some() {
-        return Box::pin(async {
-            Err(JsHostError::new(
-                "Chat streaming callbacks are not implemented by the current executor",
-            ))
-        });
+/// Requires the immutable engine-bound owner and its still-enabled actual registration.
+fn authenticated_chat_extension_owner(host: &AIToolHandler) -> Result<String, JsHostError> {
+    let owner = host.authenticatedExtensionOwner.as_deref().ok_or_else(|| {
+        JsHostError::new("Chat extensions require a real ToolPkg execution owner")
+    })?;
+    if owner.trim().is_empty() {
+        return Err(JsHostError::new("Chat extension owner is empty"));
     }
-    invoke_generated(
-        host,
-        name,
-        "Chat",
-        "sendMessageStreaming",
-        vec![
-            generated_argument("message", message),
-            generated_argument("chatId", chat_id),
-            generated_argument("roleCardId", role_card_id),
-            generated_argument("senderName", sender_name),
-            generated_argument("options", base_options),
-            generated_argument("waifu", waifu),
-        ],
-    )
+    let manager = host.getOrCreatePackageManager();
+    let registry = manager.lock().expect("package manager mutex poisoned");
+    registry
+        .packageRegistryReadiness()
+        .require_ready()
+        .map_err(JsHostError::new)?;
+    registry.getToolPkgContainerRuntime(owner).ok_or_else(|| {
+        JsHostError::new(format!("Chat extension owner is not registered: {owner}"))
+    })?;
+    if !registry.isPackageEnabled(owner) {
+        return Err(JsHostError::new(format!(
+            "Chat extension owner is disabled: {owner}"
+        )));
+    }
+    Ok(owner.to_string())
+}
+
+/// Reads the exact caller namespace directly through the typed record support boundary.
+fn invoke_chat_extension_read(
+    host: &AIToolHandler,
+    target: ChatExtensionTarget,
+) -> JsFuture<JsNullable<JsonObject>> {
+    let owner = authenticated_chat_extension_owner(host);
+    let support = host.runtimeSupport();
+    Box::pin(async move {
+        let owner = owner?;
+        target.validate().map_err(JsHostError::new)?;
+        support
+            .readChatExtension(&owner, &target)
+            .map(JsNullable::from_option)
+            .map_err(JsHostError::new)
+    })
+}
+
+/// Replaces only the exact caller's namespace without invoking an AI tool or a chat runtime lock.
+fn invoke_chat_extension_write(
+    host: &AIToolHandler,
+    target: ChatExtensionTarget,
+    value: JsonObject,
+) -> JsFuture<JsonObject> {
+    let owner = authenticated_chat_extension_owner(host);
+    let support = host.runtimeSupport();
+    Box::pin(async move {
+        let owner = owner?;
+        target.validate().map_err(JsHostError::new)?;
+        support
+            .writeChatExtension(&owner, &target, value)
+            .map_err(JsHostError::new)
+    })
+}
+
+/// Deletes only the exact caller's namespace and propagates record or execution-guard failures.
+fn invoke_chat_extension_delete(
+    host: &AIToolHandler,
+    target: ChatExtensionTarget,
+) -> JsFuture<bool> {
+    let owner = authenticated_chat_extension_owner(host);
+    let support = host.runtimeSupport();
+    Box::pin(async move {
+        let owner = owner?;
+        target.validate().map_err(JsHostError::new)?;
+        support
+            .deleteChatExtension(&owner, &target)
+            .map_err(JsHostError::new)
+    })
+}
+
+/// Opens the shared real send pipeline using only immutable engine-authenticated plugin ownership.
+fn open_chat_send(host: &AIToolHandler, request: ChatSendRequest, observeParts: bool) -> JsAsyncIterable<ChatSendEvent> {
+    let opening = authenticated_chat_extension_owner(host).and_then(|owner| {
+        host.runtimeSupport().openPluginChatMessage(&owner, request, observeParts).map_err(JsHostError::new)
+    });
+    match opening { Ok(stream) => stream, Err(error) => rejected_js_async_iterable(error) }
+}
+
+/// Opens semantic observation on the sole real native send pipeline.
+fn invoke_chat_stream(host: &AIToolHandler, request: ChatSendRequest) -> JsAsyncIterable<ChatSendEvent> {
+    open_chat_send(host, request, true)
+}
+
+/// Drains the same pipeline and returns only its actual finalized terminal receipt.
+fn invoke_chat_send(host: &AIToolHandler, request: ChatSendRequest) -> JsFuture<MessageSendResultData> {
+    let stream = open_chat_send(host, request, false);
+    Box::pin(async move {
+        let result = loop {
+            match stream.next().await {
+                Ok(Some(ChatSendEvent::Part { .. })) => {},
+                Ok(Some(ChatSendEvent::Completed { result })) => break Ok(result),
+                Ok(None) => break Err(JsHostError::new("Chat send ended without its terminal receipt")),
+                Err(error) => break Err(error),
+            }
+        };
+        let closed = stream.close().await;
+        match (result, closed) {
+            (Ok(result), Ok(())) => Ok(result),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(close)) => Err(JsHostError::new(format!("{error}; chat observation disposal failed: {close}"))),
+        }
+    })
+}
+
+/// Requests cancellation after capturing only this enabled authenticated owner's active execution.
+fn invoke_chat_cancel(host: &AIToolHandler, chatId: String) -> JsFuture<ChatCancelResult> {
+    let result = authenticated_chat_extension_owner(host).and_then(|owner| {
+        host.runtimeSupport().requestPluginChatCancellation(&owner, &chatId).map_err(JsHostError::new)
+    });
+    Box::pin(async move { result })
 }
 
 include!(concat!(env!("OUT_DIR"), "/js_tools_host_impl.rs"));
+
+/// Executes a narrow typed configuration-directory read without registering or invoking an AI tool.
+fn invoke_software_settings_directory<TResult>(
+    host: &AIToolHandler,
+    method: &str,
+) -> JsFuture<TResult>
+where
+    TResult: DeserializeOwned + Send + 'static,
+{
+    let support = host.runtimeSupport();
+    let method = method.to_owned();
+    Box::pin(async move {
+        let value = match method.as_str() {
+            "listModelSummaries" => {
+                serde_json::to_value(support.listModelSummaries().map_err(JsHostError::new)?)
+            }
+            "listTtsConfigs" => {
+                serde_json::to_value(support.listTtsConfigs().map_err(JsHostError::new)?)
+            }
+            "listThemeConfigs" => serde_json::to_value(support.listThemeConfigs().map_err(JsHostError::new)?),
+            "getCurrentTtsConfigId" => serde_json::to_value(support.getCurrentTtsConfigId().map_err(JsHostError::new)?),
+            "readToolSourceCatalog" => serde_json::to_value(
+                support
+                    .readToolSourceCatalog()
+                    .await
+                    .map_err(JsHostError::new)?,
+            ),
+            _ => {
+                return Err(JsHostError::new(format!(
+                    "Unknown SoftwareSettings directory method: {method}"
+                )))
+            }
+        }
+        .map_err(|error| JsHostError::new(error.to_string()))?;
+        serde_json::from_value(value).map_err(|error| JsHostError::new(error.to_string()))
+    })
+}
+
+/// Applies one narrowly declared ordinary configuration reference through its canonical manager.
+fn invoke_software_settings_config<TResult>(host: &AIToolHandler, method: &str, id: String) -> JsFuture<TResult>
+where
+    TResult: DeserializeOwned + Send + 'static,
+{
+    let support = host.runtimeSupport();
+    let method = method.to_owned();
+    Box::pin(async move {
+        if id.trim().is_empty() || id.trim() != id {
+            return Err(JsHostError::new("Configuration ID must be exact nonblank text"));
+        }
+        let value = match method.as_str() {
+            "applyThemeConfig" => serde_json::to_value(support.applyThemeConfig(id).map_err(JsHostError::new)?),
+            "setCurrentTtsConfigId" => serde_json::to_value(support.setCurrentTtsConfigId(id).map_err(JsHostError::new)?),
+            _ => return Err(JsHostError::new(format!("Unknown SoftwareSettings configuration method: {method}"))),
+        }.map_err(|error| JsHostError::new(error.to_string()))?;
+        serde_json::from_value(value).map_err(|error| JsHostError::new(error.to_string()))
+    })
+}

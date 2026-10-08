@@ -264,13 +264,16 @@ fn chatOrderFixture(name: &str) -> (ChatHistoryManager, Arc<AppDatabase>) {
         let mut chat = ChatEntity::new(id.to_string(), id.to_string(), 1);
         chat.displayOrder = index as i64;
         chat.pinned = id == "pinned";
-        chat.group = Some("saved-group".to_string());
-        chat.characterCardName = Some("saved-character".to_string());
+        chat.pluginExtensions.insert(
+            "fixture.owner".to_string(),
+            serde_json::json!({"opaque": id}),
+        );
         database.chatDao().insertChat(chat).unwrap();
     }
     (manager, database)
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 fn sidebarChatIds(manager: &ChatHistoryManager) -> Vec<String> {
     manager
         .chatHistoriesFlow()
@@ -281,6 +284,7 @@ fn sidebarChatIds(manager: &ChatHistoryManager) -> Vec<String> {
         .collect()
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn new_user_message_promotes_chat_below_pins_and_preserves_metadata() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -311,6 +315,7 @@ fn new_user_message_promotes_chat_below_pins_and_preserves_metadata() {
     );
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn successive_user_sends_follow_send_order_even_with_negative_display_orders() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -319,12 +324,7 @@ fn successive_user_sends_follow_send_order_even_with_negative_display_orders() {
     // still move ahead of it rather than relying solely on the wall clock.
     database
         .chatDao()
-        .updateChatOrderAndGroup(
-            "recent",
-            -9_000_000_000_000_000,
-            Some("saved-group".to_string()),
-            1,
-        )
+        .updateChatOrder("recent", -9_000_000_000_000_000)
         .unwrap();
     for (index, id) in ["older", "recent", "older"].into_iter().enumerate() {
         manager
@@ -342,6 +342,7 @@ fn successive_user_sends_follow_send_order_even_with_negative_display_orders() {
     }
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn replies_edits_and_duplicate_user_saves_do_not_promote_chat() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -396,6 +397,7 @@ fn replies_edits_and_duplicate_user_saves_do_not_promote_chat() {
     }
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn new_background_user_message_promotes_chat_through_update_path() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -427,6 +429,7 @@ fn new_background_user_message_promotes_chat_through_update_path() {
     );
 }
 
+/// Verifies canonical chat persistence using real SQLite-backed repository operations.
 #[test]
 fn user_send_in_pinned_chat_moves_it_to_front_without_unpinning() {
     let _guard = DATABASE_MUTEX.lock().unwrap();

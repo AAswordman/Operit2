@@ -255,7 +255,6 @@ impl<'a> ToolPkgPackageService<'a> {
     /// Builds localized navigation entries declared by one ToolPkg container.
     #[allow(non_snake_case)]
     fn buildToolPkgNavigationEntries(
-        &self,
         container: &ToolPkgContainerRuntime,
         useEnglish: bool,
     ) -> Vec<ToolPkgNavigationEntry> {
@@ -268,6 +267,7 @@ impl<'a> ToolPkgPackageService<'a> {
                 toolPkgId: container.packageName.clone(),
                 entryId: entry.id.clone(),
                 routeId: entry.routeId.clone(),
+                params: entry.params.clone(),
                 surface: entry.surface.clone(),
                 title: nonBlankOr(entry.title.resolve(useEnglish).trim(), &entry.id),
                 description: containerDescription.clone(),
@@ -451,12 +451,11 @@ impl<'a> ToolPkgPackageService<'a> {
     pub fn getToolPkgNavigationEntries(&self, useEnglish: bool) -> Vec<ToolPkgNavigationEntry> {
         self.packageManager.ensureInitialized();
         let enabledSet = self.packageManager.getEnabledPackageNameSetInternal();
-        self.packageManager
-            .toolPkgContainersInternal()
-            .values()
-            .filter(|container| enabledSet.contains(&container.packageName))
-            .flat_map(|container| self.buildToolPkgNavigationEntries(container, useEnglish))
-            .collect()
+        navigationEntriesFromCatalog(
+            &self.packageManager.toolPkgContainersInternal(),
+            &enabledSet,
+            useEnglish,
+        )
     }
 
     /// Returns localized desktop widgets exposed by enabled ToolPkg containers.
@@ -1296,4 +1295,165 @@ fn joinHostPath(directory: &str, relativePath: &str) -> String {
         directory.trim_end_matches(['/', '\\']),
         relativePath
     )
+}
+
+
+/// Projects the current enabled navigation catalog and applies stable cross-package ordering without caching it.
+#[allow(non_snake_case)]
+fn navigationEntriesFromCatalog(
+    containers: &BTreeMap<String, ToolPkgContainerRuntime>,
+    enabled: &BTreeSet<String>,
+    useEnglish: bool,
+) -> Vec<ToolPkgNavigationEntry> {
+    let mut entries = containers.values()
+        .filter(|container| enabled.contains(&container.packageName))
+        .flat_map(|container| ToolPkgPackageService::buildToolPkgNavigationEntries(container, useEnglish))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        left.surface.cmp(&right.surface)
+            .then_with(|| left.order.cmp(&right.order))
+            .then_with(|| left.title.cmp(&right.title))
+            .then_with(|| left.containerPackageName.cmp(&right.containerPackageName))
+            .then_with(|| left.entryId.cmp(&right.entryId))
+    });
+    entries
+}
+
+#[cfg(test)]
+mod navigation_catalog_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use crate::package::LocalizedText;
+    use crate::toolpkg::ToolPkgCommonPluginConstants::{buildToolPkgRouteId, TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS};
+    use crate::toolpkg::ToolPkgParser::ToolPkgNavigationEntryRuntime;
+
+    /// Supplies real SDK registration metadata only, not a fake host, filesystem, or attachment service.
+    fn package(name: &str, order: i32, english: &str, chinese: &str) -> ToolPkgContainerRuntime {
+        ToolPkgContainerRuntime {
+            packageName: name.to_string(),
+            navigationEntries: vec![ToolPkgNavigationEntryRuntime {
+                id: "arbitrary-attachment".to_string(),
+                routeId: format!("toolpkg:{name}:ui:picker"),
+                params: Some(serde_json::json!({ "opaque": { "ids": ["9223372036854775807"] }, "values": [null, true, 1.5] })),
+                surface: TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS.to_string(),
+                title: LocalizedText { values: HashMap::from([
+                    ("en".to_string(), english.to_string()), ("zh".to_string(), chinese.to_string()),
+                ]) },
+                icon: Some("attachment".to_string()),
+                order,
+                action: None,
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// Requires both arbitrary enabled plugins to survive projection and orders entries across package boundaries.
+    #[test]
+    fn projects_two_arbitrary_plugins_in_registered_order_and_language() {
+        let first = package("com.example.alpha", 30, "Alpha", "甲附件");
+        let second = package("org.example.beta", 5, "Beta", "乙附件");
+        let containers = BTreeMap::from([(first.packageName.clone(), first), (second.packageName.clone(), second)]);
+        let enabled = containers.keys().cloned().collect();
+        let english = navigationEntriesFromCatalog(&containers, &enabled, true);
+        assert_eq!(english.len(), 2);
+        assert_eq!(english[0].containerPackageName, "org.example.beta");
+        assert_eq!(english[0].order, 5);
+        assert_eq!(english[1].order, 30);
+        assert_eq!(english.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(), vec!["Beta", "Alpha"]);
+        let chinese = navigationEntriesFromCatalog(&containers, &enabled, false);
+        assert_eq!(chinese.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(), vec!["乙附件", "甲附件"]);
+        assert!(english.iter().all(|entry| entry.surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS));
+    }
+
+    /// Requires every query to honor the current enabled set and newly loaded route metadata without a cached directory.
+    #[test]
+    fn excludes_disabled_packages_and_reads_reloaded_catalog() {
+        let first = package("com.example.alpha", 30, "Alpha", "甲");
+        let second = package("org.example.beta", 5, "Beta", "乙");
+        let mut containers = BTreeMap::from([(first.packageName.clone(), first), (second.packageName.clone(), second)]);
+        let enabled = BTreeSet::from(["org.example.beta".to_string()]);
+        let entries = navigationEntriesFromCatalog(&containers, &enabled, true);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].containerPackageName, "org.example.beta");
+        let reloaded = containers.get_mut("org.example.beta").unwrap();
+        reloaded.navigationEntries[0].routeId = "toolpkg:org.example.beta:ui:reloaded".to_string();
+        reloaded.navigationEntries[0].params = Some(serde_json::json!({ "reload": true }));
+        let changed = navigationEntriesFromCatalog(&containers, &enabled, true);
+        assert_eq!(changed[0].routeId, "toolpkg:org.example.beta:ui:reloaded");
+        assert_eq!(changed[0].params, Some(serde_json::json!({ "reload": true })));
+        assert!(navigationEntriesFromCatalog(&containers, &BTreeSet::new(), true).is_empty());
+    }
+
+    /// Returns cloned opaque params so a UI consumer cannot mutate the source registration or a later query result.
+    #[test]
+    fn consumer_params_mutation_never_changes_registered_metadata() {
+        let registered = package("org.example.independent", 0, "Independent", "独立附件");
+        let original = registered.navigationEntries[0].params.clone();
+        let containers = BTreeMap::from([(registered.packageName.clone(), registered)]);
+        let enabled = containers.keys().cloned().collect();
+        let mut entries = navigationEntriesFromCatalog(&containers, &enabled, true);
+        entries[0].params.as_mut().unwrap()["opaque"]["ids"][0] = Value::String("changed by consumer".to_string());
+        assert_eq!(containers["org.example.independent"].navigationEntries[0].params, original);
+        assert_eq!(navigationEntriesFromCatalog(&containers, &enabled, true)[0].params, original);
+    }
+
+    /// Supplies sidebar registration metadata to the existing catalog projection, not a business host or a tab renderer.
+    fn sidebar_package(name: &str, order: i32, english: &str, chinese: &str) -> ToolPkgContainerRuntime {
+        let mut registered = package(name, order, english, chinese);
+        registered.navigationEntries[0].id = "panel-tab".to_string();
+        registered.navigationEntries[0].surface = crate::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS.to_string();
+        registered.navigationEntries[0].routeId = buildToolPkgRouteId(name, "panel");
+        registered.navigationEntries[0].icon = Some("Dashboard".to_string());
+        registered.uiRoutes = vec![crate::toolpkg::ToolPkgParser::ToolPkgUiRouteRuntime {
+            id: "panel".to_string(), routeId: buildToolPkgRouteId(name, "panel"),
+            runtime: TOOLPKG_RUNTIME_COMPOSE_DSL.to_string(), screen: "ui/panel.js".to_string(), ..Default::default()
+        }];
+        registered
+    }
+
+    /// Projects two arbitrary sidebar plugins in actual cross-package order with independently localized titles and owned routes.
+    #[test]
+    fn sidebar_catalog_preserves_two_packages_order_and_language() {
+        let first = sidebar_package("com.example.alpha", 30, "Alpha panel", "甲面板");
+        let second = sidebar_package("org.example.beta", 5, "Beta panel", "乙面板");
+        let containers = BTreeMap::from([(first.packageName.clone(), first), (second.packageName.clone(), second)]);
+        let enabled = containers.keys().cloned().collect();
+        let english = navigationEntriesFromCatalog(&containers, &enabled, true);
+        assert_eq!(english.len(), 2);
+        assert_eq!(english.iter().map(|entry| entry.order).collect::<Vec<_>>(), vec![5, 30]);
+        assert_eq!(english.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(), vec!["Beta panel", "Alpha panel"]);
+        assert_eq!(english.iter().map(|entry| entry.icon.as_deref()).collect::<Vec<_>>(), vec![Some("Dashboard"), Some("Dashboard")]);
+        assert_eq!(english.iter().map(|entry| entry.routeId.as_str()).collect::<Vec<_>>(), vec!["toolpkg:org.example.beta:ui:panel", "toolpkg:com.example.alpha:ui:panel"]);
+        assert!(english.iter().all(|entry| entry.surface == "chat_sidebar_tabs" && entry.action.is_none()));
+        let chinese = navigationEntriesFromCatalog(&containers, &enabled, false);
+        assert_eq!(chinese.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(), vec!["乙面板", "甲面板"]);
+    }
+
+    /// Omits disabled tab owners and reads reloaded opaque params from the current catalog on every query.
+    #[test]
+    fn sidebar_catalog_respects_disabled_owners_and_reload() {
+        let first = sidebar_package("com.example.alpha", 30, "Alpha", "甲");
+        let second = sidebar_package("org.example.beta", 5, "Beta", "乙");
+        let mut containers = BTreeMap::from([(first.packageName.clone(), first), (second.packageName.clone(), second)]);
+        let enabled = BTreeSet::from(["org.example.beta".to_string()]);
+        let entries = navigationEntriesFromCatalog(&containers, &enabled, true);
+        assert_eq!(entries.len(), 1); assert_eq!(entries[0].containerPackageName, "org.example.beta");
+        containers.get_mut("org.example.beta").unwrap().navigationEntries[0].params = Some(serde_json::json!({ "reload": true }));
+        assert_eq!(navigationEntriesFromCatalog(&containers, &enabled, true)[0].params, Some(serde_json::json!({ "reload": true })));
+        assert!(navigationEntriesFromCatalog(&containers, &BTreeSet::new(), true).is_empty());
+    }
+
+    /// Clones opaque tab params so consumer edits cannot change registrations or another projection query.
+    #[test]
+    fn sidebar_catalog_params_remain_immutable_to_consumers() {
+        let registered = sidebar_package("org.example.independent", 0, "Independent", "独立");
+        let original = registered.navigationEntries[0].params.clone();
+        let containers = BTreeMap::from([(registered.packageName.clone(), registered)]);
+        let enabled = containers.keys().cloned().collect();
+        let mut projected = navigationEntriesFromCatalog(&containers, &enabled, true);
+        projected[0].params.as_mut().unwrap()["opaque"]["ids"][0] = Value::String("consumer change".to_string());
+        assert_eq!(containers["org.example.independent"].navigationEntries[0].params, original);
+        assert_eq!(navigationEntriesFromCatalog(&containers, &enabled, true)[0].params, original);
+    }
+
 }

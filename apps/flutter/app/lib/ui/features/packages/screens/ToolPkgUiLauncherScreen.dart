@@ -5,7 +5,6 @@ import '../../../../core/application/PluginHotReload.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -48,6 +47,7 @@ part 'compose_dsl/interactive_nodes.dart';
 part 'compose_dsl/renderer_slots.dart';
 
 class ToolPkgUiLauncherScreen extends StatefulWidget {
+  /// Creates a routable or embedded screen using the existing Compose host.
   const ToolPkgUiLauncherScreen({
     super.key,
     required this.clients,
@@ -60,6 +60,7 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
     this.initialState = const <String, Object?>{},
     this.initialMemo = const <String, Object?>{},
     this.initialModuleSpec,
+    this.onActionResult,
   });
 
   final GeneratedCoreProxyClients clients;
@@ -77,6 +78,10 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
   final Map<String, Object?> initialMemo;
   final Map<String, Object?>? initialModuleSpec;
 
+  /// Delivers completed plugin actions to the owner of an embedded surface.
+  final ValueChanged<Object?>? onActionResult;
+
+  /// Creates the state that owns the plugin execution and render lifecycle.
   @override
   State<ToolPkgUiLauncherScreen> createState() =>
       _ToolPkgUiLauncherScreenState();
@@ -419,6 +424,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         actionId,
         payload,
         reportAndSuppressErrors: true,
+        notifyActionResult: true,
       );
     });
   }
@@ -428,7 +434,12 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     final routeGeneration = _routeLoadGeneration;
     return _actionScheduler.dispatchTextInput(() {
       if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
-      return _dispatchActionCore(actionId, text, reportAndSuppressErrors: true);
+      return _dispatchActionCore(
+        actionId,
+        text,
+        reportAndSuppressErrors: true,
+        notifyActionResult: true,
+      );
     });
   }
 
@@ -441,6 +452,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         actionId,
         payload,
         reportAndSuppressErrors: false,
+        notifyActionResult: false,
       );
     });
   }
@@ -450,7 +462,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     String actionId,
     Object? payload, {
     required bool reportAndSuppressErrors,
+    required bool notifyActionResult,
   }) async {
+    final routeGeneration = _routeLoadGeneration;
     final uiModuleId = _selectedUiModuleId();
     final routeInstanceId = _selectedRouteInstanceId();
     final executionContextKey = _executionContextKey(
@@ -544,6 +558,12 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       }
       await completion.future;
       _navigateCommands(navigationCommands);
+      if (notifyActionResult) {
+        _notifyActionResult(
+          latestActionResult,
+          routeGeneration: routeGeneration,
+        );
+      }
       return latestActionResult;
     } catch (error, stackTrace) {
       if (!mounted) {
@@ -557,6 +577,13 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         rethrow;
       }
       return null;
+    }
+  }
+
+  /// Delivers results only to the presentation that still owns this route load.
+  void _notifyActionResult(Object? result, {required int routeGeneration}) {
+    if (_isCurrentRouteLoad(routeGeneration)) {
+      widget.onActionResult?.call(result);
     }
   }
 
@@ -737,11 +764,14 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       uiModuleId: uiModuleId,
       routeInstanceId: routeInstanceId,
     );
+    final routeGeneration = _routeLoadGeneration;
     final webViewHostContext = ComposeDslWebViewHostContext(
       packageName: widget.plugin.packageName,
       routeInstanceId: routeInstanceId,
       executionContextKey: executionContextKey,
       dispatchAction: _dispatchWebViewAction,
+      onActionResultDelivered: (result) =>
+          _notifyActionResult(result, routeGeneration: routeGeneration),
       runtimeOptionsProvider: () => _runtimeOptions(
         uiModuleId: uiModuleId,
         routeInstanceId: routeInstanceId,

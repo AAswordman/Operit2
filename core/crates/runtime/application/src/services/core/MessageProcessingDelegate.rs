@@ -1,3 +1,4 @@
+use operit_store::ChatExecutionLease::ChatExecutionLease;
 use std::collections::{HashMap, HashSet};
 
 use std::sync::{Arc, Mutex};
@@ -7,7 +8,6 @@ use crate::core::chat::AIMessageManager::{
     SendMessageRequest as AIMessageSendRequest, StableContextWindowRequest,
 };
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::services::core::ChatHistoryDelegate::ChatHistoryDelegate;
@@ -39,6 +39,9 @@ use operit_providers::chat::llmprovider::AIService::SharedAiResponseStream;
 use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, SendMessageCallbacks, SendMessageOptions,
 };
+use operit_providers::runtime_support::ChatConfigurationResult;
+use operit_plugin_sdk::js_sdk::results::{ChatCommittedMessage, JsOptional, MessageSendOutcome, MessageSendResultData, MessageSendStatus};
+use tokio::sync::oneshot;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use operit_tools::tools::ToolProgressBus::ToolProgressBus;
@@ -217,10 +220,52 @@ fn buildToolPkgHookTimeoutNotice(pluginIdentifier: String) -> String {
     format!("前置插件「{pluginIdentifier}」响应超时，已跳过并继续发送")
 }
 
+/// Waits for the actual originating stream and persistence completion without retaining the chat holder lock.
+#[derive(Debug)]
+pub(crate) enum ChatTurnSubmission {
+    /// Observes one specific originating generation, including its failure or cancellation.
+    Pending(oneshot::Receiver<Result<MessageSendResultData, String>>),
+    /// Returns an explicit input-ownership decision that is not a completed generation.
+    Handled(MessageSendResultData),
+}
+
+impl ChatTurnSubmission {
+    /// Awaits only this originating generation and reports a lost completion channel as an actual error.
+    pub(crate) async fn wait(self) -> Result<MessageSendResultData, String> {
+        match self {
+            Self::Handled(result) => Ok(result),
+            Self::Pending(receiver) => receiver.await
+                .map_err(|error| format!("Chat turn completion channel closed before a terminal receipt: {error}"))?,
+        }
+    }
+}
+
+/// Tracks exact commit identities on one real turn instead of searching the most recent history row.
+#[derive(Debug)]
+struct ChatTurnReceiptState {
+    turnId: u64,
+    nativeExecutionId: Option<String>,
+    sender: Option<oneshot::Sender<Result<MessageSendResultData, String>>>,
+    result: MessageSendResultData,
+}
+
+impl ChatTurnReceiptState {
+    /// Delivers a terminal result once; a detached UI observer does not alter the business result.
+    fn deliver(&mut self, result: Result<MessageSendResultData, String>) {
+        if let Some(sender) = self.sender.take() {
+            if sender.send(result).is_err() {
+                AppLogger::trace("ChatTurnReceipt", "Originating UI observer detached from the accepted turn");
+            }
+        }
+    }
+}
+
 /// Per-chat runtime state for one active or recently active send turn.
 #[derive(Clone, Debug)]
 pub struct ChatRuntime {
     pub activeTurnId: u64,
+    receipt: Option<Arc<Mutex<ChatTurnReceiptState>>>,
+    pub executionLease: Option<ChatExecutionLease>,
     pub isCancelling: bool,
     pub activeStreamingAiMessage: Option<ChatMessage>,
     pub sendJob: Option<String>,
@@ -239,6 +284,8 @@ impl ChatRuntime {
     pub fn new() -> Self {
         Self {
             activeTurnId: 0,
+            receipt: None,
+            executionLease: None,
             isCancelling: false,
             activeStreamingAiMessage: None,
             sendJob: None,
@@ -327,23 +374,15 @@ pub struct BuildUserMessageContentForSendRequest {
     pub workspacePath: Option<String>,
     pub replyToMessage: Option<ChatMessage>,
     pub chatId: String,
-    pub roleCardId: String,
+    pub participantId: String,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
 }
 
-/// Request data used to construct a group-orchestration user message.
-pub struct BuildUserMessageContentForGroupOrchestrationRequest {
-    pub messageText: String,
-    pub attachments: Vec<AttachmentInfo>,
-    pub workspacePath: Option<String>,
-    pub replyToMessage: Option<ChatMessage>,
-    pub chatId: String,
-    pub roleCardId: String,
-}
-
 /// End-to-end request for sending a user message through enhanced AI processing.
 pub struct SendUserMessageProcessingRequest<'a> {
+    pub executionLease: ChatExecutionLease,
+    pub chatConfiguration: ChatConfigurationResult,
     pub enhancedAiService: &'a mut EnhancedAIService,
     pub chatHistoryDelegate: &'a mut ChatHistoryDelegate,
     pub chatId: String,
@@ -353,10 +392,6 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub workspacePath: Option<String>,
     pub workspaceFolders: Vec<String>,
     pub promptFunctionType: PromptFunctionType,
-    pub roleCardId: String,
-    pub currentRoleName: Option<String>,
-    pub characterName: Option<String>,
-    pub avatarUri: Option<String>,
     pub attachments: Vec<AttachmentInfo>,
     pub replyToMessage: Option<ChatMessage>,
     pub enableThinking: bool,
@@ -365,8 +400,6 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub tokenUsageThreshold: f64,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub isGroupOrchestrationTurn: bool,
-    pub groupParticipantNamesText: Option<String>,
     pub proxySenderNameOverride: Option<String>,
     pub suppressUserMessageInHistory: bool,
     pub isAutoContinuation: bool,
@@ -375,14 +408,17 @@ pub struct SendUserMessageProcessingRequest<'a> {
 }
 
 /// Result returned after a user message send finishes and history is updated.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SendUserMessageProcessingResult {
+    pub(crate) completion: ChatTurnSubmission,
     pub aiMessage: ChatMessage,
     pub nextWindowSize: Option<i64>,
 }
 
 /// Request data used to regenerate one AI message variant.
 pub struct RegenerateAiMessageVariantRequest<'a> {
+    pub executionLease: ChatExecutionLease,
+    pub chatConfiguration: ChatConfigurationResult,
     pub enhancedAiService: &'a mut EnhancedAIService,
     pub chatHistoryDelegate: &'a mut ChatHistoryDelegate,
     pub chatId: String,
@@ -391,8 +427,6 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
     pub requestHistory: Vec<ChatMessage>,
     pub workspacePath: Option<String>,
     pub promptFunctionType: PromptFunctionType,
-    pub roleCardId: String,
-    pub currentRoleName: String,
     pub attachments: Vec<AttachmentInfo>,
     pub replyToMessage: Option<ChatMessage>,
     pub enableThinking: bool,
@@ -401,8 +435,6 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
     pub tokenUsageThreshold: f64,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
-    pub isGroupOrchestrationTurn: bool,
-    pub groupParticipantNamesText: Option<String>,
 }
 
 /// Manages message send state, streaming persistence, cancellation, and UI flows.
@@ -658,13 +690,19 @@ impl MessageProcessingDelegate {
 
     /// Starts a fresh chat turn and returns its chat-scoped ownership token.
     #[allow(non_snake_case)]
-    fn beginChatTurn(&self, chatId: String, turnOptions: ChatTurnOptions) -> u64 {
+    fn beginChatTurn(
+        &self,
+        chatId: String,
+        turnOptions: ChatTurnOptions,
+        executionLease: ChatExecutionLease,
+    ) -> u64 {
         self.withRuntime(Some(chatId), |runtime| {
             runtime.activeTurnId = runtime
                 .activeTurnId
                 .checked_add(1)
                 .expect("chat turn id must not overflow");
             runtime.isCancelling = false;
+            runtime.executionLease = Some(executionLease);
             runtime.currentTurnOptions = turnOptions;
             runtime.requestSentAt = messageTimingNow().startedAtMs as i64;
             runtime.requestStartElapsed = messageTimingNow().startedAtMs as i64;
@@ -674,6 +712,89 @@ impl MessageProcessingDelegate {
             runtime.responseStream = None;
             runtime.activeTurnId
         })
+    }
+
+    /// Captures a timestamp only after reading the actual committed user row.
+    fn recordCommittedUser(&self, chatId: &str, turnId: u64, timestamp: i64) {
+        self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            if let Some(receipt) = &runtime.receipt {
+                let mut receipt = receipt.lock().expect("turn receipt mutex poisoned");
+                if receipt.turnId == turnId {
+                    if let MessageSendOutcome::Committed { userMessageTimestamp, .. } = &mut receipt.result.outcome {
+                        *userMessageTimestamp = Some(timestamp);
+                    }
+                }
+            }
+        });
+    }
+
+    /// Captures the exact assistant revision only on a successful persistence path for this generation.
+    pub(crate) fn recordCommittedAssistant(&self, chatId: &str, turnId: u64, message: &ChatMessage, variantIndex: i32) {
+        self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            if let Some(receipt) = &runtime.receipt {
+                let mut receipt = receipt.lock().expect("turn receipt mutex poisoned");
+                if receipt.turnId == turnId {
+                    if let MessageSendOutcome::Committed { assistant, .. } = &mut receipt.result.outcome {
+                        *assistant = Some(ChatCommittedMessage { messageTimestamp: message.timestamp, variantIndex });
+                    }
+                }
+            }
+        });
+    }
+
+    /// Completes only the originating receipt with already captured persisted identities.
+    fn completeTurnReceipt(&self, chatId: &str, turnId: u64, status: MessageSendStatus, message: Option<&ChatMessage>) {
+        self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            if let Some(receipt) = &runtime.receipt {
+                let mut receipt = receipt.lock().expect("turn receipt mutex poisoned");
+                if receipt.turnId != turnId || receipt.sender.is_none() { return; }
+                match &mut receipt.result.outcome {
+                    MessageSendOutcome::Committed { status: current, .. } | MessageSendOutcome::NotPersisted { status: current } => *current = status.clone(),
+                    MessageSendOutcome::Blocked { .. } | MessageSendOutcome::Consumed { .. } => unreachable!("Input decisions never own a generation receipt"),
+                }
+                if matches!(receipt.result.outcome, MessageSendOutcome::Committed { userMessageTimestamp: None, assistant: None, .. }) {
+                    receipt.result.outcome = MessageSendOutcome::NotPersisted { status: status.clone() };
+                }
+                receipt.result.aiResponse = JsOptional::from_nullable_option(message.map(ChatMessage::displayText));
+                receipt.result.receivedAt = JsOptional::Value(messageTimingNow().startedAtMs as i64);
+                let result = receipt.result.clone();
+                receipt.deliver(Ok(result));
+            }
+        });
+    }
+
+    /// Reads only the named native execution's actual committed receipt, including records retained when its terminal result is an error.
+    pub(crate) fn nativeCommittedTurnReceipt(&self, chatId: &str, executionId: &str) -> Result<Option<MessageSendResultData>, String> {
+        match self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            runtime.receipt.as_ref().map(|receipt| {
+                let receipt = receipt.lock().map_err(|_| "Native committed receipt mutex poisoned".to_string())?;
+                if receipt.nativeExecutionId.as_deref() == Some(executionId) { Ok(Some(receipt.result.clone())) }
+                else { Ok(None) }
+            }).transpose()
+        }) {
+            Some(result) => result.map(Option::flatten),
+            None => Ok(None),
+        }
+    }
+
+    /// Propagates an execution or persistence failure to its waiting send without returning empty success.
+    pub(crate) fn failTurnReceipt(&self, chatId: &str, error: String) {
+        self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            if let Some(receipt) = &runtime.receipt {
+                receipt.lock().expect("turn receipt mutex poisoned").deliver(Err(error));
+            }
+        });
+    }
+
+    /// Settles cancellation only after Core commits its explicit partial output or confirms that no output is kept.
+    pub(crate) fn completeCancelledTurnReceipt(&self, chatId: &str, message: Option<&ChatMessage>) {
+        let turnId = self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            runtime.receipt.as_ref().map(|receipt| receipt.lock().expect("turn receipt mutex poisoned").turnId)
+        }).flatten();
+        if let Some(turnId) = turnId {
+            if let Some(message) = message { self.recordCommittedAssistant(chatId, turnId, message, message.selectedVariantIndex); }
+            self.completeTurnReceipt(chatId, turnId, MessageSendStatus::Cancelled, message);
+        }
     }
 
     /// Reports whether an asynchronous action still owns the current chat turn.
@@ -692,6 +813,11 @@ impl MessageProcessingDelegate {
             .withExistingRuntime(Some(chatId.clone()), |runtime| {
                 if runtime.activeTurnId != turnId || runtime.isCancelling {
                     return false;
+                }
+                if let Some(lease) = runtime.executionLease.take() {
+                    if !runtime.currentTurnOptions.deferSequenceCompletion {
+                        lease.release().expect("Execution lease release must succeed");
+                    }
                 }
                 runtime.isLoading = false;
                 runtime.sendJob = None;
@@ -940,12 +1066,28 @@ impl MessageProcessingDelegate {
     /// Publishes the terminal state of one logical chat execution atomically.
     #[allow(non_snake_case)]
     pub fn finishChatExecution(&mut self, chatId: String, terminalState: InputProcessingState) {
+        if let InputProcessingState::Error { message } = &terminalState {
+            self.failTurnReceipt(&chatId, message.clone());
+        }
         debug_assert!(matches!(
             &terminalState,
             InputProcessingState::Idle
                 | InputProcessingState::Completed
                 | InputProcessingState::Error { .. }
         ));
+        self.withExistingRuntime(Some(chatId.clone()), |runtime| {
+            if let Some(lease) = runtime.executionLease.take() {
+                if !runtime.currentTurnOptions.deferSequenceCompletion {
+                    lease.release().expect("Terminal execution lease release must succeed");
+                }
+            }
+            runtime.isLoading = false;
+            runtime.sendJob = None;
+            runtime.responseStream = None;
+            runtime.streamCollectionJob = None;
+            runtime.stateCollectionJob = None;
+            runtime.activeStreamingAiMessage = None;
+        });
         ToolProgressBus::clear();
         self.updateChatExecutionState(chatId, |state| {
             state.isLoading = false;
@@ -959,6 +1101,13 @@ impl MessageProcessingDelegate {
         if !self.isCurrentChatTurn(&chatId, turnId) {
             return false;
         }
+        self.withExistingRuntime(Some(chatId.clone()), |runtime| {
+            if let Some(lease) = runtime.executionLease.take() {
+                if !runtime.currentTurnOptions.deferSequenceCompletion {
+                    lease.release().expect("Completed execution lease release must succeed");
+                }
+            }
+        });
         self.updateChatExecutionState(chatId, |state| {
             state.isLoading = false;
             state.inputProcessingState = InputProcessingState::Summarizing {
@@ -966,26 +1115,6 @@ impl MessageProcessingDelegate {
             };
         });
         true
-    }
-
-    /// Builds the user message payload used by group orchestration turns.
-    #[allow(non_snake_case)]
-    pub async fn buildUserMessageContentForGroupOrchestration(
-        &self,
-        request: BuildUserMessageContentForGroupOrchestrationRequest,
-    ) -> Result<String, operit_providers::chat::llmprovider::AIService::AiServiceError> {
-        self.buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
-            messageText: request.messageText,
-            proxySenderNameOverride: None,
-            attachments: request.attachments,
-            workspacePath: request.workspacePath,
-            replyToMessage: request.replyToMessage,
-            chatId: request.chatId,
-            roleCardId: request.roleCardId,
-            chatProviderIdOverride: None,
-            chatModelIdOverride: None,
-        })
-        .await
     }
 
     /// Builds model-ready user message content with attachments, workspace, and reply context.
@@ -1058,7 +1187,7 @@ impl MessageProcessingDelegate {
                 enableDirectAudioProcessing,
                 enableDirectVideoProcessing,
                 chatId: Some(request.chatId.clone()),
-                roleCardId: Some(request.roleCardId),
+                participantId: Some(request.participantId),
                 onHookTimeout: Some(onHookTimeout),
             })
             .await?;
@@ -1125,9 +1254,20 @@ impl MessageProcessingDelegate {
         aiMessage.parts = partStream
             .finish()
             .expect("cancelled assistant markup must parse into message parts");
+        if let Some(observer) = &snapshot.turnOptions.outputObserver {
+            observer.snapshot(aiMessage.timestamp, &aiMessage.parts);
+        }
         aiMessage.contentStream = None;
         aiMessage.completedAt = messageTimingNow().startedAtMs as i64;
         Some(aiMessage)
+    }
+
+    /// Matches only an admitted native execution while it owns the actual current streaming runtime.
+    pub(crate) fn isNativeExecutionActive(&self, chatId: &str, executionId: &str) -> bool {
+        match self.withExistingRuntime(Some(chatId.to_string()), |runtime| {
+            runtime.isLoading && !runtime.isCancelling
+                && runtime.currentTurnOptions.nativeExecutionId.as_deref() == Some(executionId)
+        }) { Some(active) => active, None => false }
     }
 
     /// Cancels an active message turn and optionally keeps partial response content.
@@ -1171,6 +1311,11 @@ impl MessageProcessingDelegate {
             .withExistingRuntime(Some(chatId.clone()), |runtime| {
                 if runtime.activeTurnId != cancellationTurnId || !runtime.isCancelling {
                     return false;
+                }
+                if let Some(lease) = runtime.executionLease.take() {
+                    if !runtime.currentTurnOptions.deferSequenceCompletion {
+                        lease.release().expect("Cancelled execution lease release must succeed");
+                    }
                 }
                 runtime.isLoading = false;
                 runtime.responseStream = None;
@@ -1324,7 +1469,18 @@ impl MessageProcessingDelegate {
         SendUserMessageProcessingResult,
         operit_providers::chat::llmprovider::AIService::AiServiceError,
     > {
+        let mut executionGuard = request.executionLease.requestGuard();
+        if request.turnOptions.deferSequenceCompletion {
+            executionGuard.handoff();
+        }
         let chatId = request.chatId.clone();
+        let configuration = request.chatConfiguration.clone();
+        configuration.validate().map_err(
+            operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed,
+        )?;
+        request.chatProviderIdOverride =
+            Some(configuration.profile.modelBinding.providerId.clone());
+        request.chatModelIdOverride = Some(configuration.profile.modelBinding.modelId.clone());
         let originalMessageText = request.messageText.trim().to_string();
         AppLogger::i(
             "CoreSend",
@@ -1346,17 +1502,39 @@ impl MessageProcessingDelegate {
                     "suppressUserMessage",
                     ChainLogger::boolField(request.suppressUserMessageInHistory),
                 ),
-                (
-                    "groupOrchestration",
-                    ChainLogger::boolField(request.isGroupOrchestrationTurn),
-                ),
+
             ],
         );
         self.resetCurrentTurnToolInvocationCount(chatId.clone());
-        let turnId = self.beginChatTurn(chatId.clone(), request.turnOptions.clone());
+        let turnId = self.beginChatTurn(
+            chatId.clone(),
+            request.turnOptions.clone(),
+            request.executionLease.clone(),
+        );
+        let (receiptSender, receiptReceiver) = oneshot::channel();
+        self.withRuntime(Some(chatId.clone()), |runtime| {
+            runtime.receipt = Some(Arc::new(Mutex::new(ChatTurnReceiptState {
+                turnId, nativeExecutionId: request.turnOptions.nativeExecutionId.clone(), sender: Some(receiptSender),
+                result: MessageSendResultData {
+                    chatId: chatId.clone(), message: request.messageText.clone(),
+                    aiResponse: JsOptional::Null, receivedAt: JsOptional::Null, sentAt: runtime.requestSentAt,
+                    outcome: if request.turnOptions.persistTurn {
+                        MessageSendOutcome::Committed {
+                            status: MessageSendStatus::Completed,
+                            userMessageTimestamp: request.turnOptions.continuation.as_ref().map(|turn| turn.userMessageTimestamp),
+                            assistant: None,
+                        }
+                    } else {
+                        MessageSendOutcome::NotPersisted { status: MessageSendStatus::Completed }
+                    },
+                },
+            })));
+        });
         self.startChatExecution(chatId.clone());
 
-        let finalMessageContent = match self
+        let finalMessageContent = if request.turnOptions.continuation.is_some() {
+            String::new()
+        } else { match self
             .buildUserMessageContentForSend(BuildUserMessageContentForSendRequest {
                 messageText: originalMessageText.clone(),
                 proxySenderNameOverride: request.proxySenderNameOverride.clone(),
@@ -1364,7 +1542,7 @@ impl MessageProcessingDelegate {
                 workspacePath: request.workspacePath.clone(),
                 replyToMessage: request.replyToMessage.clone(),
                 chatId: chatId.clone(),
-                roleCardId: request.roleCardId.clone(),
+                participantId: configuration.profile.id.clone(),
                 chatProviderIdOverride: request.chatProviderIdOverride.clone(),
                 chatModelIdOverride: request.chatModelIdOverride.clone(),
             })
@@ -1388,15 +1566,14 @@ impl MessageProcessingDelegate {
                 }
                 return Err(error);
             }
-        };
+        } };
         let shouldAddUserMessageToChat = request.turnOptions.persistTurn
+            && request.turnOptions.continuation.is_none()
             && !request.suppressUserMessageInHistory
             && !(request.isAutoContinuation
                 && originalMessageText.is_empty()
                 && request.attachments.is_empty())
-            && !(request.isGroupOrchestrationTurn
-                && originalMessageText.is_empty()
-                && request.attachments.is_empty());
+            ;
         let isFirstMessage = !request.chatHistoryDelegate.hasUserMessage(chatId.clone());
         let provisionalTitle = if request.turnOptions.persistTurn && isFirstMessage {
             let title = Self::provisionalConversationTitle(&request.attachments);
@@ -1423,6 +1600,22 @@ impl MessageProcessingDelegate {
             },
             ..ChatMessage::new("user".to_string())
         };
+        if let Some(continuation) = &request.turnOptions.continuation {
+            userMessage.timestamp = continuation.userMessageTimestamp;
+        }
+        if shouldAddUserMessageToChat {
+        request
+            .executionLease
+            .protectRevision(userMessage.timestamp, 0)
+            .map_err(|error| {
+                operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                    error.to_string(),
+                )
+            })?;
+        AIMessageManager::applyConfigurationSnapshot(&mut userMessage, &configuration).map_err(
+            operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed,
+        )?;
+        }
         let mut workspaceToolHookSession = None;
         let mut workspaceToolHookHandler = request.enhancedAiService.tool_handler.clone();
         if let Some(workspacePath) = request
@@ -1453,9 +1646,8 @@ impl MessageProcessingDelegate {
                     ),
                 ],
             );
-            request
-                .chatHistoryDelegate
-                .addMessageToChat(userMessage.clone(), Some(chatId.clone()));
+            let committedUser = request.chatHistoryDelegate.commitUserMessage(&chatId, userMessage.clone())
+                .map_err(operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed)?;
             ChainLogger::verbose(
                 MESSAGE_STORE_CHAIN,
                 "message.store.user.done",
@@ -1464,6 +1656,8 @@ impl MessageProcessingDelegate {
                     ("timestamp", userMessage.timestamp.to_string()),
                 ],
             );
+
+            self.recordCommittedUser(&chatId, turnId, committedUser.timestamp);
             userMessageAdded = true;
             if let Some(provisionalTitle) = provisionalTitle {
                 Self::launchConversationTitleGeneration(
@@ -1495,28 +1689,15 @@ impl MessageProcessingDelegate {
             });
         }
 
-        let characterName = CharacterCardManager::getInstance()
-            .getCharacterCard(&request.roleCardId)
-            .ok()
-            .map(|card| card.name)
-            .filter(|name| !name.trim().is_empty());
-        let currentRoleName = characterName
-            .clone()
-            .unwrap_or_else(|| "Operit".to_string());
-        let requestMessageContent = if request.isGroupOrchestrationTurn
-            && !finalMessageContent.trim_start().is_empty()
-            && !finalMessageContent.trim_start().starts_with("[From user]")
-        {
-            format!("[From user]\n{}", finalMessageContent)
-        } else {
-            finalMessageContent
-        };
+        let participantName = configuration.profile.name.clone();
+        let requestMessageContent = finalMessageContent;
         AppLogger::i(
             "CoreSend",
             &format!("response stream create start chatId={}", chatId),
         );
         let assistantMessageTimestamp = ChatMessageTimestampAllocator::next();
         let completionStream = match AIMessageManager::sendMessage(AIMessageSendRequest {
+            chatConfiguration: configuration.clone(),
             enhancedAiService: request.enhancedAiService,
             chatId: Some(chatId.clone()),
             messageContent: requestMessageContent,
@@ -1529,13 +1710,6 @@ impl MessageProcessingDelegate {
             enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
             maxTokens: request.maxTokens,
             tokenUsageThreshold: request.tokenUsageThreshold,
-            characterName: characterName.clone(),
-            avatarUri: request.avatarUri,
-            roleCardId: request.roleCardId.clone(),
-            currentRoleName: Some(currentRoleName.clone()),
-            splitHistoryByRole: true,
-            groupOrchestrationMode: request.isGroupOrchestrationTurn,
-            groupParticipantNamesText: request.groupParticipantNamesText.clone(),
             proxySenderName: request.proxySenderNameOverride.clone(),
             notifyReplyOverride: request.turnOptions.notifyReply,
             chatProviderIdOverride: request.chatProviderIdOverride.clone(),
@@ -1601,7 +1775,7 @@ impl MessageProcessingDelegate {
         let mut aiMessage = ChatMessage {
             sender: "ai".to_string(),
             timestamp: assistantMessageTimestamp,
-            roleName: currentRoleName.clone(),
+            roleName: participantName.clone(),
             provider: modelIdentity.providerName,
             modelName: modelIdentity.modelName,
             inputTokens: 0,
@@ -1610,6 +1784,17 @@ impl MessageProcessingDelegate {
             displayMode: ChatMessageDisplayMode::NORMAL,
             ..ChatMessage::new("ai".to_string())
         };
+        request
+            .executionLease
+            .protectRevision(aiMessage.timestamp, 0)
+            .map_err(|error| {
+                operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed(
+                    error.to_string(),
+                )
+            })?;
+        AIMessageManager::applyConfigurationSnapshot(&mut aiMessage, &configuration).map_err(
+            operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed,
+        )?;
         let streamKey = format!("chat-message-stream:{}:{}", chatId, aiMessage.timestamp);
         let segmentSource = coreResponseStreamSource(sharedResponseStream.clone(), streamKey);
         aiMessage.contentStream = Some(CoreStream::fromSourceWithId(
@@ -1647,12 +1832,10 @@ impl MessageProcessingDelegate {
         let completionContextWorkspacePath = request.workspacePath.clone();
         let completionContextWorkspaceFolders = request.workspaceFolders.clone();
         let completionContextPromptFunctionType = request.promptFunctionType.clone();
-        let completionContextRoleCardId = request.roleCardId.clone();
-        let completionContextRoleName = currentRoleName.clone();
+        let completionContextParticipantId = configuration.profile.id.clone();
+        let completionContextConfiguration = configuration.clone();
         let completionContextEnableThinking = request.enableThinking;
         let completionContextEnableMemoryAutoUpdate = request.enableMemoryAutoUpdate;
-        let completionContextGroupOrchestrationMode = request.isGroupOrchestrationTurn;
-        let completionContextGroupParticipantNamesText = request.groupParticipantNamesText.clone();
         let completionContextProxySenderName = request.proxySenderNameOverride.clone();
         let completionContextProviderIdOverride = request.chatProviderIdOverride.clone();
         let completionContextModelIdOverride = request.chatModelIdOverride.clone();
@@ -1685,6 +1868,9 @@ impl MessageProcessingDelegate {
         let chunkChatId = workerChatId.clone();
         let chunkFirstResponseElapsed = workerFirstResponseElapsed.clone();
         let chunkRevisionTracker = workerRevisionTracker.clone();
+        let chunkPartStream = workerPartStream.clone();
+        let chunkOutputObserver = workerTurnOptions.outputObserver.clone();
+        let chunkMessageTimestamp = aiMessage.timestamp;
         let completionChatId = workerChatId.clone();
         let completionTurnId = workerTurnId;
         let completionTurnOptions = workerTurnOptions.clone();
@@ -1765,6 +1951,13 @@ impl MessageProcessingDelegate {
                                         {
                                             let snapshot = tracker.current_content().to_owned();
                                             drop(tracker);
+                                            if let Some(observer) = &chunkOutputObserver {
+                                                let mut parser = chunkPartStream.lock().expect("semantic stream parser mutex poisoned");
+                                                match parser.resetToSnapshot(&snapshot) {
+                                                    Ok(()) => observer.snapshot(chunkMessageTimestamp, parser.parts()),
+                                                    Err(error) => observer.failed(error),
+                                                }
+                                            }
                                             persistStreamingSnapshot(&snapshot);
                                         }
                                         return;
@@ -1800,6 +1993,13 @@ impl MessageProcessingDelegate {
                                         .current_content()
                                         .to_owned()
                                 };
+                                if let Some(observer) = &chunkOutputObserver {
+                                    let mut parser = chunkPartStream.lock().expect("semantic stream parser mutex poisoned");
+                                    match parser.pushSnapshot(&snapshot) {
+                                        Ok(()) => observer.snapshot(chunkMessageTimestamp, parser.parts()),
+                                        Err(error) => observer.failed(error),
+                                    }
+                                }
                                 persistStreamingSnapshot(&snapshot);
                             })
                             .await;
@@ -1893,6 +2093,9 @@ impl MessageProcessingDelegate {
                             workerAiMessage.inputTokens += tokenSnapshot.inputTokens;
                             workerAiMessage.outputTokens += tokenSnapshot.outputTokens;
                             workerAiMessage.cachedInputTokens += tokenSnapshot.cachedInputTokens;
+                            if let Some(observer) = &completionTurnOptions.outputObserver {
+                                observer.snapshot(workerAiMessage.timestamp, &parts);
+                            }
                             workerAiMessage.parts = parts;
                             MessageProcessingDelegate::withTurnMetrics(
                                 ChatMessage {
@@ -1942,12 +2145,9 @@ impl MessageProcessingDelegate {
                                 workspacePath: completionContextWorkspacePath.clone(),
                                 promptFunctionType: completionContextPromptFunctionType.clone(),
                                 enableThinking: completionContextEnableThinking,
-                                enableMemoryAutoUpdate: completionContextEnableMemoryAutoUpdate,
-                                roleCardId: completionContextRoleCardId.clone(),
-                                roleName: completionContextRoleName.clone(),
-                                groupOrchestrationMode: completionContextGroupOrchestrationMode,
-                                groupParticipantNamesText: completionContextGroupParticipantNamesText
-                                    .clone(),
+                                participantId: completionContextConfiguration.profile.id.clone(),
+                                extensionOwner: completionContextConfiguration.extensionOwner.clone(),
+                                messageExtension: completionContextConfiguration.messageExtension.clone(),
                                 proxySenderName: completionContextProxySenderName.clone(),
                                 notifyReplyOverride: completionTurnOptions.notifyReply,
                                 chatProviderIdOverride: completionContextProviderIdOverride.clone(),
@@ -1956,14 +2156,14 @@ impl MessageProcessingDelegate {
                             });
                         let nextWindowSize = async {
                             let runtimeOptions = SendMessageOptions {
-                                roleCardId: Some(completionContextRoleCardId.clone()),
+                                executionParticipantId: Some(completionContextParticipantId.clone()),
                                 promptFunctionType: completionContextPromptFunctionType.clone(),
                                 chatProviderIdOverride: completionContextProviderIdOverride.clone(),
                                 chatModelIdOverride: completionContextModelIdOverride.clone(),
                                 ..SendMessageOptions::new()
                             };
                             let runtime = workerService
-                                .createSendMessageRuntime(&runtimeOptions)
+                                .createSendMessageRuntime(&runtimeOptions, completionContextConfiguration)
                                 .map_err(|_| ())?;
                             AIMessageManager::calculateStableContextWindow(
                                 StableContextWindowRequest {
@@ -1974,12 +2174,6 @@ impl MessageProcessingDelegate {
                                     workspacePath: completionContextWorkspacePath,
                                     workspaceFolders: completionContextWorkspaceFolders,
                                     promptFunctionType: completionContextPromptFunctionType,
-                                    roleCardId: Some(completionContextRoleCardId),
-                                    currentRoleName: Some(completionContextRoleName),
-                                    splitHistoryByRole: true,
-                                    groupOrchestrationMode: completionContextGroupOrchestrationMode,
-                                    groupParticipantNamesText:
-                                        completionContextGroupParticipantNamesText,
                                     proxySenderName: completionContextProxySenderName,
                                     chatProviderIdOverride: completionContextProviderIdOverride,
                                     chatModelIdOverride: completionContextModelIdOverride,
@@ -2057,6 +2251,9 @@ impl MessageProcessingDelegate {
                                 );
                                 return;
                             }
+                            completionMessageProcessingDelegate.lock()
+                                .expect("worker message processing delegate mutex poisoned")
+                                .recordCommittedAssistant(&completionChatId, completionTurnId, &completedMessage, 0);
                         }
                         drop(workerChatHistoryDelegate);
                         if let Some(routeChange) = pendingRouteChange {
@@ -2126,7 +2323,9 @@ impl MessageProcessingDelegate {
                     error.to_string(),
                 )
             })?;
+        executionGuard.handoff();
         Ok(SendUserMessageProcessingResult {
+            completion: ChatTurnSubmission::Pending(receiptReceiver),
             aiMessage,
             nextWindowSize: None,
         })
@@ -2149,6 +2348,8 @@ impl MessageProcessingDelegate {
             .unwrap_or_default();
         let result = self
             .sendUserMessage(SendUserMessageProcessingRequest {
+                executionLease: request.executionLease,
+                chatConfiguration: request.chatConfiguration,
                 enhancedAiService: request.enhancedAiService,
                 chatHistoryDelegate: request.chatHistoryDelegate,
                 chatId: request.chatId,
@@ -2158,10 +2359,6 @@ impl MessageProcessingDelegate {
                 workspacePath: request.workspacePath,
                 workspaceFolders,
                 promptFunctionType: request.promptFunctionType,
-                roleCardId: request.roleCardId,
-                currentRoleName: Some(request.currentRoleName),
-                characterName: None,
-                avatarUri: None,
                 attachments: request.attachments,
                 replyToMessage: request.replyToMessage,
                 enableThinking: request.enableThinking,
@@ -2170,8 +2367,6 @@ impl MessageProcessingDelegate {
                 tokenUsageThreshold: request.tokenUsageThreshold,
                 chatProviderIdOverride: request.chatProviderIdOverride,
                 chatModelIdOverride: request.chatModelIdOverride,
-                isGroupOrchestrationTurn: request.isGroupOrchestrationTurn,
-                groupParticipantNamesText: request.groupParticipantNamesText,
                 proxySenderNameOverride: None,
                 suppressUserMessageInHistory: true,
                 isAutoContinuation: false,
@@ -2219,7 +2414,7 @@ impl MessageProcessingDelegate {
         if !self.isCurrentChatTurn(&chatId, turnId) {
             return;
         }
-        let shouldNotifyReply = turnOptions.persistTurn && turnOptions.notifyReply != Some(false);
+        let shouldNotifyReply = turnOptions.persistTurn && !turnOptions.deferSequenceCompletion && turnOptions.notifyReply != Some(false);
         let pendingAsyncSummaryUi = self.hasPendingAsyncSummaryUiForChat(&chatId);
         self.cleanupRuntimeAfterTurn(chatId.clone(), turnId);
         if pendingAsyncSummaryUi {
@@ -2232,21 +2427,61 @@ impl MessageProcessingDelegate {
                 InputProcessingState::Completed,
             );
         }
+        if !turnOptions.deferSequenceCompletion {
         let mut counters = self.turnCompleteCounterByChatIdFlow.value();
         let next = counters.get(&chatId).copied().unwrap_or(0) + 1;
         counters.insert(chatId.clone(), next);
         self.turnCompleteCounterByChatId = counters.clone();
         self.turnCompleteCounterByChatIdFlow.set_value(counters);
+        }
         if shouldNotifyReply {
             publishOwnerAppNotification(RuntimeHostInteractionAppNotificationPayload {
                 notificationType: "ai_message_completed".to_string(),
                 title: "Operit".to_string(),
                 message: aiMessageNotificationPreview(&aiMessage.displayText()),
-                chatId: Some(chatId),
+                chatId: Some(chatId.clone()),
                 messageTimestamp: Some(aiMessage.timestamp),
             });
         }
+        self.completeTurnReceipt(&chatId, turnId, MessageSendStatus::Completed, Some(&aiMessage));
         let _ = nextWindowSize;
+    }
+
+    /// Publishes one native sequence completion using only its actually persisted records and terminal status.
+    pub(crate) fn finalizeSequenceAndNotify(
+        &mut self, chatId: &str, status: &operit_tools::runtime_support::ChatSequenceStatus,
+        error: Option<&str>, hasCommittedUser: bool, assistant: Option<&ChatMessage>, notifyReply: bool,
+    ) -> Result<(), String> {
+        use operit_tools::runtime_support::ChatSequenceStatus;
+        if self.isChatLoading(chatId.to_string()) { return Err("Cannot finalize a sequence with an active generation".to_string()); }
+        let terminal = match status {
+            ChatSequenceStatus::Completed => InputProcessingState::Completed,
+            ChatSequenceStatus::Cancelled => InputProcessingState::Idle,
+            ChatSequenceStatus::Failed => InputProcessingState::Error {
+                message: error.ok_or_else(|| "Failed sequence omitted its native error".to_string())?.to_string(),
+            },
+        };
+        let mut counters = self.turnCompleteCounterByChatIdFlow.value();
+        let nextCounter = if hasCommittedUser && *status != ChatSequenceStatus::Failed {
+            let previous = match counters.get(chatId) { Some(previous) => *previous, None => 0 };
+            Some(previous.checked_add(1).ok_or_else(|| "Sequence completion counter overflow".to_string())?)
+        } else { None };
+        self.finishChatExecution(chatId.to_string(), terminal);
+        if let Some(next) = nextCounter {
+            counters.insert(chatId.to_string(), next);
+            self.turnCompleteCounterByChatId = counters.clone();
+            self.turnCompleteCounterByChatIdFlow.set_value(counters);
+            if *status == ChatSequenceStatus::Completed && notifyReply {
+                if let Some(assistant) = assistant {
+                    publishOwnerAppNotification(RuntimeHostInteractionAppNotificationPayload {
+                        notificationType: "ai_message_completed".to_string(), title: "Operit".to_string(),
+                        message: aiMessageNotificationPreview(&assistant.displayText()), chatId: Some(chatId.to_string()),
+                        messageTimestamp: Some(assistant.timestamp),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Clears runtime state after a send has finished.

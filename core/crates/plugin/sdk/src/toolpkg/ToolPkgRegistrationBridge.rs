@@ -28,6 +28,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             chatInputHooks: [],
             chatViewHooks: [],
             chatMessageHooks: [],
+            chatLifecycleHooks: [],
             chatMessageMenuItems: [],
             chatRuntimeHooks: [],
             hostEventHooks: [],
@@ -65,6 +66,76 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 }
             }
             return output;
+        }
+
+        /** Requires exact supported navigation surfaces instead of coercing casing or whitespace. */
+        function validateNavigationSurface(surface) {
+            switch (surface) {
+                case 'toolbox':
+                case 'main_sidebar_plugins':
+                case 'app_bar':
+                case 'chat_attachments':
+                case 'chat_sidebar_tabs':
+                    return;
+                default:
+                    throw new Error('registerNavigationEntry.surface is unsupported: ' + String(surface));
+            }
+        }
+
+        /** Requires one already registered package-owned Compose DSL route for an embedded sidebar tab. */
+        function validateSidebarTabRoute(definition) {
+            var owner = resolveCurrentToolPkgTarget();
+            if (!owner) throw new Error('registerNavigationEntry.route owner is unavailable for chat_sidebar_tabs');
+            if (!definition.route.startsWith('toolpkg:' + owner + ':ui:')) {
+                throw new Error('registerNavigationEntry.route must belong to this package for chat_sidebar_tabs: ' + definition.route);
+            }
+            var registeredRoutes = capture.uiRoutes.concat(capture.toolboxUiModules);
+            var matches = 0;
+            for (var index = 0; index < registeredRoutes.length; index += 1) {
+                var registered = JSON.parse(registeredRoutes[index]);
+                var generatedRoute = typeof registered.id === 'string' ? 'toolpkg:' + owner + ':ui:' + registered.id.trim() : null;
+                var explicitMatch = registered.route === definition.route;
+                var generatedMatch = registered.route === undefined && generatedRoute === definition.route;
+                if (!explicitMatch && !generatedMatch) continue;
+                matches += 1;
+                if (registered.runtime !== undefined && registered.runtime !== 'compose_dsl') {
+                    throw new Error('registerNavigationEntry.route must use compose_dsl for chat_sidebar_tabs: ' + definition.route);
+                }
+            }
+            if (matches === 0) throw new Error('registerNavigationEntry.route is not registered for chat_sidebar_tabs: ' + definition.route);
+            if (matches !== 1) throw new Error('registerNavigationEntry.route is duplicated for chat_sidebar_tabs: ' + definition.route);
+        }
+
+        /** Rejects non-JSON route input before serialization can silently drop or replace values. */
+        function validateNavigationParams(value, ancestors) {
+            if (value === null) return;
+            var kind = typeof value;
+            if (kind === 'string' || kind === 'boolean') return;
+            if (kind === 'number') {
+                if (!Number.isFinite(value)) throw new Error('registerNavigationEntry.params requires finite JSON numbers');
+                return;
+            }
+            if (kind !== 'object') throw new Error('registerNavigationEntry.params must be JSON');
+            if (ancestors.indexOf(value) !== -1) throw new Error('registerNavigationEntry.params must not be cyclic');
+            var prototype = Object.getPrototypeOf(value);
+            if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+                throw new Error('registerNavigationEntry.params requires plain JSON objects');
+            }
+            if (Object.getOwnPropertySymbols(value).length !== 0) {
+                throw new Error('registerNavigationEntry.params must not have symbol properties');
+            }
+            ancestors.push(value);
+            if (Array.isArray(value)) {
+                for (var index = 0; index < value.length; index += 1) {
+                    validateNavigationParams(value[index], ancestors);
+                }
+            } else {
+                var keys = Object.keys(value);
+                for (var index = 0; index < keys.length; index += 1) {
+                    validateNavigationParams(value[keys[index]], ancestors);
+                }
+            }
+            ancestors.pop();
         }
 
         function getActiveExports() {
@@ -533,8 +604,24 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
             registerChatComposerSlot: registerScreen('chatComposerSlots', 'registerToolPkgChatComposerSlot'),
-            /// Encodes navigation callbacks using the nested runtime action contract.
+            /** Captures validated navigation metadata, opaque route input, and durable optional callbacks. */
             registerNavigationEntry: function(definition) {
+                if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+                    throw new Error('registerNavigationEntry requires an object');
+                }
+                validateNavigationSurface(definition.surface);
+                if (definition.surface === 'chat_attachments' || definition.surface === 'chat_sidebar_tabs') {
+                    if (definition.action !== undefined && definition.action !== null) {
+                        throw new Error('registerNavigationEntry.action is unsupported for ' + definition.surface);
+                    }
+                    if (typeof definition.route !== 'string' || !definition.route.trim()) {
+                        throw new Error('registerNavigationEntry.route is required for ' + definition.surface);
+                    }
+                }
+                if (definition.surface === 'chat_sidebar_tabs') validateSidebarTabRoute(definition);
+                if (Object.prototype.hasOwnProperty.call(definition, 'params')) {
+                    validateNavigationParams(definition.params, []);
+                }
                 var normalized = copyObject(definition, '');
                 if (definition && typeof definition.action === 'function') {
                     var ref = resolveDurableFunctionRef(
@@ -555,6 +642,19 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerChatInputHook: registerFunction('chatInputHooks', 'registerChatInputHook'),
             registerChatViewHook: registerFunction('chatViewHooks', 'registerChatViewHook'),
             registerChatMessageHook: registerFunction('chatMessageHooks', 'registerChatMessageHook'),
+            /** Captures exactly one exported creation handler for this authenticated package owner. */
+            registerChatLifecycleHook: function(definition) {
+                var owner = resolveCurrentToolPkgTarget();
+                if (!owner) throw new Error('registerChatLifecycleHook owner is unavailable');
+                if (!definition || typeof definition.id !== 'string' || !definition.id.trim()) {
+                    throw new Error('registerChatLifecycleHook.id is required');
+                }
+                if (capture.chatLifecycleHooks.length !== 0) {
+                    throw new Error('Duplicate chat lifecycle hook owner: ' + owner);
+                }
+                var normalized = normalizeFunctionField(definition, 'function', 'registerChatLifecycleHook');
+                capture.chatLifecycleHooks.push(normalizeSpec(normalized));
+            },
             registerChatMessageMenuItem: toolPkgApi.method()
                 .between('1.0.1', '2.0.0')
                 .since('2.0.0')
@@ -608,6 +708,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         root.registerToolPkgChatInputHook = api.registerChatInputHook;
         root.registerToolPkgChatViewHook = api.registerChatViewHook;
         root.registerToolPkgChatMessageHook = api.registerChatMessageHook;
+        root.registerToolPkgChatLifecycleHook = api.registerChatLifecycleHook;
         root.registerToolPkgChatMessageMenuItem = api.registerChatMessageMenuItem;
         root.registerToolPkgChatRuntimeHook = api.registerChatRuntimeHook;
         root.registerToolPkgHostEventHook = api.registerHostEventHook;
@@ -631,6 +732,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         root.registerChatInputHook = api.registerChatInputHook;
         root.registerChatViewHook = api.registerChatViewHook;
         root.registerChatMessageHook = api.registerChatMessageHook;
+        root.registerChatLifecycleHook = api.registerChatLifecycleHook;
         root.registerChatMessageMenuItem = api.registerChatMessageMenuItem;
         root.registerChatRuntimeHook = api.registerChatRuntimeHook;
         root.registerHostEventHook = api.registerHostEventHook;

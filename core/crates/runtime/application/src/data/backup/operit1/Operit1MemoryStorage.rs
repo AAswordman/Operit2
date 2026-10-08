@@ -61,10 +61,21 @@ fn buildSnapshotFileCopyPlan(
     Ok(plan)
 }
 
-/// Returns whether an archive entry belongs to one non-workspace copy prefix.
+/// Recognizes declared Operit1 memory directories without treating user workspace documents as memory storage.
+#[allow(non_snake_case)]
+fn isOperit1LegacyMemoryEntry(entry: &str) -> bool {
+    let Some(relative) = entry.strip_prefix(ENTRY_FILES_PREFIX) else { return false; };
+    let Some((directory, _)) = relative.split_once('/') else { return false; };
+    directory == "objectbox"
+        || directory.starts_with("objectbox_")
+        || directory == "memory-space-profiles"
+}
+
+/// Returns whether an entry is an adopted non-workspace resource, leaving legacy preferences and memory source data unmodified.
 fn entryMatchesCopyPrefix(entry: &str, sourcePrefix: &str) -> bool {
     entry.starts_with(sourcePrefix)
-        && !isDataStoreEntry(entry)
+        && !entry.starts_with(ENTRY_DATASTORE_PREFIX)
+        && !isOperit1LegacyMemoryEntry(entry)
         && !(sourcePrefix == ENTRY_FILES_PREFIX && entry.starts_with(ENTRY_WORKSPACE_FILES_PREFIX))
 }
 

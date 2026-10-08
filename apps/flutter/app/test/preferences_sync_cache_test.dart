@@ -8,7 +8,6 @@ import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
-import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/layout/ApplicationZoomPreferences.dart';
 import 'package:operit2/ui/main/layout/SidebarDockController.dart';
@@ -19,7 +18,6 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 const _userFile = 'user_preferences.preferences.json';
 const _zoomFile = 'application_zoom.preferences.json';
 const _dockFile = 'sidebar_dock.preferences.json';
-const _themePrefix = 'character_group_theme_group-1_';
 
 /// Verifies committed peer changes reach existing application-level caches.
 void main() {
@@ -33,7 +31,6 @@ void main() {
       final savedModes = <ThemeMode>[];
       var changes = 0;
       final controller = OperitThemeController(
-        clients: clients,
         preferencesManager: UserPreferencesManager(clients: clients),
         onChanged: () => changes++,
         saveStartupThemeMode: (mode) async => savedModes.add(mode),
@@ -44,9 +41,9 @@ void main() {
       final beforeSync = changes;
 
       bridge.applyPeerPreferences(_userFile, <String, String>{
-        '${_themePrefix}theme_mode': 'dark',
-        '${_themePrefix}font_scale': '1.3',
-        '${_themePrefix}input_style': 'classic',
+        'theme_mode': 'dark',
+        'font_scale': '1.3',
+        'input_style': 'classic',
       });
       await _drainEvents();
 
@@ -66,7 +63,7 @@ void main() {
       await _drainEvents();
       final afterDispose = changes;
       bridge.applyPeerPreferences(_userFile, <String, String>{
-        '${_themePrefix}theme_mode': 'light',
+        'theme_mode': 'light',
       });
       await _drainEvents();
       expect(changes, afterDispose);
@@ -80,7 +77,6 @@ void main() {
       final bridge = _PreferenceBridge();
       final clients = GeneratedCoreProxyClients(bridge);
       final controller = OperitThemeController(
-        clients: clients,
         preferencesManager: UserPreferencesManager(clients: clients),
         onChanged: () {},
         saveStartupThemeMode: (_) async {},
@@ -92,11 +88,11 @@ void main() {
       final releaseOldRead = Completer<void>();
       bridge.nextPreferenceRead = releaseOldRead.future;
       bridge.applyPeerPreferences(_userFile, <String, String>{
-        '${_themePrefix}font_scale': '1.2',
+        'font_scale': '1.2',
       });
       await _drainEvents();
       bridge.applyPeerPreferences(_userFile, <String, String>{
-        '${_themePrefix}font_scale': '1.5',
+        'font_scale': '1.5',
       });
       await _drainEvents();
       expect(controller.themePreferenceSnapshot.fontScale, 1.5);
@@ -112,10 +108,9 @@ void main() {
     () async {
       final bridge = _PreferenceBridge();
       final clients = GeneratedCoreProxyClients(bridge);
-      final releaseTargetRead = Completer<void>();
-      bridge.targetRead = releaseTargetRead.future;
+      final releasePreferenceRead = Completer<void>();
+      bridge.nextPreferenceRead = releasePreferenceRead.future;
       final controller = OperitThemeController(
-        clients: clients,
         preferencesManager: UserPreferencesManager(clients: clients),
         onChanged: () {},
         saveStartupThemeMode: (_) async {},
@@ -123,7 +118,7 @@ void main() {
       final starting = controller.start();
       await _drainEvents();
       controller.dispose();
-      releaseTargetRead.complete();
+      releasePreferenceRead.complete();
       await starting;
       await _drainEvents();
       expect(bridge.activeWatches, 0);
@@ -146,6 +141,108 @@ void main() {
   });
 
   test(
+    'ordinary appearance never queries a plugin-owned prompt or card',
+    () async {
+      final bridge = _PreferenceBridge();
+      bridge.applyPeerPreferences(_userFile, <String, String>{
+        'theme_mode': 'light',
+        'character_theme_retired_theme_mode': 'dark',
+        'character_group_theme_retired_font_scale': '2.0',
+      });
+      final controller = OperitThemeController(
+        preferencesManager: UserPreferencesManager(
+          clients: GeneratedCoreProxyClients(bridge),
+        ),
+        onChanged: () {},
+        saveStartupThemeMode: (_) async {},
+      );
+      addTearDown(controller.dispose);
+      await controller.start();
+      await _drainEvents();
+
+      expect(controller.themeMode, ThemeMode.light);
+      expect(controller.themePreferenceSnapshot.fontScale, 1);
+      expect(bridge.calls.map((call) => call.methodName).toSet(), {
+        'getPreferences',
+      });
+      expect(
+        bridge.watchRequests.map((request) => request.propertyName).toSet(),
+        {'preferencesFlow'},
+      );
+      expect(bridge.preferenceWrites, 0);
+      expect(bridge.preferenceRemovals, 0);
+    },
+  );
+
+  test(
+    'malformed ordinary theme fails startup without committing a substitute',
+    () async {
+      final bridge = _PreferenceBridge();
+      bridge.applyPeerPreferences(_userFile, <String, String>{
+        'theme_mode': 'invalid-mode',
+      });
+      final savedModes = <ThemeMode>[];
+      var changes = 0;
+      final controller = OperitThemeController(
+        preferencesManager: UserPreferencesManager(
+          clients: GeneratedCoreProxyClients(bridge),
+        ),
+        onChanged: () => changes++,
+        saveStartupThemeMode: (mode) async => savedModes.add(mode),
+      );
+      addTearDown(controller.dispose);
+
+      await expectLater(controller.start(), throwsA(isA<FormatException>()));
+      expect(changes, 0);
+      expect(savedModes, isEmpty);
+      expect(bridge.activeWatches, 0);
+      expect(bridge.preferenceWrites, 0);
+    },
+  );
+
+  test(
+    'ordinary appearance writes and resets preserve independent avatar and retired data',
+    () async {
+      final bridge = _PreferenceBridge();
+      bridge.applyPeerPreferences(_userFile, <String, String>{
+        'custom_user_avatar_uri': 'host:///avatars/user.png',
+        'character_theme_retired_theme_mode': 'dark',
+      });
+      final preferences = UserPreferencesManager(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+
+      await preferences.saveThemeSettings(
+        themeMode: ThemeMode.light,
+        fontScale: 1.2,
+        bubbleUserRoundedCornersEnabled: false,
+      );
+      expect(bridge.calls.last.methodName, 'setPreferences');
+      expect(bridge.calls.last.args, <String, Object?>{
+        'fileName': _userFile,
+        'values': <String, String>{
+          'theme_mode': 'light',
+          'font_scale': '1.2',
+          'bubble_rounded_corners_enabled': 'false',
+        },
+      });
+      await preferences.resetThemeSettings();
+
+      final snapshot = await preferences.resolveThemePreferenceSnapshot();
+      expect(snapshot.themeMode, ThemeMode.system);
+      expect(snapshot.fontScale, 1);
+      expect(snapshot.customUserAvatarUri, 'host:///avatars/user.png');
+      expect(bridge._values[_userFile], <String, String>{
+        'custom_user_avatar_uri': 'host:///avatars/user.png',
+        'character_theme_retired_theme_mode': 'dark',
+      });
+      expect(bridge.preferenceWrites, 1);
+      expect(bridge.preferenceRemovals, 1);
+    },
+  );
+
+
+  test(
     'long-paste cache receives sync updates without unrelated notifications',
     () async {
       final bridge = _PreferenceBridge();
@@ -166,7 +263,7 @@ void main() {
       bridge.applyPeerPreferences(_userFile, <String, String>{
         'long_pasted_text_input_enabled': 'false',
         'long_pasted_text_input_threshold': '5000',
-        '${_themePrefix}theme_mode': 'dark',
+        'theme_mode': 'dark',
       });
       bridge.applyPeerPreferences(_userFile, <String, String>{
         'long_pasted_text_input_threshold': 'broken',
@@ -299,11 +396,13 @@ class _PreferenceBridge extends OperitRuntimeBridge {
         _zoomFile: <String, String>{},
         _dockFile: <String, String>{},
       };
+  final List<CoreCallRequest> calls = <CoreCallRequest>[];
+  final List<CoreWatchRequest> watchRequests = <CoreWatchRequest>[];
   final Map<CoreWatchRequest, StreamController<CoreEvent>> _watches = {};
   int preferenceWrites = 0;
   String? localZoom;
+  int preferenceRemovals = 0;
   Future<void>? nextPreferenceRead;
-  Future<void>? targetRead;
   Object? watchError;
 
   /// Reports the number of active physical watches after cancellation.
@@ -323,6 +422,7 @@ class _PreferenceBridge extends OperitRuntimeBridge {
   /// Implements only the exact reads and writes required by the cache owners.
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
+    calls.add(request);
     final args = request.args as Map;
     switch (request.methodName) {
       case 'applicationZoomPath':
@@ -340,25 +440,6 @@ class _PreferenceBridge extends OperitRuntimeBridge {
         expect(args['path'], 'runtime/client/application_zoom.local');
         localZoom = args['content'] as String;
         return encodeCoreLink(<Object?>[0, null]);
-      case 'getActivePrompt':
-        return encodeCoreLink(<Object?>[
-          0,
-          core.ActivePrompt.characterGroup(id: 'group-1').toJson(),
-        ]);
-      case 'getCharacterGroupCard':
-        await targetRead;
-        final id = args['groupId'] as String;
-        return encodeCoreLink(<Object?>[
-          0,
-          <String, Object?>{
-            'id': id,
-            'name': id,
-            'description': '',
-            'members': <Object?>[],
-            'createdAt': 0,
-            'updatedAt': 0,
-          },
-        ]);
       case 'getPreferences':
         final values = _values[args['fileName']]!;
         final selected = <String, String>{
@@ -369,6 +450,12 @@ class _PreferenceBridge extends OperitRuntimeBridge {
         nextPreferenceRead = null;
         await wait;
         return encodeCoreLink(<Object?>[0, selected]);
+      case 'removePreferences':
+        preferenceRemovals++;
+        for (final key in (args['keys'] as List).cast<String>()) {
+          _values[args['fileName']]!.remove(key);
+        }
+        return encodeCoreLink(<Object?>[0, null]);
       case 'setPreferences':
         preferenceWrites++;
         _values[args['fileName']]!.addAll(
@@ -382,9 +469,10 @@ class _PreferenceBridge extends OperitRuntimeBridge {
     }
   }
 
-  /// Opens an encoded preference or prompt watch with an initial committed snapshot.
+  /// Opens an ordinary preference watch with an initial committed snapshot.
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
+    watchRequests.add(request);
     if (watchError case final Object error) {
       return Stream<CoreEvent>.error(error);
     }
@@ -392,9 +480,7 @@ class _PreferenceBridge extends OperitRuntimeBridge {
       'preferencesFlow' => Map<String, String>.of(
         _values[(request.args as Map)['fileName']]!,
       ),
-      'activePromptFlow' => core.ActivePrompt.characterGroup(
-        id: 'group-1',
-      ).toJson(),
+
       _ => throw StateError('Unexpected Core watch: ${request.propertyName}'),
     };
     late final StreamController<CoreEvent> controller;

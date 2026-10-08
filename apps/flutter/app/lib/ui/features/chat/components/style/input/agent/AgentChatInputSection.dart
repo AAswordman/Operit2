@@ -21,6 +21,7 @@ import '../../../../../settings/model/ProviderLogo.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../ChatLayoutMetrics.dart';
 import '../common/ChatAttachmentImagePreview.dart';
+import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
@@ -28,6 +29,7 @@ import 'AgentInputMenuPopup.dart';
 import 'AgentModelSelectorPopup.dart';
 
 class AgentChatInputSection extends StatefulWidget {
+  /// Creates the Agent composer with the shared registered attachment menu.
   const AgentChatInputSection({
     super.key,
     this.hintSuffix = '',
@@ -38,8 +40,6 @@ class AgentChatInputSection extends StatefulWidget {
     this.mentionSuggestionPanel,
     required this.viewModel,
     required this.currentChatId,
-    required this.currentCharacterCardName,
-    required this.currentCharacterCardAvatarUri,
     required this.onSendMessage,
     required this.onQueueMessage,
     required this.onCancelMessage,
@@ -57,7 +57,7 @@ class AgentChatInputSection extends StatefulWidget {
     this.onInsertAttachment,
     this.onAttachImage,
     this.onTakePhoto,
-    this.onAttachMemory,
+    this.onPluginAttachment,
     this.onAttachFile,
     this.onAttachFiles,
     this.onPasteImages,
@@ -77,8 +77,6 @@ class AgentChatInputSection extends StatefulWidget {
   final Widget? mentionSuggestionPanel;
   final ChatViewModel viewModel;
   final String? currentChatId;
-  final String? currentCharacterCardName;
-  final String? currentCharacterCardAvatarUri;
   final VoidCallback onSendMessage;
   final VoidCallback onQueueMessage;
   final VoidCallback onCancelMessage;
@@ -96,7 +94,7 @@ class AgentChatInputSection extends StatefulWidget {
   final ValueChanged<AttachmentInfo>? onInsertAttachment;
   final VoidCallback? onAttachImage;
   final VoidCallback? onTakePhoto;
-  final VoidCallback? onAttachMemory;
+  final ChatAttachmentCompletion? onPluginAttachment;
   final VoidCallback? onAttachFile;
   final ValueChanged<List<String>>? onAttachFiles;
   final ValueChanged<List<PastedImageAttachmentPayload>>? onPasteImages;
@@ -121,6 +119,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
+  int _inputMenuContextGeneration = 0;
   OverlayEntry? _mentionPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
   final GlobalKey _modelPopupWidgetKey = GlobalKey();
@@ -150,9 +149,15 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     });
   }
 
+  /// Expires input menu requests when the actual chat or runtime owner changes.
   @override
   void didUpdateWidget(covariant AgentChatInputSection oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _inputMenuContextGeneration++;
+      _dismissInputMenuPopup();
+    }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleInputChanged);
       widget.controller.addListener(_handleInputChanged);
@@ -325,8 +330,19 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     overlay.insert(_modelPopupEntry!);
   }
 
+  /// Opens the shared registered context menu for this exact composer generation.
   void _showInputMenuPopup() {
     final overlay = Overlay.of(context);
+    final viewModel = widget.viewModel;
+    final chatId = widget.currentChatId;
+    final generation = ++_inputMenuContextGeneration;
+
+    /// Keeps detached presentations owned by this exact live composer context.
+    bool isChatContextCurrent() =>
+        mounted &&
+        generation == _inputMenuContextGeneration &&
+        widget.viewModel == viewModel &&
+        widget.currentChatId == chatId;
     _inputMenuPopupEntry = OverlayEntry(
       builder: (context) {
         final placement = _popupPlacement(
@@ -354,12 +370,10 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                 child: ConstrainedBox(
                   constraints: BoxConstraints(maxHeight: placement.maxHeight),
                   child: AgentInputMenuPopup(
-                    viewModel: widget.viewModel,
-                    currentChatId: widget.currentChatId,
-                    currentCharacterCardName: widget.currentCharacterCardName,
-                    currentCharacterCardAvatarUri:
-                        widget.currentCharacterCardAvatarUri,
+                    viewModel: viewModel,
+                    currentChatId: chatId,
                     onDismiss: _dismissInputMenuPopup,
+                    isChatContextCurrent: isChatContextCurrent,
                   ),
                 ),
               ),
@@ -399,10 +413,13 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                 onTap: () {},
                 child: ConstrainedBox(
                   constraints: BoxConstraints(maxHeight: placement.maxHeight),
-                  child: _AttachmentSelectorPopupPanel(
+                  child: ChatAttachmentMenuPopup(
+                    clients: widget.viewModel.clients,
+                    chatId: widget.currentChatId,
+                    onDismiss: _dismissAttachmentPopup,
+                    onAttachmentResult: widget.onPluginAttachment,
                     onAttachImage: _runAttachmentAction(widget.onAttachImage),
                     onTakePhoto: _runAttachmentAction(widget.onTakePhoto),
-                    onAttachMemory: _runAttachmentAction(widget.onAttachMemory),
                     onAttachFile: _runAttachmentAction(widget.onAttachFile),
                     onAttachScreenContent: _runAttachmentAction(
                       widget.onAttachScreenContent,
@@ -582,6 +599,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     }
   }
 
+  /// Removes only the input menu overlay, preserving its pending result handler.
   void _dismissInputMenuPopup() {
     _inputMenuPopupEntry?.remove();
     _inputMenuPopupEntry = null;
@@ -601,6 +619,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   /// Releases listeners, viewport observation, and open popup entries.
   @override
   void dispose() {
+    _inputMenuContextGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
     _modelBindingSubscription?.cancel();
@@ -1404,161 +1423,6 @@ class _InputBody extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _AttachmentSelectorPopupPanel extends StatelessWidget {
-  const _AttachmentSelectorPopupPanel({
-    required this.onAttachImage,
-    required this.onTakePhoto,
-    required this.onAttachMemory,
-    required this.onAttachFile,
-    required this.onAttachScreenContent,
-    required this.onAttachNotifications,
-    required this.onAttachLocation,
-    required this.onAttachPackage,
-  });
-
-  final VoidCallback? onAttachImage;
-  final VoidCallback? onTakePhoto;
-  final VoidCallback? onAttachMemory;
-  final VoidCallback? onAttachFile;
-  final VoidCallback? onAttachScreenContent;
-  final VoidCallback? onAttachNotifications;
-  final VoidCallback? onAttachLocation;
-  final VoidCallback onAttachPackage;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final l10n = AppLocalizations.of(context)!;
-    final items = <_AttachmentPanelItem>[
-      _AttachmentPanelItem(
-        icon: Icons.image,
-        label: l10n.attachmentPhoto,
-        onTap: onAttachImage,
-      ),
-      _AttachmentPanelItem(
-        icon: Icons.photo_camera,
-        label: l10n.attachmentCamera,
-        onTap: onTakePhoto,
-      ),
-      _AttachmentPanelItem(
-        icon: Icons.memory,
-        label: l10n.attachmentMemory,
-        onTap: onAttachMemory,
-      ),
-      _AttachmentPanelItem(
-        icon: Icons.description,
-        label: l10n.attachmentFile,
-        onTap: onAttachFile,
-      ),
-      _AttachmentPanelItem(
-        icon: Icons.screenshot_monitor,
-        label: l10n.attachmentScreenContent,
-        onTap: onAttachScreenContent,
-      ),
-      _AttachmentPanelItem(
-        icon: Icons.notifications,
-        label: l10n.attachmentNotifications,
-        onTap: onAttachNotifications,
-      ),
-      _AttachmentPanelItem(
-        icon: Icons.location_on,
-        label: l10n.attachmentLocation,
-        onTap: onAttachLocation,
-      ),
-      _AttachmentPanelItem(
-        icon: Icons.auto_awesome,
-        label: l10n.attachmentPackage,
-        onTap: onAttachPackage,
-      ),
-    ];
-
-    return Material(
-      color: colorScheme.surfaceContainer,
-      elevation: 4,
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            for (final item in items)
-              _AttachmentPanelItemButton(
-                item: item,
-                iconColor: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                textStyle: theme.textTheme.bodyMedium,
-                textColor: colorScheme.onSurface,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AttachmentPanelItem {
-  const _AttachmentPanelItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-}
-
-class _AttachmentPanelItemButton extends StatelessWidget {
-  const _AttachmentPanelItemButton({
-    required this.item,
-    required this.iconColor,
-    required this.textStyle,
-    required this.textColor,
-  });
-
-  final _AttachmentPanelItem item;
-  final Color iconColor;
-  final TextStyle? textStyle;
-  final Color textColor;
-
-  /// Builds an attachment action with the host capability availability state.
-  @override
-  Widget build(BuildContext context) {
-    final enabled = item.onTap != null;
-    final disabledColor = Theme.of(context).disabledColor;
-    return InkWell(
-      onTap: item.onTap,
-      child: SizedBox(
-        height: 36,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                item.icon,
-                size: 16,
-                color: enabled ? iconColor : disabledColor,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  item.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle?.copyWith(
-                    color: enabled ? textColor : disabledColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

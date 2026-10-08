@@ -19,6 +19,11 @@ pub enum SqliteStoreError {
     MutexPoisoned,
     #[error("sqlite invalidation observer mutex poisoned")]
     ObserverMutexPoisoned,
+    #[error("transaction failed: {action}; explicit rollback failed: {rollback}")]
+    TransactionRollback {
+        action: Box<SqliteStoreError>,
+        rollback: HostError,
+    },
     #[error("{0}")]
     Message(String),
 }
@@ -29,6 +34,7 @@ pub struct SqliteStore {
     path: PathBuf,
     connection: Arc<Mutex<Box<dyn RuntimeSqliteConnection>>>,
     observers: Arc<Mutex<Vec<Arc<dyn Fn() -> Result<(), SqliteStoreError> + Send + Sync>>>>,
+    pub(crate) executionLeases: Arc<Mutex<crate::ChatExecutionLease::ChatExecutionLeaseState>>,
 }
 
 impl SqliteStore {
@@ -41,6 +47,9 @@ impl SqliteStore {
             path,
             connection: Arc::new(Mutex::new(connection)),
             observers: Arc::new(Mutex::new(Vec::new())),
+            executionLeases: Arc::new(Mutex::new(
+                crate::ChatExecutionLease::ChatExecutionLeaseState::default(),
+            )),
         })
     }
 
@@ -162,7 +171,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Runs a closure inside a SQLite transaction and commits on success.
+    /// Commits successful actions and explicitly rolls back failed actions on every runtime host.
     pub fn transaction<T, F>(&self, action: F) -> Result<T, SqliteStoreError>
     where
         F: FnOnce(&mut SqliteTransaction<'_>) -> Result<T, SqliteStoreError>,
@@ -173,9 +182,19 @@ impl SqliteStore {
             .map_err(|_| SqliteStoreError::MutexPoisoned)?;
         let transaction = connection.beginTransaction()?;
         let mut transaction = SqliteTransaction { inner: transaction };
-        let result = action(&mut transaction)?;
-        transaction.inner.commit()?;
-        Ok(result)
+        match action(&mut transaction) {
+            Ok(result) => {
+                transaction.inner.commit()?;
+                Ok(result)
+            }
+            Err(action) => match transaction.inner.rollback() {
+                Ok(()) => Err(action),
+                Err(rollback) => Err(SqliteStoreError::TransactionRollback {
+                    action: Box::new(action),
+                    rollback,
+                }),
+            },
+        }
     }
 }
 
@@ -398,4 +417,157 @@ macro_rules! sqliteParams {
     ($($value:expr),+ $(,)?) => {
         vec![$($crate::SqliteStore::toSqliteValue(&$value)),+]
     };
+}
+
+#[cfg(test)]
+mod transaction_lifecycle_tests {
+    use super::*;
+    use operit_host_api::HostResult;
+
+    /// Records host lifecycle calls without implementing destructor rollback.
+    #[derive(Default)]
+    struct LifecycleState {
+        commits: usize,
+        rollbacks: usize,
+        failRollback: bool,
+    }
+
+    /// Supplies a transaction whose only cleanup path is the explicit host method.
+    struct LifecycleConnection {
+        state: Arc<Mutex<LifecycleState>>,
+    }
+
+    impl RuntimeSqliteConnection for LifecycleConnection {
+        /// Rejects batch statements outside the lifecycle under test.
+        fn executeBatch(&mut self, _: &str) -> HostResult<()> {
+            Err(HostError::new("Unexpected lifecycle batch"))
+        }
+
+        /// Rejects nontransactional statements in this lifecycle test.
+        fn execute(&mut self, _: &str, _: Vec<SqliteValue>) -> HostResult<usize> {
+            Err(HostError::new("Unexpected lifecycle execute"))
+        }
+
+        /// Rejects connection queries that are unrelated to transaction cleanup.
+        fn query(&mut self, _: &str, _: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>> {
+            Err(HostError::new("Unexpected lifecycle query"))
+        }
+
+        /// Rejects row-id lookups that are unrelated to transaction cleanup.
+        fn lastInsertRowId(&self) -> HostResult<i64> {
+            Err(HostError::new("Unexpected lifecycle row id"))
+        }
+
+        /// Returns a host transaction with recorded explicit terminal calls.
+        fn beginTransaction(&mut self) -> HostResult<Box<dyn RuntimeSqliteTransaction + '_>> {
+            Ok(Box::new(LifecycleTransaction {
+                state: self.state.clone(),
+            }))
+        }
+    }
+
+    /// Uses explicit lifecycle counters rather than RAII to detect missing rollback calls.
+    struct LifecycleTransaction {
+        state: Arc<Mutex<LifecycleState>>,
+    }
+
+    impl RuntimeSqliteTransaction for LifecycleTransaction {
+        /// Reports a deterministic statement error without rolling anything back implicitly.
+        fn execute(&mut self, _: &str, _: Vec<SqliteValue>) -> HostResult<usize> {
+            Err(HostError::new("Injected action SQL failure"))
+        }
+
+        /// Rejects queries that are not needed by the lifecycle test.
+        fn query(&mut self, _: &str, _: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>> {
+            Err(HostError::new("Unexpected lifecycle transaction query"))
+        }
+
+        /// Rejects row-id lookups that are not needed by the lifecycle test.
+        fn lastInsertRowId(&self) -> HostResult<i64> {
+            Err(HostError::new("Unexpected lifecycle transaction row id"))
+        }
+
+        /// Records the sole successful commit terminal operation.
+        fn commit(self: Box<Self>) -> HostResult<()> {
+            self.state.lock().unwrap().commits += 1;
+            Ok(())
+        }
+
+        /// Records explicit rollback and optionally reports the independent injected cleanup failure.
+        fn rollback(self: Box<Self>) -> HostResult<()> {
+            let mut state = self.state.lock().unwrap();
+            state.rollbacks += 1;
+            if state.failRollback {
+                return Err(HostError::new("Injected host rollback failure"));
+            }
+            Ok(())
+        }
+    }
+
+    /// Builds a store around the lifecycle-only host so destructor cleanup cannot make the test pass.
+    fn lifecycleStore(failRollback: bool) -> (SqliteStore, Arc<Mutex<LifecycleState>>) {
+        let state = Arc::new(Mutex::new(LifecycleState {
+            failRollback,
+            ..LifecycleState::default()
+        }));
+        let store = SqliteStore {
+            path: PathBuf::from("transaction-lifecycle-test"),
+            connection: Arc::new(Mutex::new(Box::new(LifecycleConnection {
+                state: state.clone(),
+            }))),
+            observers: Arc::new(Mutex::new(Vec::new())),
+            executionLeases: Arc::new(Mutex::new(
+                crate::ChatExecutionLease::ChatExecutionLeaseState::default(),
+            )),
+        };
+        (store, state)
+    }
+
+    /// Requires exactly one explicit rollback and preserves the original failed statement error.
+    #[test]
+    fn failed_action_rolls_back_explicitly_without_destructor_cleanup() {
+        let (store, state) = lifecycleStore(false);
+        let error = store
+            .transaction::<(), _>(|transaction| {
+                transaction.execute("injected failure", Vec::new())?;
+                Ok(())
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "host error: Injected action SQL failure");
+        let state = state.lock().unwrap();
+        assert_eq!((state.commits, state.rollbacks), (0, 1));
+    }
+
+    /// Reports both the action failure and explicit rollback failure instead of losing either error.
+    #[test]
+    fn rollback_failure_preserves_both_action_and_host_errors() {
+        let (store, state) = lifecycleStore(true);
+        let error = store
+            .transaction::<(), _>(|transaction| {
+                transaction.execute("injected failure", Vec::new())?;
+                Ok(())
+            })
+            .unwrap_err();
+        match error {
+            SqliteStoreError::TransactionRollback { action, rollback } => {
+                assert_eq!(
+                    action.to_string(),
+                    "host error: Injected action SQL failure"
+                );
+                assert_eq!(rollback.to_string(), "Injected host rollback failure");
+            }
+            other => panic!("Expected both transaction errors, got {other}"),
+        }
+        let state = state.lock().unwrap();
+        assert_eq!((state.commits, state.rollbacks), (0, 1));
+    }
+
+    /// Requires a successful action to commit exactly once without calling rollback.
+    #[test]
+    fn successful_action_commits_once() {
+        let (store, state) = lifecycleStore(false);
+        assert_eq!(store.transaction(|_| Ok(7)).unwrap(), 7);
+        let state = state.lock().unwrap();
+        assert_eq!((state.commits, state.rollbacks), (1, 0));
+    }
 }

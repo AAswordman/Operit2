@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use operit_host_api::HostEnvironmentDescriptor;
 
-use crate::runtime_support::{
-    CachedMcpToolInfo, ResolvedCharacterCardToolAccess, ToolRuntimeSupport,
-};
+use crate::runtime_support::{CachedMcpToolInfo, ToolRuntimeSupport};
 use crate::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
 use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use crate::tools::skill_runtime::SkillRepository::SkillRepository;
@@ -229,15 +227,16 @@ impl CliToolModeSupport {
         format!("{intro}\n\n{category}")
     }
 
+    /// Builds discoverable tools from registered executors and one ready package snapshot.
     #[allow(non_snake_case)]
     pub fn buildHiddenToolCatalog(
         context: &HostManager,
         packageManager: &RuntimePackageManager,
         useEnglish: bool,
-        roleCardToolAccess: &ResolvedCharacterCardToolAccess,
         hostEnvironment: &HostEnvironmentDescriptor,
         runtimeSupport: &dyn ToolRuntimeSupport,
-    ) -> Vec<HiddenToolCatalogEntry> {
+        registeredToolNames: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<HiddenToolCatalogEntry>, String> {
         let categories =
             Self::buildBuiltinAndInternalCategories(useEnglish, hostEnvironment, runtimeSupport);
         let builtinToolNames =
@@ -246,13 +245,13 @@ impl CliToolModeSupport {
 
         for category in categories {
             for tool in category.tools {
+                if !registeredToolNames.contains(&tool.name) {
+                    continue;
+                }
                 if tool.name == "use_package" {
                     continue;
                 }
                 if Self::isReservedProxyTarget(&tool.name) || Self::isCliPublicTool(&tool.name) {
-                    continue;
-                }
-                if !Self::isToolNameAllowedForRoleCard(&tool.name, None, roleCardToolAccess) {
                     continue;
                 }
 
@@ -280,13 +279,14 @@ impl CliToolModeSupport {
             .map(|name| name.trim().to_string())
             .filter(|name| !name.is_empty())
             .filter(|name| !packageManager.isToolPkgContainer(name))
-            .filter(|name| roleCardToolAccess.isExternalSourceAllowed(name))
             .collect::<Vec<_>>();
 
         for packageName in enabledPackages {
-            let Some(toolPackage) = packageManager.getEffectivePackageTools(&packageName) else {
-                continue;
-            };
+            let toolPackage = packageManager
+                .getEffectivePackageTools(&packageName)
+                .ok_or_else(|| {
+                    format!("Enabled package has no registered tool definition: {packageName}")
+                })?;
             if toolPackage.tools.is_empty() {
                 Self::addActivationEntry(
                     &mut entries,
@@ -309,9 +309,6 @@ impl CliToolModeSupport {
 
         let skillPackages = runtimeSupport.aiVisibleSkillPackages();
         for skillPackage in skillPackages {
-            if !roleCardToolAccess.isExternalSourceAllowed(&skillPackage.name) {
-                continue;
-            }
             Self::addActivationEntry(
                 &mut entries,
                 &skillPackage.name,
@@ -324,9 +321,6 @@ impl CliToolModeSupport {
         let mcpServers = packageManager.getAvailableServerPackages();
         let mcpLocalServer = MCPLocalServer::getInstance(context);
         for (serverName, serverConfig) in mcpServers {
-            if !roleCardToolAccess.isExternalSourceAllowed(&serverName) {
-                continue;
-            }
             let cachedTools = runtimeSupport.cachedMcpTools(&serverName);
             if cachedTools.is_empty() {
                 Self::addActivationEntry(
@@ -346,7 +340,7 @@ impl CliToolModeSupport {
             );
         }
 
-        entries.into_values().collect()
+        Ok(entries.into_values().collect())
     }
 
     #[allow(non_snake_case)]
@@ -519,30 +513,6 @@ impl CliToolModeSupport {
         } else {
             "当前角色卡无权访问这个隐藏工具。".to_string()
         }
-    }
-
-    #[allow(non_snake_case)]
-    pub fn isToolNameAllowedForRoleCard(
-        toolName: &str,
-        usePackageSourceName: Option<&str>,
-        roleCardToolAccess: &ResolvedCharacterCardToolAccess,
-    ) -> bool {
-        if toolName == "use_package" {
-            if !roleCardToolAccess.isBuiltinToolAllowed("use_package") {
-                return false;
-            }
-            return usePackageSourceName
-                .map(str::trim)
-                .map(|sourceName| {
-                    sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(sourceName)
-                })
-                .unwrap_or(true);
-        }
-        if toolName.contains(':') {
-            let sourceName = toolName.split(':').next().unwrap_or("").trim();
-            return sourceName.is_empty() || roleCardToolAccess.isExternalSourceAllowed(sourceName);
-        }
-        roleCardToolAccess.isBuiltinToolAllowed(toolName)
     }
 
     #[allow(non_snake_case)]

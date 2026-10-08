@@ -428,6 +428,10 @@ class UserPreferencesManager {
   static const String _KEY_CHAT_HISTORY_GROUPING_MODE =
       'chat_history_grouping_mode';
 
+  /// Names the only built-in conversation tab, independent of old grouping values.
+  static const String CHAT_SIDEBAR_WORKSPACE_TAB = 'workspace';
+  static const String _KEY_CHAT_SIDEBAR_TAB = 'chat_sidebar_tab_v1';
+
   static const ThemePreferenceSnapshot defaultThemePreferenceSnapshot =
       ThemePreferenceSnapshot(
         themeMode: ThemeMode.system,
@@ -722,7 +726,7 @@ class UserPreferencesManager {
     ..._floatThemeKeys,
   ];
 
-  static const List<String> _targetThemeKeys = <String>[
+  static const List<String> _appearanceKeys = <String>[
     ..._themeKeys,
     _KEY_CUSTOM_USER_AVATAR_URI,
   ];
@@ -748,6 +752,38 @@ class UserPreferencesManager {
         )
         .distinct(mapEquals)
         .map(_decodeLongPastedTextInputSettings);
+  }
+
+  /// Observes the new opaque tab selection without consulting legacy grouping keys.
+  Stream<String> chatSidebarTabFlow() => preferencesFlow()
+      .map((values) => _decodeChatSidebarTab(values[_KEY_CHAT_SIDEBAR_TAB]))
+      .distinct();
+
+  /// Defines workspace as the initial state of the new key and rejects corrupt values.
+  String _decodeChatSidebarTab(String? value) {
+    if (value == null) {
+      return CHAT_SIDEBAR_WORKSPACE_TAB;
+    }
+    if (value.trim().isEmpty) {
+      throw const FormatException(
+        'The persisted chat sidebar tab ID is blank.',
+      );
+    }
+    return value;
+  }
+
+  /// Loads the opaque tab selection without translating legacy character preferences.
+  Future<String> loadChatSidebarTab() async {
+    final values = await _getStrings(<String>[_KEY_CHAT_SIDEBAR_TAB]);
+    return _decodeChatSidebarTab(values[_KEY_CHAT_SIDEBAR_TAB]);
+  }
+
+  /// Persists a caller-owned opaque tab ID without interpreting package input.
+  Future<void> saveChatSidebarTab(String tabId) async {
+    if (tabId.trim().isEmpty) {
+      throw ArgumentError.value(tabId, 'tabId', 'must not be blank');
+    }
+    await _setStrings(<String, String>{_KEY_CHAT_SIDEBAR_TAB: tabId});
   }
 
   /// Observes the persisted sidebar conversation grouping mode.
@@ -845,36 +881,29 @@ class UserPreferencesManager {
     await _setStrings(<String, String>{_KEY_CHAT_HISTORY_GROUPING_MODE: mode});
   }
 
-  /// Resolves one target-scoped theme snapshot and migrates its mode field.
-  Future<ThemePreferenceSnapshot> resolveThemePreferenceSnapshot({
-    String? characterCardId,
-    String? characterGroupId,
-  }) async {
-    final prefix = _requiredThemePrefix(
-      characterCardId: characterCardId,
-      characterGroupId: characterGroupId,
-    );
-    final keys = [
-      ..._prefixedTargetThemeKeys(prefix),
-      _keyWithPrefix(_LEGACY_USE_SYSTEM_THEME, prefix),
-      _KEY_CUSTOM_USER_AVATAR_URI,
-    ];
+  /// Reads ordinary appearance values without querying plugin-owned references.
+  Future<ThemePreferenceSnapshot> resolveThemePreferenceSnapshot() async {
+    final keys = [..._appearanceKeys, _LEGACY_USE_SYSTEM_THEME];
     final preferences = await _getStrings(keys);
 
+    /// Reads an ordinary key using its declared initial value when unset.
     String? stringValue(String key, {String? defaultValue}) {
-      return preferences[_keyWithPrefix(key, prefix)] ?? defaultValue;
+      return preferences[key] ?? defaultValue;
     }
 
+    /// Decodes an ordinary boolean and rejects malformed stored values.
     bool booleanValue(String key, bool defaultValue) {
       final value = stringValue(key);
       return value == null ? defaultValue : _decodeBool(value);
     }
 
+    /// Decodes an optional ordinary integer without altering malformed data.
     int? intValue(String key) {
       final value = stringValue(key);
       return value == null ? null : int.parse(value);
     }
 
+    /// Decodes an ordinary number using only its declared unset-key value.
     double doubleValue(String key, double defaultValue) {
       final value = stringValue(key);
       return value == null ? defaultValue : double.parse(value);
@@ -883,10 +912,7 @@ class UserPreferencesManager {
     final storedThemeMode = _decodeThemeMode(
       stringValue(_THEME_MODE) ?? ThemeMode.system.name,
     );
-    final legacyUseSystemThemeKey = _keyWithPrefix(
-      _LEGACY_USE_SYSTEM_THEME,
-      prefix,
-    );
+    const legacyUseSystemThemeKey = _LEGACY_USE_SYSTEM_THEME;
     final legacyUseSystemTheme = preferences[legacyUseSystemThemeKey];
     final themeMode = legacyUseSystemTheme == null
         ? storedThemeMode
@@ -894,9 +920,7 @@ class UserPreferencesManager {
         ? ThemeMode.system
         : storedThemeMode;
     if (legacyUseSystemTheme != null) {
-      await _setStrings(<String, String>{
-        _keyWithPrefix(_THEME_MODE, prefix): themeMode.name,
-      });
+      await _setStrings(<String, String>{_THEME_MODE: themeMode.name});
       await _removeStrings(<String>[legacyUseSystemThemeKey]);
     }
 
@@ -1038,10 +1062,8 @@ class UserPreferencesManager {
     );
   }
 
-  /// Persists the supplied target-scoped theme fields.
+  /// Persists supplied ordinary appearance fields without changing plugin bindings.
   Future<void> saveThemeSettings({
-    String? characterCardId,
-    String? characterGroupId,
     ThemeMode? themeMode,
     bool? useCustomColors,
     int? customPrimaryColor,
@@ -1120,17 +1142,14 @@ class UserPreferencesManager {
     String? bubbleAiSystemFontName,
     String? bubbleAiCustomFontPath,
   }) async {
-    final prefix = _requiredThemePrefix(
-      characterCardId: characterCardId,
-      characterGroupId: characterGroupId,
-    );
     final values = <String, String>{};
 
+    /// Encodes explicitly supplied fields for the ordinary preference transaction.
     void setIfPresent(String key, Object? value) {
       if (value == null) {
         return;
       }
-      values[_keyWithPrefix(key, prefix)] = value.toString();
+      values[key] = value.toString();
     }
 
     setIfPresent(_THEME_MODE, themeMode?.name);
@@ -1231,97 +1250,20 @@ class UserPreferencesManager {
     }
   }
 
-  Future<void> resetMessageColorSettingsForCharacterCard(
-    String characterCardId,
-  ) {
-    return _resetMessageColorSettingsWithPrefix(
-      _characterCardThemePrefix(characterCardId),
-    );
-  }
+  /// Clears only ordinary message color overrides, preserving other appearance values.
+  Future<void> resetMessageColorSettings() => _removeStrings(<String>[
+    _CURSOR_USER_BUBBLE_COLOR,
+    _BUBBLE_USER_BUBBLE_COLOR,
+    _BUBBLE_AI_BUBBLE_COLOR,
+    _BUBBLE_USER_TEXT_COLOR,
+    _BUBBLE_AI_TEXT_COLOR,
+  ]);
 
-  Future<void> resetMessageColorSettingsForCharacterGroup(
-    String characterGroupId,
-  ) {
-    return _resetMessageColorSettingsWithPrefix(
-      _characterGroupThemePrefix(characterGroupId),
-    );
-  }
+  /// Clears ordinary theme overrides without deleting independent user-avatar settings.
+  Future<void> resetThemeSettings() => _removeStrings(_themeKeys);
 
-  Future<void> cloneThemeBetweenCharacterCards(
-    String sourceCharacterCardId,
-    String targetCharacterCardId,
-  ) {
-    return _cloneThemeBetweenPrefixes(
-      _characterCardThemePrefix(sourceCharacterCardId),
-      _characterCardThemePrefix(targetCharacterCardId),
-    );
-  }
-
-  Future<void> deleteCharacterCardTheme(String characterCardId) {
-    return _deleteThemeByPrefix(_characterCardThemePrefix(characterCardId));
-  }
-
-  Future<bool> hasCharacterCardTheme(String characterCardId) {
-    return _hasThemePrefix(_characterCardThemePrefix(characterCardId));
-  }
-
-  Future<void> cloneThemeBetweenCharacterGroups(
-    String sourceCharacterGroupId,
-    String targetCharacterGroupId,
-  ) {
-    return _cloneThemeBetweenPrefixes(
-      _characterGroupThemePrefix(sourceCharacterGroupId),
-      _characterGroupThemePrefix(targetCharacterGroupId),
-    );
-  }
-
-  Future<void> deleteCharacterGroupTheme(String characterGroupId) {
-    return _deleteThemeByPrefix(_characterGroupThemePrefix(characterGroupId));
-  }
-
-  Future<bool> hasCharacterGroupTheme(String characterGroupId) {
-    return _hasThemePrefix(_characterGroupThemePrefix(characterGroupId));
-  }
-
-  Future<void> _cloneThemeBetweenPrefixes(
-    String sourcePrefix,
-    String targetPrefix,
-  ) async {
-    final sourceKeys = _prefixedTargetThemeKeys(sourcePrefix);
-    final values = await _getStrings(sourceKeys);
-    await _setStrings(
-      values.map(
-        (key, value) => MapEntry(
-          '$targetPrefix${key.substring(sourcePrefix.length)}',
-          value,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _deleteThemeByPrefix(String prefix) async {
-    await _removeStrings(_prefixedTargetThemeKeys(prefix));
-  }
-
-  Future<void> _resetMessageColorSettingsWithPrefix(String prefix) async {
-    await _removeStrings(
-      <String>[
-        _CURSOR_USER_BUBBLE_COLOR,
-        _BUBBLE_USER_BUBBLE_COLOR,
-        _BUBBLE_AI_BUBBLE_COLOR,
-        _BUBBLE_USER_TEXT_COLOR,
-        _BUBBLE_AI_TEXT_COLOR,
-      ].map((key) => '$prefix$key').toList(),
-    );
-  }
-
-  Future<bool> _hasThemePrefix(String prefix) async {
-    return _containsThemePrefix(
-      await _getStrings(_prefixedTargetThemeKeys(prefix)),
-      prefix,
-    );
-  }
-
+  /// Persists the ordinary user-avatar setting without any role ownership inference.
+  /// Writes the independent user avatar without referencing a plugin identity.
   Future<void> saveGlobalUserAvatarSettings({
     required String customUserAvatarUri,
   }) async {
@@ -1369,51 +1311,4 @@ ThemeMode _decodeThemeMode(String value) {
     'dark' => ThemeMode.dark,
     _ => throw FormatException('invalid theme mode preference: $value'),
   };
-}
-
-String? _normalizedThemeId(String? value) {
-  final normalized = value?.trim();
-  return normalized == null || normalized.isEmpty ? null : normalized;
-}
-
-String _requiredThemePrefix({
-  required String? characterCardId,
-  required String? characterGroupId,
-}) {
-  final normalizedGroupId = _normalizedThemeId(characterGroupId);
-  if (normalizedGroupId != null) {
-    return _characterGroupThemePrefix(normalizedGroupId);
-  }
-  final normalizedCardId = _normalizedThemeId(characterCardId);
-  if (normalizedCardId != null) {
-    return _characterCardThemePrefix(normalizedCardId);
-  }
-  throw StateError('No active character theme target');
-}
-
-String _characterCardThemePrefix(String characterCardId) {
-  return 'character_card_theme_${characterCardId}_';
-}
-
-String _characterGroupThemePrefix(String characterGroupId) {
-  return 'character_group_theme_${characterGroupId}_';
-}
-
-String _keyWithPrefix(String key, String? prefix) {
-  return prefix == null ? key : '$prefix$key';
-}
-
-List<String> _prefixedTargetThemeKeys(String prefix) {
-  return UserPreferencesManager._targetThemeKeys
-      .map((key) => '$prefix$key')
-      .toList();
-}
-
-bool _containsThemePrefix(Map<String, String> preferences, String prefix) {
-  for (final key in UserPreferencesManager._targetThemeKeys) {
-    if (preferences.containsKey('$prefix$key')) {
-      return true;
-    }
-  }
-  return false;
 }

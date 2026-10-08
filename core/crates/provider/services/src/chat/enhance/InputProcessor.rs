@@ -1,4 +1,3 @@
-use crate::chat::hooks::ActivePromptHookMetadata::build_active_prompt_hook_metadata;
 use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -20,15 +19,13 @@ pub struct ProcessUserInputRequest {
 impl InputProcessor {
     /// Applies input preprocessing hooks for one chat request.
     pub async fn process_user_input(request: ProcessUserInputRequest) -> String {
-        let active_prompt_metadata = build_active_prompt_hook_metadata(
-            request.chat_id.as_deref(),
-            request.role_card_id.as_deref(),
-        );
-        let mut metadata = HashMap::<String, Value>::new();
-        metadata.insert(
-            "activePrompt".to_string(),
-            Value::Object(active_prompt_metadata.to_value_map()),
-        );
+        let metadata = HashMap::<String, Value>::from([(
+            "executionContext".to_string(),
+            serde_json::json!({
+                "chatId": request.chat_id,
+                "participantId": request.role_card_id,
+            }),
+        )]);
 
         let before_context = PromptHookRegistry::dispatchPromptInputHooks(PromptHookContext {
             stage: "before_process".to_string(),

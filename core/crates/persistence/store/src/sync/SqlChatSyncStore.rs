@@ -1,3 +1,4 @@
+use crate::PluginExtensions::{decodePluginExtensions, encodePluginExtensions};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::sqliteParams;
@@ -26,7 +27,7 @@ use operit_model::MessageVariantEntity::MessageVariantEntity;
 /// Sync domain used for SQL-backed chat history operations.
 pub const CHAT_SYNC_DOMAIN: &str = "chat";
 
-const CHAT_SYNC_OPERATION_SCHEMA_VERSION: i32 = 6;
+const CHAT_SYNC_OPERATION_SCHEMA_VERSION: i32 = 7;
 
 const DELETE_CHAT: &str = "chats";
 const DELETE_MESSAGE: &str = "messages";
@@ -195,16 +196,27 @@ impl SqlChatSyncStore {
             .filter(|part| part.variantIndex != 0)
             .collect::<Vec<_>>();
         partRows.extend(baseParts);
-        let payload = ChatSyncPayload {
-            chatRows: vec![chat.clone()],
-            messageRows: vec![message.clone()],
-            partRows,
-            variantRows,
-            deletions: Vec::new(),
-        };
-        let payloadValue = serde_json::to_value(&payload)?;
         let createdAt = currentTimeMillis()?;
         self.store.transaction(|transaction| {
+            let mut chat = chat.clone();
+            let chatRow = transaction.queryOne("SELECT pluginExtensions FROM chats WHERE id = ?1", sqliteParams![chat.id])?.ok_or_else(|| SqliteStoreError::Message(format!("Chat does not exist: {}", chat.id)))?;
+            chat.pluginExtensions = decodePluginExtensions(&chatRow.get::<_, String>(0)?)?;
+            let mut message = message.clone();
+            let messageRow = transaction.queryOne("SELECT pluginExtensions FROM messages WHERE chatId = ?1 AND timestamp = ?2", sqliteParams![message.chatId, message.timestamp])?.ok_or_else(|| SqliteStoreError::Message("Assistant base record does not exist".to_string()))?;
+            message.pluginExtensions = decodePluginExtensions(&messageRow.get::<_, String>(0)?)?;
+            let mut variantRows = variantRows.clone();
+            for variant in &mut variantRows {
+                let row = transaction.queryOne("SELECT pluginExtensions FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3", sqliteParams![variant.chatId, variant.messageTimestamp, variant.variantIndex])?.ok_or_else(|| SqliteStoreError::Message("Assistant variant record does not exist".to_string()))?;
+                variant.pluginExtensions = decodePluginExtensions(&row.get::<_, String>(0)?)?;
+            }
+            let payload = ChatSyncPayload {
+                chatRows: vec![chat.clone()],
+                messageRows: vec![message.clone()],
+                partRows: partRows.clone(),
+                variantRows,
+                deletions: Vec::new(),
+            };
+            let payloadValue = serde_json::to_value(&payload)?;
             upsertChat(transaction, &chat)?;
             upsertMessage(transaction, &message)?;
             for variant in &payload.variantRows {
@@ -592,22 +604,10 @@ fn readPayload(store: &SqliteStore, opId: &str) -> Result<ChatSyncPayload, Sqlit
     })
 }
 
+/// Reads complete chat sync records including independently persisted extension maps.
 fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-    store
-        .queryRows(
-            r#"
-            SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens,
-                currentWindowSize, "group", displayOrder, workspaceId,
-                parentChatId, characterCardName, characterGroupId, locked, pinned
-            FROM sync_sql_chat_rows
-            WHERE opId = ?1
-            ORDER BY id
-            "#,
-            sqliteParams![opId],
-        )?
-        .into_iter()
-        .map(|row| {
-            Ok(ChatEntity {
+    store.queryRows("SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions FROM sync_sql_chat_rows WHERE opId = ?1 ORDER BY id", sqliteParams![opId])?
+        .into_iter().map(|row| Ok(ChatEntity {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 createdAt: row.get(2)?,
@@ -615,39 +615,22 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
                 inputTokens: row.get(4)?,
                 outputTokens: row.get(5)?,
                 currentWindowSize: row.get(6)?,
-                group: row.get(7)?,
-                displayOrder: row.get(8)?,
-                workspaceId: row.get(9)?,
-                parentChatId: row.get(10)?,
-                characterCardName: row.get(11)?,
-                characterGroupId: row.get(12)?,
-                locked: row.get(13)?,
-                pinned: row.get(14)?,
-            })
-        })
-        .collect()
+                displayOrder: row.get(7)?,
+                workspaceId: row.get(8)?,
+                parentChatId: row.get(9)?,
+                locked: row.get(10)?,
+                pinned: row.get(11)?,
+                pluginExtensions: decodePluginExtensions(&row.get::<_, String>(12)?)?,
+            })).collect()
 }
 
+/// Reads complete message sync records including independently persisted extension maps.
 fn readMessageRows(
     store: &SqliteStore,
     opId: &str,
 ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-    store
-        .queryRows(
-            r#"
-            SELECT chatId, sender, timestamp, orderIndex, roleName,
-                selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
-                cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-                completedAt, completedExecutionGeneration, displayMode, isFavorite
-            FROM sync_sql_message_rows
-            WHERE opId = ?1
-            ORDER BY chatId, timestamp
-            "#,
-            sqliteParams![opId],
-        )?
-        .into_iter()
-        .map(|row| {
-            Ok(MessageEntity {
+    store.queryRows("SELECT chatId, sender, timestamp, orderIndex, roleName, selectedVariantIndex, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions FROM sync_sql_message_rows WHERE opId = ?1 ORDER BY chatId, timestamp", sqliteParams![opId])?
+        .into_iter().map(|row| Ok(MessageEntity {
                 messageId: 0,
                 chatId: row.get(0)?,
                 sender: row.get(1)?,
@@ -667,30 +650,17 @@ fn readMessageRows(
                 completedExecutionGeneration: row.get(15)?,
                 displayMode: row.get(16)?,
                 isFavorite: row.get(17)?,
-            })
-        })
-        .collect()
+                pluginExtensions: decodePluginExtensions(&row.get::<_, String>(18)?)?,
+            })).collect()
 }
 
+/// Reads complete variant sync records including independently persisted extension maps.
 fn readVariantRows(
     store: &SqliteStore,
     opId: &str,
 ) -> Result<Vec<MessageVariantEntity>, SqliteStoreError> {
-    store
-        .queryRows(
-            r#"
-            SELECT chatId, messageTimestamp, variantIndex, roleName,
-                provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-                sentAt, outputDurationMs, waitDurationMs, completedAt
-            FROM sync_sql_message_variant_rows
-            WHERE opId = ?1
-            ORDER BY chatId, messageTimestamp, variantIndex
-            "#,
-            sqliteParams![opId],
-        )?
-        .into_iter()
-        .map(|row| {
-            Ok(MessageVariantEntity {
+    store.queryRows("SELECT chatId, messageTimestamp, variantIndex, roleName, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions FROM sync_sql_message_variant_rows WHERE opId = ?1 ORDER BY chatId, messageTimestamp, variantIndex", sqliteParams![opId])?
+        .into_iter().map(|row| Ok(MessageVariantEntity {
                 variantId: 0,
                 chatId: row.get(0)?,
                 messageTimestamp: row.get(1)?,
@@ -705,9 +675,8 @@ fn readVariantRows(
                 outputDurationMs: row.get(10)?,
                 waitDurationMs: row.get(11)?,
                 completedAt: row.get(12)?,
-            })
-        })
-        .collect()
+                pluginExtensions: decodePluginExtensions(&row.get::<_, String>(13)?)?,
+            })).collect()
 }
 
 /// Reads structured part rows stored for one pending sync operation.
@@ -836,79 +805,23 @@ fn insertOperation(
     Ok(())
 }
 
+/// Stores a complete chat record in the real sync operation payload table.
 fn insertChatSyncRow(
     transaction: &mut SqliteTransaction<'_>,
     opId: &str,
     chat: &ChatEntity,
 ) -> Result<(), SqliteStoreError> {
-    transaction.execute(
-        r#"
-        INSERT INTO sync_sql_chat_rows (
-            opId, id, title, createdAt, updatedAt, inputTokens, outputTokens,
-            currentWindowSize, "group", displayOrder, workspaceId,
-            parentChatId, characterCardName, characterGroupId, locked, pinned
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
-        "#,
-        sqliteParams![
-            opId,
-            chat.id,
-            chat.title,
-            chat.createdAt,
-            chat.updatedAt,
-            chat.inputTokens,
-            chat.outputTokens,
-            chat.currentWindowSize,
-            chat.group,
-            chat.displayOrder,
-            chat.workspaceId,
-            chat.parentChatId,
-            chat.characterCardName,
-            chat.characterGroupId,
-            chat.locked,
-            chat.pinned,
-        ],
-    )?;
+    transaction.execute("INSERT INTO sync_sql_chat_rows (opId, id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)", sqliteParams![opId, chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, encodePluginExtensions(&chat.pluginExtensions)?])?;
     Ok(())
 }
 
+/// Stores a complete message record in the real sync operation payload table.
 fn insertMessageSyncRow(
     transaction: &mut SqliteTransaction<'_>,
     opId: &str,
     message: &MessageEntity,
 ) -> Result<(), SqliteStoreError> {
-    transaction.execute(
-        r#"
-        INSERT INTO sync_sql_message_rows (
-            opId, chatId, sender, timestamp, orderIndex, roleName,
-            selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
-            cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-            completedAt, completedExecutionGeneration, displayMode, isFavorite
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-        "#,
-        sqliteParams![
-            opId,
-            message.chatId,
-            message.sender,
-            message.timestamp,
-            message.orderIndex,
-            message.roleName,
-            message.selectedVariantIndex,
-            message.provider,
-            message.modelName,
-            message.inputTokens,
-            message.outputTokens,
-            message.cachedInputTokens,
-            message.sentAt,
-            message.outputDurationMs,
-            message.waitDurationMs,
-            message.completedAt,
-            message.completedExecutionGeneration,
-            message.displayMode,
-            message.isFavorite,
-        ],
-    )?;
+    transaction.execute("INSERT INTO sync_sql_message_rows (opId, chatId, sender, timestamp, orderIndex, roleName, selectedVariantIndex, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)", sqliteParams![opId, message.chatId, message.sender, message.timestamp, message.orderIndex, message.roleName, message.selectedVariantIndex, message.provider, message.modelName, message.inputTokens, message.outputTokens, message.cachedInputTokens, message.sentAt, message.outputDurationMs, message.waitDurationMs, message.completedAt, message.completedExecutionGeneration, message.displayMode, message.isFavorite, encodePluginExtensions(&message.pluginExtensions)?])?;
     Ok(())
 }
 
@@ -946,37 +859,13 @@ fn insertPartSyncRow(
     Ok(())
 }
 
+/// Stores a complete variant record in the real sync operation payload table.
 fn insertVariantSyncRow(
     transaction: &mut SqliteTransaction<'_>,
     opId: &str,
     variant: &MessageVariantEntity,
 ) -> Result<(), SqliteStoreError> {
-    transaction.execute(
-        r#"
-        INSERT INTO sync_sql_message_variant_rows (
-            opId, chatId, messageTimestamp, variantIndex, roleName,
-            provider, modelName, inputTokens, outputTokens, cachedInputTokens,
-            sentAt, outputDurationMs, waitDurationMs, completedAt
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-        "#,
-        sqliteParams![
-            opId,
-            variant.chatId,
-            variant.messageTimestamp,
-            variant.variantIndex,
-            variant.roleName,
-            variant.provider,
-            variant.modelName,
-            variant.inputTokens,
-            variant.outputTokens,
-            variant.cachedInputTokens,
-            variant.sentAt,
-            variant.outputDurationMs,
-            variant.waitDurationMs,
-            variant.completedAt,
-        ],
-    )?;
+    transaction.execute("INSERT INTO sync_sql_message_variant_rows (opId, chatId, messageTimestamp, variantIndex, roleName, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)", sqliteParams![opId, variant.chatId, variant.messageTimestamp, variant.variantIndex, variant.roleName, variant.provider, variant.modelName, variant.inputTokens, variant.outputTokens, variant.cachedInputTokens, variant.sentAt, variant.outputDurationMs, variant.waitDurationMs, variant.completedAt, encodePluginExtensions(&variant.pluginExtensions)?])?;
     Ok(())
 }
 
@@ -1097,55 +986,16 @@ fn applyDeletion(
     Ok(())
 }
 
+/// Applies a complete authoritative synced chat record including its namespace objects.
 fn upsertChat(
     transaction: &mut SqliteTransaction<'_>,
     chat: &ChatEntity,
 ) -> Result<(), SqliteStoreError> {
-    transaction.execute(
-        r#"
-        INSERT INTO chats (
-            id, title, createdAt, updatedAt, inputTokens, outputTokens,
-            currentWindowSize, "group", displayOrder, workspaceId,
-            parentChatId, characterCardName, characterGroupId, locked, pinned
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-        ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
-            createdAt = excluded.createdAt,
-            updatedAt = excluded.updatedAt,
-            inputTokens = excluded.inputTokens,
-            outputTokens = excluded.outputTokens,
-            currentWindowSize = excluded.currentWindowSize,
-            "group" = excluded."group",
-            displayOrder = excluded.displayOrder,
-            workspaceId = excluded.workspaceId,
-            parentChatId = excluded.parentChatId,
-            characterCardName = excluded.characterCardName,
-            characterGroupId = excluded.characterGroupId,
-            locked = excluded.locked,
-            pinned = excluded.pinned
-        "#,
-        sqliteParams![
-            chat.id,
-            chat.title,
-            chat.createdAt,
-            chat.updatedAt,
-            chat.inputTokens,
-            chat.outputTokens,
-            chat.currentWindowSize,
-            chat.group,
-            chat.displayOrder,
-            chat.workspaceId,
-            chat.parentChatId,
-            chat.characterCardName,
-            chat.characterGroupId,
-            chat.locked,
-            chat.pinned,
-        ],
-    )?;
+    transaction.execute("INSERT INTO chats (id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) ON CONFLICT(id) DO UPDATE SET title = excluded.title, createdAt = excluded.createdAt, updatedAt = excluded.updatedAt, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, currentWindowSize = excluded.currentWindowSize, displayOrder = excluded.displayOrder, workspaceId = excluded.workspaceId, parentChatId = excluded.parentChatId, locked = excluded.locked, pinned = excluded.pinned, pluginExtensions = excluded.pluginExtensions", sqliteParams![chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, encodePluginExtensions(&chat.pluginExtensions)?])?;
     Ok(())
 }
 
+/// Applies a complete authoritative synced message record including its namespace objects.
 fn upsertMessage(
     transaction: &mut SqliteTransaction<'_>,
     message: &MessageEntity,
@@ -1154,77 +1004,16 @@ fn upsertMessage(
         "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2",
         sqliteParams![message.chatId, message.timestamp],
     )?;
-    transaction.execute(
-        "DELETE FROM messages WHERE chatId = ?1 AND timestamp = ?2",
-        sqliteParams![message.chatId, message.timestamp],
-    )?;
-    transaction.execute(
-        r#"
-        INSERT INTO messages (
-            chatId, sender, timestamp, orderIndex, roleName,
-            selectedVariantIndex, provider, modelName, inputTokens, outputTokens,
-            cachedInputTokens, sentAt, outputDurationMs, waitDurationMs,
-            completedAt, completedExecutionGeneration, displayMode, isFavorite
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
-        "#,
-        sqliteParams![
-            message.chatId,
-            message.sender,
-            message.timestamp,
-            message.orderIndex,
-            message.roleName,
-            message.selectedVariantIndex,
-            message.provider,
-            message.modelName,
-            message.inputTokens,
-            message.outputTokens,
-            message.cachedInputTokens,
-            message.sentAt,
-            message.outputDurationMs,
-            message.waitDurationMs,
-            message.completedAt,
-            message.completedExecutionGeneration,
-            message.displayMode,
-            message.isFavorite,
-        ],
-    )?;
+    transaction.execute("INSERT INTO messages (chatId, sender, timestamp, orderIndex, roleName, selectedVariantIndex, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, completedExecutionGeneration, displayMode, isFavorite, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19) ON CONFLICT(chatId, timestamp) DO UPDATE SET sender = excluded.sender, orderIndex = excluded.orderIndex, roleName = excluded.roleName, selectedVariantIndex = excluded.selectedVariantIndex, provider = excluded.provider, modelName = excluded.modelName, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, cachedInputTokens = excluded.cachedInputTokens, sentAt = excluded.sentAt, outputDurationMs = excluded.outputDurationMs, waitDurationMs = excluded.waitDurationMs, completedAt = excluded.completedAt, completedExecutionGeneration = excluded.completedExecutionGeneration, displayMode = excluded.displayMode, isFavorite = excluded.isFavorite, pluginExtensions = excluded.pluginExtensions", sqliteParams![message.chatId, message.sender, message.timestamp, message.orderIndex, message.roleName, message.selectedVariantIndex, message.provider, message.modelName, message.inputTokens, message.outputTokens, message.cachedInputTokens, message.sentAt, message.outputDurationMs, message.waitDurationMs, message.completedAt, message.completedExecutionGeneration, message.displayMode, message.isFavorite, encodePluginExtensions(&message.pluginExtensions)?])?;
     Ok(())
 }
 
+/// Applies a complete authoritative synced variant record including its namespace objects.
 fn upsertVariant(
     transaction: &mut SqliteTransaction<'_>,
     variant: &MessageVariantEntity,
 ) -> Result<(), SqliteStoreError> {
-    transaction.execute(
-        "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
-        sqliteParams![variant.chatId, variant.messageTimestamp, variant.variantIndex],
-    )?;
-    transaction.execute(
-        r#"
-        INSERT INTO message_variants (
-            chatId, messageTimestamp, variantIndex, roleName, provider,
-            modelName, inputTokens, outputTokens, cachedInputTokens, sentAt,
-            outputDurationMs, waitDurationMs, completedAt
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-        "#,
-        sqliteParams![
-            variant.chatId,
-            variant.messageTimestamp,
-            variant.variantIndex,
-            variant.roleName,
-            variant.provider,
-            variant.modelName,
-            variant.inputTokens,
-            variant.outputTokens,
-            variant.cachedInputTokens,
-            variant.sentAt,
-            variant.outputDurationMs,
-            variant.waitDurationMs,
-            variant.completedAt,
-        ],
-    )?;
+    transaction.execute("INSERT INTO message_variants (chatId, messageTimestamp, variantIndex, roleName, provider, modelName, inputTokens, outputTokens, cachedInputTokens, sentAt, outputDurationMs, waitDurationMs, completedAt, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) ON CONFLICT(chatId, messageTimestamp, variantIndex) DO UPDATE SET roleName = excluded.roleName, provider = excluded.provider, modelName = excluded.modelName, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, cachedInputTokens = excluded.cachedInputTokens, sentAt = excluded.sentAt, outputDurationMs = excluded.outputDurationMs, waitDurationMs = excluded.waitDurationMs, completedAt = excluded.completedAt, pluginExtensions = excluded.pluginExtensions", sqliteParams![variant.chatId, variant.messageTimestamp, variant.variantIndex, variant.roleName, variant.provider, variant.modelName, variant.inputTokens, variant.outputTokens, variant.cachedInputTokens, variant.sentAt, variant.outputDurationMs, variant.waitDurationMs, variant.completedAt, encodePluginExtensions(&variant.pluginExtensions)?])?;
     Ok(())
 }
 
@@ -1434,3 +1223,6 @@ fn currentTimeMillis() -> Result<i64, SqlChatSyncStoreError> {
 #[cfg(test)]
 #[path = "SqlChatSyncStoreTests/mod.rs"]
 pub(crate) mod tests;
+
+#[path = "SqlChatExtensionTransactions.rs"]
+mod extension_transactions;

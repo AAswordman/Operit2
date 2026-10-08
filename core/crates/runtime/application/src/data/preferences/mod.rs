@@ -1,7 +1,5 @@
 #![allow(non_snake_case)]
 
-#[path = "ActivePromptManager.rs"]
-pub mod ActivePromptManager;
 #[path = "AgreementPreferences.rs"]
 pub mod AgreementPreferences;
 #[path = "AndroidPermissionPreferences.rs"]
@@ -10,14 +8,6 @@ pub mod AndroidPermissionPreferences;
 pub mod ApiPreferences;
 #[path = "CodexAuthPreferences.rs"]
 pub mod CodexAuthPreferences;
-#[path = "CharacterCardBilingualData.rs"]
-pub mod CharacterCardBilingualData;
-#[path = "CharacterCardManager.rs"]
-pub mod CharacterCardManager;
-#[path = "CharacterCardToolAccessResolver.rs"]
-pub mod CharacterCardToolAccessResolver;
-#[path = "CharacterGroupCardManager.rs"]
-pub mod CharacterGroupCardManager;
 #[path = "CustomEmojiPreferences.rs"]
 pub mod CustomEmojiPreferences;
 #[path = "EnvPreferences.rs"]
@@ -36,22 +26,20 @@ pub mod GitHubAuthPreferences;
 pub mod MemorySearchSettingsPreferences;
 #[path = "ModelConfigManager.rs"]
 pub mod ModelConfigManager;
-#[path = "PersonaCardChatHistoryManager.rs"]
-pub mod PersonaCardChatHistoryManager;
 #[path = "PreferenceStorageManager.rs"]
 pub mod PreferenceStorageManager;
-#[path = "PromptTagManager.rs"]
-pub mod PromptTagManager;
 #[path = "PromptVersionManager.rs"]
 pub mod PromptVersionManager;
 #[path = "RemoteAnnouncementPreferences.rs"]
 pub mod RemoteAnnouncementPreferences;
-#[path = "SharedMemoryStoreManager.rs"]
-pub mod SharedMemoryStoreManager;
 #[path = "SkillVisibilityPreferences.rs"]
 pub mod SkillVisibilityPreferences;
 #[path = "SttConfigManager.rs"]
 pub mod SttConfigManager;
+#[path = "ThemeConfigManager.rs"]
+pub mod ThemeConfigManager;
+#[path = "ThemePreferenceSnapshot.rs"]
+pub mod ThemePreferenceSnapshot;
 #[path = "TtsConfigManager.rs"]
 pub mod TtsConfigManager;
 #[path = "UserPreferencesManager.rs"]
@@ -61,14 +49,9 @@ pub mod WaifuPreferences;
 #[path = "WakeWordPreferences.rs"]
 pub mod WakeWordPreferences;
 
-pub use ActivePromptManager::*;
 pub use AgreementPreferences::*;
 pub use AndroidPermissionPreferences::*;
 pub use ApiPreferences::*;
-pub use CharacterCardBilingualData::*;
-pub use CharacterCardManager::*;
-pub use CharacterCardToolAccessResolver::*;
-pub use CharacterGroupCardManager::*;
 pub use CustomEmojiPreferences::*;
 pub use EnvPreferences::*;
 pub use ExternalHttpApiPreferences::*;
@@ -78,14 +61,13 @@ pub use GitHubAuthBus::*;
 pub use GitHubAuthPreferences::*;
 pub use MemorySearchSettingsPreferences::*;
 pub use ModelConfigManager::*;
-pub use PersonaCardChatHistoryManager::*;
 pub use PreferenceStorageManager::*;
-pub use PromptTagManager::*;
 pub use PromptVersionManager::*;
 pub use RemoteAnnouncementPreferences::*;
-pub use SharedMemoryStoreManager::*;
 pub use SkillVisibilityPreferences::*;
 pub use SttConfigManager::*;
+pub use ThemeConfigManager::*;
+pub use ThemePreferenceSnapshot::validateThemePreferenceSnapshot;
 pub use TtsConfigManager::*;
 pub use UserPreferencesManager::*;
 pub use WaifuPreferences::*;

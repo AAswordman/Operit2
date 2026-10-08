@@ -138,7 +138,7 @@ pub struct ToolPkgChatComposerSlot {
     pub keepAlive: bool,
 }
 
-/// Describes one ToolPkg navigation entry.
+/// Describes one enabled plugin navigation entry, including registered Compose DSL sidebar tabs.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct ToolPkgNavigationEntry {
@@ -146,6 +146,8 @@ pub struct ToolPkgNavigationEntry {
     pub toolPkgId: String,
     pub entryId: String,
     pub routeId: String,
+    /// Carries the exact registered opaque route input to host UI consumers.
+    pub params: Option<Value>,
     pub surface: String,
     pub title: String,
     pub description: String,

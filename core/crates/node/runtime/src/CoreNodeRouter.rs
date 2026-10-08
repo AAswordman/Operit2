@@ -3244,6 +3244,13 @@ mod tests {
                 .commit()
                 .map_err(|error| HostError::new(error.to_string()))
         }
+
+        /// Aborts the test transaction explicitly using the same host contract as production.
+        fn rollback(self: Box<Self>) -> HostResult<()> {
+            self.transaction
+                .rollback()
+                .map_err(|error| HostError::new(error.to_string()))
+        }
     }
 
     /// Provides common statement preparation for rusqlite connections and transactions.

@@ -277,6 +277,23 @@ impl<'ast> Visit<'ast> for RegistrationVisitor {
             }
             self.record_operation_pair(expression.args.iter());
         }
+        if expression.method == "markBuiltinToolsUnavailable" {
+            match expression.args.first() {
+                Some(Expr::Reference(reference)) => match reference.expr.as_ref() {
+                    Expr::Array(array) => {
+                        for element in &array.elems {
+                            match builtin_tool_name(element) {
+                                Some(name) => { *self.unavailable.entry(name).or_default() += 1; }
+                                None => self.pairing_errors.push("Unavailable tools must use exact BuiltinToolName variants".to_string()),
+                            }
+                        }
+                    }
+                    _ => self.pairing_errors.push("Unavailable tools require an explicit typed array".to_string()),
+                },
+                Some(Expr::Path(_)) => {},
+                _ => self.pairing_errors.push("Unavailable tools require an explicit typed array reference".to_string()),
+            }
+        }
         visit::visit_expr_method_call(self, expression);
     }
 
@@ -564,6 +581,21 @@ mod tests {
                     .to_string()
             ]
         );
+    }
+
+    /// Keeps explicitly unavailable SDK names separate from executable Core registrations.
+    #[test]
+    fn records_exact_unavailable_tools_without_restoring_executors() {
+        let source = syn::parse_file("fn register(handler: &mut Handler) { handler.markBuiltinToolsUnavailable(&[BuiltinToolName::CreateMemory], reason); }").unwrap();
+        let mut visitor = RegistrationVisitor::default();
+        visitor.visit_file(&source);
+        assert_eq!(visitor.unavailable.get("create_memory"), Some(&1));
+        assert!(visitor.registered.is_empty());
+        assert!(visitor.pairing_errors.is_empty());
+        let invalid = syn::parse_file("fn register(handler: &mut Handler) { handler.markBuiltinToolsUnavailable(&[unknown], reason); }").unwrap();
+        let mut invalid_visitor = RegistrationVisitor::default();
+        invalid_visitor.visit_file(&invalid);
+        assert!(!invalid_visitor.pairing_errors.is_empty());
     }
 
     /// Verifies reversible conversion between generated enum variants and tool names.

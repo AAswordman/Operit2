@@ -32,12 +32,14 @@ typedef ComposeDslWebViewRuntimeOptionsProvider =
     Map<String, Object?> Function();
 
 class ComposeDslWebViewHostContext {
+  /// Creates the action bridge and its post-response completion observer.
   const ComposeDslWebViewHostContext({
     required this.packageName,
     required this.routeInstanceId,
     required this.executionContextKey,
     required this.dispatchAction,
     required this.runtimeOptionsProvider,
+    this.onActionResultDelivered,
   });
 
   /// Stable plugin package identity, not the transient execution/session key.
@@ -47,6 +49,10 @@ class ComposeDslWebViewHostContext {
   final ComposeDslWebViewActionDispatcher dispatchAction;
   final ComposeDslWebViewRuntimeOptionsProvider runtimeOptionsProvider;
 
+  /// Observes action results only after the WebView receives its bridge response.
+  final ValueChanged<Object?>? onActionResultDelivered;
+
+  /// Executes an action while retaining errors for the requesting WebView.
   Future<ComposeDslWebViewBlockingActionResult> executeAction({
     required String actionId,
     Object? payload,
@@ -1373,6 +1379,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     );
   }
 
+  /// Responds to the requesting document before notifying presentation owners.
   Future<void> _handleBridgeMessage(JavaScriptMessage message) async {
     final messageText = message.message;
     final payload = _decodeJsonObject(messageText);
@@ -1381,8 +1388,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     }
     final requestId = _string(payload['id']).trim();
     final type = _string(payload['type']).trim();
+    final hostContext = widget.hostContext;
+    Object? data;
     try {
-      final data = await _handleBridgeRequest(
+      data = await _handleBridgeRequest(
         type: type,
         payload: payload['payload'],
       );
@@ -1395,9 +1404,14 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         'success': false,
         'message': error.toString(),
       });
+      return;
+    }
+    if (type == 'invoke' || type == 'dispatchAction') {
+      hostContext?.onActionResultDelivered?.call(data);
     }
   }
 
+  /// Dispatches an exact bridge operation and propagates action failures.
   Future<Object?> _handleBridgeRequest({
     required String type,
     required Object? payload,
@@ -1441,6 +1455,9 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
           actionId: actionId,
           payload: _decodePlainJsonValue(map['args']),
         );
+        if (result.message != null) {
+          throw StateError(result.message!);
+        }
         return result.actionResult;
       case 'dispatchAction':
         if (hostContext == null) {
@@ -1455,6 +1472,9 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
           actionId: actionId,
           payload: map['payload'],
         );
+        if (result.message != null) {
+          throw StateError(result.message!);
+        }
         return result.actionResult;
       case 'pickFiles':
         return _pickFiles(_stringMap(payload));
@@ -1463,6 +1483,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     }
   }
 
+  /// Awaits delivery of the response to the owning JavaScript document.
   Future<void> _postBridgeResponse(
     String requestId,
     Map<String, Object?> response,

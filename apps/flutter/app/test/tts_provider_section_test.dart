@@ -9,6 +9,7 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/components/M3LoadingIndicator.dart';
 import 'package:operit2/ui/features/settings/tts/TtsSettingsPanel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
@@ -92,6 +93,61 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'inactive TTS deletion uses only the independent configuration manager',
+    (tester) async {
+      final bridge = _TtsSettingsBridge();
+      await _pumpSection(tester, bridge);
+      await tester.tap(find.text('TTS 供应商'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SiliconFlow'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('remote-model · remote-voice'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('编辑 TTS 音色'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, '删除'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, '删除'));
+      await tester.pumpAndSettle();
+
+      final deletions = bridge.calls.where(
+        (call) => call.methodName == 'deleteTtsConfig',
+      );
+      expect(deletions, hasLength(1));
+      expect(deletions.single.args, <String, Object?>{'id': 'remote'});
+      expect(bridge.configs.map((config) => config.id), <String>['system']);
+      expect(bridge.currentConfigId, 'system');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'the independent current TTS configuration still cannot be deleted',
+    (tester) async {
+      final bridge = _TtsSettingsBridge();
+      await _pumpSection(tester, bridge);
+      await tester.tap(find.text('TTS 供应商'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('系统默认音色'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('编辑 TTS 音色'), findsOneWidget);
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(TtsProviderSection)),
+      )!;
+      expect(
+        find.text(l10n.settingsTtsCurrentConfigCannotDelete),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(TextButton, '删除'), findsNothing);
+      expect(
+        bridge.calls.where((call) => call.methodName == 'deleteTtsConfig'),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('a pending selection can complete after the section is removed', (
     tester,
   ) async {
@@ -167,7 +223,7 @@ core.TtsConfig _config({
   );
 }
 
-/// Implements only the Core calls required to load and select TTS voices.
+/// Implements only independent TTS configuration calls and rejects domain lookups.
 class _TtsSettingsBridge extends OperitRuntimeBridge {
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
   final List<core.TtsConfig> configs = <core.TtsConfig>[
@@ -216,8 +272,14 @@ class _TtsSettingsBridge extends OperitRuntimeBridge {
             operations: [],
           ).toJson(),
         ];
-      case 'getAllCharacterCards':
-        result = <Object?>[];
+      case 'deleteTtsConfig':
+        final id = (request.args as Map)['id'] as String;
+        if (id == currentConfigId) {
+          throw StateError('The current TTS configuration cannot be deleted');
+        }
+        final count = configs.length;
+        configs.removeWhere((config) => config.id == id);
+        result = configs.length != count;
       case 'setCurrentTtsConfigId':
         requestedConfigId = (request.args as Map)['id'] as String;
         selection = Completer<Uint8List>();

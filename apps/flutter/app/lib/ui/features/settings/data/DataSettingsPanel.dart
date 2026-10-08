@@ -112,10 +112,8 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         );
   }
 
+  /// Loads ordinary host data counts without querying plugin-owned entities.
   Future<_DataSettingsData> _load() async {
-    final characterCardManager = widget.clients.preferencesCharacterCardManager;
-    final characterGroupCardManager =
-        widget.clients.preferencesCharacterGroupCardManager;
     final modelConfigManager = widget.clients.preferencesModelConfigManager;
     final storagePaths = await RuntimeBootstrapManager.instance
         .localRuntimeStorageBasePaths();
@@ -131,10 +129,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       chatHistoryCount:
           (await widget.clients.chatRuntimeHolderMain.chatHistoriesFlow().first)
               .length,
-      characterCardCount:
-          (await characterCardManager.getAllCharacterCards()).length,
-      characterGroupCount:
-          (await characterGroupCardManager.getAllCharacterGroupCards()).length,
       modelConfigCount:
           (await modelConfigManager.getAllModelSummaries()).length,
     );
@@ -717,154 +711,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
   }
 
-  /// Exports all character cards to a JSON file.
-  Future<void> _exportCharacterCardsBackup() async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() => _busy = true);
-    try {
-      final jsonText = await widget.clients.preferencesCharacterCardManager
-          .exportAllCharacterCardsToBackupContent();
-      final savedPath = await _saveBackupJson(
-        jsonText: jsonText,
-        suggestedName: _backupJsonSuggestedName('character-cards'),
-      );
-      if (savedPath == null) {
-        return;
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(savedPath))));
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupExportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  /// Imports all character cards from a JSON file.
-  Future<void> _importCharacterCardsBackup() async {
-    final l10n = AppLocalizations.of(context)!;
-    final jsonText = await _readBackupJson();
-    if (jsonText == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final result = await widget.clients.preferencesCharacterCardManager
-          .importAllCharacterCardsFromBackupContent(jsonContent: jsonText);
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.settingsDataBackupImportResult(
-              result.newValue,
-              result.updated,
-              result.skipped,
-            ),
-          ),
-        ),
-      );
-      _reload();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupImportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  /// Exports all character groups to a JSON file.
-  Future<void> _exportCharacterGroupsBackup() async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() => _busy = true);
-    try {
-      final jsonText = await widget.clients.preferencesCharacterGroupCardManager
-          .exportAllCharacterGroupsToBackupContent();
-      final savedPath = await _saveBackupJson(
-        jsonText: jsonText,
-        suggestedName: _backupJsonSuggestedName('character-groups'),
-      );
-      if (savedPath == null) {
-        return;
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(savedPath))));
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupExportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  /// Imports all character groups from a JSON file.
-  Future<void> _importCharacterGroupsBackup() async {
-    final l10n = AppLocalizations.of(context)!;
-    final jsonText = await _readBackupJson();
-    if (jsonText == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final result = await widget.clients.preferencesCharacterGroupCardManager
-          .importAllCharacterGroupsFromBackupContent(jsonContent: jsonText);
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.settingsDataBackupImportResult(
-              result.newValue,
-              result.updated,
-              result.skipped,
-            ),
-          ),
-        ),
-      );
-      _reload();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupImportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
   /// Imports model configurations from a JSON file.
   Future<void> _importModelConfigsBackup() async {
     final l10n = AppLocalizations.of(context)!;
@@ -967,6 +813,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     );
   }
 
+  /// Builds host-owned backups and restore controls without plugin backup duplicates.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -1042,28 +889,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                       ),
                       const Divider(height: 20),
                       _BackupLine(
-                        title: l10n.settingsDataCharacterCardsBackup,
-                        subtitle: l10n.settingsDataBackupCount(
-                          data.characterCardCount,
-                        ),
-                        description:
-                            l10n.settingsDataCharacterCardsBackupDescription,
-                        onExport: _busy ? null : _exportCharacterCardsBackup,
-                        onImport: _busy ? null : _importCharacterCardsBackup,
-                      ),
-                      const Divider(height: 20),
-                      _BackupLine(
-                        title: l10n.settingsDataCharacterGroupsBackup,
-                        subtitle: l10n.settingsDataBackupCount(
-                          data.characterGroupCount,
-                        ),
-                        description:
-                            l10n.settingsDataCharacterGroupsBackupDescription,
-                        onExport: _busy ? null : _exportCharacterGroupsBackup,
-                        onImport: _busy ? null : _importCharacterGroupsBackup,
-                      ),
-                      const Divider(height: 20),
-                      _BackupLine(
                         title: l10n.settingsDataModelConfigsBackup,
                         subtitle: l10n.settingsDataBackupCount(
                           data.modelConfigCount,
@@ -1135,14 +960,13 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
 }
 
 class _DataSettingsData {
+  /// Retains only ordinary runtime, conversation, and model overview values.
   const _DataSettingsData({
     required this.coreVersion,
     required this.storagePaths,
     required this.inputTokens,
     required this.outputTokens,
     required this.chatHistoryCount,
-    required this.characterCardCount,
-    required this.characterGroupCount,
     required this.modelConfigCount,
   });
 
@@ -1151,8 +975,6 @@ class _DataSettingsData {
   final int inputTokens;
   final int outputTokens;
   final int chatHistoryCount;
-  final int characterCardCount;
-  final int characterGroupCount;
   final int modelConfigCount;
 }
 

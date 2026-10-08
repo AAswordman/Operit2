@@ -37,7 +37,7 @@ pub struct PrepareConversationHistoryRequest {
     pub workspace_folders: Vec<String>,
     pub prompt_function_type: String,
     pub custom_system_prompt_template: Option<String>,
-    pub role_card_id: Option<String>,
+    pub participant_id: Option<String>,
     pub enable_group_orchestration_hint: bool,
     pub group_participant_names_text: Option<String>,
     pub proxy_sender_name: Option<String>,
@@ -87,7 +87,7 @@ pub trait SystemPromptComposer: Send + Sync {
         &'a self,
         request: &'a PrepareConversationHistoryRequest,
         use_english: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>>;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>;
 }
 
 /// Converts stored chat turns into provider-facing conversation history.
@@ -109,7 +109,7 @@ impl ConversationService {
         history_hooks: &dyn PromptHistoryHookDispatcher,
         system_prompt_composer: &dyn SystemPromptComposer,
         use_english: bool,
-    ) -> Vec<PromptTurn> {
+    ) -> Result<Vec<PromptTurn>, String> {
         let before_context = history_hooks
             .dispatch_prompt_history_hooks(HistoryHookContext {
                 stage: "before_prepare_history".to_string(),
@@ -131,7 +131,7 @@ impl ConversationService {
         {
             let system_prompt = system_prompt_composer
                 .get_system_prompt_with_custom_prompts(&request, use_english)
-                .await;
+                .await?;
             let final_system_prompt = build_final_system_prompt(
                 &request.avatar_mood_rules_text,
                 &system_prompt,
@@ -171,7 +171,7 @@ impl ConversationService {
                 ..before_context
             })
             .await;
-        after_context.prepared_history
+        Ok(after_context.prepared_history)
     }
 
     /// Splits mixed text and XML-like assistant output into ordered tag segments.

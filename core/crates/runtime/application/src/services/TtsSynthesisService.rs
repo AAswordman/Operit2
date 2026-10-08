@@ -6,7 +6,6 @@ use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::RuntimeStorageLayout::RUNTIME_TTS_AUDIO_DIR_PATH;
 
-use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use crate::services::LocalProviderService::LocalProviderService;
 use operit_host_api::HostManager::HostManager;
@@ -18,10 +17,9 @@ use operit_util::TtsCleaner::TtsCleaner;
 use operit_util::TtsSegmenter::TtsSegmenter;
 
 #[derive(Clone)]
-/// Synthesizes speech audio using configured character or TTS profiles.
+/// Synthesizes speech audio using exact resolved TTS configurations.
 pub struct TtsSynthesisService {
     paths: RuntimeStorePaths,
-    characterCardManager: CharacterCardManager,
     ttsConfigManager: TtsConfigManager,
     context: Option<HostManager>,
 }
@@ -70,7 +68,6 @@ impl TtsSynthesisService {
     /// Creates a synthesis service for explicit runtime paths.
     pub fn new(paths: RuntimeStorePaths) -> Self {
         Self {
-            characterCardManager: CharacterCardManager::new(paths.clone()),
             ttsConfigManager: TtsConfigManager::new(paths.clone()),
             paths,
             context: None,
@@ -80,45 +77,13 @@ impl TtsSynthesisService {
     /// Creates a synthesis service with runtime paths and host context.
     pub fn newWithContext(paths: RuntimeStorePaths, context: HostManager) -> Self {
         Self {
-            characterCardManager: CharacterCardManager::new(paths.clone()),
             ttsConfigManager: TtsConfigManager::new(paths.clone()),
             paths,
             context: Some(context),
         }
     }
 
-    /// Synthesizes text with the TTS configuration bound to a character card.
-    pub fn synthesizeForCharacter(
-        &self,
-        characterCardId: &str,
-        text: &str,
-    ) -> Result<TtsSynthesisResult, String> {
-        let characterCardId = characterCardId.trim();
-        if characterCardId.is_empty() {
-            return Err("character card id is empty".to_string());
-        }
-        let cleanedText = TtsCleaner::clean(text);
-        if cleanedText.is_empty() {
-            return Err("tts text is empty".to_string());
-        }
-        let card = self
-            .characterCardManager
-            .getCharacterCard(characterCardId)
-            .map_err(|error| error.to_string())?;
-        let config = match card.ttsConfigId.as_ref().map(|value| value.trim()) {
-            Some(configId) if !configId.is_empty() => self
-                .ttsConfigManager
-                .getTtsConfig(configId)
-                .map_err(|error| error.to_string())?,
-            _ => self
-                .ttsConfigManager
-                .getCurrentTtsConfig()
-                .map_err(|error| error.to_string())?,
-        };
-        self.synthesizeWithResolvedConfig(characterCardId, &config, &cleanedText)
-    }
-
-    /// Synthesizes text with a selected TTS configuration.
+    /// Synthesizes text with the exact configuration selected by a resolved chat profile.
     pub fn synthesizeWithConfig(
         &self,
         ttsConfigId: &str,

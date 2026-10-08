@@ -144,7 +144,7 @@ fn buildOperit2CharacterCards(
                 preferences,
                 &format!("character_card_{id}_is_default"),
             )?
-            .unwrap_or(id == CharacterCardManager::DEFAULT_CHARACTER_CARD_ID),
+            .unwrap_or(id == OPERIT1_SOURCE_DEFAULT_CHARACTER_CARD_ID),
             createdAt: optionalPreferenceI64(
                 preferences,
                 &format!("character_card_{id}_created_at"),
@@ -176,7 +176,7 @@ fn buildOperit1CharacterCardAvatarUris(
         if value.trim().is_empty() {
             continue;
         }
-        if cardId == CharacterCardManager::DEFAULT_CHARACTER_CARD_ID
+        if cardId == OPERIT1_SOURCE_DEFAULT_CHARACTER_CARD_ID
             && value.trim() == OPERIT1_DEFAULT_AI_AVATAR_URI
         {
             continue;
@@ -298,7 +298,7 @@ mod tests {
     /// Leaves Operit1's built-in default avatar unassigned for the Operit2 default avatar component.
     #[test]
     fn leaves_operit1_builtin_default_avatar_unassigned() {
-        let cardId = CharacterCardManager::DEFAULT_CHARACTER_CARD_ID;
+        let cardId = OPERIT1_SOURCE_DEFAULT_CHARACTER_CARD_ID;
         let cardIds = vec![cardId.to_string()];
         let mut preferences = HashMap::new();
         preferences.insert(

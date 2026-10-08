@@ -4,9 +4,12 @@ use operit_tools::tools::packTool::RuntimePackageManager::BundledExternalPackage
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use std::collections::BTreeSet;
 
-/// Runs ToolPkg plugin management commands.
+use super::delegated::ReadyCommandRegistry;
+
+/// Runs plugin management while reusing the invocation's ready command registry for command operations.
 pub async fn run_plugin_command(
     application: &OperitApplication,
+    registry: &ReadyCommandRegistry,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -22,8 +25,8 @@ pub async fn run_plugin_command(
             Ok(())
         }
         "list" => list_plugins(tool_handler, output),
-        "commands" => list_plugin_commands(tool_handler, output),
-        "exec" => execute_plugin_command(tool_handler, &args[1..], output).await,
+        "commands" => list_plugin_commands(registry, output),
+        "exec" => execute_plugin_command(registry, &args[1..], output).await,
         "more" => list_more_plugins(tool_handler, output),
         "show" => {
             let name = args
@@ -67,16 +70,12 @@ pub async fn run_plugin_command(
     }
 }
 
-/// Lists slash commands registered by enabled ToolPkg plugins.
+/// Lists enabled registered commands from the same ready catalog used for root ownership.
 fn list_plugin_commands(
-    tool_handler: AIToolHandler,
+    registry: &ReadyCommandRegistry,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let package_manager = package_manager(&tool_handler);
-    let guard = package_manager
-        .lock()
-        .expect("package manager mutex poisoned");
-    let commands = guard.getToolPkgCoreCommands(false)?;
+    let commands = registry.plugin_commands()?;
     output.push_stdout_line(format!("Plugin commands: {}", commands.len()));
     for command in &commands {
         output.push_stdout_line(format!(
@@ -88,32 +87,16 @@ fn list_plugin_commands(
     Ok(())
 }
 
-/// Executes one slash command registered by an enabled ToolPkg plugin.
+/// Resolves an explicitly addressed plugin command on the invocation's existing ready snapshot.
 async fn execute_plugin_command(
-    tool_handler: AIToolHandler,
+    registry: &ReadyCommandRegistry,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let command_name = args
         .first()
         .ok_or_else(|| "usage: operit2 plugin exec <command> [args...]".to_string())?;
-    let package_manager = package_manager(&tool_handler);
-    let manager = package_manager
-        .lock()
-        .expect("package manager mutex poisoned")
-        .clone();
-    let result = manager
-        .executeToolPkgCoreCommand(command_name, &args[1..], output.isJsonMode())
-        .await?;
-    if output.isJsonMode() {
-        output.setJsonStdout(result.json.ok_or_else(|| {
-            format!("plugin command /{command_name} did not return a JSON result")
-        })?);
-    } else {
-        output.push_stdout(result.stdout);
-        output.push_stderr(result.stderr);
-    }
-    Ok(())
+    super::delegated::run_delegated_command(registry, command_name, &args[1..], output).await
 }
 
 /// Lists loaded ToolPkg plugins.

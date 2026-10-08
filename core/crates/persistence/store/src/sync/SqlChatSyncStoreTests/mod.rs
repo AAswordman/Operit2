@@ -234,6 +234,13 @@ impl RuntimeSqliteTransaction for TestRuntimeSqliteTransaction<'_> {
             .commit()
             .map_err(|error| HostError::new(error.to_string()))
     }
+
+    /// Aborts the host transaction explicitly instead of relying on destructor cleanup.
+    fn rollback(self: Box<Self>) -> HostResult<()> {
+        self.transaction
+            .rollback()
+            .map_err(|error| HostError::new(error.to_string()))
+    }
 }
 
 trait TestRusqliteConnection {
@@ -360,6 +367,7 @@ fn message(chatId: &str, timestamp: i64, content: &str) -> MessageEntity {
         timestamp,
         orderIndex: 0,
         roleName: String::new(),
+        pluginExtensions: BTreeMap::new(),
         selectedVariantIndex: 0,
         provider: "test-provider".to_string(),
         modelName: "test-model".to_string(),
@@ -625,7 +633,7 @@ fn chat_dao_update_chats_preserves_child_messages() {
         .unwrap()
         .expect("chat must exist");
     chat.displayOrder = 42;
-    chat.group = Some("updated-group".to_string());
+    chat.workspaceId = Some("updated-workspace".to_string());
     chat.updatedAt = 9_100;
     database.chatDao().updateChats(vec![chat]).unwrap();
 
@@ -635,7 +643,7 @@ fn chat_dao_update_chats_preserves_child_messages() {
         .unwrap()
         .expect("chat must remain");
     assert_eq!(updated.displayOrder, 42);
-    assert_eq!(updated.group.as_deref(), Some("updated-group"));
+    assert_eq!(updated.workspaceId.as_deref(), Some("updated-workspace"));
     let messages = database.messageDao().getMessagesForChat(chatId).unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(

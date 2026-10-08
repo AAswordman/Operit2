@@ -1,23 +1,17 @@
 use std::fs;
 use std::path::Path;
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant};
 
 use crate::output::CoreCommandOutput;
 use operit_model::AttachmentInfo::AttachmentInfo;
 use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
-use operit_model::FunctionType::FunctionType;
-use operit_model::InputProcessingState::InputProcessingState;
-use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
+use operit_tools::runtime_support::{RuntimeChatSendRequest, RuntimeChatSlot};
 use serde_json::json;
 
 /// Runs a synchronous action against the local main chat runtime core.
@@ -40,7 +34,7 @@ fn build_chat_command_runtime() -> Result<tokio::runtime::Runtime, String> {
         .map_err(|error| error.to_string())
 }
 
-/// Runs chat history, message, branch, stats, binding, and send commands.
+/// Runs only host-owned chat history, messages, branches, neutral statistics and sends.
 pub fn run_chat_command(
     application: &mut OperitApplication,
     args: &[String],
@@ -67,13 +61,7 @@ pub fn run_chat_command(
         "pin" => update_chat_pinned(application, &args[1..], output),
         "send" => send_chat_message_command(application, &args[1..], output),
         "stats" => show_chat_stats(output),
-        "bind-character" => bind_chat_character(application, &args[1..], output),
-        "bind-group" => bind_chat_group_card(application, &args[1..], output),
-        "set-group" => set_chat_group(&args[1..], output),
-        _ => {
-            print_chat_usage(output);
-            Ok(())
-        }
+        _ => Err(format!("unknown chat command: {}", args[0])),
     }
 }
 
@@ -86,14 +74,12 @@ fn list_chats(
     output.push_stdout_line(format!("Chats: {}", chats.len()));
     for chat in &chats {
         output.push_stdout_line(format!(
-            "- {} | {} | messages: {} | tokens: {}/{} | character: {} | group card: {} | locked: {} | pinned: {}",
+            "- {} | {} | messages: {} | tokens: {}/{} | locked: {} | pinned: {}",
             chat.id,
             chat.title,
             chat.messages.len(),
             chat.inputTokens,
             chat.outputTokens,
-            option_text(chat.characterCardName.as_deref()),
-            option_text(chat.characterGroupId.as_deref()),
             chat.locked,
             chat.pinned
         ));
@@ -112,16 +98,19 @@ fn show_chat(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat show <chat-id> [--runtime]".to_string())?
         .clone();
-    let (chat, messages) = with_main_chat_core(application, |core| {
-        core.switchChat(chatId.clone());
+    let runtime = build_chat_command_runtime()?;
+    let (chat, messages) = runtime.block_on(async {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        let core = holder.getCore(ChatRuntimeSlot::MAIN);
+        core.switchChat(chatId.clone()).await?;
         let chat = core
             .chatHistoriesFlow()
             .value()
             .into_iter()
             .find(|chat| chat.id == chatId)
             .ok_or_else(|| format!("chat not found: {chatId}"))?;
-        Ok::<_, String>((chat, core.chatHistory().clone()))
-    })??;
+        Ok::<_, String>((chat, core.chatHistory()))
+    })?;
     print_chat_history_header(&chat, output);
     for message in &messages {
         print_chat_message(&message, output);
@@ -143,7 +132,11 @@ fn delete_chat(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat delete <chat-id>".to_string())?
         .clone();
-    let deleted = with_main_chat_core(application, |core| core.deleteChatHistory(chatId.clone()))?;
+    let runtime = build_chat_command_runtime()?;
+    let deleted = runtime.block_on(async {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        holder.getCore(ChatRuntimeSlot::MAIN).deleteChatHistory(chatId.clone()).await
+    })?;
     output.push_stdout_line(format!("Deleted chat {chatId}: {deleted}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -242,12 +235,17 @@ fn create_chat_branch(
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let upToMessageTimestamp = parse_branch_args(args)?;
-    let chatId = with_main_chat_core(application, |core| {
-        core.createBranch(upToMessageTimestamp);
-        core.currentChatIdFlow()
-            .value()
-            .ok_or_else(|| "core did not create branch".to_string())
-    })??;
+    let runtime = build_chat_command_runtime()?;
+    let service = EnhancedAIService::new(
+        application.toolHandler.clone(),
+        application.providerRuntimeContext.clone(),
+    );
+    let chatId = runtime.block_on(async {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        let core = holder.getCore(ChatRuntimeSlot::MAIN);
+        core.enhancedAiService = Some(service);
+        core.createBranch(upToMessageTimestamp).await
+    })?;
     output.push_stdout_line(format!("Created chat branch {chatId}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -344,7 +342,11 @@ fn switch_chat_command(
         .get(0)
         .ok_or_else(|| "usage: operit2 chat switch <chat-id>".to_string())?
         .clone();
-    with_main_chat_core(application, |core| core.switchChat(chatId.clone()))?;
+    let runtime = build_chat_command_runtime()?;
+    runtime.block_on(async {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        holder.getCore(ChatRuntimeSlot::MAIN).switchChat(chatId.clone()).await
+    })?;
     output.push_stdout_line(format!("Current chat: {chatId}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -353,204 +355,88 @@ fn switch_chat_command(
     Ok(())
 }
 
-/// Shows aggregate chat statistics.
+/// Shows only neutral aggregate statistics from canonical host records.
 fn show_chat_stats(output: &mut CoreCommandOutput) -> Result<(), String> {
     let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    let totalChats = manager
-        .getTotalChatCount()
-        .map_err(|error| error.to_string())?;
-    let totalMessages = manager
-        .getTotalMessageCount()
-        .map_err(|error| error.to_string())?;
-    let characterStats = manager
-        .characterCardStatsFlow()
-        .map_err(|error| error.to_string())?;
-    let groupStats = manager
-        .characterGroupStatsFlow()
-        .map_err(|error| error.to_string())?;
+    let totalChats = manager.getTotalChatCount().map_err(|error| error.to_string())?;
+    let totalMessages = manager.getTotalMessageCount().map_err(|error| error.to_string())?;
     output.push_stdout_line("Chat statistics");
     output.push_stdout_line(format!("Total chats: {totalChats}"));
     output.push_stdout_line(format!("Total messages: {totalMessages}"));
-    output.push_stdout_line(format!("Character cards: {}", characterStats.len()));
-    for stats in &characterStats {
-        output.push_stdout_line(format!(
-            "- {} | chats: {} | messages: {}",
-            option_text(stats.characterCardName.as_deref()),
-            stats.chatCount,
-            stats.messageCount
-        ));
-    }
-    output.push_stdout_line(format!("Character groups: {}", groupStats.len()));
-    for stats in &groupStats {
-        output.push_stdout_line(format!(
-            "- {} | chats: {} | messages: {}",
-            option_text(stats.characterGroupId.as_deref()),
-            stats.chatCount,
-            stats.messageCount
-        ));
-    }
-    output.setJsonStdout(json!({
-        "totalChats": totalChats,
-        "totalMessages": totalMessages,
-        "characterCards": characterStats.iter().map(|stats| {
-            json!({
-                "characterCardName": stats.characterCardName,
-                "chatCount": stats.chatCount,
-                "messageCount": stats.messageCount
-            })
-        }).collect::<Vec<_>>(),
-        "characterGroups": groupStats.iter().map(|stats| {
-            json!({
-                "characterGroupId": stats.characterGroupId,
-                "chatCount": stats.chatCount,
-                "messageCount": stats.messageCount
-            })
-        }).collect::<Vec<_>>()
-    }));
+    output.setJsonStdout(json!({ "totalChats": totalChats, "totalMessages": totalMessages }));
     Ok(())
 }
 
-/// Binds a character card to one chat.
-fn bind_chat_character(
-    application: &mut OperitApplication,
-    args: &[String],
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| {
-            "usage: operit2 chat bind-character <chat-id> <character-card-name>".to_string()
-        })?
-        .clone();
-    let characterCardName = args
-        .get(1)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| {
-            "usage: operit2 chat bind-character <chat-id> <character-card-name>".to_string()
-        })?;
-    with_main_chat_core(application, |core| {
-        core.updateChatCharacterCard(chatId.clone(), Some(characterCardName.clone()))
-    })?;
-    output.push_stdout_line(format!("Updated character binding for {chatId}"));
-    output.push_stdout_line(format!("Character card: {characterCardName}"));
-    output.setJsonStdout(json!({
-        "chatId": chatId,
-        "characterCardName": characterCardName,
-        "updated": true
-    }));
-    Ok(())
+/// Holds explicit generic creation options without interpreting plugin input.
+#[derive(Debug)]
+struct ChatNewArgs {
+    setAsCurrentChat: bool,
+    sourceChatId: Option<String>,
+    input: Option<serde_json::Value>,
 }
 
-/// Binds a character group card to one chat.
-fn bind_chat_group_card(
-    application: &mut OperitApplication,
-    args: &[String],
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 chat bind-group <chat-id> <character-group-id>".to_string())?
-        .clone();
-    let characterGroupId = args
-        .get(1)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| {
-            "usage: operit2 chat bind-group <chat-id> <character-group-id>".to_string()
-        })?;
-    with_main_chat_core(application, |core| {
-        core.updateChatCharacterGroup(chatId.clone(), Some(characterGroupId.clone()))
-    })?;
-    output.push_stdout_line(format!("Updated character group binding for {chatId}"));
-    output.push_stdout_line(format!("Character group: {characterGroupId}"));
-    output.setJsonStdout(json!({
-        "chatId": chatId,
-        "characterGroupId": characterGroupId,
-        "updated": true
-    }));
-    Ok(())
-}
-
-/// Sets a chat history group label.
-fn set_chat_group(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 chat set-group <chat-id> <group-name>".to_string())?
-        .clone();
-    let groupName = args
-        .get(1)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| "usage: operit2 chat set-group <chat-id> <group-name>".to_string())?;
-    let manager = ChatHistoryManager::default().map_err(|error| error.to_string())?;
-    manager
-        .updateChatGroup(chatId.clone(), Some(groupName.clone()))
-        .map_err(|error| error.to_string())?;
-    output.push_stdout_line(format!("Updated group for {chatId}"));
-    output.push_stdout_line(format!("Group: {groupName}"));
-    output.setJsonStdout(json!({
-        "chatId": chatId,
-        "group": groupName,
-        "updated": true
-    }));
-    Ok(())
-}
-
-/// Creates a new chat.
+/// Creates a chat through the awaited canonical lifecycle and uses its returned identity.
 fn create_chat(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let (characterCardName, characterGroupId, group) = parse_chat_new_args(args)?;
-    let jsonCharacterCardName = characterCardName.clone();
-    let jsonCharacterGroupId = characterGroupId.clone();
-    let jsonGroup = group.clone();
-    let chatId = with_main_chat_core(application, |core| {
-        core.createNewChat(characterCardName, group, true, true, characterGroupId);
-        core.currentChatIdFlow()
-            .value()
-            .ok_or_else(|| "core did not create chat".to_string())
-    })??;
+    let options = parse_chat_new_args(args)?;
+    let runtime = build_chat_command_runtime()?;
+    let service = EnhancedAIService::new(
+        application.toolHandler.clone(),
+        application.providerRuntimeContext.clone(),
+    );
+    let chatId = runtime.block_on(async {
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        let core = holder.getCore(ChatRuntimeSlot::MAIN);
+        core.enhancedAiService = Some(service);
+        core.createNewChat(
+            options.setAsCurrentChat,
+            options.sourceChatId.clone(),
+            options.input.clone(),
+        ).await
+    })?;
     output.push_stdout_line(format!("Created chat {chatId}"));
-    output.setJsonStdout(json!({
-        "chatId": chatId,
-        "characterCardName": jsonCharacterCardName,
-        "characterGroupId": jsonCharacterGroupId,
-        "group": jsonGroup
-    }));
+    output.setJsonStdout(json!({ "chatId": chatId, "setAsCurrentChat": options.setAsCurrentChat, "sourceChatId": options.sourceChatId, "input": options.input }));
     Ok(())
 }
 
-fn parse_chat_new_args(
-    args: &[String],
-) -> Result<(Option<String>, Option<String>, Option<String>), String> {
-    let mut characterCardName = None;
-    let mut characterGroupId = None;
-    let mut group = None;
+/// Parses only the generic source, opaque JSON input and current-selection switches.
+fn parse_chat_new_args(args: &[String]) -> Result<ChatNewArgs, String> {
+    let usage = "usage: operit2 chat new [--set-current <true|false>] [--source <chat-id>] [--input <json-object>]";
+    let mut options = ChatNewArgs { setAsCurrentChat: true, sourceChatId: None, input: None };
+    let mut hasSetCurrent = false;
     let mut index = 0;
     while index < args.len() {
-        match args[index].as_str() {
-            "--character" => {
-                index += 1;
-                characterCardName = args.get(index).cloned().and_then(nonBlankString);
+        let option = args[index].as_str();
+        index += 1;
+        let value = args.get(index).ok_or_else(|| usage.to_string())?;
+        match option {
+            "--set-current" => {
+                if hasSetCurrent { return Err("Duplicate --set-current option".to_string()); }
+                options.setAsCurrentChat = parse_bool_arg(value)?;
+                hasSetCurrent = true;
             }
-            "--group-card" => {
-                index += 1;
-                characterGroupId = args.get(index).cloned().and_then(nonBlankString);
+            "--source" => {
+                if options.sourceChatId.is_some() { return Err("Duplicate --source option".to_string()); }
+                if value.trim().is_empty() || value.trim() != value { return Err("Source chat id must be nonblank canonical text".to_string()); }
+                options.sourceChatId = Some(value.clone());
             }
-            "--group" => {
-                index += 1;
-                group = args.get(index).cloned().and_then(nonBlankString);
+            "--input" => {
+                if options.input.is_some() { return Err("Duplicate --input option".to_string()); }
+                let input: serde_json::Value = serde_json::from_str(value).map_err(|error| error.to_string())?;
+                if !input.is_object() { return Err("Chat creation input must be a JSON object".to_string()); }
+                options.input = Some(input);
             }
-            _ => return Err("usage: operit2 chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]".to_string()),
+            _ => return Err(usage.to_string()),
         }
         index += 1;
     }
-    Ok((characterCardName, characterGroupId, group))
+    Ok(options)
 }
 
+/// Parses the explicit source cutoff for a branch without changing its identity.
 fn parse_branch_args(args: &[String]) -> Result<Option<i64>, String> {
     let usage = "usage: operit2 chat branch [--up-to <message-timestamp>]";
     let mut upToMessageTimestamp = None;
@@ -570,6 +456,7 @@ fn parse_branch_args(args: &[String]) -> Result<Option<i64>, String> {
     Ok(upToMessageTimestamp)
 }
 
+/// Parses the exact host metadata flag and its target conversation.
 fn parse_chat_bool_update_args(args: &[String], command: &str) -> Result<(String, bool), String> {
     let usage = format!("usage: operit2 chat {command} <chat-id> <true|false>");
     let chatId = args.get(0).ok_or_else(|| usage.clone())?.clone();
@@ -595,12 +482,7 @@ struct ChatSendArgs {
     replyToTimestamp: Option<i64>,
 }
 
-#[derive(Clone, Debug)]
-struct ChatSendResult {
-    chatId: String,
-    aiMessage: ChatMessage,
-}
-
+/// Parses a neutral chat send with explicit attachments and reply identity.
 fn parse_chat_send_args(args: &[String]) -> Result<ChatSendArgs, String> {
     if args.is_empty() {
         return Err("usage: operit2 chat send [--chat <chat-id>] [--attachment <path>] [--reply-to <timestamp>] <message>".to_string());
@@ -654,218 +536,39 @@ fn send_chat_message_command(
     let sendArgs = parse_chat_send_args(args)?;
     let runtime = build_chat_command_runtime()?;
     let result = runtime.block_on(send_chat_message_with_application(application, sendArgs))?;
-    print_chat_send_result(&result, output);
+    print_chat_send_result(&result, output)?;
     Ok(())
 }
 
+/// Awaits the generic originating-turn receipt without inferring an assistant from global history.
 async fn send_chat_message_with_application(
     application: &mut OperitApplication,
     sendArgs: ChatSendArgs,
-) -> Result<ChatSendResult, String> {
-    let beforeLastAiTimestamp =
-        dispatch_chat_message_with_application(application, sendArgs).await?;
-    let (currentChatId, aiMessage) = with_main_chat_core(application, |core| {
-        let currentChatId = core
-            .currentChatIdFlow()
-            .value()
-            .ok_or_else(|| "core has no active chat after send".to_string())?;
-        let aiMessage = core
-            .chatHistory()
-            .iter()
-            .rev()
-            .find(|message| message.sender == "ai" && message.timestamp > beforeLastAiTimestamp)
-            .ok_or_else(|| "core did not produce ai message for current turn".to_string())?
-            .clone();
-        Ok::<_, String>((currentChatId, aiMessage))
-    })??;
-    let aiMessage = wait_for_committed_ai_message(
-        application,
-        &currentChatId,
-        aiMessage.timestamp,
-        Duration::from_secs(30),
-    )?;
-    Ok(ChatSendResult {
-        chatId: currentChatId,
-        aiMessage,
-    })
-}
-
-async fn dispatch_chat_message_with_application(
-    application: &mut OperitApplication,
-    sendArgs: ChatSendArgs,
-) -> Result<i64, String> {
-    let functionalConfigManager = FunctionalConfigManager::default();
-    let chatBinding = functionalConfigManager
-        .getModelBindingForFunction(FunctionType::CHAT)
-        .map_err(|error| error.to_string())?;
-    let turnOptions = ChatTurnOptions::default();
-    let mut holder = application.chatRuntimeHolder.lock().await;
-    let core = holder.getCore(ChatRuntimeSlot::MAIN);
-    core.enhancedAiService = Some(EnhancedAIService::new(
-        application.toolHandler.clone(),
-        application.providerRuntimeContext.clone(),
-    ));
-    if let Some(chatId) = sendArgs.chatId.as_ref() {
-        core.switchChat(chatId.clone());
-    }
+) -> Result<serde_json::Value, String> {
     let attachments = sendArgs
         .attachmentPaths
         .iter()
         .map(|path| build_attachment_info(path))
         .collect::<Result<Vec<_>, _>>()?;
-    let replyToMessage = match sendArgs.replyToTimestamp {
-        Some(timestamp) => core
-            .chatHistory()
-            .iter()
-            .find(|message| message.timestamp == timestamp)
-            .cloned()
-            .ok_or_else(|| format!("reply-to message not found: {timestamp}"))?,
-        None => ChatMessage::new(String::new()),
-    };
-    let replyToMessage = if replyToMessage.sender.is_empty() {
-        None
-    } else {
-        Some(replyToMessage)
-    };
-    let beforeLastAiTimestamp = core
-        .chatHistory()
-        .iter()
-        .filter(|message| message.sender == "ai")
-        .map(|message| message.timestamp)
-        .max()
-        .unwrap_or(0);
-    core.sendUserMessage(
-        PromptFunctionType::CHAT,
-        None,
-        None,
-        sendArgs.message,
-        None,
-        Some(chatBinding.providerId),
-        Some(chatBinding.modelId),
+    let request = RuntimeChatSendRequest {
+        slot: RuntimeChatSlot::MAIN,
+        participantId: None,
+        chatId: sendArgs.chatId,
+        message: sendArgs.message,
+        proxySenderName: None,
         attachments,
-        replyToMessage,
-        turnOptions,
-    )
-    .await;
-    let currentChatId = core
-        .currentChatIdFlow()
-        .value()
-        .ok_or_else(|| "core has no active chat after send".to_string())?;
-    let inputProcessingStateByChatId = core.inputProcessingStateByChatIdFlow().value();
-    match inputProcessingStateByChatId.get(&currentChatId) {
-        Some(InputProcessingState::Error { message }) => return Err(message.clone()),
-        _ => {}
-    }
-    Ok(beforeLastAiTimestamp)
+        replyToMessageTimestamp: sendArgs.replyToTimestamp,
+        turnOptions: ChatTurnOptions::default(),
+    };
+    let receipt = application.toolHandler.runtimeSupport().sendChatMessage(request).await?;
+    serde_json::to_value(&receipt).map_err(|error| error.to_string())
 }
 
-/// Waits until the local CLI command observes the committed AI message.
-fn wait_for_committed_ai_message(
-    application: &mut OperitApplication,
-    chatId: &str,
-    timestamp: i64,
-    timeout: Duration,
-) -> Result<ChatMessage, String> {
-    enum WaitSignal {
-        Ready(ChatMessage),
-        Error(String),
-    }
-
-    let startedAt = Instant::now();
-    let (messageFlow, stateFlow) = with_main_chat_core(application, |core| {
-        (
-            core.localChatMessagesFlow(chatId.to_string()),
-            core.inputProcessingStateByChatIdFlow(),
-        )
-    })?;
-
-    if let Some(message) = messageFlow.value().into_iter().find(|message| {
-        message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
-    }) {
-        return Ok(message);
-    }
-    if let Some(InputProcessingState::Error { message }) = stateFlow.value().get(chatId) {
-        return Err(message.clone());
-    }
-
-    let (sender, receiver) = mpsc::channel();
-    let messageSender = sender.clone();
-    let messageSubscriptionId = messageFlow.subscribe(move |messages| {
-        if let Some(message) = messages.into_iter().find(|message| {
-            message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
-        }) {
-            let _ = messageSender.send(WaitSignal::Ready(message));
-        }
-    });
-    let stateSender = sender.clone();
-    let chatIdForState = chatId.to_string();
-    let stateSubscriptionId = stateFlow.subscribe(move |stateByChatId| {
-        if let Some(InputProcessingState::Error { message }) = stateByChatId.get(&chatIdForState) {
-            let _ = stateSender.send(WaitSignal::Error(message.clone()));
-        }
-    });
-    drop(sender);
-
-    let result = (|| {
-        if let Some(message) = messageFlow.value().into_iter().find(|message| {
-            message.sender == "ai" && message.timestamp == timestamp && message.completedAt > 0
-        }) {
-            return Ok(message);
-        }
-        if let Some(InputProcessingState::Error { message }) = stateFlow.value().get(chatId) {
-            return Err(message.clone());
-        }
-        let elapsed = startedAt.elapsed();
-        let remaining = if elapsed >= timeout {
-            return Err(format!(
-                "timed out waiting for committed ai message: chat={chatId} timestamp={timestamp}"
-            ));
-        } else {
-            timeout - elapsed
-        };
-        match receiver.recv_timeout(remaining) {
-            Ok(WaitSignal::Ready(message)) => Ok(message),
-            Ok(WaitSignal::Error(message)) => Err(message),
-            Err(RecvTimeoutError::Timeout) => Err(format!(
-                "timed out waiting for committed ai message: chat={chatId} timestamp={timestamp}"
-            )),
-            Err(RecvTimeoutError::Disconnected) => {
-                Err("chat message wait channel disconnected".to_string())
-            }
-        }
-    })();
-    messageFlow.unsubscribe(messageSubscriptionId);
-    stateFlow.unsubscribe(stateSubscriptionId);
-    result
-}
-
-/// Prints a completed chat send result.
-fn print_chat_send_result(result: &ChatSendResult, output: &mut CoreCommandOutput) {
-    let text = result.aiMessage.displayText();
-    output.push_stdout(&text);
-    output.push_stdout_line("");
-    output.push_stdout_line(format!(
-        "Chat: {} | Provider: {} | Model: {}",
-        result.chatId, result.aiMessage.provider, result.aiMessage.modelName
-    ));
-    output.push_stdout_line(format!(
-        "Tokens: input {} | cached input {} | output {}",
-        result.aiMessage.inputTokens,
-        result.aiMessage.cachedInputTokens,
-        result.aiMessage.outputTokens
-    ));
-    output.setJsonStdout(json!({
-        "chatId": &result.chatId,
-        "text": &text,
-        "message": &result.aiMessage,
-        "usage": {
-            "inputTokens": result.aiMessage.inputTokens,
-            "cachedInputTokens": result.aiMessage.cachedInputTokens,
-            "outputTokens": result.aiMessage.outputTokens
-        },
-        "provider": &result.aiMessage.provider,
-        "modelName": &result.aiMessage.modelName
-    }));
+/// Preserves the complete native completion, cancellation, blocked or consumed outcome in text and JSON.
+fn print_chat_send_result(result: &serde_json::Value, output: &mut CoreCommandOutput) -> Result<(), String> {
+    output.push_stdout_line(serde_json::to_string_pretty(result).map_err(|error| error.to_string())?);
+    output.setJsonStdout(result.clone());
+    Ok(())
 }
 
 /// Builds attachment metadata for one path supplied to a chat send command.
@@ -926,7 +629,6 @@ fn print_chat_history_header(chat: &ChatHistory, output: &mut CoreCommandOutput)
     output.push_stdout_line(format!("Input tokens: {}", chat.inputTokens));
     output.push_stdout_line(format!("Output tokens: {}", chat.outputTokens));
     output.push_stdout_line(format!("Context window: {}", chat.currentWindowSize));
-    output.push_stdout_line(format!("Group: {}", chat.group.clone().unwrap_or_default()));
     output.push_stdout_line(format!("Display order: {}", chat.displayOrder));
     output.push_stdout_line(format!(
         "Workspace: {}",
@@ -935,14 +637,6 @@ fn print_chat_history_header(chat: &ChatHistory, output: &mut CoreCommandOutput)
     output.push_stdout_line(format!(
         "Parent chat: {}",
         chat.parentChatId.clone().unwrap_or_default()
-    ));
-    output.push_stdout_line(format!(
-        "Character: {}",
-        chat.characterCardName.clone().unwrap_or_default()
-    ));
-    output.push_stdout_line(format!(
-        "Character group: {}",
-        chat.characterGroupId.clone().unwrap_or_default()
     ));
     output.push_stdout_line(format!("Locked: {}", chat.locked));
     output.push_stdout_line(format!("Pinned: {}", chat.pinned));
@@ -976,16 +670,6 @@ fn print_chat_message(message: &ChatMessage, output: &mut CoreCommandOutput) {
     output.push_stdout_line(format!("Content: {}", message.displayText()));
 }
 
-/// Converts non-empty text to an owned string.
-fn nonBlankString(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
 /// Formats optional text for readable command output.
 fn option_text(value: Option<&str>) -> &str {
     match value {
@@ -997,7 +681,7 @@ fn option_text(value: Option<&str>) -> &str {
 /// Prints chat command usage.
 fn print_chat_usage(output: &mut CoreCommandOutput) {
     let lines = [
-        "operit2 chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]",
+        "operit2 chat new [--set-current <true|false>] [--source <chat-id>] [--input <json-object>]",
         "operit2 chat list",
         "operit2 chat show <chat-id> [--runtime]",
         "operit2 chat current",
@@ -1011,9 +695,6 @@ fn print_chat_usage(output: &mut CoreCommandOutput) {
         "operit2 chat lock <chat-id> <true|false>",
         "operit2 chat pin <chat-id> <true|false>",
         "operit2 chat stats",
-        "operit2 chat bind-character <chat-id> <character-card-name>",
-        "operit2 chat bind-group <chat-id> <character-group-id>",
-        "operit2 chat set-group <chat-id> <group-name>",
         "operit2 chat send [--chat <chat-id>] <message>",
     ];
     for line in lines {

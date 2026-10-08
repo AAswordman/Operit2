@@ -56,6 +56,8 @@ pub enum ToolRegistrationVisibility {
 pub struct AIToolHandler {
     inner: Arc<Mutex<AIToolHandlerState>>,
     executorAvailability: Arc<tokio::sync::Notify>,
+    /// Contains only the immutable package identity bound by the JavaScript engine.
+    pub(super) authenticatedExtensionOwner: Option<String>,
 }
 
 /// Returns a taken executor on normal completion, cancellation or panic unwinding.
@@ -198,6 +200,7 @@ impl AIToolHandler {
                 packageManager: None,
             })),
             executorAvailability: Arc::new(tokio::sync::Notify::new()),
+            authenticatedExtensionOwner: None,
         }
     }
 
@@ -312,9 +315,9 @@ impl AIToolHandler {
         self.notifyHooks(|hook| hook.onToolCallRequested(tool));
     }
 
-    /// Returns the first hook decision for a tool call before execution begins.
+    /// Returns an explicit policy decision or the original invoked failure before tool execution begins.
     #[allow(non_snake_case)]
-    pub async fn checkToolInterception(&self, tool: &AITool) -> AIToolHookDecision {
+    pub async fn checkToolInterception(&self, tool: &AITool) -> Result<AIToolHookDecision, String> {
         let hooks = self
             .inner
             .lock()
@@ -322,12 +325,12 @@ impl AIToolHandler {
             .hooks
             .clone();
         for hook in hooks {
-            match hook.onToolCallInterceptAsync(tool).await {
+            match hook.onToolCallInterceptAsync(tool).await? {
                 AIToolHookDecision::Allow => {}
-                decision @ AIToolHookDecision::Block(_) => return decision,
+                decision @ AIToolHookDecision::Block(_) => return Ok(decision),
             }
         }
-        AIToolHookDecision::Allow
+        Ok(AIToolHookDecision::Allow)
     }
 
     /// Builds the standard failed result emitted when a hook blocks a tool call.
@@ -1186,7 +1189,20 @@ impl AIToolHandler {
             ],
         );
         self.notifyToolCallRequested(&tool);
-        let interception = self.checkToolInterception(&tool).await;
+        let interception = match self.checkToolInterception(&tool).await {
+            Ok(decision) => decision,
+            Err(error) => {
+                let result = ToolResult {
+                    toolName: tool.name.clone(),
+                    success: false,
+                    result: stringResultData(""),
+                    error: Some(error),
+                };
+                self.notifyToolExecutionResult(&tool, &result);
+                self.notifyToolExecutionFinished(&tool);
+                return result;
+            }
+        };
         if let AIToolHookDecision::Block(_) = interception {
             let result = Self::toolInterceptionResult(&tool, interception);
             self.notifyToolExecutionResult(&tool, &result);
@@ -1335,6 +1351,37 @@ impl AIToolHandlerState {
 }
 
 impl JsExecutionHost for AIToolHandler {
+    /// Authenticates the actual registered container before binding an immutable per-engine owner.
+    fn for_toolpkg_execution_context(
+        &self,
+        context: &operit_plugin_sdk::javascript::ToolPkgExecutionContext,
+    ) -> Result<Arc<dyn JsExecutionHost>, String> {
+        if context.context_key.trim().is_empty() || context.container_package_name.trim().is_empty()
+        {
+            return Err("ToolPkg extension execution context is incomplete".to_string());
+        }
+        let manager = self.getOrCreatePackageManager();
+        let registry = manager.lock().expect("package manager mutex poisoned");
+        registry.packageRegistryReadiness().require_ready()?;
+        registry
+            .getToolPkgContainerRuntime(&context.container_package_name)
+            .ok_or_else(|| {
+                format!(
+                    "ToolPkg extension owner is not registered: {}",
+                    context.container_package_name
+                )
+            })?;
+        if !registry.isPackageEnabled(&context.container_package_name) {
+            return Err(format!(
+                "ToolPkg extension owner is disabled: {}",
+                context.container_package_name
+            ));
+        }
+        let mut host = self.clone();
+        host.authenticatedExtensionOwner = Some(context.container_package_name.clone());
+        Ok(Arc::new(host))
+    }
+
     /// Returns executable built-in and package tools with their declared parameters.
     fn get_tool_catalog(&self) -> Result<Value, String> {
         let mut handler = self.clone();

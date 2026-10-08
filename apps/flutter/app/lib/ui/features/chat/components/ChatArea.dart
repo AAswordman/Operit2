@@ -36,7 +36,8 @@ class ChatArea extends StatefulWidget {
     required this.errorMessage,
     required this.scrollController,
     required this.currentChatId,
-    required this.currentCharacterCardAvatarUri,
+    required this.identityAvatarUri,
+    this.onIdentityTap,
     required this.clients,
     required this.packageManager,
     required this.autoScrollToBottomListenable,
@@ -75,7 +76,8 @@ class ChatArea extends StatefulWidget {
   final String? errorMessage;
   final ScrollController scrollController;
   final String? currentChatId;
-  final String? currentCharacterCardAvatarUri;
+  final String? identityAvatarUri;
+  final VoidCallback? onIdentityTap;
   final GeneratedCoreProxyClients clients;
   final GeneratedApplicationPackageManagerCoreProxy packageManager;
   final ValueListenable<bool> autoScrollToBottomListenable;
@@ -986,8 +988,9 @@ class _ChatAreaState extends State<ChatArea>
         cached.selected == selected &&
         cached.selectionMode == selectionMode &&
         cached.isStreaming == isStreaming &&
-        cached.currentCharacterCardAvatarUri ==
-            widget.currentCharacterCardAvatarUri &&
+        cached.onIdentityTap == widget.onIdentityTap &&
+        cached.chatId == widget.currentChatId &&
+        cached.identityAvatarUri == widget.identityAvatarUri &&
         cached.themePreferenceSnapshot == themePreferenceSnapshot &&
         cached.messageThemeColors == messageThemeColors &&
         _sameMessageForRender(cached.message, message);
@@ -1000,10 +1003,12 @@ class _ChatAreaState extends State<ChatArea>
       colorScheme: colorScheme,
       key: ValueKey<String>(_messageWidgetKey(message)),
       message: message,
-      currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+      identityAvatarUri: widget.identityAvatarUri,
+      onIdentityTap: widget.onIdentityTap,
       splitMarkdownContent: widget.splitMarkdownContent,
       onDeleteMessage: widget.onDeleteMessage,
       onEditSummary: widget.onSelectMessageToEdit,
+      enableDialogs: !selectionMode,
     );
     final messageContent = _SelectableMessageFrame(
       selected: selected,
@@ -1057,9 +1062,11 @@ class _ChatAreaState extends State<ChatArea>
       selected: selected,
       selectionMode: selectionMode,
       isStreaming: isStreaming,
-      currentCharacterCardAvatarUri: widget.currentCharacterCardAvatarUri,
+      identityAvatarUri: widget.identityAvatarUri,
+      onIdentityTap: widget.onIdentityTap,
       themePreferenceSnapshot: themePreferenceSnapshot,
       messageThemeColors: messageThemeColors,
+      chatId: widget.currentChatId,
       widget: row,
     );
     return row;
@@ -1388,9 +1395,11 @@ class _CachedMessageRow {
     required this.selected,
     required this.selectionMode,
     required this.isStreaming,
-    required this.currentCharacterCardAvatarUri,
+    required this.identityAvatarUri,
+    this.onIdentityTap,
     required this.themePreferenceSnapshot,
     required this.messageThemeColors,
+    required this.chatId,
     required this.widget,
   });
 
@@ -1399,9 +1408,11 @@ class _CachedMessageRow {
   final bool selected;
   final bool selectionMode;
   final bool isStreaming;
-  final String? currentCharacterCardAvatarUri;
+  final String? identityAvatarUri;
+  final VoidCallback? onIdentityTap;
   final ThemePreferenceSnapshot themePreferenceSnapshot;
   final ChatMessageThemeColors messageThemeColors;
+  final String? chatId;
   final Widget widget;
 }
 

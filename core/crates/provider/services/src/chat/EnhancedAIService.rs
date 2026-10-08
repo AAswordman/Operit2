@@ -20,16 +20,17 @@ use crate::chat::enhance::ConversationService::{
 };
 use crate::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
 use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
-use crate::chat::library::MemoryLibrary::MemoryLibrary;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, AiServiceError, SendMessageRequest, SharedAiResponseStream,
     TokenCounts,
 };
-use crate::runtime_support::{ProviderRuntimeContext, ProviderRuntimeSupport};
+use crate::runtime_support::{
+    ChatConfigurationPurpose, ChatConfigurationRequest, ChatConfigurationResult, ProviderFunctionModelBinding,
+    ProviderRuntimeContext, ProviderRuntimeSupport,
+};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::CoreValue;
-use operit_model::CharacterCard::CharacterCardMemoryBindingMode;
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::ModelConfigData::ResolvedModelConfig;
@@ -38,8 +39,6 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::{ToolParameterSchema, ToolPrompt};
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
-use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
-use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_tools::files::PathMapper::{PathMapper, ResolvedVfsPath};
 use operit_tools::runtime_support::{CoreRouteResumeContext, ToolRuntimeSupport};
 use operit_tools::tools::climode::CliToolModeSupport::{
@@ -51,7 +50,7 @@ use operit_tools::ConversationMarkupManager::{
 };
 use operit_tools::ToolExecutionManager::{
     AITool as RuntimeAITool, RouteChangeIntent, ToolExecutionManager,
-    ToolExposureMode as RuntimeToolExposureMode, ToolInvocation,
+    ToolExposureMode as RuntimeToolExposureMode, ToolInvocation, ToolRuntimeContext,
 };
 use operit_util::stream::RevisableTextStream::{ResponseStreamItem, RevisableTextStream};
 use operit_util::stream::RevisableTextStream::{TextStreamEvent, TextStreamEventType};
@@ -61,7 +60,6 @@ use operit_util::AppLogger::AppLogger;
 use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ChatUtils::ChatUtils;
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
-use operit_util::OperitPaths::{characterMemoryOwnerKey, sharedMemoryOwnerKey};
 
 const TAG: &str = "EnhancedAIService";
 
@@ -75,7 +73,6 @@ pub struct EnhancedAIService {
     pub input_processing_state: MutableStateFlow<InputProcessingState>,
     pub request_window_estimate_flow: MutableStateFlow<Option<i64>>,
     pub api_preferences: ApiPreferencesMirror,
-    pub character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
     pub tool_processing_scope: ToolProcessingScopeMirror,
     pub package_manager: PackageManagerMirror,
     pub provider_runtime_context: ProviderRuntimeContext,
@@ -220,7 +217,10 @@ pub struct SendMessageOptions {
     pub isSubTask: bool,
     pub characterName: Option<String>,
     pub avatarUri: Option<String>,
-    pub roleCardId: Option<String>,
+    /// Explicit participant selected from a plugin-resolved execution plan.
+    pub executionParticipantId: Option<String>,
+    /// Resolved neutral context propagated unchanged through prompt and tool execution.
+    pub chatConfiguration: Option<ChatConfigurationResult>,
     pub enableGroupOrchestrationHint: bool,
     pub groupParticipantNamesText: Option<String>,
     pub proxySenderName: Option<String>,
@@ -259,7 +259,8 @@ impl SendMessageOptions {
             isSubTask: false,
             characterName: None,
             avatarUri: None,
-            roleCardId: None,
+            executionParticipantId: None,
+            chatConfiguration: None,
             enableGroupOrchestrationHint: false,
             groupParticipantNamesText: None,
             proxySenderName: None,
@@ -356,6 +357,7 @@ pub struct SendMessageExecution {
 }
 
 pub struct SendMessageRuntime {
+    pub chatConfiguration: ChatConfigurationResult,
     pub activePromptMetadata: BTreeMap<String, String>,
     pub useEnglish: bool,
     pub userPreferencesText: String,
@@ -389,9 +391,6 @@ pub struct FileBindingServiceMirror;
 
 #[derive(Clone, Debug)]
 pub struct ApiPreferencesMirror;
-
-#[derive(Clone, Debug)]
-pub struct CharacterCardToolAccessResolverMirror;
 
 #[derive(Clone, Debug)]
 pub struct PackageManagerMirror;
@@ -510,14 +509,16 @@ impl PromptHistoryHookDispatcher for RuntimePromptHistoryHooks {
 pub struct RuntimeSystemPromptComposer {
     tool_handler: AIToolHandler,
     provider_runtime_context: ProviderRuntimeContext,
+    executionContext: Value,
 }
 
 impl SystemPromptComposer for RuntimeSystemPromptComposer {
+    /// Composes prompts with the actual resolved participant context available to registered hooks.
     fn get_system_prompt_with_custom_prompts<'a>(
         &'a self,
         request: &'a PrepareConversationHistoryRequest,
         use_english: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
             let custom_system_prompt_template = match &request.custom_system_prompt_template {
                 Some(value) => value.clone(),
@@ -588,6 +589,11 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                     description: package.description,
                 })
                 .collect::<Vec<_>>();
+            let mut hookMetadata = btree_to_value_map(&request.active_prompt_metadata);
+            hookMetadata.insert(
+                "executionContext".to_string(),
+                self.executionContext.clone(),
+            );
             SystemPromptConfig::getSystemPromptWithCustomPrompts(SystemPromptWithCustomOptions {
                 base: SystemPromptOptions {
                     chat_id: request.chat_id.clone(),
@@ -612,7 +618,7 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                     enabled_packages,
                     mcp_servers,
                     skill_packages,
-                    hook_metadata: btree_to_value_map(&request.active_prompt_metadata),
+                    hook_metadata: hookMetadata,
                     ..SystemPromptOptions::default()
                 },
                 custom_intro_prompt: request.intro_prompt.clone(),
@@ -645,7 +651,6 @@ impl EnhancedAIService {
             input_processing_state: mutableStateFlow(InputProcessingState::Idle),
             request_window_estimate_flow: mutableStateFlow(None),
             api_preferences: ApiPreferencesMirror,
-            character_card_tool_access_resolver: CharacterCardToolAccessResolverMirror,
             tool_processing_scope: ToolProcessingScopeMirror,
             package_manager: PackageManagerMirror,
             provider_runtime_context,
@@ -755,10 +760,11 @@ impl EnhancedAIService {
         context
     }
 
+    /// Correlates final prompt hooks with the same resolved execution participant used by tools.
     pub fn buildPromptFinalizeMetadata(
         &self,
         chatId: Option<String>,
-        roleCardId: Option<String>,
+        participantId: Option<String>,
         workspacePath: Option<String>,
         enableThinking: bool,
         stream: bool,
@@ -770,7 +776,10 @@ impl EnhancedAIService {
             ("stream".to_string(), json!(stream)),
             ("isSubTask".to_string(), json!(isSubTask)),
             ("chatId".to_string(), json!(chatId)),
-            ("roleCardId".to_string(), json!(roleCardId)),
+            (
+                "executionContext".to_string(),
+                json!({ "chatId": chatId, "participantId": participantId }),
+            ),
         ])
     }
 
@@ -797,7 +806,7 @@ impl EnhancedAIService {
         workspaceFolders: Vec<String>,
         promptFunctionType: PromptFunctionType,
         customSystemPromptTemplate: Option<String>,
-        roleCardId: Option<String>,
+        participantId: Option<String>,
         enableGroupOrchestrationHint: bool,
         groupParticipantNamesText: Option<String>,
         proxySenderName: Option<String>,
@@ -806,7 +815,7 @@ impl EnhancedAIService {
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
-    ) -> Vec<PromptTurn> {
+    ) -> Result<Vec<PromptTurn>, AiServiceError> {
         let config = self.getModelConfigForFunction(
             functionType,
             chatProviderIdOverride,
@@ -822,8 +831,16 @@ impl EnhancedAIService {
         let system_prompt_composer = RuntimeSystemPromptComposer {
             tool_handler: self.tool_handler.clone(),
             provider_runtime_context: self.provider_runtime_context.clone(),
+            executionContext: json!({
+                "chatId": chatId,
+                "participantId": runtime.chatConfiguration.profile.id,
+            }),
         };
-        self.conversation_service
+        let toolContext = toolRuntimeContextForConfiguration(
+            &runtime.chatConfiguration, chatId.clone(), workspacePath.clone(),
+            workspaceFolders.clone(), &runtime.toolExposureMode,
+        )?;
+        ToolExecutionManager::scopeToolRuntimeContext(toolContext, self.conversation_service
             .prepare_conversation_history(
                 PrepareConversationHistoryRequest {
                     chat_history: chatHistory,
@@ -834,7 +851,7 @@ impl EnhancedAIService {
                     prompt_function_type: prompt_function_type_name(&promptFunctionType)
                         .to_string(),
                     custom_system_prompt_template: customSystemPromptTemplate,
-                    role_card_id: roleCardId,
+                    participant_id: participantId,
                     enable_group_orchestration_hint: enableGroupOrchestrationHint,
                     group_participant_names_text: groupParticipantNamesText,
                     proxy_sender_name: proxySenderName,
@@ -857,8 +874,7 @@ impl EnhancedAIService {
                 &history_hooks,
                 &system_prompt_composer,
                 runtime.useEnglish,
-            )
-            .await
+            )).await.map_err(AiServiceError::RequestFailed)
     }
 
     pub async fn generateSummary(
@@ -901,7 +917,7 @@ impl EnhancedAIService {
         functionType: FunctionType,
         _chatId: Option<String>,
         _promptFunctionType: Option<PromptFunctionType>,
-        _roleCardId: Option<String>,
+        _participantId: Option<String>,
         _chatProviderIdOverride: Option<String>,
         _chatModelIdOverride: Option<String>,
         runtime: &SendMessageRuntime,
@@ -961,7 +977,7 @@ impl EnhancedAIService {
         workspacePath: Option<String>,
         workspaceFolders: Vec<String>,
         promptFunctionType: PromptFunctionType,
-        roleCardId: Option<String>,
+        participantId: Option<String>,
         enableGroupOrchestrationHint: bool,
         groupParticipantNamesText: Option<String>,
         proxySenderName: Option<String>,
@@ -975,11 +991,11 @@ impl EnhancedAIService {
                 chatHistory,
                 message.clone(),
                 chatId.clone(),
-                workspacePath,
-                workspaceFolders,
+                workspacePath.clone(),
+                workspaceFolders.clone(),
                 promptFunctionType.clone(),
                 None,
-                roleCardId.clone(),
+                participantId.clone(),
                 enableGroupOrchestrationHint,
                 groupParticipantNamesText,
                 proxySenderName,
@@ -989,16 +1005,28 @@ impl EnhancedAIService {
                 chatModelIdOverride.clone(),
                 &runtime,
             )
-            .await;
+            .await?;
         let availableTools = self.getAvailableToolsForFunction(
             FunctionType::CHAT,
             chatId.clone(),
             Some(promptFunctionType.clone()),
-            roleCardId,
+            participantId,
             chatProviderIdOverride.clone(),
             chatModelIdOverride.clone(),
             &runtime,
         );
+        let availableTools = applyToolPromptComposeHooksToAvailableTools(
+            availableTools,
+            chatId.clone(),
+            FunctionType::CHAT,
+            Some(promptFunctionType.clone()),
+            runtime.useEnglish,
+            &runtime.chatConfiguration,
+            workspacePath,
+            workspaceFolders,
+            &runtime.toolExposureMode,
+        )
+        .await?;
         let serviceForFunction = self.getAIServiceForFunction(
             FunctionType::CHAT,
             chatProviderIdOverride,
@@ -1118,8 +1146,82 @@ impl EnhancedAIService {
         {
             return Err(AiServiceError::RequestCancelled);
         }
-        let runtime = self.createSendMessageRuntime(&options)?;
+        let configuration = self.resolveChatConfigurationForOptions(&options).await?;
+        self.sendMessageWithConfiguration(options, configuration)
+            .await
+    }
+
+    /// Executes one already resolved profile without selecting or invoking another configuration provider.
+    pub async fn sendMessageWithConfiguration(
+        &mut self,
+        mut options: SendMessageOptions,
+        configuration: ChatConfigurationResult,
+    ) -> Result<SharedAiResponseStream, AiServiceError> {
+        if options
+            .cancellationToken
+            .as_ref()
+            .is_some_and(MessageCancellationToken::isCancelled)
+        {
+            return Err(AiServiceError::RequestCancelled);
+        }
+        configuration
+            .validate()
+            .map_err(AiServiceError::RequestFailed)?;
+        options.characterName = Some(configuration.profile.name.clone());
+        options.avatarUri = configuration.profile.avatarUri.clone();
+        options.executionParticipantId = Some(configuration.profile.id.clone());
+        options.chatConfiguration = Some(configuration.clone());
+        let runtime = self.createSendMessageRuntime(&options, configuration)?;
         self.sendMessageWithRuntime(options, runtime).await
+    }
+
+    /// Resolves a fresh conversation execution after the native owner-specific canonical record read; historical snapshots use explicit revision resolution.
+    pub async fn resolveChatConfigurationForOptions(
+        &self,
+        options: &SendMessageOptions,
+    ) -> Result<ChatConfigurationResult, AiServiceError> {
+        let support = self.provider_runtime_context.support();
+        let defaultModelBinding = match (
+            options.chatProviderIdOverride.as_ref(),
+            options.chatModelIdOverride.as_ref(),
+        ) {
+            (Some(providerId), Some(modelId))
+                if !providerId.trim().is_empty() && !modelId.trim().is_empty() =>
+            {
+                ProviderFunctionModelBinding {
+                    providerId: providerId.clone(),
+                    modelId: modelId.clone(),
+                }
+            }
+            (None, None) => support
+                .modelBindingForFunction(
+                    support.dataDir().map_err(AiServiceError::RequestFailed)?,
+                    options.functionType.clone(),
+                )
+                .map_err(AiServiceError::RequestFailed)?,
+            _ => {
+                return Err(AiServiceError::RequestFailed(
+                    "Chat provider and model override must be set together".to_string(),
+                ))
+            }
+        };
+        support
+            .resolveChatConfiguration(ChatConfigurationRequest {
+                purpose: ChatConfigurationPurpose::Execution,
+                chatId: options.chatId.clone(),
+                // The native API replaces this unresolved field with the selected owner's actual record before invoking the plugin.
+                chatExtension: None,
+                // Fresh execution has no requested historical revision; stored message resolution supplies its exact snapshot separately.
+                messageExtension: None,
+                participantId: options.executionParticipantId.clone(),
+                promptFunctionType: options.promptFunctionType.clone(),
+                defaultModelBinding,
+                defaultTtsConfigId: support
+                    .defaultTtsConfigId()
+                    .map_err(AiServiceError::RequestFailed)?,
+            })
+            .await
+            .map_err(AiServiceError::RequestFailed)
     }
 
     /// Resumes model processing with history already synchronized on the target CoreNode.
@@ -1150,59 +1252,28 @@ impl EnhancedAIService {
             .await
     }
 
+    /// Builds a model runtime exclusively from one validated plugin-resolved descriptor.
     #[allow(non_snake_case)]
     pub fn createSendMessageRuntime(
         &mut self,
-        options: &SendMessageOptions,
+        _options: &SendMessageOptions,
+        configuration: ChatConfigurationResult,
     ) -> Result<SendMessageRuntime, AiServiceError> {
-        let (modelConfig, modelParameters, selectedService) = match (
-            options.chatProviderIdOverride.as_ref(),
-            options.chatModelIdOverride.as_ref(),
-        ) {
-            (Some(providerId), Some(modelId))
-                if !providerId.trim().is_empty() && !modelId.trim().is_empty() =>
-            {
-                self.multi_service_manager
-                    .getServiceBundleForModel(providerId.clone(), modelId.clone())?
-            }
-            (None, None) => self
-                .multi_service_manager
-                .getServiceBundleForFunction(options.functionType.clone())?,
-            _ => {
-                return Err(AiServiceError::RequestFailed(
-                    "chat provider and model override must be set together".to_string(),
-                ));
-            }
-        };
-        let roleCardId = options.roleCardId.as_ref().ok_or_else(|| {
-            AiServiceError::RequestFailed("roleCardId is required to resolve USER.md".to_string())
-        })?;
-        let characterPromptContext = self
-            .provider_runtime_context
-            .support()
-            .characterPromptContext(roleCardId, options.promptFunctionType.clone())
+        configuration
+            .validate()
             .map_err(AiServiceError::RequestFailed)?;
-        let activeCard = &characterPromptContext.activeCard;
-        let introPrompt = characterPromptContext.introPrompt;
-        let aiName = characterPromptContext.aiName;
-        let memoryBindingMode =
-            CharacterCardMemoryBindingMode::normalize(Some(&activeCard.memoryBindingMode));
-        let userOwnerKey = if memoryBindingMode == CharacterCardMemoryBindingMode::SHARED {
-            let sharedMemoryId = activeCard.sharedMemoryId.as_ref().ok_or_else(|| {
-                AiServiceError::RequestFailed(
-                    "shared memory binding requires sharedMemoryId".to_string(),
-                )
-            })?;
-            sharedMemoryOwnerKey(sharedMemoryId).map_err(AiServiceError::RequestFailed)?
-        } else {
-            characterMemoryOwnerKey(&activeCard.id).map_err(AiServiceError::RequestFailed)?
-        };
-        let userPreferencesText =
-            UserMarkdownRepository::new(userOwnerKey, defaultRuntimeStorageHost())
-                .readUserMarkdown()
-                .map_err(AiServiceError::RequestFailed)?;
+        let profile = &configuration.profile;
+        let (modelConfig, modelParameters, selectedService) =
+            self.multi_service_manager.getServiceBundleForModel(
+                profile.modelBinding.providerId.clone(),
+                profile.modelBinding.modelId.clone(),
+            )?;
+        let introPrompt = profile.introPrompt.clone();
+        let aiName = profile.name.clone();
+        let userPreferencesText = profile.userPreferencesText.clone();
 
         Ok(SendMessageRuntime {
+            chatConfiguration: configuration,
             activePromptMetadata: BTreeMap::new(),
             useEnglish: false,
             userPreferencesText,
@@ -1260,6 +1331,13 @@ impl EnhancedAIService {
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
             operit_util::stream::HotStream::mutable_shared_stream(usize::MAX),
         );
+        let toolRuntimeContext = toolRuntimeContextForConfiguration(
+            &runtime.chatConfiguration,
+            options.chatId.clone(),
+            options.workspacePath.clone(),
+            options.workspaceFolders.clone(),
+            &runtime.toolExposureMode,
+        )?;
         let mut service = self.clone();
         let producerStream = responseStream.clone();
         defaultHostRuntimeTaskSchedulerHost()
@@ -1273,14 +1351,15 @@ impl EnhancedAIService {
                             operit_util::AppLogger::VERBOSE_LEVEL_5,
                         );
                         let cancellationToken = execContext.cancellationToken.clone();
-                        let result = service
-                            .executeSendMessageWithRuntime(
+                        let result = ToolExecutionManager::scopeToolRuntimeContext(
+                            toolRuntimeContext,
+                            service.executeSendMessageWithRuntime(
                                 options,
                                 runtime,
                                 producerStream.clone(),
                                 execContext,
-                            )
-                            .await;
+                            ),
+                        ).await;
                         if let Err(error) = result {
                             let cancelled = matches!(error, AiServiceError::RequestCancelled)
                                 || cancellationToken
@@ -1348,8 +1427,7 @@ impl EnhancedAIService {
         let isSubTask = options.isSubTask;
         let characterName = options.characterName.clone();
         let avatarUri = options.avatarUri.clone();
-        let roleCardId = options.roleCardId.clone();
-        let memoryAutoUpdateCharacterCardId = roleCardId.clone();
+        let participantId = Some(runtime.chatConfiguration.profile.id.clone());
         let enableGroupOrchestrationHint = options.enableGroupOrchestrationHint;
         let groupParticipantNamesText = options.groupParticipantNamesText.clone();
         let proxySenderName = options.proxySenderName.clone();
@@ -1407,7 +1485,7 @@ impl EnhancedAIService {
                 options.workspaceFolders.clone(),
                 promptFunctionType.clone(),
                 customSystemPromptTemplate.clone(),
-                roleCardId.clone(),
+                participantId.clone(),
                 enableGroupOrchestrationHint,
                 groupParticipantNamesText.clone(),
                 proxySenderName.clone(),
@@ -1417,7 +1495,7 @@ impl EnhancedAIService {
                 chatModelIdOverride.clone(),
                 &runtime,
             )
-            .await;
+            .await?;
         let tAfterPrepareHistory = runtimeSupport.messageTimingNow();
         AppLogger::d(
             TAG,
@@ -1476,11 +1554,23 @@ impl EnhancedAIService {
             functionType.clone(),
             chatId.clone(),
             Some(promptFunctionType.clone()),
-            roleCardId.clone(),
+            participantId.clone(),
             chatProviderIdOverride.clone(),
             chatModelIdOverride.clone(),
             &runtime,
         );
+        let availableTools = applyToolPromptComposeHooksToAvailableTools(
+            availableTools,
+            chatId.clone(),
+            functionType.clone(),
+            Some(promptFunctionType.clone()),
+            runtime.useEnglish,
+            &runtime.chatConfiguration,
+            workspacePath.clone(),
+            options.workspaceFolders.clone(),
+            &runtime.toolExposureMode,
+        )
+        .await?;
         let tAfterGetTools = runtimeSupport.messageTimingNow();
         AppLogger::d(
             TAG,
@@ -1526,7 +1616,7 @@ impl EnhancedAIService {
                     available_tools: serializePromptHookToolPrompts(&availableTools),
                     metadata: self.buildPromptFinalizeMetadata(
                         chatId.clone(),
-                        roleCardId.clone(),
+                        participantId.clone(),
                         workspacePath.clone(),
                         enableThinking,
                         stream,
@@ -1855,7 +1945,7 @@ impl EnhancedAIService {
                 isSubTask,
                 characterName.clone(),
                 avatarUri.clone(),
-                roleCardId,
+                participantId,
                 chatId.clone(),
                 onToolInvocation,
                 notifyReplyOverride,
@@ -1900,38 +1990,6 @@ impl EnhancedAIService {
             return Ok(());
         }
 
-        if enableMemoryAutoUpdate && !isSubTask {
-            let memoryContent = execContext.roundManager.getDisplayContent();
-            if !memoryContent.trim().is_empty() {
-                let result = (|| -> Result<(), AiServiceError> {
-                    let roleCardId = memoryAutoUpdateCharacterCardId.clone().ok_or_else(|| {
-                        AiServiceError::RequestFailed(
-                            "memory auto update requires a role card".to_string(),
-                        )
-                    })?;
-                    let ownerKey = self
-                        .provider_runtime_context
-                        .support()
-                        .memoryOwnerKeyForCharacterCard(&roleCardId)
-                        .map_err(AiServiceError::RequestFailed)?;
-                    let chatId = chatId.ok_or_else(|| {
-                        AiServiceError::RequestFailed(
-                            "memory auto update requires a persisted chat".to_string(),
-                        )
-                    })?;
-                    MemoryLibrary::enqueueAutoSaveCandidate(ownerKey, chatId, currentTimeMillis())
-                        .map_err(AiServiceError::RequestFailed)?;
-                    Ok(())
-                })();
-                if let Err(error) = result {
-                    let message = format!("自动保存长期记忆候选入队失败: {error}");
-                    AppLogger::e(TAG, &message);
-                    if let Some(callback) = onNonFatalError {
-                        callback(message);
-                    }
-                }
-            }
-        }
         AppLogger::d(
             TAG,
             &format!(
@@ -1990,7 +2048,7 @@ impl EnhancedAIService {
         isSubTask: bool,
         characterName: Option<String>,
         avatarUri: Option<String>,
-        roleCardId: Option<String>,
+        participantId: Option<String>,
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
@@ -2112,11 +2170,23 @@ impl EnhancedAIService {
             functionType.clone(),
             chatId.clone(),
             Some(promptFunctionType.clone()),
-            roleCardId.clone(),
+            participantId.clone(),
             chatProviderIdOverride.clone(),
             chatModelIdOverride.clone(),
             runtime,
         );
+        let availableTools = applyToolPromptComposeHooksToAvailableTools(
+            availableTools,
+            chatId.clone(),
+            functionType.clone(),
+            Some(promptFunctionType.clone()),
+            runtime.useEnglish,
+            &runtime.chatConfiguration,
+            context.workspacePath.clone(),
+            context.workspaceFolders.clone(),
+            &runtime.toolExposureMode,
+        )
+        .await?;
 
         let currentTokens = self
             .estimatePreparedRequestWindow(
@@ -2346,7 +2416,7 @@ impl EnhancedAIService {
             isSubTask,
             characterName,
             avatarUri,
-            roleCardId,
+            participantId,
             chatId,
             onToolInvocation,
             notifyReplyOverride,
@@ -2378,7 +2448,7 @@ impl EnhancedAIService {
         isSubTask: bool,
         characterName: Option<String>,
         avatarUri: Option<String>,
-        roleCardId: Option<String>,
+        participantId: Option<String>,
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
@@ -2489,7 +2559,7 @@ impl EnhancedAIService {
                 isSubTask,
                 characterName,
                 avatarUri,
-                roleCardId,
+                participantId,
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
@@ -2581,7 +2651,7 @@ impl EnhancedAIService {
                 isSubTask,
                 characterName,
                 avatarUri,
-                roleCardId,
+                participantId,
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
@@ -2640,7 +2710,7 @@ impl EnhancedAIService {
         isSubTask: bool,
         characterName: Option<String>,
         avatarUri: Option<String>,
-        roleCardId: Option<String>,
+        participantId: Option<String>,
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         notifyReplyOverride: Option<bool>,
@@ -2708,12 +2778,15 @@ impl EnhancedAIService {
                 &packageManagerSnapshot,
                 characterName.clone(),
                 chatId.clone(),
-                roleCardId.clone(),
+                participantId.clone(),
                 context.workspacePath.clone(),
                 context.workspaceFolders.clone(),
                 toolExposureMode,
+                runtime.chatConfiguration.extensionOwner.clone(),
+                runtime.chatConfiguration.messageExtension.clone(),
             )
-            .await;
+            .await
+            .map_err(AiServiceError::RequestFailed)?;
         let routeChangeTargetNodeId = routeChangeIntent
             .as_ref()
             .map(|intent| intent.targetNodeId.clone());
@@ -2777,7 +2850,7 @@ impl EnhancedAIService {
                 isSubTask,
                 characterName,
                 avatarUri,
-                roleCardId,
+                participantId,
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
@@ -2810,7 +2883,7 @@ impl EnhancedAIService {
                 isSubTask,
                 characterName,
                 avatarUri,
-                roleCardId,
+                participantId,
                 chatId,
                 onToolInvocation,
                 notifyReplyOverride,
@@ -3030,7 +3103,6 @@ impl Clone for EnhancedAIService {
             input_processing_state: self.input_processing_state.clone(),
             request_window_estimate_flow: self.request_window_estimate_flow.clone(),
             api_preferences: self.api_preferences.clone(),
-            character_card_tool_access_resolver: self.character_card_tool_access_resolver.clone(),
             tool_processing_scope: self.tool_processing_scope.clone(),
             package_manager: self.package_manager.clone(),
             provider_runtime_context: self.provider_runtime_context.clone(),
@@ -3292,86 +3364,49 @@ fn serializePromptHookToolParameters(
     }
 }
 
-fn deserializePromptHookToolPrompts(toolItems: Vec<HashMap<String, Value>>) -> Vec<ToolPrompt> {
+/// Rejects malformed hook descriptors instead of dropping tools or fabricating schemas.
+fn deserializePromptHookToolPrompts(
+    toolItems: Vec<HashMap<String, Value>>,
+) -> Result<Vec<ToolPrompt>, AiServiceError> {
+    let mut names = BTreeSet::new();
     toolItems
         .into_iter()
-        .filter_map(|item| {
-            let name = item.get("name")?.as_str()?.to_string();
-            let description = item.get("description")?.as_str()?.to_string();
-            let parametersStructured =
-                deserializePromptHookToolParameters(item.get("parametersStructured"));
-            let parameters = item
-                .get("parameters")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .expect("tool prompt parameters must be a string");
-            let details = item
-                .get("details")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .expect("tool prompt details must be a string");
-            let notes = item
-                .get("notes")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .expect("tool prompt notes must be a string");
-
-            Some(ToolPrompt {
-                name,
-                description,
-                parameters,
-                parametersStructured: Some(parametersStructured),
-                details,
-                notes,
-            })
+        .map(|item| {
+            let value = serde_json::to_value(item)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            let tool: ToolPrompt = serde_json::from_value(value).map_err(|error| {
+                AiServiceError::RequestFailed(format!("Invalid prompt hook tool: {error}"))
+            })?;
+            if tool.name.trim().is_empty() || !names.insert(tool.name.clone()) {
+                return Err(AiServiceError::RequestFailed(format!(
+                    "Invalid or duplicate prompt tool: {}",
+                    tool.name
+                )));
+            }
+            Ok(tool)
         })
         .collect()
 }
 
-fn deserializePromptHookToolParameters(value: Option<&Value>) -> Vec<ToolParameterSchema> {
-    match value.and_then(Value::as_array) {
-        Some(items) => items
-            .iter()
-            .filter_map(|item| {
-                let parameter = item.as_object()?;
-                let name = parameter.get("name")?.as_str()?.to_string();
-                let description = parameter.get("description")?.as_str()?.to_string();
-                let parameter_type = parameter
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned)
-                    .expect("tool parameter type must be a string");
-                let required = parameter
-                    .get("required")
-                    .and_then(Value::as_bool)
-                    .expect("tool parameter required must be a bool");
-                let default = parameter
-                    .get("default")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
-                Some(ToolParameterSchema {
-                    name,
-                    r#type: parameter_type,
-                    description,
-                    required,
-                    default,
-                })
-            })
-            .collect(),
-        None => Vec::new(),
-    }
-}
-
+/// Filters actual model tools through existing hooks with the same resolved execution descriptor.
 async fn applyToolPromptComposeHooksToAvailableTools(
     availableTools: Vec<ToolPrompt>,
     chatId: Option<String>,
     functionType: FunctionType,
     promptFunctionType: Option<PromptFunctionType>,
     useEnglish: bool,
-) -> Vec<ToolPrompt> {
-    let hookContext = PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
+    configuration: &ChatConfigurationResult,
+    workspacePath: Option<String>,
+    workspaceFolders: Vec<String>,
+    exposureMode: &ToolExposureMode,
+) -> Result<Vec<ToolPrompt>, AiServiceError> {
+    let toolContext = toolRuntimeContextForConfiguration(
+        configuration, chatId.clone(), workspacePath, workspaceFolders, exposureMode,
+    )?;
+    let hookContext = ToolExecutionManager::scopeToolRuntimeContext(toolContext,
+        PromptHookRegistry::dispatchToolPromptComposeHooks(PromptHookContext {
         stage: "filter_tool_call_tools".to_string(),
-        chat_id: chatId,
+        chat_id: chatId.clone(),
         function_type: Some(function_type_name(&functionType).to_string()),
         prompt_function_type: promptFunctionType
             .as_ref()
@@ -3379,10 +3414,41 @@ async fn applyToolPromptComposeHooksToAvailableTools(
             .map(ToOwned::to_owned),
         use_english: Some(useEnglish),
         available_tools: serializePromptHookToolPrompts(&availableTools),
+        metadata: HashMap::from([(
+            "executionContext".to_string(),
+            json!({
+                "chatId": chatId,
+                "participantId": configuration.profile.id,
+            }),
+        )]),
         ..PromptHookContext::default()
-    })
-    .await;
+    })).await.map_err(AiServiceError::RequestFailed)?;
     deserializePromptHookToolPrompts(hookContext.available_tools)
+}
+
+/// Constructs the native-authenticated tool snapshot from this turn's already-resolved configuration.
+fn toolRuntimeContextForConfiguration(
+    configuration: &ChatConfigurationResult,
+    chatId: Option<String>,
+    workspacePath: Option<String>,
+    workspaceFolders: Vec<String>,
+    exposureMode: &ToolExposureMode,
+) -> Result<ToolRuntimeContext, AiServiceError> {
+    configuration.validate().map_err(AiServiceError::RequestFailed)?;
+    let context = ToolRuntimeContext {
+        callerChatId: chatId,
+        callerParticipantId: Some(configuration.profile.id.clone()),
+        workspacePath,
+        workspaceFolders,
+        toolExposureMode: match exposureMode {
+            ToolExposureMode::Cli => RuntimeToolExposureMode::CLI,
+            ToolExposureMode::Full => RuntimeToolExposureMode::FULL,
+        },
+        extensionOwner: configuration.extensionOwner.clone(),
+        messageExtension: configuration.messageExtension.clone(),
+    };
+    context.validateSnapshot().map_err(AiServiceError::RequestFailed)?;
+    Ok(context)
 }
 
 /// Serializes one functional model role for prompt-hook metadata.

@@ -28,18 +28,18 @@ impl Operit1RoomSchemaVersion {
 /// Identifies one explicit Operit1 Room to Operit2 SQLite archive bridge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Operit1ToOperit2ChatArchiveBridge {
-    Operit1RoomV10ToOperit2SqliteV27,
-    Operit1RoomV20ToOperit2SqliteV27,
-    Operit1RoomV21ToOperit2SqliteV27,
+    Operit1RoomV10ToOperit2SqliteV28,
+    Operit1RoomV20ToOperit2SqliteV28,
+    Operit1RoomV21ToOperit2SqliteV28,
 }
 
 impl Operit1ToOperit2ChatArchiveBridge {
     /// Returns the exact Operit2 SQLite target schema required by this bridge.
     const fn operit2TargetSchemaVersion(self) -> i32 {
         match self {
-            Self::Operit1RoomV10ToOperit2SqliteV27 => 27,
-            Self::Operit1RoomV20ToOperit2SqliteV27 => 27,
-            Self::Operit1RoomV21ToOperit2SqliteV27 => 27,
+            Self::Operit1RoomV10ToOperit2SqliteV28 => 28,
+            Self::Operit1RoomV20ToOperit2SqliteV28 => 28,
+            Self::Operit1RoomV21ToOperit2SqliteV28 => 28,
         }
     }
 }
@@ -67,13 +67,13 @@ fn selectOperit1ToOperit2ChatArchiveBridge(
     };
     let bridge = match sourceSchemaVersion {
         Operit1RoomSchemaVersion::V10 => {
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV27
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV28
         }
         Operit1RoomSchemaVersion::V20 => {
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV27
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV28
         }
         Operit1RoomSchemaVersion::V21 => {
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV28
         }
     };
     let targetSchemaVersion = bridge.operit2TargetSchemaVersion();
@@ -106,7 +106,7 @@ fn readOperit1RoomSchemaVersion(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use operit_host_api::{
@@ -115,21 +115,29 @@ mod tests {
     use rusqlite::types::Value as RusqliteValue;
 
     /// Adapts an in-memory rusqlite database to the runtime SQLite connection contract.
-    struct TestSqliteConnection {
+    pub(crate) struct TestSqliteConnection {
         connection: rusqlite::Connection,
     }
 
     impl TestSqliteConnection {
         /// Creates an empty in-memory SQLite connection for one migration test.
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self {
                 connection: rusqlite::Connection::open_in_memory()
                     .expect("test SQLite connection must open"),
             }
         }
 
+        /// Opens an actual staged source database for archive source and target projection tests.
+        pub(crate) fn open(path: &std::path::Path) -> Self {
+            Self {
+                connection: rusqlite::Connection::open(path)
+                    .expect("staged legacy SQLite database must open"),
+            }
+        }
+
         /// Executes test setup SQL directly against the in-memory SQLite connection.
-        fn executeBatch(&mut self, sql: &str) {
+        pub(crate) fn executeBatch(&mut self, sql: &str) {
             self.connection
                 .execute_batch(sql)
                 .expect("test SQLite setup SQL must execute");
@@ -266,7 +274,7 @@ mod tests {
 
         assert_eq!(
             bridge,
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV27
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV28
         );
         assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
         assert_eq!(
@@ -275,7 +283,7 @@ mod tests {
         );
     }
 
-    /// Selects the version-20 to version-26 bridge without rewriting the source schema.
+    /// Selects the version-20 to version-28 bridge without rewriting the source schema.
     #[test]
     fn accepts_operit1_room_20() {
         let mut connection = TestSqliteConnection::new();
@@ -284,11 +292,11 @@ mod tests {
         );
 
         let bridge = prepareOperit1RoomImport(&mut connection)
-            .expect("Operit1 schema 20 must select the version-20 to version-26 bridge");
+            .expect("Operit1 schema 20 must select the version-20 to version-28 bridge");
 
         assert_eq!(
             bridge,
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV27
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV28
         );
         assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
         assert_eq!(
@@ -325,7 +333,7 @@ mod tests {
 
         assert_eq!(
             bridge,
-            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV27
+            Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV28
         );
         assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
     }

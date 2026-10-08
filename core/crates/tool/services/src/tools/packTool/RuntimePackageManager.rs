@@ -1,3 +1,13 @@
+#[path = "PackageRegistryReadiness.rs"]
+mod package_registry_readiness;
+pub use package_registry_readiness::{PackageRegistryLoadState, PackageRegistryReadiness};
+
+#[path = "ToolPkgCoreCommandCatalog.rs"]
+mod core_command_catalog;
+pub use core_command_catalog::{ResolvedToolPkgCoreCommand, ToolPkgCoreCommandCatalog, ToolPkgCoreCommandRegistrationInfo};
+
+use crate::tools::packTool::ToolPkgPublicApiUiCatalog::{discover_public_api_owners, ToolPkgPublicApiOwner};
+
 use operit_store::ExtensionStore::{ExtensionRecord, ExtensionStore};
 use operit_store::PreferencesDataStore::CoreNodeStateStore;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
@@ -248,6 +258,7 @@ pub struct RuntimePackageManager {
     toolPkgLoadIssues: Vec<ToolPkgLoadIssue>,
     manualToolPkgLoadIssues: Vec<ToolPkgLoadIssue>,
     toolPkgCacheLock: Arc<Mutex<()>>,
+    packageRegistryReadiness: PackageRegistryReadiness,
     scopeState: Arc<Mutex<BTreeMap<String, ExtensionRecord>>>,
     toolPkgExecutionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     dataStore: CoreNodeStateStore,
@@ -314,6 +325,7 @@ impl RuntimePackageManager {
             toolPkgLoadIssues: Vec::new(),
             manualToolPkgLoadIssues: Vec::new(),
             toolPkgCacheLock: Arc::new(Mutex::new(())),
+            packageRegistryReadiness: PackageRegistryReadiness::new(),
             scopeState: Arc::new(Mutex::new(BTreeMap::new())),
             toolPkgExecutionEngineFactory,
             dataStore: CoreNodeStateStore::newWithStorage(
@@ -327,6 +339,120 @@ impl RuntimePackageManager {
             toolHandler,
         };
         manager
+    }
+
+    /// Claims the single initial package load before the application submits its background task.
+    #[allow(non_snake_case)]
+    pub fn claimInitialPackageRegistryLoad(&self) -> Result<bool, String> {
+        self.packageRegistryReadiness.claim_initial_load()
+    }
+
+    /// Records an original startup failure so commands waiting for the registry reject immediately.
+    #[allow(non_snake_case)]
+    pub fn failPackageRegistryLoad(&self, error: String) {
+        self.packageRegistryReadiness.fail(error);
+    }
+
+    /// Returns the shared lifecycle handle without cloning an incomplete registration snapshot.
+    #[allow(non_snake_case)]
+    pub fn packageRegistryReadiness(&self) -> PackageRegistryReadiness {
+        self.packageRegistryReadiness.clone()
+    }
+
+    /// Waits outside the manager lock and clones only a completed canonical registration snapshot.
+    #[allow(non_snake_case)]
+    pub async fn readySnapshot(manager: Arc<Mutex<Self>>) -> Result<Self, String> {
+        let readiness = {
+            let manager = manager.lock().map_err(|error| error.to_string())?;
+            manager.packageRegistryReadiness()
+        };
+        readiness.wait_until_ready().await?;
+        let manager = manager.lock().map_err(|error| error.to_string())?;
+        manager.packageRegistryReadiness.require_ready()?;
+        Ok(manager.clone())
+    }
+
+    /// Finds exact registerApi owners from the ready catalog without invoking their handlers or building domain UI inputs.
+    #[allow(non_snake_case)]
+    pub fn getToolPkgPublicApiOwners(&self, apiName: &str) -> Result<Vec<ToolPkgPublicApiOwner>, String> {
+        self.packageRegistryReadiness.require_ready()?;
+        let registered = self.toolPkgManager().getToolPkgContainerRuntimes();
+        let enabled = self.getEnabledToolPkgContainerRuntimes();
+        discover_public_api_owners(apiName, &registered, &enabled)
+    }
+
+    /// Lists only methods actually published by one enabled ToolPkg in this ready snapshot.
+    #[allow(non_snake_case)]
+    pub fn getToolPkgPublicApis(&self, packageName: &str) -> Result<Vec<String>, String> {
+        let runtime = self.requireToolPkgPublicApiRuntime(packageName)?;
+        let mut names = BTreeSet::new();
+        for declaration in runtime.publicApis {
+            if !names.insert(declaration.id.clone()) {
+                return Err(format!("Duplicate public API: {}/{}", runtime.packageName, declaration.id));
+            }
+        }
+        Ok(names.into_iter().collect())
+    }
+
+    /// Calls one registerApi export in its owning main runtime without dispatching an AI tool.
+    #[allow(non_snake_case)]
+    pub async fn invokeToolPkgPublicApi(
+        &self,
+        packageName: &str,
+        methodName: &str,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let runtime = self.requireToolPkgPublicApiRuntime(packageName)?;
+        let declaration = selectToolPkgPublicApi(&runtime, methodName)?.clone();
+        let script = self.getRegisteredToolPkgMainScript(&runtime.packageName)
+            .ok_or_else(|| format!("ToolPkg main script is unavailable: {}", runtime.packageName))?;
+        let contextKey = format!("toolpkg_main:{}", runtime.packageName);
+        let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName);
+        let event = operit_plugin_sdk::js_sdk::toolpkg::ToolPkgPublicApiEvent {
+            payload,
+            callerPackage: "host".to_string(),
+        };
+        let serde_json::Value::Object(event) = serde_json::to_value(event)
+            .map_err(|error| error.to_string())? else {
+            return Err("ToolPkg public API event must serialize to an object".to_string());
+        };
+        let mut params = event.into_iter().collect::<BTreeMap<_, _>>();
+        params.insert("__operit_ui_package_name".to_string(), serde_json::Value::String(runtime.packageName.clone()));
+        params.insert("toolPkgId".to_string(), serde_json::Value::String(runtime.packageName.clone()));
+        params.insert("containerPackageName".to_string(), serde_json::Value::String(runtime.packageName));
+        params.insert("__operit_execution_context_key".to_string(), serde_json::Value::String(contextKey));
+        params.insert("__operit_toolpkg_runtime_kind".to_string(), serde_json::Value::String("main".to_string()));
+        params.insert("__operit_script_screen".to_string(), serde_json::Value::String(runtime.mainEntry));
+        params.insert("__operit_toolpkg_api_version".to_string(), serde_json::Value::String(runtime.apiVersion));
+        if let Some(source) = declaration.functionSource {
+            params.insert("__operit_inline_function_name".to_string(), serde_json::Value::String(declaration.function.clone()));
+            params.insert("__operit_inline_function_source".to_string(), serde_json::Value::String(source));
+        }
+        let raw = engine.execute_script_function_async(
+            script, declaration.function, params, BTreeMap::new(), None, true, 60_000,
+        ).await.map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Public API returned no JSON result: {packageName}/{methodName}"))?;
+        serde_json::from_str(&raw).map_err(|error| error.to_string())
+    }
+
+    /// Requires a real enabled public API owner after the canonical registry has finished loading.
+    #[allow(non_snake_case)]
+    fn requireToolPkgPublicApiRuntime(&self, packageName: &str) -> Result<ToolPkgContainerRuntime, String> {
+        self.packageRegistryReadiness.require_ready()?;
+        let packageName = packageName.trim();
+        if packageName.is_empty() {
+            return Err("Public API package name is required".to_string());
+        }
+        let runtime = self.getToolPkgContainerRuntime(packageName)
+            .ok_or_else(|| format!("ToolPkg container not found: {packageName}"))?;
+        if !self.getEnabledToolPkgContainerRuntimes().iter()
+            .any(|enabled| enabled.packageName == runtime.packageName) {
+            return Err(format!("ToolPkg public API owner is disabled: {packageName}"));
+        }
+        if runtime.publicApi.is_none() {
+            return Err(format!("{packageName} does not publish public_api"));
+        }
+        Ok(runtime)
     }
 
     /// Marks a package as active for the current prompt session.
@@ -1689,6 +1815,7 @@ impl RuntimePackageManager {
         &self,
         useEnglish: bool,
     ) -> Result<Vec<ToolPkgCoreCommandInfo>, String> {
+        self.packageRegistryReadiness.require_ready()?;
         let mut owners = BTreeMap::new();
         let mut commands = Vec::new();
         for runtime in self.getEnabledToolPkgContainerRuntimes() {
@@ -1714,44 +1841,48 @@ impl RuntimePackageManager {
         Ok(commands)
     }
 
+    /// Builds a generic directory of all registered command declarations after canonical loading completes.
     #[allow(non_snake_case)]
-    /// Executes one slash command contributed by an enabled ToolPkg package.
+    pub fn getToolPkgCoreCommandCatalog(&self, useEnglish: bool) -> Result<ToolPkgCoreCommandCatalog, String> {
+        self.packageRegistryReadiness.require_ready()?;
+        let enabled = self.getEnabledToolPkgContainerRuntimes().into_iter()
+            .map(|runtime| runtime.packageName).collect::<BTreeSet<_>>();
+        Ok(ToolPkgCoreCommandCatalog::new(
+            self.toolPkgManager().getToolPkgContainerRuntimes(), enabled, useEnglish,
+        ))
+    }
+
+    /// Resolves one plugin command from its directory and invokes only that selected declaration.
+    #[allow(non_snake_case)]
     pub async fn executeToolPkgCoreCommand(
         &self,
         commandName: &str,
         args: &[String],
         jsonMode: bool,
     ) -> Result<ToolPkgCoreCommandExecutionResult, String> {
-        let normalizedName = commandName.trim();
-        let mut matched = self
-            .getEnabledToolPkgContainerRuntimes()
-            .into_iter()
-            .flat_map(|runtime| {
-                let packageName = runtime.packageName;
-                runtime
-                    .coreCommands
-                    .into_iter()
-                    .filter(move |command| command.name.eq_ignore_ascii_case(normalizedName))
-                    .map(move |command| (packageName.clone(), command))
-            })
-            .collect::<Vec<_>>();
-        if matched.is_empty() {
-            return Err(format!("plugin command not found: /{normalizedName}"));
+        self.packageRegistryReadiness.wait_until_ready().await?;
+        let resolved = self.getToolPkgCoreCommandCatalog(false)?.resolve(commandName, &[])?
+            .ok_or_else(|| format!("plugin command not found: /{commandName}"))?;
+        self.executeResolvedToolPkgCoreCommand(&resolved, args, jsonMode).await
+    }
+
+    /// Executes an immutable resolved command token without performing another name lookup.
+    #[allow(non_snake_case)]
+    pub async fn executeResolvedToolPkgCoreCommand(
+        &self,
+        resolved: &ResolvedToolPkgCoreCommand,
+        args: &[String],
+        jsonMode: bool,
+    ) -> Result<ToolPkgCoreCommandExecutionResult, String> {
+        self.packageRegistryReadiness.wait_until_ready().await?;
+        let info = resolved.info();
+        if !self.getEnabledToolPkgContainerRuntimes().iter().any(|runtime| runtime.packageName == info.containerPackageName) {
+            return Err(format!("plugin command is disabled: /{} ({})", info.name, info.containerPackageName));
         }
-        if matched.len() > 1 {
-            let owners = matched
-                .iter()
-                .map(|(packageName, _)| packageName.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(format!(
-                "duplicate enabled plugin command /{normalizedName}: {owners}"
-            ));
-        }
-        let (packageName, command) = matched.remove(0);
+        let command = resolved.declaration();
         let raw = self
             .runToolPkgMainHook(
-                &packageName,
+                &info.containerPackageName,
                 &command.function,
                 operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CORE_COMMAND,
                 Some("core_command"),
@@ -1767,9 +1898,9 @@ impl RuntimePackageManager {
                 None,
                 None,
             ).await?
-            .ok_or_else(|| format!("plugin command /{normalizedName} returned no result"))?;
+            .ok_or_else(|| format!("plugin command /{} returned no result", info.name))?;
         serde_json::from_str::<ToolPkgCoreCommandExecutionResult>(&raw).map_err(|error| {
-            format!("plugin command /{normalizedName} returned an invalid result: {error}")
+            format!("plugin command /{} returned an invalid result: {error}", info.name)
         })
     }
 
@@ -2295,6 +2426,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     /// Scans built-in, bundled external, and external package sources.
     pub fn loadAvailablePackages(&mut self) {
+        self.packageRegistryReadiness.begin_scan();
         let previousContainerNames = self
             .toolPkgManager()
             .getToolPkgContainerRuntimes()
@@ -2325,6 +2457,11 @@ impl RuntimePackageManager {
         }
         self.applyPackageScanSnapshot(mergedSnapshot);
         self.notifyToolPkgRuntimeChangeListeners();
+        let outcome = match self.getToolPkgLoadIssues().into_iter().next() {
+            Some(issue) => Err(issue.message),
+            None => Ok(()),
+        };
+        self.packageRegistryReadiness.complete_scan(outcome);
     }
 
     #[allow(non_snake_case)]
@@ -5505,4 +5642,66 @@ fn buildComposeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&
         );
     }
     serde_json::Value::Object(object).to_string()
+}
+
+/// Selects one published method exactly once and rejects absent or duplicate declarations.
+#[allow(non_snake_case)]
+fn selectToolPkgPublicApi<'a>(
+    runtime: &'a ToolPkgContainerRuntime,
+    methodName: &str,
+) -> Result<&'a operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredFunctionHook, String> {
+    let methodName = methodName.trim();
+    if methodName.is_empty() {
+        return Err("Public API method name is required".to_string());
+    }
+    let declarations = runtime.publicApis.iter()
+        .filter(|declaration| declaration.id == methodName).collect::<Vec<_>>();
+    match declarations.as_slice() {
+        [] => Err(format!("Public API not found: {}/{methodName}", runtime.packageName)),
+        [declaration] => {
+            if declaration.function.trim().is_empty() {
+                return Err(format!("Public API handler is empty: {}/{methodName}", runtime.packageName));
+            }
+            Ok(*declaration)
+        }
+        _ => Err(format!("Duplicate public API: {}/{methodName}", runtime.packageName)),
+    }
+}
+
+#[cfg(test)]
+mod public_api_selection_tests {
+    use super::*;
+    use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredFunctionHook;
+
+    /// Creates a public-method declaration with an explicit exported handler.
+    fn declaration(name: &str, function: &str) -> ToolPkgRegisteredFunctionHook {
+        ToolPkgRegisteredFunctionHook {
+            id: name.to_string(), function: function.to_string(), functionSource: None,
+        }
+    }
+
+    /// Selects arbitrary published names without applying a domain or command-root whitelist.
+    #[test]
+    fn selects_exact_registered_export() {
+        let runtime = ToolPkgContainerRuntime {
+            packageName: "demo".to_string(), publicApis: vec![declaration("configuration.read", "readConfiguration")],
+            ..Default::default()
+        };
+        assert_eq!(selectToolPkgPublicApi(&runtime, "configuration.read").unwrap().function, "readConfiguration");
+        assert!(selectToolPkgPublicApi(&runtime, "Configuration.read").is_err());
+        assert!(selectToolPkgPublicApi(&runtime, "missing").is_err());
+        assert!(selectToolPkgPublicApi(&runtime, " ").is_err());
+    }
+
+    /// Rejects duplicate publications and empty handlers before entering a JavaScript runtime.
+    #[test]
+    fn rejects_duplicate_and_empty_exports() {
+        let mut runtime = ToolPkgContainerRuntime {
+            packageName: "demo".to_string(), publicApis: vec![declaration("read", "first"), declaration("read", "second")],
+            ..Default::default()
+        };
+        assert_eq!(selectToolPkgPublicApi(&runtime, "read").unwrap_err(), "Duplicate public API: demo/read");
+        runtime.publicApis = vec![declaration("read", " ")];
+        assert_eq!(selectToolPkgPublicApi(&runtime, "read").unwrap_err(), "Public API handler is empty: demo/read");
+    }
 }

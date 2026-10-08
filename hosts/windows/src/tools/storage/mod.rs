@@ -435,6 +435,13 @@ impl RuntimeSqliteTransaction for RusqliteRuntimeTransaction<'_> {
             .commit()
             .map_err(|error| HostError::new(error.to_string()))
     }
+
+    /// Aborts the host transaction explicitly instead of relying on destructor cleanup.
+    fn rollback(self: Box<Self>) -> HostResult<()> {
+        self.transaction
+            .rollback()
+            .map_err(|error| HostError::new(error.to_string()))
+    }
 }
 
 fn queryRowsConnection(

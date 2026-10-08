@@ -57,6 +57,11 @@ impl ChatRuntimeCoreFactory {
                     ChatSelectionMode::LOCAL_ONLY
                 }
             },
+            match slot {
+                ChatRuntimeSlot::MAIN => Some(operit_plugin_sdk::js_sdk::chat::ChatRuntime::Main),
+                ChatRuntimeSlot::FLOATING => Some(operit_plugin_sdk::js_sdk::chat::ChatRuntime::Floating),
+                ChatRuntimeSlot::DETACHED(_) => None,
+            },
             self.fileSystemHost.clone(),
             self.pendingQueueStore.clone(),
         );
@@ -127,6 +132,17 @@ impl ChatRuntimeHolder {
         }
         holder.observeStats();
         holder
+    }
+
+    /// Borrows the actual main delegate's canonical manager for initialization-time record and execution-lease sharing.
+    #[allow(non_snake_case)]
+    pub(crate) fn chatHistoryManager(
+        &self,
+    ) -> Result<&operit_store::repository::ChatHistoryManager::ChatHistoryManager, String> {
+        self.cores
+            .get(&ChatRuntimeSlot::MAIN)
+            .map(|core| &core.chatHistoryDelegate.chatHistoryManager)
+            .ok_or_else(|| "Chat runtime has no initialized main record manager".to_string())
     }
 
     /// Returns the core for a slot, creating it from the factory when first used.

@@ -3,6 +3,7 @@ use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use crate::core::events::RuntimeEvent::RuntimeEvent;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::data::preferences::ThemeConfigManager::ThemeConfigManager;
 use crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
 use crate::plugins::toolpkg::ToolPkgChatComposerSlotBridge::ToolPkgChatComposerSlotBridge;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
@@ -20,7 +21,6 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost};
 #[cfg(feature = "javascript")]
 use operit_js_bridge::javascript::JsExecutionProvider::QuickJsExecutionProvider;
-use operit_providers::chat::library::MemoryAutoSaveScheduler::MemoryAutoSaveScheduler;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
@@ -178,14 +178,22 @@ impl OperitApplication {
         runtimeToolSupport
             .bindRuntimeServices(toolHandler.clone(), providerRuntimeContext.clone())
             .expect("tool runtime services must bind exactly once");
+        let initializedChatRuntimeHolder = ChatRuntimeHolder::newWithRuntimeDependencies(
+            chatFileSystemHost,
+            toolHandler.clone(),
+            providerRuntimeContext.clone(),
+        );
+        runtimeToolSupport
+            .bindChatHistoryManager(
+                initializedChatRuntimeHolder
+                    .chatHistoryManager()
+                    .expect("initialized chat runtime must expose its actual main record manager")
+                    .clone(),
+            )
+            .expect("tool runtime must bind the canonical chat record manager exactly once");
         *chatRuntimeHolder
             .try_lock()
-            .expect("new chat runtime holder must be unlocked") =
-            ChatRuntimeHolder::newWithRuntimeDependencies(
-                chatFileSystemHost,
-                toolHandler.clone(),
-                providerRuntimeContext.clone(),
-            );
+            .expect("new chat runtime holder must be unlocked") = initializedChatRuntimeHolder;
         Self {
             appStartupTimeMs: 0,
             hostManager,
@@ -317,6 +325,7 @@ impl OperitApplication {
         let pluginInitializationStartedAt = currentTimeMillis();
         AppLogger::i("OperitApplication", "built-in plugin initialization start");
         PluginRegistry::initializeBuiltins(self.toolPkgBridgeRuntime.clone());
+        crate::plugins::toolpkg::ToolPkgChatLifecycleHookBridge::ToolPkgChatLifecycleHookBridge::register(self.toolPkgBridgeRuntime.clone())?;
         AppLogger::i(
             "OperitApplication",
             &format!(
@@ -352,9 +361,8 @@ impl OperitApplication {
         self.extensionChanges = crate::services::ExtensionRuntimeService::start(
             self.hostManager.clone(), self.toolHandler.clone(),
         );
+        self.dispatchPluginLoading()?;
         self.initialized = true;
-        MemoryAutoSaveScheduler::schedule(self.providerRuntimeContext.clone());
-        self.dispatchPluginLoading();
         AppLogger::i(
             "OperitApplication",
             &format!(
@@ -399,27 +407,49 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn preloadDatabase(&self) {}
 
-    /// Starts deployed MCP plugins according to the configured startup timeout.
+    /// Schedules the single initial package and MCP load and returns its submission error.
     #[allow(non_snake_case)]
-    pub fn initMcpPlugins(&self) {
-        self.dispatchPluginLoading();
+    pub fn initMcpPlugins(&self) -> Result<(), String> {
+        self.dispatchPluginLoading()
     }
 
-    /// Loads ToolPkg packages and starts MCP plugins in the background with overlay progress.
-    fn dispatchPluginLoading(&self) {
-        let hostManager = self.hostManager.clone();
+    /// Claims and schedules the owning initial load task that publishes canonical registry readiness.
+    fn dispatchPluginLoading(&self) -> Result<(), String> {
         let packageManager = self.toolHandler.getOrCreatePackageManager();
+        let readiness = {
+            let manager = packageManager.lock().map_err(|error| error.to_string())?;
+            if !manager.claimInitialPackageRegistryLoad()? {
+                return Ok(());
+            }
+            manager.packageRegistryReadiness()
+        };
         let taskScheduler = self
             .hostManager
             .hostRuntimeTaskSchedulerHost
             .clone()
-            .expect("runtime task scheduler host must be configured for plugin startup");
+            .ok_or_else(|| {
+                let error =
+                    "runtime task scheduler host must be configured for plugin startup".to_string();
+                readiness.fail(error.clone());
+                error
+            })?;
+        let hostManager = self.hostManager.clone();
+        let taskReadiness = readiness.clone();
         let startup = move || Box::pin(async move {
             let loadingGeneration = showPluginLoading();
-            packageManager
+            let loadOutcome = packageManager
                 .lock()
-                .expect("package manager mutex poisoned")
-                .loadAvailablePackages();
+                .map_err(|error| error.to_string())
+                .and_then(|mut manager| {
+                    manager.loadAvailablePackages();
+                    manager.packageRegistryReadiness().require_ready()
+                });
+            if let Err(error) = loadOutcome {
+                taskReadiness.fail(error.clone());
+                completePluginLoadingSession(loadingGeneration);
+                AppLogger::e("OperitApplication", &error);
+                return;
+            }
             let starter = MCPStarter::new(hostManager);
             let timeoutSeconds = ApiPreferences::getInstance()
                 .getMcpStartupTimeoutSeconds()
@@ -429,7 +459,11 @@ impl OperitApplication {
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>;
         taskScheduler
             .scheduleHostRuntimeAsyncTask("operit-plugin-startup", Box::new(startup))
-            .expect("plugin startup task must be scheduled");
+            .map_err(|error| {
+                let error = error.to_string();
+                readiness.fail(error.clone());
+                error
+            })
     }
 
     /// Observes package and plugin loading overlay progress.
@@ -549,11 +583,6 @@ impl OperitApplication {
         }
     }
 
-    /// Creates owner-scoped memory scheduling, profile and history-rebuild controls.
-    pub fn memoryManagementService(&self, ownerKey: String) -> crate::services::MemoryManagementService::MemoryManagementService {
-        crate::services::MemoryManagementService::MemoryManagementService::new(ownerKey,self.providerRuntimeContext.clone())
-    }
-
     /// Creates a user-markdown repository using this runtime's configured storage host.
     #[allow(non_snake_case)]
     pub fn userMarkdownRepository(&self, ownerKey: String) -> UserMarkdownRepository {
@@ -570,6 +599,15 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn chatComposerSlotBridge(&self) -> ToolPkgChatComposerSlotBridge {
         ToolPkgChatComposerSlotBridge::new(self.toolPkgBridgeRuntime.clone())
+    }
+
+    /// Creates an independent theme manager over this application's actual ordinary preference host.
+    #[allow(non_snake_case)]
+    pub fn themeConfigManager(&self) -> Result<ThemeConfigManager, String> {
+        let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for theme configuration".to_string()
+        })?;
+        Ok(ThemeConfigManager::new(storageHost))
     }
 
     /// Returns the shared package manager owned by the initialized tool handler.

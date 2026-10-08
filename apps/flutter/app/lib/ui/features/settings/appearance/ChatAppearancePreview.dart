@@ -31,28 +31,8 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
   final _inputFocusNode = FocusNode(canRequestFocus: false);
   final _defaultViewModel = ChatViewModel();
   final _sampleDay = DateTime.now();
-  OperitThemeController? _themeController;
-  String? _characterCardId;
-  Future<List<core_proxy.CharacterCard>>? _characterCards;
 
-  /// Resolves the selected role's avatar without reloading on every slider tick.
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final controller = OperitTheme.of(context);
-    final cardId =
-        controller.hasActiveThemeTarget && !controller.isActiveThemeTargetGroup
-        ? controller.activeThemeTarget.id
-        : null;
-    if (_themeController != controller || _characterCardId != cardId) {
-      _themeController = controller;
-      _characterCardId = cardId;
-      _characterCards = cardId == null
-          ? null
-          : controller.loadThemeCharacterCards();
-    }
-  }
-
+  /// Releases preview-only text input resources.
   @override
   void dispose() {
     _inputController.dispose();
@@ -60,90 +40,70 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
     super.dispose();
   }
 
+  /// Renders ordinary appearance samples without loading any current actor or binding.
   @override
   Widget build(BuildContext context) {
     final controller = OperitTheme.of(context);
     final snapshot = controller.themePreferenceSnapshot;
-    final roleName = controller.hasActiveThemeTarget
-        ? controller.activeThemeTargetName
-        : 'Operit';
+    const roleName = 'Operit';
     final l10n = AppLocalizations.of(context)!;
-    return FutureBuilder<List<core_proxy.CharacterCard>>(
-      future: _characterCards,
-      builder: (context, cards) {
-        if (cards.hasError) {
-          Error.throwWithStackTrace(
-            cards.error!,
-            cards.stackTrace ?? StackTrace.current,
-          );
-        }
-        String? avatarUri;
-        for (final card in cards.data ?? const <core_proxy.CharacterCard>[]) {
-          if (card.id == _characterCardId) {
-            avatarUri = card.avatarUri;
-            break;
-          }
-        }
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: OperitThemeBackground(
-            themePreferenceSnapshot: snapshot,
-            fit: StackFit.loose,
-            muteVideo: true,
-            // Preview gestures must not focus the editor, send messages, open
-            // menus, or activate links. The widgets still render normally.
-            child: IgnorePointer(
-              child: ExcludeFocus(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          buildThemedChatMessage(
-                            snapshot: snapshot,
-                            colorScheme: Theme.of(context).colorScheme,
-                            message: _sampleMessage(
-                              isUser: true,
-                              text:
-                                  l10n.settingsAppearanceLivePreviewUserSample,
-                              roleName: '',
-                            ),
-                            currentCharacterCardAvatarUri: avatarUri,
-                            splitMarkdownContent:
-                                (widget.viewModel ?? _defaultViewModel)
-                                    .splitMarkdownContent,
-                            enableDialogs: false,
-                          ),
-                          const SizedBox(height: 8),
-                          buildThemedChatMessage(
-                            snapshot: snapshot,
-                            colorScheme: Theme.of(context).colorScheme,
-                            message: _sampleMessage(
-                              isUser: false,
-                              text: l10n.settingsAppearanceLivePreviewAiSample,
-                              roleName: roleName,
-                            ),
-                            currentCharacterCardAvatarUri: avatarUri,
-                            splitMarkdownContent:
-                                (widget.viewModel ?? _defaultViewModel)
-                                    .splitMarkdownContent,
-                            enableDialogs: false,
-                          ),
-                        ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: OperitThemeBackground(
+        themePreferenceSnapshot: snapshot,
+        fit: StackFit.loose,
+        muteVideo: true,
+        // Preview gestures must not focus the editor, send messages, open
+        // menus, or activate links. The widgets still render normally.
+        child: IgnorePointer(
+          child: ExcludeFocus(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      buildThemedChatMessage(
+                        snapshot: snapshot,
+                        colorScheme: Theme.of(context).colorScheme,
+                        message: _sampleMessage(
+                          isUser: true,
+                          text: l10n.settingsAppearanceLivePreviewUserSample,
+                          roleName: '',
+                        ),
+                        splitMarkdownContent:
+                            (widget.viewModel ?? _defaultViewModel)
+                                .splitMarkdownContent,
+                        identityAvatarUri: null,
+                        enableDialogs: false,
                       ),
-                    ),
-                    if (widget.showInputPreview) _buildInput(snapshot),
-                  ],
+                      const SizedBox(height: 8),
+                      buildThemedChatMessage(
+                        snapshot: snapshot,
+                        colorScheme: Theme.of(context).colorScheme,
+                        message: _sampleMessage(
+                          isUser: false,
+                          text: l10n.settingsAppearanceLivePreviewAiSample,
+                          roleName: roleName,
+                        ),
+                        splitMarkdownContent:
+                            (widget.viewModel ?? _defaultViewModel)
+                                .splitMarkdownContent,
+                        identityAvatarUri: null,
+                        enableDialogs: false,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+                if (widget.showInputPreview) _buildInput(snapshot),
+              ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -192,6 +152,7 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
     );
   }
 
+  /// Builds an inert production composer using the explicit preview appearance.
   Widget _buildInput(ThemePreferenceSnapshot snapshot) {
     final viewModel = widget.viewModel ?? _defaultViewModel;
     final inputState = core_proxy.InputProcessingState.idle();
@@ -204,8 +165,6 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
           inputState: inputState,
           viewModel: viewModel,
           currentChatId: null,
-          currentCharacterCardName: null,
-          currentCharacterCardAvatarUri: null,
           onSendMessage: _noOp,
           onQueueMessage: _noOp,
           onCancelMessage: _noOp,
@@ -221,8 +180,6 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
           inputState: inputState,
           viewModel: viewModel,
           currentChatId: null,
-          currentCharacterCardName: null,
-          currentCharacterCardAvatarUri: null,
           onSendMessage: _noOp,
           onQueueMessage: _noOp,
           onCancelMessage: _noOp,
@@ -238,4 +195,5 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
   }
 }
 
+/// Keeps appearance previews inert without performing chat actions.
 void _noOp() {}

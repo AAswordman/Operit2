@@ -1,12 +1,13 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../data/preferences/UserPreferencesManager.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../navigation/AppNavigationModels.dart';
@@ -17,6 +18,7 @@ import 'ConversationSwipeActions.dart';
 import 'NavigationDrawerAppearance.dart';
 
 class CollapsedDrawerContent extends StatelessWidget {
+  /// Receives the real nullable chat source without decoding plugin configuration.
   const CollapsedDrawerContent({
     super.key,
     required this.navigationEntries,
@@ -25,6 +27,7 @@ class CollapsedDrawerContent extends StatelessWidget {
     required this.appearance,
     required this.onNavigationEntrySelected,
     required this.onConversationActivated,
+    required this.currentChatId,
     this.bridge = const ProxyCoreRuntimeBridge(),
   });
 
@@ -34,48 +37,33 @@ class CollapsedDrawerContent extends StatelessWidget {
   final NavigationDrawerAppearance appearance;
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
   final VoidCallback onConversationActivated;
+  final String? currentChatId;
   final OperitRuntimeBridge bridge;
   static const double _topBarHeight = 64;
   static const EdgeInsets _collapsedItemPadding = EdgeInsets.symmetric(
     vertical: 2,
   );
 
-  /// Reads the persisted sidebar mode used to decide workspace inheritance.
-  Future<bool> _shouldInheritWorkspaceFromCurrent() async {
-    final mode = await UserPreferencesManager(
-      clients: GeneratedCoreProxyClients(bridge),
-    ).loadChatHistoryGroupingMode();
-    return switch (mode) {
-      null => false,
-      UserPreferencesManager.CHAT_HISTORY_GROUPING_CHARACTER => false,
-      UserPreferencesManager.CHAT_HISTORY_GROUPING_WORKSPACE => true,
-      _ => throw FormatException(
-        'Unsupported persisted sidebar grouping mode: $mode',
-      ),
-    };
-  }
-
-  /// Creates a conversation using the active sidebar grouping mode.
-  Future<void> _createConversation() async {
-    // Arm before creating so the intro overlay sees the flag when the new
-    // chat id arrives.
+  /// Creates through the generic hook without reading any role or grouping preference.
+  Future<void> _createConversation(BuildContext context) async {
+    final sourceChatId = currentChatId;
     newChatIntroArmed.value = true;
     try {
-      final inheritGroupFromCurrent =
-          await _shouldInheritWorkspaceFromCurrent();
       await GeneratedCoreProxyClients(
         bridge,
       ).chatRuntimeHolderMain.createNewChat(
-        characterCardName: null,
-        group: null,
-        inheritGroupFromCurrent: inheritGroupFromCurrent,
         setAsCurrentChat: true,
-        characterGroupId: null,
+        sourceChatId: sourceChatId,
+        input: null,
       );
       onConversationActivated();
-    } catch (_) {
+    } catch (error) {
       newChatIntroArmed.value = false;
-      rethrow;
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -141,7 +129,7 @@ class CollapsedDrawerContent extends StatelessWidget {
                     selected: false,
                     appearance: appearance,
                     icon: Icons.add_comment_outlined,
-                    onClick: _createConversation,
+                    onClick: () => unawaited(_createConversation(context)),
                   ),
                 ),
               ),
@@ -252,10 +240,7 @@ class SidebarInfoCard extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
-          if (trailing != null) ...<Widget>[
-            const Spacer(),
-            trailing!,
-          ],
+          if (trailing != null) ...<Widget>[const Spacer(), trailing!],
         ],
       ),
     );
@@ -349,11 +334,7 @@ class HistoryRail extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: <Widget>[
-          Container(
-            width: thickness,
-            height: height,
-            color: baseColor,
-          ),
+          Container(width: thickness, height: height, color: baseColor),
           AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             curve: Curves.easeOutCubic,
@@ -451,9 +432,8 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
     _marqueeController.dispose();
     super.dispose();
   }
+
   static const double _endPadding = 12;
-  static const double _runningIndicatorSize = 20;
-  static const double _runningIndicatorStrokeWidth = 2.5;
 
   bool _hovered = false;
   bool _menuOpen = false;
@@ -486,10 +466,6 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
         : active
         ? appearance.itemColor.withValues(alpha: 0.07)
         : Colors.transparent;
-    final runningIndicatorSize = workspaceStyle ? 16.0 : _runningIndicatorSize;
-    final runningIndicatorStrokeWidth = workspaceStyle
-        ? 2.0
-        : _runningIndicatorStrokeWidth;
 
     return DragTarget<core_proxy.ChatHistoryListItem>(
       onWillAcceptWithDetails: (details) =>
@@ -619,8 +595,8 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
                                         opacity: widget.isRunning
                                             ? 1.0
                                             : (active
-                                                ? 0.72
-                                                : (selected ? 0.36 : 0.0)),
+                                                  ? 0.72
+                                                  : (selected ? 0.36 : 0.0)),
                                         child: _ConversationStatusHandle(
                                           isRunning: widget.isRunning,
                                           animation: _marqueeController,
@@ -687,10 +663,8 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
                                           appearance: appearance,
                                           compact: workspaceStyle,
                                           onRename: widget.onRename,
-                                          onTogglePinned:
-                                              widget.onTogglePinned,
-                                          onToggleLocked:
-                                              widget.onToggleLocked,
+                                          onTogglePinned: widget.onTogglePinned,
+                                          onToggleLocked: widget.onToggleLocked,
                                           onDelete: widget.onDelete,
                                           onMenuOpenChanged: (open) {
                                             if (mounted) {
@@ -718,6 +692,7 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
     );
   }
 }
+
 class PluginNavigationDrawerItem extends StatelessWidget {
   const PluginNavigationDrawerItem({
     super.key,
@@ -954,7 +929,9 @@ class BottomSidebarAction extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12.5,
-                        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
                         color: contentColor,
                         letterSpacing: -0.1,
                       ),
@@ -969,6 +946,7 @@ class BottomSidebarAction extends StatelessWidget {
     );
   }
 }
+
 class _ConversationMoreMenuButton extends StatelessWidget {
   const _ConversationMoreMenuButton({
     required this.history,
@@ -1094,9 +1072,7 @@ class _ConversationMoreMenuButton extends StatelessWidget {
           ),
           _menuItem(
             value: _ConversationQuickAction.toggleLocked,
-            icon: history.locked
-                ? Icons.lock_open_rounded
-                : Icons.lock_rounded,
+            icon: history.locked ? Icons.lock_open_rounded : Icons.lock_rounded,
             label: history.locked ? '解锁' : '锁定',
             iconColor: itemIconColor,
             textColor: itemTextColor,
@@ -1116,8 +1092,8 @@ class _ConversationMoreMenuButton extends StatelessWidget {
 }
 
 class _ConversationStatusHandle extends StatelessWidget {
+  /// Creates the existing generic activity handle without an unused widget key.
   const _ConversationStatusHandle({
-    super.key,
     required this.isRunning,
     required this.selected,
     required this.hovered,
@@ -1273,6 +1249,7 @@ class _StaticDotsPainter extends CustomPainter {
     return oldDelegate.color != color;
   }
 }
+
 class _DraggingConversationItem extends StatelessWidget {
   const _DraggingConversationItem({
     required this.history,
@@ -1388,6 +1365,7 @@ class _SwipeActionBackground extends StatelessWidget {
 }
 
 class _RoundDrawerButton extends StatelessWidget {
+  /// Creates a compact action that also supports the existing inactive drag preview.
   const _RoundDrawerButton({
     required this.selected,
     required this.appearance,
@@ -1398,7 +1376,7 @@ class _RoundDrawerButton extends StatelessWidget {
   final bool selected;
   final NavigationDrawerAppearance appearance;
   final IconData icon;
-  final VoidCallback onClick;
+  final VoidCallback? onClick;
 
   /// Builds the compact plugin drag source and reorder drop target.
   @override
@@ -1441,7 +1419,7 @@ class _DockedPluginRoundButton extends StatelessWidget {
   final int insertionIndex;
   final bool selected;
   final NavigationDrawerAppearance appearance;
-  final VoidCallback onClick;
+  final VoidCallback? onClick;
 
   @override
   Widget build(BuildContext context) {

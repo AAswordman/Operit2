@@ -1131,6 +1131,13 @@ impl JsEngineState {
         toolPkgContext: Option<ToolPkgExecutionContext>,
         backgroundWake: Arc<Mutex<Option<JsBackgroundWake>>>,
     ) -> Result<Self, String> {
+        let executionHost = match (&executionHost, &toolPkgContext) {
+            (Some(host), Some(context)) => Some(host.for_toolpkg_execution_context(context)?),
+            (None, Some(_)) => {
+                return Err("ToolPkg execution context requires a real host".to_string())
+            }
+            (_, None) => executionHost,
+        };
         let (asyncCallbackSender, asyncCallbackReceiver) = mpsc::channel();
         let mut state = Self {
             runtime,
@@ -3109,4 +3116,276 @@ fn ensureRegistrationExecutionSucceeded(output: &str) -> Result<(), String> {
         return Err(message.to_string());
     }
     Ok(())
+}
+
+/// Reads the owner exclusively from the immutable native engine context, never from tool parameters.
+#[allow(non_snake_case)]
+fn chatExtensionExecutionOwner(context: Option<&ToolPkgExecutionContext>) -> Result<&str, String> {
+    let context = context.ok_or("Chat extensions require a real ToolPkg execution owner")?;
+    if context.context_key.trim().is_empty() || context.container_package_name.trim().is_empty() {
+        return Err("Chat extension execution context is incomplete".to_string());
+    }
+    Ok(&context.container_package_name)
+}
+
+/// Stores private pull handles inside one authenticated engine; authors never receive execution identities.
+type ChatSendStreamRegistry = Arc<Mutex<BTreeMap<String, operit_plugin_sdk::js_sdk::JsAsyncIterable<operit_plugin_sdk::js_sdk::chat::ChatSendEvent>>>>;
+
+/// Dispatches the current send contract and private iterator pulls through the existing host callback transport.
+#[allow(non_snake_case)]
+fn dispatchChatSend(
+    executionHost: Option<Arc<dyn JsExecutionHost>>, callbackSink: JsAsyncCallbackSink,
+    streams: ChatSendStreamRegistry, callbackId: String, method: String, payload: String,
+) -> Result<(), String> {
+    use operit_plugin_sdk::js_sdk::{JsFuture, JsHostError};
+    use operit_plugin_sdk::js_sdk::chat::ChatSendRequest;
+    if callbackId.trim().is_empty() { return Err("Chat callback identity is empty".to_string()); }
+    let host = executionHost.ok_or("Chat execution host is unavailable")?;
+    // Invoke host admission/cancellation now, not inside a queued task that might target a newer send.
+    let operation: JsFuture<Value> = match method.as_str() {
+        "send" => {
+            let request: ChatSendRequest = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+            request.validate()?;
+            let send = host.sendMessage(request);
+            Box::pin(async move { send.await.and_then(|result| serde_json::to_value(result).map_err(|error| JsHostError::new(error.to_string()))) })
+        }
+        "open" => {
+            let request: ChatSendRequest = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+            request.validate()?;
+            let stream = host.sendMessageStreaming(request);
+            let streamId = Uuid::new_v4().to_string();
+            streams.lock().map_err(|_| "Chat observation registry mutex poisoned".to_string())?.insert(streamId.clone(), stream);
+            Box::pin(async move { Ok(Value::String(streamId)) })
+        }
+        "next" => {
+            let streamId: String = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+            let stream = streams.lock().map_err(|_| "Chat observation registry mutex poisoned".to_string())?
+                .get(&streamId).cloned().ok_or_else(|| "Unknown Chat observation".to_string())?;
+            Box::pin(async move { stream.next().await.and_then(|event| serde_json::to_value(event).map_err(|error| JsHostError::new(error.to_string()))) })
+        }
+        "close" => {
+            let streamId: String = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+            let stream = streams.lock().map_err(|_| "Chat observation registry mutex poisoned".to_string())?
+                .remove(&streamId).ok_or_else(|| "Unknown Chat observation".to_string())?;
+            let close = stream.close();
+            Box::pin(async move { close.await.map(|()| Value::Null) })
+        }
+        "cancel" => {
+            let chatId: String = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+            let cancel = host.cancel(chatId);
+            Box::pin(async move { cancel.await.and_then(|result| serde_json::to_value(result).map_err(|error| JsHostError::new(error.to_string()))) })
+        }
+        _ => return Err(format!("Unknown native Chat operation: {method}")),
+    };
+    defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask("operit-chat-send-bridge", Box::new(move || Box::pin(async move {
+        let (result, isError) = match operation.await {
+            Ok(value) => (value.to_string(), false),
+            Err(error) => (serde_json::json!({"message": error.message}).to_string(), true),
+        };
+        callbackSink(JsAsyncCallback { callbackId, result, isError });
+    }))).map_err(|error| error.to_string())
+}
+
+/// Dispatches one typed owner-authenticated record operation through the already-bound execution host.
+#[allow(non_snake_case)]
+fn dispatchChatExtension(
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+    callbackSink: JsAsyncCallbackSink,
+    callbackId: String,
+    method: String,
+    targetJson: String,
+    valueJson: String,
+) -> Result<(), String> {
+    use operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget;
+    use operit_plugin_sdk::js_sdk::core::JsonObject;
+    if callbackId.trim().is_empty() {
+        return Err("Chat extension callback ID is empty".to_string());
+    }
+    let executionHost = executionHost.ok_or("Chat extension execution host is unavailable")?;
+    let target: ChatExtensionTarget =
+        serde_json::from_str(&targetJson).map_err(|error| error.to_string())?;
+    target.validate()?;
+    let value = match method.as_str() {
+        "writeExtension" => Some(
+            serde_json::from_str::<JsonObject>(&valueJson).map_err(|error| error.to_string())?,
+        ),
+        "readExtension" | "deleteExtension" => {
+            if serde_json::from_str::<Value>(&valueJson).map_err(|error| error.to_string())?
+                != Value::Null
+            {
+                return Err(
+                    "Chat extension read/delete does not accept a value or namespace".to_string(),
+                );
+            }
+            None
+        }
+        _ => return Err(format!("Unknown Chat extension method: {method}")),
+    };
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleHostRuntimeAsyncTask(
+            "operit-chat-extension",
+            Box::new(move || {
+                Box::pin(async move {
+                    let result = match method.as_str() {
+                        "readExtension" => {
+                            executionHost.readExtension(target).await.and_then(|value| {
+                                serde_json::to_value(value).map_err(|error| {
+                                    operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string())
+                                })
+                            })
+                        }
+                        "writeExtension" => executionHost
+                            .writeExtension(
+                                target,
+                                value.expect("validated write operation has an object"),
+                            )
+                            .await
+                            .and_then(|value| {
+                                serde_json::to_value(value).map_err(|error| {
+                                    operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string())
+                                })
+                            }),
+                        "deleteExtension" => {
+                            executionHost.deleteExtension(target).await.map(Value::Bool)
+                        }
+                        _ => unreachable!("method was validated before scheduling"),
+                    };
+                    let (result, isError) = match result {
+                        Ok(value) => (value.to_string(), false),
+                        Err(error) => (
+                            serde_json::json!({"message": error.message}).to_string(),
+                            true,
+                        ),
+                    };
+                    callbackSink(JsAsyncCallback {
+                        callbackId,
+                        result,
+                        isError,
+                    });
+                })
+            }),
+        )
+        .map_err(|error| error.to_string())
+}
+
+/// Reads only a declared configuration directory through the typed SoftwareSettingsHost compatibility layer.
+#[allow(non_snake_case)]
+fn dispatchSoftwareSettingsDirectoryRead(
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+    callbackSink: JsAsyncCallbackSink,
+    callbackId: String,
+    method: String,
+) -> Result<(), String> {
+    if callbackId.trim().is_empty() {
+        return Err("SoftwareSettings callback ID is empty".to_string());
+    }
+    let executionHost =
+        executionHost.ok_or_else(|| "JavaScript execution host is unavailable".to_string())?;
+    if !matches!(
+        method.as_str(),
+        "listModelSummaries" | "listTtsConfigs" | "readToolSourceCatalog" | "listThemeConfigs" | "getCurrentTtsConfigId"
+    ) {
+        return Err(format!(
+            "Unknown SoftwareSettings directory method: {method}"
+        ));
+    }
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleHostRuntimeAsyncTask(
+            "operit-software-settings-directory",
+            Box::new(move || {
+                Box::pin(async move {
+                    let result = match method.as_str() {
+                        "listModelSummaries" => {
+                            executionHost
+                                .listModelSummaries()
+                                .await
+                                .and_then(|records| {
+                                    serde_json::to_value(records).map_err(|error| {
+                                        operit_plugin_sdk::js_sdk::JsHostError::new(
+                                            error.to_string(),
+                                        )
+                                    })
+                                })
+                        }
+                        "listTtsConfigs" => {
+                            executionHost.listTtsConfigs().await.and_then(|records| {
+                                serde_json::to_value(records).map_err(|error| {
+                                    operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string())
+                                })
+                            })
+                        }
+                        "listThemeConfigs" => executionHost.listThemeConfigs().await.and_then(|records| {
+                            serde_json::to_value(records).map_err(|error| operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string()))
+                        }),
+                        "getCurrentTtsConfigId" => executionHost.getCurrentTtsConfigId().await.and_then(|id| {
+                            serde_json::to_value(id).map_err(|error| operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string()))
+                        }),
+                        "readToolSourceCatalog" => executionHost
+                            .readToolSourceCatalog()
+                            .await
+                            .and_then(|records| {
+                                serde_json::to_value(records).map_err(|error| {
+                                    operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string())
+                                })
+                            }),
+                        _ => Err(operit_plugin_sdk::js_sdk::JsHostError::new(format!(
+                            "Unknown SoftwareSettings directory method: {method}"
+                        ))),
+                    };
+                    let (result, isError) = match result {
+                        Ok(value) => (value.to_string(), false),
+                        Err(error) => (
+                            serde_json::json!({ "message": error.message }).to_string(),
+                            true,
+                        ),
+                    };
+                    callbackSink(JsAsyncCallback {
+                        callbackId,
+                        result,
+                        isError,
+                    });
+                })
+            }),
+        )
+        .map_err(|error| error.to_string())
+}
+
+/// Dispatches only the declared ordinary Theme or TTS configuration setter and returns its single original result.
+#[allow(non_snake_case)]
+fn dispatchSoftwareSettingsConfigApply(
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+    callbackSink: JsAsyncCallbackSink,
+    callbackId: String,
+    method: String,
+    id: String,
+) -> Result<(), String> {
+    if callbackId.trim().is_empty() {
+        return Err("SoftwareSettings callback ID is empty".to_string());
+    }
+    if id.trim().is_empty() || id.trim() != id {
+        return Err("Configuration ID must be exact nonblank text".to_string());
+    }
+    if !matches!(method.as_str(), "applyThemeConfig" | "setCurrentTtsConfigId") {
+        return Err(format!("Unknown SoftwareSettings configuration method: {method}"));
+    }
+    let executionHost = executionHost.ok_or_else(|| "JavaScript execution host is unavailable".to_string())?;
+    defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+        "operit-software-settings-config",
+        Box::new(move || Box::pin(async move {
+            let result = match method.as_str() {
+                "applyThemeConfig" => executionHost.applyThemeConfig(id).await.and_then(|config| {
+                    serde_json::to_value(config).map_err(|error| operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string()))
+                }),
+                "setCurrentTtsConfigId" => executionHost.setCurrentTtsConfigId(id).await.and_then(|current| {
+                    serde_json::to_value(current).map_err(|error| operit_plugin_sdk::js_sdk::JsHostError::new(error.to_string()))
+                }),
+                _ => Err(operit_plugin_sdk::js_sdk::JsHostError::new(format!("Unknown SoftwareSettings configuration method: {method}"))),
+            };
+            let (result, isError) = match result {
+                Ok(value) => (value.to_string(), false),
+                Err(error) => (serde_json::json!({"message": error.message}).to_string(), true),
+            };
+            callbackSink(JsAsyncCallback {callbackId, result, isError});
+        })),
+    ).map_err(|error| error.to_string())
 }

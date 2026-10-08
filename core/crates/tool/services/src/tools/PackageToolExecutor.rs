@@ -9,7 +9,8 @@ use crate::tools::ToolJsRuntime::{JsPackageExecutor, PackageManagerJsRuntime};
 use crate::tools::ToolResultDataClasses::stringResultData;
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, AsyncToolExecutor, ToolInvocationFuture, ToolValidationResult,
+    AITool, AsyncToolExecutor, ToolAccessSpec, ToolBoundary, ToolEffect, ToolInvocationFuture,
+    ToolValidationResult,
 };
 
 #[derive(Clone)]
@@ -39,108 +40,49 @@ impl PackageToolExecutor {
         }
     }
 
-    /// Invokes a package tool by its package-qualified tool name.
+    /// Delegates one qualified request to the authoritative SDK selection and execution path.
     #[allow(non_snake_case)]
     pub async fn invoke(&self, tool: &AITool) -> ToolResult {
-        let parts = tool.name.split(':').collect::<Vec<_>>();
-        if parts.len() != 2 {
-            return failedToolResult(
-                tool,
-                "Invalid package tool format. Expected 'packageName:toolName'".to_string(),
-            );
+        let validation = self.validateParameters(tool);
+        if !validation.valid {
+            return failedToolResult(tool, validation.errorMessage);
         }
-
-        let packageName = parts[0];
-        let toolName = parts[1];
-        if packageName != self.toolPackage.name {
-            return failedToolResult(
-                tool,
-                format!(
-                    "Package mismatch: expected {}, got {}",
-                    self.toolPackage.name, packageName
-                ),
-            );
-        }
-
-        let Some(packageTool) = self
-            .toolPackage
-            .tools
-            .iter()
-            .find(|item| item.name == toolName)
-        else {
-            return failedToolResult(
-                tool,
-                format!(
-                    "Tool '{}' not found in package '{}'",
-                    toolName, self.toolPackage.name
-                ),
-            );
-        };
-
         let request = packageToolCallRequest(tool);
-        let result = self
-            .packageExecutor
-            .execute_package_tool(&packageTool.script, &request)
-            .await;
+        let result = self.packageExecutor.execute_package_tool(&request).await;
         packageToolResult(result)
     }
 }
 
 impl AsyncToolExecutor for PackageToolExecutor {
-    /// Validates the package-qualified name and required parameters.
+    /// Validates the generic namespace boundary without selecting from stale package metadata.
     #[allow(non_snake_case)]
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
         let parts = tool.name.split(':').collect::<Vec<_>>();
-        if parts.len() != 2 {
+        if parts.len() != 2 || parts.iter().any(|part| part.trim().is_empty()) {
             return ToolValidationResult {
                 valid: false,
                 errorMessage: "Invalid package tool format. Expected 'packageName:toolName'"
                     .to_string(),
             };
         }
-
-        let packageName = parts[0];
-        let toolName = parts[1];
-        if packageName != self.toolPackage.name {
+        if parts[0] != self.toolPackage.name {
             return ToolValidationResult {
                 valid: false,
                 errorMessage: format!(
                     "Package mismatch: expected {}, got {}",
-                    self.toolPackage.name, packageName
+                    self.toolPackage.name, parts[0]
                 ),
             };
         }
-
-        let Some(packageTool) = self
-            .toolPackage
-            .tools
-            .iter()
-            .find(|item| item.name == toolName)
-        else {
-            return ToolValidationResult {
-                valid: false,
-                errorMessage: format!(
-                    "Tool '{}' not found in package '{}'",
-                    toolName, self.toolPackage.name
-                ),
-            };
-        };
-
-        let missingParams = packageTool
-            .parameters
-            .iter()
-            .filter(|parameter| parameter.required)
-            .map(|parameter| parameter.name.clone())
-            .filter(|paramName| tool.parameters.iter().all(|item| item.name != *paramName))
-            .collect::<Vec<_>>();
-
-        if !missingParams.is_empty() {
-            return ToolValidationResult {
-                valid: false,
-                errorMessage: format!("Missing required parameters: {}", missingParams.join(", ")),
-            };
+        let mut names = std::collections::HashSet::new();
+        for parameter in &tool.parameters {
+            if !names.insert(&parameter.name) {
+                return ToolValidationResult {
+                    valid: false,
+                    errorMessage: format!("Duplicate package tool parameter: {}", parameter.name),
+                };
+            }
         }
-
         ToolValidationResult {
             valid: true,
             errorMessage: String::new(),
@@ -156,30 +98,10 @@ impl AsyncToolExecutor for PackageToolExecutor {
         })
     }
 
-    /// Invokes a package tool and returns every emitted result.
+    /// Uses the same exact SDK request dispatch for streaming and ordinary calls.
     #[allow(non_snake_case)]
     fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool) -> ToolInvocationFuture<'a> {
-        Box::pin(async move {
-            let toolName = tool.name.split(':').last().unwrap_or_default();
-            let Some(packageTool) = self
-                .toolPackage
-                .tools
-                .iter()
-                .find(|item| item.name.ends_with(toolName))
-            else {
-                return vec![failedToolResult(
-                    tool,
-                    "Tool not found in package for streaming".to_string(),
-                )];
-            };
-
-            let request = packageToolCallRequest(tool);
-            let result = self
-                .packageExecutor
-                .execute_package_tool(&packageTool.script, &request)
-                .await;
-            vec![packageToolResult(result)]
-        })
+        Box::pin(async move { vec![self.invoke(tool).await] })
     }
 }
 

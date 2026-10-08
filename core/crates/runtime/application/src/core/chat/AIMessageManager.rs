@@ -23,8 +23,9 @@ use operit_providers::chat::EnhancedAIService::{
     EnhancedAIService, MessageCancellationToken, ResumeRequest, SendMessageCallbacks,
     SendMessageOptions, SendMessageRuntime,
 };
-use operit_store::PreferencesDataStore::FlowLike;
+use operit_providers::runtime_support::ChatConfigurationResult;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
+use operit_store::PreferencesDataStore::FlowLike;
 use operit_util::stream::RevisableTextStream::with_event_channel_shared;
 use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
@@ -54,12 +55,13 @@ pub struct BuildUserMessageContentRequest {
     pub enableDirectAudioProcessing: bool,
     pub enableDirectVideoProcessing: bool,
     pub chatId: Option<String>,
-    pub roleCardId: Option<String>,
+    pub participantId: Option<String>,
     /// Host callback used to surface a timed-out Prompt Input Hook.
     pub onHookTimeout: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 pub struct SendMessageRequest<'a> {
+    pub chatConfiguration: ChatConfigurationResult,
     pub enhancedAiService: &'a mut EnhancedAIService,
     pub chatId: Option<String>,
     pub messageContent: String,
@@ -72,13 +74,6 @@ pub struct SendMessageRequest<'a> {
     pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
-    pub characterName: Option<String>,
-    pub avatarUri: Option<String>,
-    pub roleCardId: String,
-    pub currentRoleName: Option<String>,
-    pub splitHistoryByRole: bool,
-    pub groupOrchestrationMode: bool,
-    pub groupParticipantNamesText: Option<String>,
     pub proxySenderName: Option<String>,
     pub notifyReplyOverride: Option<bool>,
     pub chatProviderIdOverride: Option<String>,
@@ -97,11 +92,6 @@ pub struct StableContextWindowRequest<'a> {
     pub workspacePath: Option<String>,
     pub workspaceFolders: Vec<String>,
     pub promptFunctionType: PromptFunctionType,
-    pub roleCardId: Option<String>,
-    pub currentRoleName: Option<String>,
-    pub splitHistoryByRole: bool,
-    pub groupOrchestrationMode: bool,
-    pub groupParticipantNamesText: Option<String>,
     pub proxySenderName: Option<String>,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
@@ -195,6 +185,19 @@ pub fn logMessageTiming(stage: &str, startTimeMs: MessageTiming, details: Option
 }
 
 impl AIMessageManager {
+    /// Attaches a validated execution snapshot only to the newly generated message revision.
+    pub fn applyConfigurationSnapshot(
+        message: &mut ChatMessage,
+        configuration: &ChatConfigurationResult,
+    ) -> Result<(), String> {
+        configuration.validate()?;
+        message.pluginExtensions.insert(
+            configuration.extensionOwner.clone(),
+            serde_json::Value::Object(configuration.messageExtension.clone()),
+        );
+        Ok(())
+    }
+
     pub fn initialize() {
         let _ = activeChatOperations();
         let _ = LAST_ACTIVE_CHAT_KEY.get_or_init(|| Mutex::new(DEFAULT_CHAT_KEY.to_string()));
@@ -210,7 +213,7 @@ impl AIMessageManager {
         let processedMessageText = InputProcessor::process_user_input(ProcessUserInputRequest {
             input: request.messageText,
             chat_id: request.chatId.clone(),
-            role_card_id: request.roleCardId.clone(),
+            participant_id: request.participantId.clone(),
             on_hook_timeout: request.onHookTimeout.clone(),
         })
         .await;
@@ -284,6 +287,18 @@ impl AIMessageManager {
         .join(" "))
     }
 
+    /// Serializes original user-only input without selecting a participant, invoking a model, or rewriting submitted text.
+    pub(crate) fn buildRecordedUserMessageContent(
+        text: &str, attachments: &[AttachmentInfo], reply: Option<&ChatMessage>,
+    ) -> Result<String, String> {
+        let mut parts = vec![text.to_string()];
+        for attachment in attachments {
+            parts.push(Self::buildAttachmentTag(attachment, None, false, false, false)?);
+        }
+        if let Some(reply) = reply { parts.push(Self::buildReplyTag(reply)); }
+        Ok(parts.into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" "))
+    }
+
     #[allow(non_snake_case)]
     pub async fn sendMessage(
         request: SendMessageRequest<'_>,
@@ -325,11 +340,7 @@ impl AIMessageManager {
         let memory = match request.promptHistoryOverride.clone() {
             Some(promptHistory) => promptHistory,
             None => Self::getMemoryFromMessages(
-                request.chatHistory.clone(),
-                request.splitHistoryByRole,
-                request.currentRoleName.clone(),
-                request.groupOrchestrationMode,
-            ),
+                request.chatHistory.clone()),
         };
 
         let apiPreferences = ApiPreferences::getInstance();
@@ -390,15 +401,11 @@ impl AIMessageManager {
         options.workspacePath = request.workspacePath;
         options.workspaceFolders = request.workspaceFolders;
         options.promptFunctionType = request.promptFunctionType;
+        options.executionParticipantId = Some(request.chatConfiguration.profile.id.clone());
         options.enableThinking = request.enableThinking;
         options.enableMemoryAutoUpdate = request.enableMemoryAutoUpdate;
         options.maxTokens = request.maxTokens;
         options.tokenUsageThreshold = request.tokenUsageThreshold;
-        options.characterName = request.characterName;
-        options.avatarUri = request.avatarUri;
-        options.roleCardId = Some(request.roleCardId);
-        options.enableGroupOrchestrationHint = request.groupOrchestrationMode;
-        options.groupParticipantNamesText = request.groupParticipantNamesText;
         options.proxySenderName = request.proxySenderName;
         options.notifyReplyOverride = request.notifyReplyOverride;
         options.chatProviderIdOverride = request.chatProviderIdOverride;
@@ -439,13 +446,14 @@ impl AIMessageManager {
         {
             return Err(AiServiceError::RequestCancelled);
         }
+        options.chatConfiguration = Some(request.chatConfiguration.clone());
         let providerResponse = if request.resume {
             request
                 .enhancedAiService
                 .resume(ResumeRequest { options })
                 .await
         } else {
-            request.enhancedAiService.sendMessage(options).await
+            request.enhancedAiService.sendMessageWithConfiguration(options, request.chatConfiguration).await
         };
         match providerResponse {
             Ok(stream) => {
@@ -505,9 +513,7 @@ impl AIMessageManager {
     pub async fn summarizeMemory(
         enhancedAiService: &mut EnhancedAIService,
         messages: Vec<ChatMessage>,
-        autoContinue: bool,
-        isGroupChat: bool,
-    ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
+        autoContinue: bool) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
     {
         let lastSummaryIndex = messages
             .iter()
@@ -539,50 +545,17 @@ impl AIMessageManager {
         }
 
         let mut conversationReviewEntries = Vec::<(String, String)>::new();
-        let conversationToSummarize = if isGroupChat {
-            let mut packedContent = String::new();
-            for message in &messagesToSummarize {
-                let cleanedContent = cleanSummarySourceMessage(message);
-                if cleanedContent.trim().is_empty() {
-                    continue;
-                }
+        let conversationToSummarize = messagesToSummarize.iter().enumerate().map(|(index, message)| {
+            let role = match message.sender.as_str() { "user" => "user", _ => "assistant" }.to_string();
+            let cleanedContent = cleanSummarySourceMessage(message);
+            if !cleanedContent.trim().is_empty() {
                 let displayContent = if message.sender == "ai" {
                     condenseAssistantMessageForReview(message)
-                } else {
-                    condenseUserForReview(&cleanedContent)
-                };
-                let speakerLabel = summarySpeakerLabel(message);
-                conversationReviewEntries.push((speakerLabel.clone(), displayContent));
-                if !packedContent.is_empty() {
-                    packedContent.push(' ');
-                }
-                packedContent.push_str(&format!("{speakerLabel}: {cleanedContent}"));
+                } else { condenseUserForReview(&cleanedContent) };
+                conversationReviewEntries.push((summarySpeakerLabel(message), displayContent));
             }
-            vec![("user".to_string(), packedContent)]
-        } else {
-            messagesToSummarize
-                .iter()
-                .enumerate()
-                .map(|(index, message)| {
-                    let role = if message.sender == "user" {
-                        "user".to_string()
-                    } else {
-                        "assistant".to_string()
-                    };
-                    let cleanedContent = cleanSummarySourceMessage(message);
-                    if !cleanedContent.trim().is_empty() {
-                        let displayContent = if role == "assistant" {
-                            condenseAssistantMessageForReview(message)
-                        } else {
-                            condenseUserForReview(&cleanedContent)
-                        };
-                        conversationReviewEntries
-                            .push((summarySpeakerLabel(message), displayContent));
-                    }
-                    (role, format!("#{}: {cleanedContent}", index + 1))
-                })
-                .collect::<Vec<_>>()
-        };
+            (role, format!("#{}: {cleanedContent}", index + 1))
+        }).collect::<Vec<_>>();
 
         let summary = enhancedAiService
             .generateSummary(conversationToSummarize, previousSummary)
@@ -631,11 +604,7 @@ impl AIMessageManager {
         request: StableContextWindowRequest<'_>,
     ) -> Result<i64, operit_providers::chat::llmprovider::AIService::AiServiceError> {
         let memory = Self::getMemoryFromMessages(
-            request.chatHistory,
-            request.splitHistoryByRole,
-            request.currentRoleName,
-            request.groupOrchestrationMode,
-        );
+            request.chatHistory);
         request
             .enhancedAiService
             .estimateRequestWindowFromMemory(
@@ -645,9 +614,7 @@ impl AIMessageManager {
                 request.workspacePath,
                 request.workspaceFolders,
                 request.promptFunctionType,
-                request.roleCardId,
-                request.groupOrchestrationMode,
-                request.groupParticipantNamesText,
+                Some(request.runtime.chatConfiguration.profile.id.clone()),
                 request.proxySenderName,
                 request.chatProviderIdOverride,
                 request.chatModelIdOverride,
@@ -694,77 +661,15 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
-    pub fn getMemoryFromMessages(
-        messages: Vec<ChatMessage>,
-        splitByRole: bool,
-        targetRoleName: Option<String>,
-        groupOrchestrationMode: bool,
-    ) -> Vec<PromptTurn> {
-        let lastSummaryIndex = messages
-            .iter()
-            .rposition(|message| message.sender == "summary");
-        let relevantMessages = match lastSummaryIndex {
-            Some(index) => &messages[index..],
-            None => messages.as_slice(),
-        };
-        let normalizedTargetRole = match targetRoleName {
-            Some(roleName) => roleName.trim().to_string(),
-            None => String::new(),
-        };
-        let isRoleScopedMode = splitByRole && !normalizedTargetRole.is_empty();
-
-        relevantMessages
-            .iter()
-            .flat_map(|message| match message.sender.as_str() {
-                "ai" => Self::processAiMessage(message, isRoleScopedMode, &normalizedTargetRole),
-                "user" => vec![Self::processUserMessage(
-                    message,
-                    isRoleScopedMode,
-                    groupOrchestrationMode,
-                )],
-                "summary" => vec![PromptTurn::new(
-                    PromptTurnKind::SUMMARY,
-                    message.displayText(),
-                )],
-                _ => Vec::new(),
-            })
-            .collect()
-    }
-
-    #[allow(non_snake_case)]
-    fn processAiMessage(
-        message: &ChatMessage,
-        isRoleScopedMode: bool,
-        targetRoleName: &str,
-    ) -> Vec<PromptTurn> {
-        if !isRoleScopedMode {
-            return Self::assistantPromptTurnsFromParts(message);
-        }
-
-        let messageRoleName = message.roleName.trim();
-        if messageRoleName == targetRoleName {
-            return Self::assistantPromptTurnsFromParts(message);
-        }
-
-        let cleanedContent = message
-            .parts
-            .iter()
-            .filter(|part| part.kind == MessagePartKind::Markdown)
-            .map(|part| part.content.as_str())
-            .collect::<String>();
-        if cleanedContent.trim().is_empty() {
-            return Vec::new();
-        }
-
-        let roleLabel = if messageRoleName.is_empty() {
-            "unknown"
-        } else {
-            messageRoleName
-        };
-        vec![PromptTurn::new(
-            PromptTurnKind::USER,
-            format!("[From role: {roleLabel}]\n{cleanedContent}"),
-        )]
+    pub fn getMemoryFromMessages(messages: Vec<ChatMessage>) -> Vec<PromptTurn> {
+        let lastSummaryIndex = messages.iter().rposition(|message| message.sender == "summary");
+        let relevantMessages = match lastSummaryIndex { Some(index) => &messages[index..], None => messages.as_slice() };
+        relevantMessages.iter().flat_map(|message| match message.sender.as_str() {
+            "ai" => Self::assistantPromptTurnsFromParts(message),
+            "user" => vec![PromptTurn::new(PromptTurnKind::USER, message.displayText())],
+            "summary" => vec![PromptTurn::new(PromptTurnKind::SUMMARY, message.displayText())],
+            _ => Vec::new(),
+        }).collect()
     }
 
     /// Converts stored assistant parts into provider turns while preserving tool boundaries.
@@ -824,26 +729,7 @@ impl AIMessageManager {
         MessagePartCodec::assistantMarkup(&[part.clone()])
     }
 
-    #[allow(non_snake_case)]
-    fn processUserMessage(
-        message: &ChatMessage,
-        isRoleScopedMode: bool,
-        groupOrchestrationMode: bool,
-    ) -> PromptTurn {
-        let baseContent = message.displayText();
-        if groupOrchestrationMode && isRoleScopedMode {
-            let trimmed = baseContent.trim();
-            if trimmed.is_empty() {
-                return PromptTurn::new(PromptTurnKind::USER, baseContent);
-            }
-            if trimmed.starts_with("[From user]") {
-                return PromptTurn::new(PromptTurnKind::USER, trimmed.to_string());
-            }
-            return PromptTurn::new(PromptTurnKind::USER, format!("[From user]\n{trimmed}"));
-        }
-        PromptTurn::new(PromptTurnKind::USER, baseContent)
-    }
-
+    /// Builds display-only reply markup without selecting an execution identity.
     fn buildReplyTag(message: &ChatMessage) -> String {
         let cleanContent = strip_xml_tags(&message.displayText()).trim().to_string();
         let clipped = if cleanContent.chars().count() > 100 {
@@ -1027,7 +913,8 @@ impl AIMessageManager {
     /// Builds the XML attributes for an attachment notice.
     fn buildAttachmentAttributes(attachment: &AttachmentInfo) -> String {
         let escape = |value: &str| {
-            value.replace('&', "&amp;")
+            value
+                .replace('&', "&amp;")
                 .replace('"', "&quot;")
                 .replace('<', "&lt;")
                 .replace('>', "&gt;")
@@ -1040,7 +927,11 @@ impl AIMessageManager {
             escape(&attachment.fileName),
             escape(&attachment.mimeType)
         );
-        if let Some(nodeId) = attachment.nodeId.as_deref().filter(|nodeId| !nodeId.is_empty()) {
+        if let Some(nodeId) = attachment
+            .nodeId
+            .as_deref()
+            .filter(|nodeId| !nodeId.is_empty())
+        {
             attributes.push_str(&format!(" node_id=\"{}\"", escape(nodeId)));
         }
         if toolPath.starts_with("/app/data/temp/clean_on_exit/") {
@@ -1481,10 +1372,13 @@ mod tests {
     fn attachment_markup_keeps_the_source_node_and_portable_tool_path() {
         let mut attachment = AttachmentInfo::new(
             "/device-b/runtime/temp/clean_on_exit/report.pdf".into(),
-            "报价单\".pdf".into(), "application/pdf".into(), 3,
+            "报价单\".pdf".into(),
+            "application/pdf".into(),
+            3,
         );
         attachment.nodeId = Some("core-b".into());
-        let tag = AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
+        let tag =
+            AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
         assert!(tag.contains("node_id=\"core-b\""));
         assert!(tag.contains("path=\"/app/data/temp/clean_on_exit/report.pdf\""));
         assert!(tag.contains("filename=\"报价单&quot;.pdf\""));
@@ -1496,11 +1390,15 @@ mod tests {
     fn remote_media_never_reads_the_current_file_host() {
         for mimeType in ["image/png", "audio/mpeg", "video/mp4"] {
             let mut attachment = AttachmentInfo::new(
-                "/device-b/runtime/temp/clean_on_exit/media".into(), "media".into(), mimeType.into(), 3,
+                "/device-b/runtime/temp/clean_on_exit/media".into(),
+                "media".into(),
+                mimeType.into(),
+                3,
             );
             attachment.nodeId = Some("test-remote-attachment-node".into());
             // No host: attempting direct audio/video registration would fail the send.
-            let tag = AIMessageManager::buildAttachmentTag(&attachment, None, true, true, true).unwrap();
+            let tag =
+                AIMessageManager::buildAttachmentTag(&attachment, None, true, true, true).unwrap();
             assert!(tag.starts_with("<attachment "));
             assert!(tag.contains("node_id=\"test-remote-attachment-node\""));
             assert!(!tag.contains("_link"));
@@ -1521,9 +1419,30 @@ mod tests {
     }
 
     #[test]
+    fn external_host_paths_are_not_mislabeled_as_vfs_paths() {
+        let mut attachment = AttachmentInfo::new(
+            "/Users/source/report.pdf".into(),
+            "report.pdf".into(),
+            "application/pdf".into(),
+            3,
+        );
+        attachment.nodeId = Some("core-b".into());
+        let tag =
+            AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
+        assert!(tag.contains("node_id=\"core-b\""));
+        assert!(!tag.contains(" path="));
+    }
+
+    #[test]
     fn legacy_attachment_markup_does_not_claim_a_current_node() {
-        let attachment = AttachmentInfo::new("/old/report.pdf".into(), "report.pdf".into(), "application/pdf".into(), 3);
-        let tag = AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
+        let attachment = AttachmentInfo::new(
+            "/old/report.pdf".into(),
+            "report.pdf".into(),
+            "application/pdf".into(),
+            3,
+        );
+        let tag =
+            AIMessageManager::buildAttachmentTag(&attachment, None, false, false, false).unwrap();
         assert!(!tag.contains("node_id="));
     }
 
@@ -1553,7 +1472,7 @@ mod tests {
             ],
         );
 
-        let turns = AIMessageManager::getMemoryFromMessages(vec![message], false, None, false);
+        let turns = AIMessageManager::getMemoryFromMessages(vec![message]);
 
         assert_eq!(
             turns

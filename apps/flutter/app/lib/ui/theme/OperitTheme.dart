@@ -9,10 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/errors/UnhandledErrorReporter.dart';
-import '../../core/proxy/generated/CoreProxyClients.g.dart';
-import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
@@ -178,6 +175,7 @@ class _OperitThemeState extends State<OperitTheme> {
         ),
       );
       setState(() {
+        _runtimeUiReady = false;
         _runtimeStartupError = error;
       });
     } finally {
@@ -383,27 +381,17 @@ class OperitThemeController {
     required VoidCallback onChanged,
     Future<void> Function(ThemeMode)? saveStartupThemeMode,
     UserPreferencesManager preferencesManager = const UserPreferencesManager(),
-    GeneratedCoreProxyClients clients = const GeneratedCoreProxyClients(
-      ProxyCoreRuntimeBridge(),
-    ),
   }) : _onChanged = onChanged,
        _saveStartupThemeMode =
            saveStartupThemeMode ?? _saveStartupThemeModeDefault,
-       _preferencesManager = preferencesManager,
-       _clients = clients;
+       _preferencesManager = preferencesManager;
 
   final VoidCallback _onChanged;
   final Future<void> Function(ThemeMode) _saveStartupThemeMode;
   final UserPreferencesManager _preferencesManager;
-  final GeneratedCoreProxyClients _clients;
-  StreamSubscription<Object?>? _activePromptSubscription;
   StreamSubscription<Map<String, String>>? _themePreferencesSubscription;
   ThemePreferenceSnapshot _themePreferenceSnapshot =
       UserPreferencesManager.defaultThemePreferenceSnapshot;
-  String? _activeCharacterCardId;
-  String? _activeCharacterGroupId;
-  String? _activeThemeTargetName;
-  int _activePromptRevision = 0;
   int _themePreferenceRevision = 0;
   int _lifecycleRevision = 0;
   bool _suppressThemeAnimation = false;
@@ -412,56 +400,18 @@ class OperitThemeController {
   ThemePreferenceSnapshot get themePreferenceSnapshot =>
       _themePreferenceSnapshot;
   bool get suppressThemeAnimation => _suppressThemeAnimation;
-  String get activeThemeTargetName {
-    final name = _activeThemeTargetName;
-    if (name == null || name.trim().isEmpty) {
-      throw StateError('No active theme target name');
-    }
-    return name;
-  }
-
-  bool get hasActiveThemeTarget =>
-      _activeCharacterGroupId != null || _activeCharacterCardId != null;
-  bool get isActiveThemeTargetGroup => _activeCharacterGroupId != null;
-
-  /// Returns the currently active character card or group theme target.
-  core_proxy.ActivePrompt get activeThemeTarget {
-    final groupId = _activeCharacterGroupId;
-    if (groupId != null) {
-      return core_proxy.ActivePrompt.characterGroup(id: groupId);
-    }
-    final cardId = _activeCharacterCardId;
-    if (cardId != null) {
-      return core_proxy.ActivePrompt.characterCard(id: cardId);
-    }
-    throw StateError('No active theme target');
-  }
 
   /// Applies the known first-frame theme state before asynchronous startup.
   void setInitialThemePreferenceSnapshot(ThemePreferenceSnapshot snapshot) {
     _themePreferenceSnapshot = snapshot;
   }
 
-  /// Starts core-backed theme preferences and active prompt subscriptions.
+  /// Loads ordinary appearance values and observes their authoritative preference changes.
   Future<void> start() async {
     final lifecycleRevision = ++_lifecycleRevision;
     await _themePreferencesSubscription?.cancel();
     _themePreferencesSubscription = null;
-    await _activePromptSubscription?.cancel();
-    _activePromptSubscription = null;
-    final activePrompt = await _clients.preferencesActivePromptManager
-        .getActivePrompt();
-    if (lifecycleRevision != _lifecycleRevision) {
-      return;
-    }
-    _applyActivePrompt(activePrompt);
-    final revision = ++_activePromptRevision;
-    _activePromptSubscription = _clients.preferencesActivePromptManager
-        .activePromptFlow()
-        .listen((activePrompt) {
-          unawaited(_handleActivePromptChange(activePrompt));
-        });
-    await _loadActiveThemeTarget(revision);
+    await _reloadThemePreferenceSnapshot();
     if (lifecycleRevision != _lifecycleRevision) {
       return;
     }
@@ -470,15 +420,12 @@ class OperitThemeController {
         .listen((_) => unawaited(_reloadThemePreferenceSnapshot()));
   }
 
-  /// Cancels active prompt and theme preference subscriptions.
+  /// Invalidates in-flight loads and closes the ordinary appearance observer.
   void dispose() {
     _lifecycleRevision++;
-    _activePromptRevision++;
     _themePreferenceRevision++;
     unawaited(_themePreferencesSubscription?.cancel());
     _themePreferencesSubscription = null;
-    unawaited(_activePromptSubscription?.cancel());
-    _activePromptSubscription = null;
   }
 
   /// Reports whether the effective Material theme is dark.
@@ -511,16 +458,12 @@ class OperitThemeController {
     );
   }
 
-  /// Persists and applies one theme mode for the active target.
+  /// Persists and applies one ordinary appearance mode without actor-dependent scope.
   Future<void> setThemeMode(ThemeMode themeMode) async {
     if (_themePreferenceSnapshot.themeMode == themeMode) {
       return;
     }
-    await _preferencesManager.saveThemeSettings(
-      characterCardId: _activeCharacterCardId,
-      characterGroupId: _activeCharacterGroupId,
-      themeMode: themeMode,
-    );
+    await _preferencesManager.saveThemeSettings(themeMode: themeMode);
     await _reloadThemePreferenceSnapshot();
   }
 
@@ -619,8 +562,6 @@ class OperitThemeController {
     String? bubbleAiCustomFontPath,
   }) async {
     await _preferencesManager.saveThemeSettings(
-      characterCardId: _activeCharacterCardId,
-      characterGroupId: _activeCharacterGroupId,
       inputStyle: inputStyle,
       chatStyle: chatStyle,
       bubbleShowAvatar: bubbleShowAvatar,
@@ -700,43 +641,7 @@ class OperitThemeController {
     await _reloadThemePreferenceSnapshot();
   }
 
-  /// Loads every character card available as a theme target.
-  Future<List<core_proxy.CharacterCard>> loadThemeCharacterCards() {
-    return _clients.preferencesCharacterCardManager.getAllCharacterCards();
-  }
-
-  /// Loads every character group available as a theme target.
-  Future<List<core_proxy.CharacterGroupCard>> loadThemeCharacterGroups() {
-    return _clients.preferencesCharacterGroupCardManager
-        .getAllCharacterGroupCards();
-  }
-
-  /// Activates the selected character card or group as the current theme target.
-  Future<void> setActiveThemeTarget(core_proxy.ActivePrompt prompt) async {
-    final id = prompt.id.trim();
-    if (id.isEmpty) {
-      throw ArgumentError.value(
-        prompt.id,
-        'prompt.id',
-        'empty theme target id',
-      );
-    }
-    final normalizedPrompt = switch (prompt.tag) {
-      'CharacterCard' => core_proxy.ActivePrompt.characterCard(id: id),
-      'CharacterGroup' => core_proxy.ActivePrompt.characterGroup(id: id),
-      _ => throw ArgumentError.value(
-        prompt.tag,
-        'prompt.tag',
-        'invalid theme target tag',
-      ),
-    };
-    await _clients.preferencesActivePromptManager.setActivePrompt(
-      prompt: normalizedPrompt,
-    );
-    await _handleActivePromptChange(normalizedPrompt);
-  }
-
-  /// Persists the global user avatar shown by the active theme.
+  /// Saves the independent user-avatar setting and reloads ordinary appearance.
   Future<void> saveActiveThemeUserAvatarSettings({
     required String customUserAvatarUri,
   }) async {
@@ -746,130 +651,35 @@ class OperitThemeController {
     await _reloadThemePreferenceSnapshot();
   }
 
-  /// Clears message color overrides for the active target.
+  /// Clears ordinary message color overrides without reading plugin references.
   Future<void> resetMessageColorSettings() async {
-    await _resetCurrentTargetMessageColorSettings();
+    await _preferencesManager.resetMessageColorSettings();
     await _reloadThemePreferenceSnapshot();
   }
 
-  /// Clears every target-scoped theme preference for the active target.
+  /// Resets ordinary appearance overrides without selecting or modifying a plugin actor.
   Future<void> resetThemeSettings() async {
-    await _resetCurrentTargetThemeSettings();
+    await _preferencesManager.resetThemeSettings();
     await _reloadThemePreferenceSnapshot();
   }
 
-  /// Reloads and commits the latest snapshot for the active target.
+  /// Commits ordinary appearance only while the same load and controller lifetime remain current.
   Future<void> _reloadThemePreferenceSnapshot() async {
-    final targetRevision = _activePromptRevision;
+    final lifecycleRevision = _lifecycleRevision;
     final preferenceRevision = ++_themePreferenceRevision;
-    final snapshot = await _preferencesManager.resolveThemePreferenceSnapshot(
-      characterCardId: _activeCharacterCardId,
-      characterGroupId: _activeCharacterGroupId,
-    );
+    final snapshot = await _preferencesManager.resolveThemePreferenceSnapshot();
     await _loadCustomFontIfNeeded(snapshot);
-    if (targetRevision != _activePromptRevision ||
+    if (lifecycleRevision != _lifecycleRevision ||
         preferenceRevision != _themePreferenceRevision) {
       return;
     }
     await _saveStartupThemeMode(snapshot.themeMode);
-    if (targetRevision != _activePromptRevision ||
+    if (lifecycleRevision != _lifecycleRevision ||
         preferenceRevision != _themePreferenceRevision) {
       return;
     }
     _themePreferenceSnapshot = snapshot;
     _onChanged();
-  }
-
-  /// Starts a revision-guarded load when the active prompt target changes.
-  Future<void> _handleActivePromptChange(
-    core_proxy.ActivePrompt? activePrompt,
-  ) async {
-    if (_applyActivePrompt(activePrompt)) {
-      await _loadActiveThemeTarget(++_activePromptRevision);
-    }
-  }
-
-  Future<void> _resetCurrentTargetThemeSettings() async {
-    final groupId = _activeCharacterGroupId;
-    final cardId = _activeCharacterCardId;
-    if (groupId != null) {
-      await _preferencesManager.deleteCharacterGroupTheme(groupId);
-    } else if (cardId != null) {
-      await _preferencesManager.deleteCharacterCardTheme(cardId);
-    } else {
-      throw StateError('No active theme target for theme settings');
-    }
-  }
-
-  Future<void> _resetCurrentTargetMessageColorSettings() async {
-    final groupId = _activeCharacterGroupId;
-    final cardId = _activeCharacterCardId;
-    if (groupId != null) {
-      await _preferencesManager.resetMessageColorSettingsForCharacterGroup(
-        groupId,
-      );
-    } else if (cardId != null) {
-      await _preferencesManager.resetMessageColorSettingsForCharacterCard(
-        cardId,
-      );
-    } else {
-      throw StateError('No active theme target for message color settings');
-    }
-  }
-
-  /// Loads one target snapshot and commits it only while still current.
-  Future<void> _loadActiveThemeTarget(int revision) async {
-    final groupId = _activeCharacterGroupId;
-    final cardId = _activeCharacterCardId;
-    final targetName = await _resolveActiveThemeTargetName(
-      characterCardId: cardId,
-      characterGroupId: groupId,
-    );
-    if (revision != _activePromptRevision) {
-      return;
-    }
-    _activeThemeTargetName = targetName;
-    await _reloadThemePreferenceSnapshot();
-  }
-
-  /// Resolves the display name for one explicit theme target.
-  Future<String?> _resolveActiveThemeTargetName({
-    required String? characterCardId,
-    required String? characterGroupId,
-  }) async {
-    if (characterGroupId != null) {
-      final group = await _clients.preferencesCharacterGroupCardManager
-          .getCharacterGroupCard(groupId: characterGroupId);
-      return group?.name;
-    }
-    if (characterCardId != null) {
-      final card = await _clients.preferencesCharacterCardManager
-          .getCharacterCard(id: characterCardId);
-      return card.name;
-    }
-    throw StateError('No active theme target');
-  }
-
-  /// Applies a generated active prompt to the current theme target ids.
-  bool _applyActivePrompt(core_proxy.ActivePrompt? activePrompt) {
-    String? nextCardId;
-    String? nextGroupId;
-    if (activePrompt != null) {
-      if (activePrompt.tag == 'CharacterCard' &&
-          activePrompt.id.trim().isNotEmpty) {
-        nextCardId = activePrompt.id.trim();
-      } else if (activePrompt.tag == 'CharacterGroup' &&
-          activePrompt.id.trim().isNotEmpty) {
-        nextGroupId = activePrompt.id.trim();
-      }
-    }
-    if (_activeCharacterCardId == nextCardId &&
-        _activeCharacterGroupId == nextGroupId) {
-      return false;
-    }
-    _activeCharacterCardId = nextCardId;
-    _activeCharacterGroupId = nextGroupId;
-    return true;
   }
 }
 
