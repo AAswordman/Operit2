@@ -749,6 +749,20 @@ pub(super) fn display_width(value: &str) -> usize {
     value.chars().map(char_display_width).sum()
 }
 
+/// Converts a terminal cell column within `text` to a char index, rounding
+/// down to the wide character that spans the cell.
+pub(super) fn cell_column_to_char_index(text: &str, cell_column: usize) -> usize {
+    let mut width = 0usize;
+    for (index, ch) in text.chars().enumerate() {
+        let char_width = char_display_width(ch);
+        if width + char_width > cell_column {
+            return index;
+        }
+        width += char_width;
+    }
+    text.chars().count()
+}
+
 fn char_display_width(ch: char) -> usize {
     if ch == '\0' || ch.is_control() {
         0
