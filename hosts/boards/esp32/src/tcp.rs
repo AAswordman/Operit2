@@ -111,6 +111,7 @@ impl TcpListener for Esp32TcpListener {
 
 struct Esp32TcpConnection {
     stream: StdMutex<Option<TcpStream>>,
+    remote: Option<std::net::SocketAddr>,
     reader: Mutex<()>,
     writer: Mutex<()>,
     closed: AtomicBool,
@@ -120,8 +121,10 @@ impl Esp32TcpConnection {
         stream
             .set_nonblocking(true)
             .map_err(|error| HostError::new(error.to_string()))?;
+        let remote = stream.peer_addr().ok();
         Ok(Arc::new(Self {
             stream: StdMutex::new(Some(stream)),
+            remote,
             reader: Mutex::new(()),
             writer: Mutex::new(()),
             closed: AtomicBool::new(false),
@@ -130,6 +133,10 @@ impl Esp32TcpConnection {
 }
 #[async_trait]
 impl TcpConnection for Esp32TcpConnection {
+    fn remote_address(&self) -> Option<std::net::SocketAddr> {
+        self.remote
+    }
+
     async fn write(&self, bytes: &[u8]) -> HostResult<()> {
         let _guard = self.writer.lock().await;
         let mut offset = 0;
@@ -163,7 +170,12 @@ impl TcpConnection for Esp32TcpConnection {
     }
     async fn read(&self) -> HostResult<Option<Vec<u8>>> {
         let _guard = self.reader.lock().await;
-        let mut bytes = vec![0; 4096];
+        // Keep idle reads small; preserve the buffer across WouldBlock without
+        // allocating a desktop-sized 4 KiB block for every connection.
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(512)
+            .map_err(|_| HostError::new("Insufficient memory for TCP receive buffer"))?;
+        bytes.resize(512, 0);
         loop {
             if self.closed.load(Ordering::Acquire) {
                 return Ok(None);
@@ -246,6 +258,16 @@ mod tests {
                 received.extend(server.read().await.unwrap().unwrap());
             }
             assert_eq!(received, b"call/watch/push bytes");
+            assert!(server.remote_address().unwrap().ip().is_loopback());
+            let payload = vec![0x5a; 2049];
+            client.write(&payload).await.unwrap();
+            let mut received = Vec::new();
+            while received.len() < payload.len() {
+                let chunk = server.read().await.unwrap().unwrap();
+                assert!(chunk.len() <= 512);
+                received.extend(chunk);
+            }
+            assert_eq!(received, payload);
             server.write(b"response").await.unwrap();
             assert_eq!(client.read().await.unwrap().unwrap(), b"response");
             client.close().await;

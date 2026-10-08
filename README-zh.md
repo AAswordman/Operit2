@@ -99,7 +99,7 @@ operit2 cli backup restore <snapshot.zip>
 | Web Access | 访问某个已运行 CoreNode 的浏览器入口 | 不是自动加入 Space 的浏览器节点，也不是中心化 Agent Server |
 | WebAssembly/browser Host | 浏览器运行时的本地能力边界 | 与 Web Access 访问面分开，具体能力取决于浏览器和当前 Web 构建模式 |
 | Linux 云端设备 | Space 中的普通 CoreNode | 长期在线可以承担更多任务，但不因此拥有中心身份 |
-| ESP32 Edge Node | 设备侧 Edge Service 能力节点 | 不是完整 CoreNode，不持有 OperitApplication、Chat、Store、Identity 或 Space 同步 |
+| ESP32 Edge Node | 设备侧 Edge Service 能力节点 | 不是完整 CoreNode；仅保存节点身份、配对与设备空间控制状态，不运行 Chat/Store 业务，也不复制业务数据 |
 | Server | 未来的部署形态和 Host 方向 | 当前仓库还没有可以直接发布的完整 Server 产品 |
 
 仓库包含多平台 Host 适配路径，但“能够构建”不等于“已经完成跨设备互操作验证”。平台构建、签名和发布条件请以 [`BUILDING.md`](BUILDING.md) 与对应 workflow 为准。

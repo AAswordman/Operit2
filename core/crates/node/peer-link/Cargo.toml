@@ -10,7 +10,7 @@ async-trait.workspace = true
 operit-host-api = { path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
 serde.workspace = true
-tokio = { workspace = true, features = ["sync", "macros"] }
+tokio = { workspace = true, features = ["sync", "macros", "time"] }
 
 bytes = "1"
 http = "1"

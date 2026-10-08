@@ -82,13 +82,14 @@ fn wrap(
     data: BluetoothSessionData,
     source: PeerEndpoint,
     target: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerConnection>, String> {
     let session = Arc::new(Session {
         host,
         id: data.sessionId,
         closed: AtomicBool::new(false),
     });
-    let inbox = Inbox::new();
+    let inbox = Inbox::new(maxMessageBytes);
     let connection = Arc::new(Connection {
         session: session.clone(),
         scheduler: scheduler.clone(),
@@ -140,12 +141,14 @@ fn wrap(
         target,
         PeerTransport::Bluetooth,
         connection,
+        maxMessageBytes,
     ))
 }
 pub(super) async fn connect(
     host: &HostManager,
     source: PeerEndpoint,
     target: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerConnection>, String> {
     let provider = host
         .bluetoothHost
@@ -164,7 +167,7 @@ pub(super) async fn connect(
         })
     })
     .await?;
-    wrap(provider, scheduler, data, source, target)
+    wrap(provider, scheduler, data, source, target, maxMessageBytes)
 }
 struct Listener {
     session: Arc<Session>,
@@ -200,6 +203,7 @@ impl PeerListener for Listener {
 pub(super) async fn listen(
     host: &HostManager,
     source: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let provider = host
         .bluetoothHost
@@ -257,6 +261,7 @@ pub(super) async fn listen(
                             data,
                             source.clone(),
                             target,
+                            maxMessageBytes,
                         )
                     });
                     let failed = result.is_err();

@@ -29,9 +29,11 @@ impl Esp32FirmwareConfig {
         !self.wifiSsid.trim().is_empty()
     }
 
-    /// Reports whether the authenticated Edge carrier can be enabled.
-    pub fn hasEdgeToken(&self) -> bool {
-        !self.edgeToken.trim().is_empty()
+    /// UART remains available offline; TCP is offered on station networking.
+    pub fn peerTransports(station: bool) -> Vec<operit_peer_link::PeerTransport> {
+        use operit_peer_link::PeerTransport;
+        if station { vec![PeerTransport::Serial, PeerTransport::Tcp] }
+        else { vec![PeerTransport::Serial] }
     }
 
     /// Merges NVS runtime settings over build-time fallbacks.
@@ -64,6 +66,13 @@ impl Esp32FirmwareConfig {
 mod tests {
     use super::*;
 
+    #[test]
+    fn tcp_requires_station_networking_but_uart_always_remains_available() {
+        use operit_peer_link::PeerTransport;
+        assert_eq!(Esp32FirmwareConfig::peerTransports(false), vec![PeerTransport::Serial]);
+        assert_eq!(Esp32FirmwareConfig::peerTransports(true), vec![PeerTransport::Serial, PeerTransport::Tcp]);
+    }
+
     /// Verifies empty compile-time credentials disable Wi-Fi startup.
     #[test]
     fn emptyCredentialsDisableWifi() {
@@ -75,6 +84,6 @@ mod tests {
             edgeToken: String::new(),
         };
         assert!(!config.hasWifi());
-        assert!(!config.hasEdgeToken());
+
     }
 }

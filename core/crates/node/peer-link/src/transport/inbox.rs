@@ -4,14 +4,16 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 
 pub(super) struct Inbox {
+    maxMessageBytes: usize,
     sender: mpsc::Sender<Vec<u8>>,
     receiver: Mutex<mpsc::Receiver<Vec<u8>>>,
     terminal: watch::Sender<Option<Result<(), String>>>,
 }
 impl Inbox {
-    pub fn new() -> Arc<Self> {
+    pub fn new(maxMessageBytes: usize) -> Arc<Self> {
         let (sender, receiver) = mpsc::channel(32);
         Arc::new(Self {
+            maxMessageBytes,
             sender,
             receiver: Mutex::new(receiver),
             terminal: watch::channel(None).0,
@@ -29,7 +31,7 @@ impl Inbox {
     }
     pub fn put(&self, bytes: Vec<u8>) {
         // 回调不能阻塞 Host 的网络线程；超限终止连接，不丢包后继续。
-        if bytes.len() > super::stream::MAX_PEER_MESSAGE_BYTES + 4
+        if bytes.len() > self.maxMessageBytes + 4
             || self.sender.try_send(bytes).is_err()
         {
             self.finish(Err("Peer receive queue exceeded limit".into()));

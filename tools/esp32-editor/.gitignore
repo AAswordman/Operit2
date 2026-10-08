@@ -1,3 +1,4 @@
 generated/
 __pycache__/
 simulator/target/
+device.local.json

@@ -1,5 +1,12 @@
 # Agent UI editing contract
 
+> 当前后端说明（2026-10-06）：UI 已删除，唯一渲染器是
+> `apps/esp32/ui_port/operit_mini_ui.c`，C ABI 为 `operit_ui_*`。
+> 以下布局/组件协议保留为草稿与存储工具；当前固定自绘 UI 不应用布局包，
+> 不提供拖拽控件、旧侧栏、软键盘或图片预览。实现新屏幕需修改自绘 C 源码并重建。
+> 历史控件布局能力不能视为当前设备能力；以 `/api/board` capabilities 为准。
+
+
 All clients edit the same `apps/esp32/ui/layout.json`; there is no Agent-specific copy.
 The GUI, HTTP clients and MCP adapter share validation and optimistic revision checks.
 
@@ -33,10 +40,10 @@ A stale revision returns HTTP 409. Read again, compare the new document, and del
 ## CLI
 
 ```powershell
-node tools/esp32-editor/src/agent.mjs ui_components
-node tools/esp32-editor/src/agent.mjs ui_read
-node tools/esp32-editor/src/agent.mjs ui_patch @patch.json
-node tools/esp32-editor/src/agent.mjs ui_build_status
+npm --prefix tools/esp32-editor run agent -- ui_components
+npm --prefix tools/esp32-editor run agent -- ui_read
+npm --prefix tools/esp32-editor run agent -- ui_patch @patch.json
+npm --prefix tools/esp32-editor run agent -- ui_build_status
 ```
 
 Use a JSON file for arguments to avoid shell quoting. `OPERIT_UI_URL` overrides the service URL.
@@ -48,7 +55,7 @@ Register this command in an Agent's MCP configuration:
 ```json
 {
   "command":"node",
-  "args":["./tools/esp32-editor/src/agent.mjs","--mcp"],
+  "args":["--experimental-strip-types","./tools/esp32-editor/src/agent.mts","--mcp"],
   "env":{"OPERIT_UI_URL":"http://127.0.0.1:8766"}
 }
 ```
@@ -62,7 +69,7 @@ Windows/macOS/Linux Agents can use HTTP or MCP. Android/iOS/Web/OHOS Agents use 
 
 Version 1 supports the current board's 320×240 layout, up to 24 nodes and a conservative complexity budget of 40. Nested children reference a preceding `panel`; coordinates are relative to their parent. Bounds, unique IDs, supported widget types, actions, and strings are validated before writes. The current embedded font supports ASCII; arbitrary C code and file paths cannot be submitted through layout operations.
 
-`enabled:true` uses this layout as firmware home. With `false`, the editor previews the draft while firmware retains its built-in home. `compile-layout.mjs` generates a small C descriptor header; the same LVGL factory creates widgets for Wasm and firmware. Dragging changes the live LVGL object without compiling; Save persists the document and triggers a dual build. Build failures remain visible, and the previous successful preview is retained.
+Layouts are independent Editor drafts, not firmware UI descriptors. The fixed renderer does not apply layout documents; layout deployment is rejected before contacting a device. Screen code changes require rebuilding the shared C renderer. Build failures remain visible, and the previous successful preview is retained.
 
 Read `/api/build` after editing. An accepted JSON write is not proof of successful compilation or adequate real-device memory/performance. Board flashing remains a separate operation.
 
@@ -70,7 +77,7 @@ Read `/api/build` after editing. An accepted JSON write is not proof of successf
 
 Right-click / touch-hold an editor component to compose a function request. The context includes `kind: "operit.hardware.component"`, `componentId`, component, complete document, revision, dirty flag, request and route capabilities. Never treat an unsaved draft as the persisted document. When dirty, preserve the attached draft and coordinate it before changing persisted layout; do not silently overwrite it with `ui_patch`.
 
-Both GUI and API expose click (`action`) and optional long-press (`longAction`). `GET /api/components` / `ui_components` provides route IDs, labels, targets and event fields. Known routes include `home`, `apps`, `page:theme`, `page:settings`, `page:network`, `page:face`, `page:terminal`, `face_online`, `run_node`, and the empty string to unbind. Unknown routes are rejected. Navigation runs in the shared LVGL C implementation; device commands use the existing firmware callback. Registering a name alone does not implement a new feature.
+Both GUI and API expose click (`action`) and optional long-press (`longAction`). `GET /api/components` / `ui_components` provides route IDs, labels, targets and event fields. Known routes include `home`, `apps`, `page:theme`, `page:settings`, `page:network`, `page:face`, `page:terminal`, `face_online`, `run_node`, and the empty string to unbind. Unknown routes are rejected. Navigation runs in the shared UI C implementation; device commands use the existing firmware callback. Registering a name alone does not implement a new feature.
 
 Example reply to a component conversation (paste into the editor's AI reply field):
 
@@ -100,3 +107,37 @@ The user's request is to implement behavior in the project, not merely generate 
 AI 开发任务 kind `operit.hardware.task` 带 task/context；context 包含当前完整草稿、页面/组件ID、JSON pointer、实际源码行号与 revision。默认发到软件当前对话；独立API通过 `/api/ai/develop` 返回审阅提案。密钥不得写入项目。
 
 USB 离线部署：在“部署到设备”刷新串口，选择 COM 口，点击“USB 下发布局，无需编译”。后端先读取设备分区表和两个布局槽位，核对地址/尺寸/CRC/版本，只覆盖非当前槽位并递增版本；不改程序分区或 NVS。临时读取文件和布局文件结束后删除。接口为 `POST /api/deploy/usb-layout {port,document}`，状态仍用 `GET /api/deploy/flash`。与 Wi-Fi 热更新不同，USB 使用 ROM 引导器，会重启设备。
+
+
+## 真机 USB 读屏与点击（与模拟器分开）
+
+```powershell
+# 在仓库根目录运行；没有常驻 server 也可使用
+npm run device:screen --prefix tools/esp32-editor -- --port COM24
+npm run device:tree --prefix tools/esp32-editor -- --port COM24
+npm run device:tap --prefix tools/esp32-editor -- --port COM24 --id <从读屏结果取得的节点ID>
+# 也可直接调用 Python
+python -X utf8 tools/esp32-editor/device-debug.py screen --port COM24
+```
+
+需要安装包含串口调试入口的固件。首次更新极简固件：
+`npm run dev --prefix tools/esp32-editor -- --port COM24 --no-monitor`。
+普通更新保留 NVS 中的 Wi-Fi、配对身份、空间状态；不要为此使用 `flash:fresh`。
+
+返回的 `source: "device-uart"` 表示数据来自**物理设备当前 C 渲染器**，不是浏览器 Wasm 或模拟器。
+`result` 包含页面、屏幕节点 ID/文本/坐标/可点击与可用状态；极简版还包含屏幕配对码和 UI 静态内存。
+这是结构化屏幕内容/对象树，不是像素截图，也不是整板 RAM 测量；不在设备上分配全屏 framebuffer。
+原来的 `/api/simulator/debug/*` 仍只操作模拟器，不能当真机读屏使用。
+
+点击使用当前真实 UI 的触摸/事件入口，隐藏/禁用/不存在的目标会报错。
+`device:swipe -- --port COM24 --direction left` 仅在当前渲染器支持时成功；极简试验版暂不支持滑动。
+调试命令通过 UART0 单一读通道与 Link 复用，在 UI 主线程执行，队列单飞、请求/响应有长度上限和 CRC。
+只开放本机 USB，不开放未认证的网络读码接口，也不代替配对/空间审批协议。
+
+PC 侧串口一次只能被一个程序占用：先结束 `monitor` 或 CLI 常驻串口 session 再读屏。
+串口配对可依次运行 `pair-start` → 真机 `device:screen` 读取码 → `pair-finish`，每一步结束后释放端口。
+读屏/点击命令不主动复位设备；超时不要盲目重试点击（可能已执行而确认丢失），应先读屏确认状态。
+日志及 Link 帧会被响应扫描器跳过；不落盘配对码、屏幕历史或临时截图。
+
+检查：`npm run test:device-debug --prefix tools/esp32-editor`；
+Rust UART/帧边界测试：`cargo test --manifest-path hosts/boards/esp32/Cargo.toml serial`。

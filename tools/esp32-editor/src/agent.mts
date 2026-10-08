@@ -44,7 +44,7 @@ const definitions: ToolDefinition[] = [
   },
   {
     name: 'ui_components',
-    description: 'List LVGL components, click/long-press route capabilities, support status and resource limits.',
+    description: 'List self-drawn UI components, click/long-press route capabilities, support status and resource limits.',
     inputSchema: {type: 'object', properties: {}, additionalProperties: false},
   },
   {

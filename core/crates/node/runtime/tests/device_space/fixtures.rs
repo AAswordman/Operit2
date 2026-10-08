@@ -12,17 +12,8 @@ fn approvalService(node: &str) -> (CoreNodeRouter, RuntimeRemoteLinkService) {
 }
 
 /// Exercises controlOperationsForSpace through isolated runtime stores.
-fn controlOperationsForSpace(
-    router: &CoreNodeRouter,
-    spaceId: &str,
-) -> Vec<operit_store::SyncOperationStore::SyncOperation> {
-    router
-        .networkControlStore
-        .currentSpaceOperations()
-        .unwrap()
-        .into_iter()
-        .filter(|operation| operation.payload["spaceId"].as_str() == Some(spaceId))
-        .collect()
+fn controlOperationsForSpace(router: &CoreNodeRouter, spaceId: &str) -> Vec<operit_store::SyncOperationStore::SyncOperation> {
+    router.networkControlStore.spaceOperations(spaceId).unwrap()
 }
 
 struct ApprovalMeshPeer {

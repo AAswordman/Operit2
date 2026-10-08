@@ -97,7 +97,7 @@ def package_manifest(editor_manifest: dict[str, object], images: list[dict[str, 
         "partitionTable": "partitions.csv",
         "images": images,
     }
-    for key in ("runtimeHash", "sourceHash", "builtAt", "lvgl"):
+    for key in ("runtimeHash", "sourceHash", "builtAt", "renderer"):
         value = editor_manifest.get(key)
         if isinstance(value, str) and value:
             package[key] = value
@@ -119,7 +119,7 @@ def write_archive(archive_path: Path, manifest: dict[str, object]) -> Path:
         "Selective flashing: bootloader.bin at 0x001000, partition-table.bin at 0x008000,\n"
         "and operit-esp32.bin at 0x010000. Use manifest.json for verified offsets and hashes.\n"
         "\n"
-        "Routine UI changes use the ESP32 editor layout deployment and do not reflash this bundle.\n"
+        "The fixed UI requires a firmware rebuild for screen changes; dynamic layout deployment is not supported.\n"
     )
     manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:

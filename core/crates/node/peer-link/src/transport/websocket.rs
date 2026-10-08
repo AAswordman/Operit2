@@ -45,6 +45,7 @@ pub(super) async fn connect(
     host: &HostManager,
     source: PeerEndpoint,
     target: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerConnection>, String> {
     let provider = host
         .webSocketHost
@@ -54,7 +55,7 @@ pub(super) async fn connect(
         .hostRuntimeTaskSchedulerHost
         .clone()
         .ok_or("Host task scheduler is not installed")?;
-    let inbox = Inbox::new();
+    let inbox = Inbox::new(maxMessageBytes);
     let client = Arc::new(Client {
         host: provider.clone(),
         scheduler,
@@ -100,6 +101,7 @@ pub(super) async fn connect(
         target,
         PeerTransport::WebSocket,
         client,
+        maxMessageBytes,
     ))
 }
 struct Server {
@@ -138,6 +140,7 @@ pub(super) async fn listen(
     registry: &super::http::ServerRegistry,
     host: &HostManager,
     source: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let address = source.address.clone();
     let (tx, rx) = mpsc::channel(32);
@@ -155,9 +158,9 @@ pub(super) async fn listen(
             upgrade.accept(Box::new(move |mut socket| Box::pin(async move {
                 let (output, mut outgoing) = mpsc::channel::<(Vec<u8>, oneshot::Sender<Result<(), String>>)>(32);
                 let (stop, mut stopped) = tokio::sync::watch::channel(false);
-                let inbox = Inbox::new();
+                let inbox = Inbox::new(maxMessageBytes);
                 let connection = Arc::new(Server { remote, output, inbox: inbox.clone(), stop });
-                slot.send(FramedPeerConnection::new(source, PeerEndpoint { nodeId: String::new(), address: String::new() }, PeerTransport::WebSocket, connection) as Arc<dyn PeerConnection>);
+                slot.send(FramedPeerConnection::new(source, PeerEndpoint { nodeId: String::new(), address: String::new() }, PeerTransport::WebSocket, connection, maxMessageBytes) as Arc<dyn PeerConnection>);
                 let result: Result<(), String> = async {
                     loop {
                         tokio::select! {

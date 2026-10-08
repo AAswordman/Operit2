@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use operit_host_api::AtomicCounter::AtomicU64;
+use std::sync::atomic::Ordering;
 
 /// Character class used for generated tool tag suffixes.
 pub const TOOL_TAG_SUFFIX_REGEX_SOURCE: &str = "[A-Za-z0-9_]+";

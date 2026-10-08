@@ -24,7 +24,7 @@
       <div class="header-actions">
         <span class="badge">
           <i>
-          </i>LVGL 同源预览</span>
+          </i>自绘 UI 同源预览</span>
         <button id="open-deploy">部署到设备</button>
         <button id="open-ai">AI 开发</button>
         <button id="save-layout" class="primary" disabled>保存项目</button>
@@ -33,20 +33,20 @@
     <div class="workspace-bar">
       <span>ESP32-2432S028 <span class="muted">/ 横屏 320 × 240</span>
       </span>
-      <span class="muted desktop-only">拖入组件 · 调整布局 · 同步固件</span>
+      <span class="muted desktop-only">固定页面 · 触摸调试 · 同源固件</span>
     </div>
     <div class="layout">
       <nav class="palette panel" data-pane="components" aria-label="组件库">
         <div class="section-top">
           <strong>组件库</strong>
-          <span class="pill">LVGL 9</span>
+          <span class="pill">自绘 UI</span>
         </div>
         <div class="panel-body">
           <label class="search-label">
             <span class="sr-only">搜索组件</span>
             <input id="component-search" type="search" placeholder="搜索组件名称…">
           </label>
-          <p class="note">拖入画布，或轻点添加</p>
+          <p class="note">当前自绘 UI 暂不支持拖拽布局</p>
           <div id="component-list">
           </div>
           <p id="search-empty" hidden>没有找到组件，试试“按钮”或 slider。</p>
@@ -83,11 +83,11 @@
             <div class="device">
               <div class="screen-wrap">
                 <canvas id="screen" width="320" height="240" tabindex="0" role="application"
-                  aria-label="ESP32 屏幕。编辑模式下拖动组件；运行模式下触摸操作 LVGL">
+                  aria-label="ESP32 屏幕。编辑模式下拖动组件；运行模式下触摸操作 自绘 UI">
                 </canvas>
                 <div id="grid">
                 </div>
-                <div id="edit-layer">
+                <div id="edit-layer" hidden>
                 </div>
               </div>
             </div>
@@ -108,7 +108,7 @@
         <div class="screen-toolbar">
           <div>
             <button id="home">运行首页</button>
-            <button id="apps">应用网格</button>
+            <button id="apps">插件页</button>
           </div>
           <label class="toggle">网格<input id="show-grid" type="checkbox">
           </label>
@@ -146,7 +146,7 @@
             </label>
             <label class="color-field">画布背景<input id="layout-bg" type="color">
             </label>
-            <p class="note">首页与其他页面都保存在同一项目中。保存项目后可直接下发布局，无需编译。</p>
+            <p class="note">首页与其他页面都保存在同一项目中。保存项目后可直接布局部署不支持。</p>
           </div>
         </section>
         <section id="pane-layers" data-pane="layers" hidden>
@@ -230,7 +230,7 @@
       </aside>
     </div>
     <footer>
-      <span>真实 LVGL 渲染 · WebAssembly</span>
+      <span>真实 自绘 UI 渲染 · WebAssembly</span>
       <span id="source">
       </span>
     </footer>
@@ -278,18 +278,17 @@
       <div class="dialog-actions"><button id="export-layout">导出项目 JSON</button><button
           id="export-package">下载设备布局包</button></div>
       <label>设备地址<input id="device-address" placeholder="http://192.168.1.50" autocomplete="off"></label>
-      <label>设备 Edge Token<input id="device-token" type="password" autocomplete="off"
-          placeholder="与设备设置中的令牌一致，仅保留在本页内存"></label>
       <div class="dialog-actions"><button id="connect-device">检查连接</button><button id="deploy-layout"
-          class="primary">下发布局，无需编译</button></div>
+          class="primary" disabled>布局部署不支持</button></div>
       <p id="deploy-feedback" role="status"></p>
       <details open>
         <summary>USB 布局部署 / 首次安装</summary>
-        <p>用数据线连接电脑，选择 ESP32 串口。烧录开发者已生成的基础固件，不启动编译。保留 Wi-Fi、配对信息和布局分区；烧录过程中请勿断电。</p>
+        <p>用数据线连接电脑，选择 ESP32 串口。烧录开发者已生成的基础固件，不启动编译。默认清理程序分区，保留 Wi-Fi、配对信息和布局；需要清掉历史设备数据时勾选下方选项。烧录过程中请勿断电。</p>
         <div class="dialog-actions"><select id="flash-port" aria-label="ESP32 串口"></select><button
             id="refresh-ports">刷新串口</button></div>
-        <div class="dialog-actions"><button id="usb-layout" class="primary">USB 下发布局，无需编译</button><button
+        <div class="dialog-actions"><button id="usb-layout" class="primary">USB 布局部署不支持</button><button
             id="flash-runtime">安装 / 更新基础固件</button></div>
+        <label><input type="checkbox" id="flash-reset-data"> 清空设备后重新安装（删除 Wi-Fi、配对身份、空间状态和布局，需确认）</label>
         <pre id="flash-output"></pre>
       </details>
     </div>
@@ -317,7 +316,7 @@
         <summary>查看 AI 修改提案</summary>
         <pre id="ai-proposal"></pre><button id="ai-apply" disabled>应用布局到草稿</button><button id="ai-apply-code"
           disabled>写入已审阅的代码修改</button>
-        <p class="note">布局先在当前项目中预览，保存后可下发到设备，无需编译。代码功能可交给软件对话中的工作区 Agent 实现。</p>
+        <p class="note">布局仅作 Editor 草稿保存；当前固定自绘 UI 不支持动态布局下发。代码功能可交给软件对话中的工作区 Agent 实现。</p>
       </details>
     </div>
   </dialog>

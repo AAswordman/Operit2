@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::CoreNodeIdentityStore::CoreNodeIdentityStore;
-use crate::PreferencesDataStore::{emptyPreferences, stringPreferencesKey, PreferencesDataStore};
+use crate::PreferencesDataStore::{emptyPreferences, stringPreferencesKey, CoreNodeStateStore, PreferencesDataStore};
 use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 
 const CORE_SPACE_RECORD_KEY: &str = "record";
@@ -94,12 +94,20 @@ pub struct CoreSpaceTopologyRecord {
 #[derive(Clone)]
 pub struct CoreSpaceStore {
     storage: Arc<dyn RuntimeStorageHost>,
+    recordSyncOperations: bool,
 }
 
 impl CoreSpaceStore {
     /// Creates a Space store over an explicit runtime storage host.
     pub fn new(storage: Arc<dyn RuntimeStorageHost>) -> Self {
-        Self { storage }
+        Self { storage, recordSyncOperations: true }
+    }
+
+    /// Keeps an endpoint's membership/profile projection without making it a
+    /// Space data replica or creating business replication clocks and journals.
+    #[allow(non_snake_case)]
+    pub fn newNodeLocal(storage: Arc<dyn RuntimeStorageHost>) -> Self {
+        Self { storage, recordSyncOperations: false }
     }
 
     /// Creates a Space store over the process-wide runtime storage host.
@@ -170,6 +178,12 @@ impl CoreSpaceStore {
 
     /// Adopts a joined Space projection produced by an explicit pairing workflow.
     pub fn adopt(&self, joinedSpace: CoreSpace) -> Result<CoreSpace, String> {
+        self.adoptAt(joinedSpace, currentTimeMillis())
+    }
+
+    /// A claimed admission supplies a stable timestamp across partial retries.
+    #[allow(non_snake_case)]
+    pub fn adoptAt(&self, joinedSpace: CoreSpace, timestamp: i64) -> Result<CoreSpace, String> {
         validateCoreSpace(&joinedSpace)?;
         let localSpace = self.initialize()?;
         if joinedSpace.spaceRevision < localSpace.spaceRevision {
@@ -189,11 +203,12 @@ impl CoreSpaceStore {
             .into_iter()
             .chain(joinedSpace.members)
             .collect::<BTreeSet<_>>();
-        self.writeSpaceProjection(
+        self.writeSpaceProjectionAt(
             joinedSpace.spaceId,
             joinedSpace.spaceName,
             joinedSpace.spaceRevision,
             members,
+            timestamp,
         )
     }
 
@@ -310,6 +325,27 @@ impl CoreSpaceStore {
             updatedAt: now,
         })?;
         self.space()
+    }
+
+    /// A non-replicating endpoint caches only the current membership projection.
+    /// Full Core history and journals are never pruned by this operation.
+    pub fn pruneNodeLocalProjection(&self) -> Result<(), String> {
+        if self.recordSyncOperations { return Ok(()); }
+        let spaceId = self.space()?.spaceId;
+        // Profiles imported ahead of an admission have no membership record
+        // yet. They are not retired: a restart must preserve partial approvals.
+        let retired = self.memberRecords()?.into_values()
+            .filter(|record| record.spaceId != spaceId).map(|record| record.nodeId);
+        for node in retired {
+            // Delete the membership marker last so interrupted cleanup retries
+            // still know which profile/topology files belong to a retired Space.
+            for directory in [RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH, RUNTIME_SPACE_TOPOLOGY_DIR_PATH, RUNTIME_SPACE_MEMBERS_DIR_PATH] {
+                let path = format!("{directory}/{node}.preferences.json");
+                CoreNodeStateStore::newWithStorage(self.storage.clone(), path)
+                    .delete().map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
     }
 
     /// Returns whether the supplied CoreNode is a member of the current Space.
@@ -874,7 +910,7 @@ impl CoreSpaceStore {
             serde_json::to_string(record).map_err(|error| error.to_string())?,
         );
         self.syncedMemberStore(&record.nodeId)
-            .replace(preferences)
+            .replaceRecoverably(preferences)
             .map_err(|error| error.to_string())
     }
 
@@ -887,12 +923,16 @@ impl CoreSpaceStore {
         spaceRevision: i64,
         members: BTreeSet<String>,
     ) -> Result<CoreSpace, String> {
+        self.writeSpaceProjectionAt(spaceId, spaceName, spaceRevision, members, currentTimeMillis())
+    }
+
+    #[allow(non_snake_case)]
+    fn writeSpaceProjectionAt(&self, spaceId: String, spaceName: String, spaceRevision: i64, members: BTreeSet<String>, now: i64) -> Result<CoreSpace, String> {
         validateSpaceName(&spaceName)?;
         if spaceRevision <= 0 {
             return Err("Device space revision must be greater than zero".to_string());
         }
         let existingRecords = self.memberRecords()?;
-        let now = currentTimeMillis();
         for nodeId in members {
             validateNodeId(&nodeId)?;
             let joinedAt = existingRecords
@@ -969,8 +1009,7 @@ impl CoreSpaceStore {
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
             serde_json::to_string(record).map_err(|error| error.to_string())?,
         );
-        PreferencesDataStore::newWithStorage(
-            self.storage.clone(),
+        self.recordStore(
             format!(
                 "{RUNTIME_SPACE_TOPOLOGY_DIR_PATH}/{}.preferences.json",
                 record.nodeId
@@ -989,8 +1028,7 @@ impl CoreSpaceStore {
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
             serde_json::to_string(presence).map_err(|error| error.to_string())?,
         );
-        PreferencesDataStore::newWithStorage(
-            self.storage.clone(),
+        self.recordStore(
             format!(
                 "{RUNTIME_SPACE_DEVICE_PRESENCE_DIR_PATH}/{}.preferences.json",
                 presence.nodeId
@@ -1009,24 +1047,31 @@ impl CoreSpaceStore {
             &stringPreferencesKey(CORE_SPACE_RECORD_KEY),
             serde_json::to_string(profile).map_err(|error| error.to_string())?,
         );
-        PreferencesDataStore::newWithStorage(
-            self.storage.clone(),
+        self.recordStore(
             format!(
                 "{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/{}.preferences.json",
                 profile.nodeId
             ),
         )
-        .replace(preferences)
+        .replaceRecoverably(preferences)
         .map_err(|error| error.to_string())
     }
 
     /// Creates the synchronized preferences store for one Space member.
     fn syncedMemberStore(&self, nodeId: &str) -> PreferencesDataStore {
-        PreferencesDataStore::newWithStorage(
-            self.storage.clone(),
+        self.recordStore(
             format!("{RUNTIME_SPACE_MEMBERS_DIR_PATH}/{nodeId}.preferences.json"),
         )
     }
+
+    fn recordStore(&self, path: impl Into<String>) -> PreferencesDataStore {
+        if self.recordSyncOperations {
+            PreferencesDataStore::newWithStorage(self.storage.clone(), path)
+        } else {
+            (*CoreNodeStateStore::newWithStorage(self.storage.clone(), path)).clone()
+        }
+    }
+
 }
 
 impl CoreSpaceMemberRecord {
@@ -1553,6 +1598,25 @@ mod tests {
             .is_err());
     }
 
+    /// Reimporting the same device after local exit must recreate its file,
+    /// not mistake a deleted preferences cache entry for durable storage.
+    #[test]
+    fn node_local_exit_then_identical_profile_reimport_restores_the_file() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::newNodeLocal(host.clone());
+        initializeTestDeviceProfile(&store);
+        let remote = "returning-core".to_string();
+        store.admitRemoteMember(remote.clone(), "Core".into(), "windows".into(), "desktop".into(), "1".into()).unwrap();
+        let profile = store.deviceProfiles().unwrap().remove(&remote).unwrap();
+        let path = format!("{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/{remote}.preferences.json");
+        store.leave().unwrap();
+        store.pruneNodeLocalProjection().unwrap();
+        assert!(!host.exists(&path).unwrap());
+        store.importDeviceProfiles(vec![profile.clone()]).unwrap();
+        assert!(host.exists(&path).unwrap(), "reimport incorrectly skipped a write because the deleted path was still cached");
+        assert_eq!(store.deviceProfiles().unwrap().get(&remote), Some(&profile));
+    }
+
     /// Verifies that repeating the same paired Space observation records no new transaction.
     #[test]
     fn observe_paired_space_is_idempotent_for_identical_membership() {
@@ -1835,7 +1899,114 @@ mod tests {
 
     /// Verifies a newly admitted member receives the complete default user capability set.
     #[test]
-    fn network_control_admission_assigns_the_default_user_capabilities() {
+    fn node_local_membership_and_policy_do_not_create_replica_metadata() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let space = CoreSpaceStore::newNodeLocal(host.clone());
+        initializeTestDeviceProfile(&space);
+        let control = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+        control.initializeCurrentSpace().unwrap();
+        let before = control.currentState().unwrap();
+        assert!(host.list(RUNTIME_SYNC_DIR_PATH).unwrap().is_empty());
+        let restored = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+        assert_eq!(restored.currentState().unwrap(), before);
+        assert!(host.list(RUNTIME_SYNC_DIR_PATH).unwrap().is_empty());
+    }
+
+    #[test]
+    fn endpoint_migration_preserves_authority_and_removes_only_replica_metadata() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let legacySpace = CoreSpaceStore::new(host.clone()); initializeTestDeviceProfile(&legacySpace);
+        let legacyPolicy = NetworkControlStore::new(host.clone()).unwrap();
+        legacyPolicy.initializeCurrentSpace().unwrap();
+        let original = legacyPolicy.currentState().unwrap();
+        let identity = host.readBytes(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_IDENTITY_PATH);
+        let endpoint = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+        endpoint.migrateNodeLocalProjection(host.as_ref()).unwrap();
+        assert!(host.list(RUNTIME_SYNC_DIR_PATH).unwrap().is_empty());
+        assert_eq!(NetworkControlStore::newNodeLocal(host.clone()).unwrap().currentState().unwrap(), original);
+        assert_eq!(host.readBytes(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_IDENTITY_PATH).ok(), identity.ok());
+    }
+
+    #[test]
+    fn endpoint_migration_refuses_unknown_business_journals_without_deleting_anything() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let legacySpace = CoreSpaceStore::new(host.clone()); initializeTestDeviceProfile(&legacySpace);
+        let legacyPolicy = NetworkControlStore::new(host.clone()).unwrap(); legacyPolicy.initializeCurrentSpace().unwrap();
+        let log = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+        let id = CoreNodeIdentityStore::new(host.clone()).initialize().unwrap().nodeId;
+        log.appendLocalOperation(&id, NewSyncOperation { domain: "chat".into(), entityType: "test".into(),
+            entityId: "keep-message".into(), operation: "write".into(), semantics: SyncOperationSemantics::Transaction,
+            payload: serde_json::json!({}) }).unwrap();
+        let before = host.files.lock().unwrap().clone();
+        assert!(NetworkControlStore::newNodeLocal(host.clone()).unwrap().migrateNodeLocalProjection(host.as_ref()).is_err());
+        assert_eq!(*host.files.lock().unwrap(), before);
+    }
+
+    #[test]
+    fn authority_projection_does_not_skip_older_business_operations_after_storage_grant() {
+        let source = Arc::new(MemoryStorageHost::default());
+        let sourceSpace = CoreSpaceStore::new(source.clone());
+        initializeTestDeviceProfile(&sourceSpace);
+        let sourcePolicy = NetworkControlStore::new(source.clone()).unwrap();
+        sourcePolicy.initializeCurrentSpace().unwrap();
+        addTestSpaceMember(&sourceSpace, "projection-member");
+        sourcePolicy.admitMember("projection-member".into()).unwrap();
+        sourcePolicy.setIdentity(NetworkControlIdentityAssignment { nodeId: "projection-member".into(), roleId: "runner".into() }).unwrap();
+        let sourceLog = SyncOperationStore::new(source.clone(), RUNTIME_SYNC_DIR_PATH);
+        let business = sourceLog.appendLocalOperation(&CoreNodeIdentityStore::new(source.clone()).initialize().unwrap().nodeId, NewSyncOperation {
+            domain: "chat".into(), entityType: "test".into(), entityId: "older-message".into(),
+            operation: "write".into(), semantics: SyncOperationSemantics::Transaction, payload: serde_json::json!({}),
+        }).unwrap();
+        sourcePolicy.setIdentity(NetworkControlIdentityAssignment { nodeId: "projection-member".into(), roleId: "storage".into() }).unwrap();
+        let receiver = Arc::new(MemoryStorageHost::default());
+        CoreNodeIdentityStore::new(receiver.clone()).writeNodeId("projection-member".into()).unwrap();
+        let receiverSpace = CoreSpaceStore::newNodeLocal(receiver.clone());
+        receiverSpace.initialize().unwrap(); receiverSpace.adopt(sourceSpace.space().unwrap()).unwrap();
+        let receiverPolicy = NetworkControlStore::newNodeLocal(receiver.clone()).unwrap();
+        let mut commands = sourcePolicy.currentSpaceOperations().unwrap();
+        receiverPolicy.projectControlOperations(&commands).unwrap();
+        assert!(receiverPolicy.nodeHasCapability("projection-member", "storage.provide", None).unwrap());
+        let clock = SyncOperationStore::new(receiver.clone(), RUNTIME_SYNC_DIR_PATH).localClock().unwrap();
+        assert_eq!(clock.sequenceFor(&business.originDeviceId), 0);
+        assert!(sourceLog.operationsSince(&clock, &["chat".into()], 512).unwrap().iter().any(|op| op.opId == business.opId));
+        let before = receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap();
+        commands[0].domain = "chat".into();
+        assert!(receiverPolicy.projectControlOperations(&commands).is_err());
+        assert_eq!(receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap(), before);
+        let mut forgedRoot = sourcePolicy.currentSpaceOperations().unwrap().into_iter()
+            .find(|operation| matches!(serde_json::from_value::<NetworkControlCommandRecord>(operation.payload.clone()).unwrap().command,
+                NetworkControlCommand::Bootstrap { .. })).unwrap();
+        let mut forged: NetworkControlCommandRecord = serde_json::from_value(forgedRoot.payload.clone()).unwrap();
+        forged.commandId = "forged-root".into(); forged.issuerNodeId = "projection-member".into();
+        forged.command = NetworkControlCommand::Bootstrap { initialAdminNodeId: "projection-member".into() };
+        forgedRoot.opId = "forged-root".into(); forgedRoot.entityId = "forged-root".into();
+        forgedRoot.originDeviceId = "projection-member".into(); forgedRoot.createdAt -= 1;
+        forgedRoot.payload = serde_json::to_value(forged).unwrap();
+        assert!(receiverPolicy.projectPeerControlOperations("projection-member", &[forgedRoot]).is_err());
+        assert_eq!(receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap(), before);
+        let admin = CoreNodeIdentityStore::new(source.clone()).initialize().unwrap().nodeId;
+        let next = sourcePolicy.updatePolicy("projection-test".into(), "value".into()).unwrap();
+        assert!(receiverPolicy.projectPeerControlOperations("projection-member", std::slice::from_ref(&next)).is_err(),
+            "a storage member cannot forge an unknown command attributed to the administrator");
+        assert_eq!(receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap(), before);
+        receiverPolicy.projectPeerControlOperations(&admin, std::slice::from_ref(&next)).unwrap();
+        let revoke = sourcePolicy.clearIdentity("projection-member".into()).unwrap();
+        receiverPolicy.projectPeerControlOperations(&admin, std::slice::from_ref(&revoke)).unwrap();
+        assert!(!receiverPolicy.nodeHasCapability("projection-member", "storage.provide", None).unwrap());
+        sourcePolicy.defineRole(NetworkControlRole { roleId: "limited-manager".into(), displayName: "Limited manager".into(),
+            capabilities: BTreeSet::from(["network.identity.manage".into()]) }).unwrap();
+        sourcePolicy.setIdentity(NetworkControlIdentityAssignment { nodeId: "projection-member".into(), roleId: "limited-manager".into() }).unwrap();
+        receiverPolicy.projectPeerControlOperations(&admin, &sourcePolicy.currentSpaceOperations().unwrap()).unwrap();
+        let privileged = sourcePolicy.updatePolicy("cannot-impersonate-admin".into(), "value".into()).unwrap();
+        let before = receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap();
+        assert!(receiverPolicy.projectPeerControlOperations("projection-member", &[privileged]).is_err(),
+            "a limited identity manager must not acquire full administrator relay authority");
+        assert_eq!(receiver.readBytes("runtime/link_access/space_policy.preferences.json").unwrap(), before);
+        assert_eq!(SyncOperationStore::new(receiver, RUNTIME_SYNC_DIR_PATH).localClock().unwrap().sequenceFor(&admin), 0);
+    }
+
+    #[test]
+    fn network_control_admission_assigns_the_default_user_capabilities_without_storage() {
         let host = Arc::new(MemoryStorageHost::default());
         let spaceStore = CoreSpaceStore::new(host.clone());
         initializeTestDeviceProfile(&spaceStore);
@@ -1855,9 +2026,10 @@ mod tests {
         assert!(control
             .nodeHasCapability("peer-member", "chat.read", None)
             .expect("default user chat read capability must materialize"));
-        assert!(control
+        assert!(!control
             .nodeHasCapability("peer-member", "storage.provide", None)
-            .expect("default user storage capability must materialize"));
+            .expect("default user storage capability must be evaluated"),
+            "ordinary membership must not grant Space storage by default");
         assert!(control
             .nodeHasCapability("peer-member", "network.relay", None)
             .expect("default user relay capability must materialize"));

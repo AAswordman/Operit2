@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+pub mod PeerRouter;
+
 use std::sync::Arc;
 use operit_node_runtime::NodeServices::NodeServices;
 
@@ -359,6 +361,23 @@ impl EdgeNode {
         plugin.invoke(&request.action, request.args).map_err(serviceError)
     }
 
+    async fn invokePluginAsync(&self, args: CoreValue) -> Result<CoreValue, CoreLinkError> {
+        let request: plugin::EdgePluginCall = decodeValue(args)?;
+        let plugin = self.plugins.iter().find(|plugin| plugin.manifest().id == request.pluginId)
+            .ok_or_else(|| CoreLinkError::new("EDGE_PLUGIN_NOT_FOUND", "Edge plugin is not installed"))?;
+        if !plugin.manifest().actions.iter().any(|action| *action == request.action) {
+            return Err(CoreLinkError::new("EDGE_PLUGIN_ACTION_NOT_FOUND", "Edge plugin action is not declared"));
+        }
+        plugin.invokeAsync(&request.action, request.args).await.map_err(serviceError)
+    }
+
+    async fn dispatchAsyncCall(&self, request: CoreCallRequest) -> CoreCallResponse {
+        if request.target == EDGE_PLUGIN_TARGET && request.methodName == "invoke" {
+            let id = request.requestId.clone();
+            CoreCallResponse { requestId: id, result: self.invokePluginAsync(request.args).await }
+        } else { self.dispatchCall(request) }
+    }
+
     fn sendScreenInput(&self, args: CoreValue) -> Result<CoreValue, CoreLinkError> {
         let service = self
             .screenService
@@ -373,7 +392,7 @@ impl EdgeNode {
 impl CoreLinkSharedClient for EdgeNode {
     /// Dispatches one local Edge Core call through the shared Link interface.
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
-        self.dispatchCall(request)
+        self.dispatchAsyncCall(request).await
     }
 
     /// Reads one local Edge Core watch snapshot through the shared Link interface.
@@ -392,7 +411,7 @@ impl CoreLinkSharedClient for EdgeNode {
 #[async_trait(?Send)]
 impl operit_link::CoreLinkClient for EdgeNode {
     async fn call(&mut self, request: CoreCallRequest) -> CoreCallResponse {
-        self.dispatchCall(request)
+        self.dispatchAsyncCall(request).await
     }
     async fn watchSnapshot(&mut self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
         self.dispatchWatchSnapshot(request)
@@ -446,6 +465,29 @@ mod tests {
     use super::*;
     use crate::service::{DeviceIoService, RobotFaceService, RobotFaceStateStream};
     use operit_host_api::RobotFaceState;
+
+    #[tokio::test]
+    async fn asynchronous_plugin_wait_does_not_use_the_blocking_entrypoint() {
+        struct AsyncPlugin;
+        #[async_trait(?Send)]
+        impl EdgePlugin for AsyncPlugin {
+            fn manifest(&self) -> EdgePluginManifest { EdgePluginManifest { id: "ui".into(), name: "UI".into(), actions:vec!["screen".into()] } }
+            fn invoke(&self, _: &str, _: CoreValue) -> Result<CoreValue,EdgeServiceError> { panic!("Must not block the runtime") }
+            async fn invokeAsync(&self, _: &str, _: CoreValue) -> Result<CoreValue,EdgeServiceError> {
+                tokio::task::yield_now().await;
+                Ok(CoreValue::String("main-thread-snapshot".into()))
+            }
+        }
+        let node = testNode().withPlugin(Arc::new(AsyncPlugin)).unwrap();
+        let request = |action:&str| CoreCallRequest::new("ui-test",EDGE_PLUGIN_TARGET,"invoke",CoreValue::Map(std::collections::BTreeMap::from([
+            ("pluginId".into(),CoreValue::String("ui".into())),
+            ("action".into(),CoreValue::String(action.into())),("args".into(),CoreValue::emptyMap())
+        ])));
+        let response = CoreLinkSharedClient::call(&node,request("screen")).await;
+        assert_eq!(response.result.unwrap(),CoreValue::String("main-thread-snapshot".into()));
+        let response = CoreLinkSharedClient::call(&node,request("undeclared")).await;
+        assert_eq!(response.result.unwrap_err().code,"EDGE_PLUGIN_ACTION_NOT_FOUND");
+    }
 
     #[tokio::test]
     async fn standard_link_dispatches_to_board_host_and_publishes_watch() {
@@ -530,6 +572,127 @@ mod tests {
             requestId: operit_link::CoreRequestId::new("watch"),
         })).await;
         assert!(!session.hasWatches());
+    }
+
+    /// Exercises the shared runtime adapter, not a second Edge wire registry.
+    #[tokio::test]
+    async fn shared_peer_router_reuses_local_call_and_watch() {
+        use crate::PeerRouter::EdgePeerRouter;
+        use operit_link::{RoutedCoreRequest, RoutedCoreRequestKind};
+        use operit_node_runtime::PeerRouter::PeerRouter;
+        let router = EdgePeerRouter::new("edge-test".into());
+        router
+            .install(Arc::new(EdgeNode::new(Arc::new(TestDeviceIoService))))
+            .unwrap();
+        assert!(router
+            .install(Arc::new(EdgeNode::new(Arc::new(TestDeviceIoService))))
+            .is_err());
+        assert_eq!(router.localNodeId(), "edge-test");
+        assert_eq!(router.spaceChannelScope("paired-core").unwrap(), None);
+        let route = |payload| RoutedCoreRequest {
+            spaceId: String::new(),
+            originNodeId: "paired-core".into(),
+            targetNodeId: "edge-test".into(),
+            ttl: 1,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload,
+        };
+        let args = toCoreValue(operit_host_api::DeviceDigitalOutputRequest {
+            pin: 2,
+            level: true,
+        })
+        .unwrap();
+        let call = CoreCallRequest::new(
+            "write",
+            EDGE_DEVICE_IO_OBJECT_ID,
+            "setDigitalOutput",
+            args.clone(),
+        );
+        let response = router.routedCall("paired-core".into(), route(call)).await;
+        assert_eq!(response.requestId, operit_link::CoreRequestId::new("write"));
+        let state: operit_host_api::DeviceDigitalOutputState =
+            operit_link::fromCoreValue(response.result.unwrap()).unwrap();
+        assert!(state.level);
+        assert_eq!(state.pin, 2);
+        let request = RoutedCoreRequest {
+            spaceId: String::new(),
+            originNodeId: "paired-core".into(),
+            targetNodeId: "edge-test".into(),
+            ttl: 1,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload: CoreWatchRequest::new(
+                "watch",
+                EDGE_DEVICE_IO_OBJECT_ID,
+                EDGE_DEVICE_IO_STATE_PROPERTY,
+                args,
+            ),
+        };
+        assert_eq!(
+            router
+                .routedWatchSnapshot("paired-core".into(), request.clone())
+                .await
+                .unwrap()
+                .kind,
+            CoreEventKind::Snapshot
+        );
+        let mut stream = router
+            .routedWatch("paired-core".into(), request)
+            .await
+            .unwrap();
+        assert_eq!(stream.recv().await.unwrap().kind, CoreEventKind::Snapshot);
+    }
+
+    #[tokio::test]
+    async fn shared_peer_router_rejects_other_nodes_and_space_routes() {
+        use crate::PeerRouter::EdgePeerRouter;
+        use operit_link::{RoutedCoreRequest, RoutedCoreRequestKind};
+        use operit_node_runtime::PeerRouter::PeerRouter;
+        let router = EdgePeerRouter::new("edge-test".into());
+        let request = RoutedCoreRequest {
+            spaceId: String::new(),
+            originNodeId: "paired-core".into(),
+            targetNodeId: "other-node".into(),
+            ttl: 1,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload: CoreCallRequest::new(
+                "call",
+                EDGE_DEVICE_IO_OBJECT_ID,
+                "getDigitalOutput",
+                CoreValue::Null,
+            ),
+        };
+        assert_eq!(
+            router
+                .routedCall("paired-core".into(), request.clone())
+                .await
+                .result
+                .unwrap_err()
+                .code,
+            "EDGE_ROUTE_TARGET_MISMATCH"
+        );
+        let mut request = request;
+        request.targetNodeId = "edge-test".into();
+        for kind in [
+            RoutedCoreRequestKind::SpaceRoute,
+            RoutedCoreRequestKind::SpaceBinding,
+        ] {
+            request.routeKind = kind;
+            assert_eq!(
+                router
+                    .routedCall("paired-core".into(), request.clone())
+                    .await
+                    .result
+                    .unwrap_err()
+                    .code,
+                "EDGE_ROUTE_UNSUPPORTED"
+            );
+        }
+        request.routeKind = RoutedCoreRequestKind::Target;
+        assert!(router
+            .routedCall("paired-core".into(), request)
+            .await
+            .result
+            .is_err());
     }
 
     /// Provides a deterministic typed service for Edge Node tests.
@@ -707,3 +870,7 @@ mod tests {
         assert_eq!(state.expression, "neutral");
     }
 }
+
+#[cfg(test)]
+#[path = "space_admission_tests.rs"]
+mod space_admission_tests;

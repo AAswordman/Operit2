@@ -78,6 +78,16 @@ impl Cipher {
         Ok(Self { key: aead::LessSafeKey::new(aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key)
             .map_err(|_| error("AEAD initialization failed"))?), next: 0, context: context.to_vec() })
     }
+    // Keep the nonce and AEAD arguments in one synchronous frame. In the
+    // Xtensa async send frame, optimized nonce temporaries produced invalid
+    // ciphertext; diagnostic spills masked it. This boundary is also smaller
+    // than retaining the crypto call's temporaries in the connection future.
+    #[inline(never)]
+    fn seal(&mut self, bytes: &mut Vec<u8>) -> Result<(), CoreLinkError> {
+        let nonce = self.nonce()?;
+        self.key.seal_in_place_append_tag(nonce, aead::Aad::from(&self.context), bytes)
+            .map_err(|_| error("Encryption failed"))
+    }
     fn nonce(&mut self) -> Result<aead::Nonce, CoreLinkError> {
         let next = self.next; self.next = next.checked_add(1).ok_or_else(|| error("Session nonce exhausted"))?;
         let mut nonce = [0; 12]; nonce[4..].copy_from_slice(&next.to_be_bytes());
@@ -89,30 +99,42 @@ pub(super) struct Channel {
     pub raw: Arc<dyn PeerConnection>,
     send: Mutex<Cipher>, receive: Mutex<Cipher>,
     pub transaction: Mutex<()>,
+    duplex: std::sync::Mutex<Option<Arc<super::duplex::Duplex>>>,
+    pub returnScope: std::sync::Mutex<Option<String>>,
 }
 impl Channel {
     pub fn new(raw: Arc<dyn PeerConnection>, key: &[u8], context: &[u8], client: bool) -> Result<Arc<Self>, CoreLinkError> {
         let c2s = derive(key, context, b"operit-link-client-to-server-v1")?;
         let s2c = derive(key, context, b"operit-link-server-to-client-v1")?;
         Ok(Arc::new(Self { raw, send: Mutex::new(Cipher::new(if client { c2s } else { s2c }, context)?),
-            receive: Mutex::new(Cipher::new(if client { s2c } else { c2s }, context)?), transaction: Mutex::new(()) }))
+            receive: Mutex::new(Cipher::new(if client { s2c } else { c2s }, context)?), transaction: Mutex::new(()), duplex: std::sync::Mutex::new(None), returnScope: std::sync::Mutex::new(None) }))
     }
     pub async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> {
         let mut cipher = self.send.lock().await;
         let mut bytes = encodeLink(message).map_err(|e| error(e.to_string()))?;
         let sequence = cipher.next;
-        let nonce = cipher.nonce()?;
-        cipher.key.seal_in_place_append_tag(nonce, aead::Aad::from(&cipher.context), &mut bytes)
-            .map_err(|_| error("Encryption failed"))?;
+        cipher.seal(&mut bytes)?;
         self.raw.send(PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(
             sequence.to_string(), "$peer.session", "data", CoreValue::Bytes(bytes))))).await.map_err(error)
     }
+    pub fn setDuplex(&self, duplex: Arc<super::duplex::Duplex>) { *self.duplex.lock().unwrap() = Some(duplex); }
+    pub fn duplex(&self) -> Option<Arc<super::duplex::Duplex>> { self.duplex.lock().unwrap().clone() }
+    pub fn isOpen(&self) -> bool { self.duplex().is_some_and(|d| !d.closed.load(std::sync::atomic::Ordering::Acquire)) }
+    pub async fn close(&self) {
+        if let Some(d) = self.duplex() { d.finish(); }
+        self.raw.close().await;
+    }
+    pub async fn release(&self) { if self.duplex().is_none() { self.raw.close().await; } }
     pub async fn receive(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
+        if let Some(d) = self.duplex() { return Ok(d.receive().await); }
+        self.receiveEncrypted().await
+    }
+    pub async fn receiveEncrypted(&self) -> Result<Option<PeerMessage>, CoreLinkError> {
         let mut cipher = self.receive.lock().await;
         let Some(message) = self.raw.receive().await.map_err(error)? else { return Ok(None); };
         let PeerMessage::Request(CoreLinkRequest::Call(request)) = message else { return Err(error("Encrypted Call required")); };
         if request.target != "$peer.session" || request.methodName != "data" || request.requestId.0 != cipher.next.to_string() {
-            return Err(error("Unexpected/replayed session message"));
+            return Err(error(format!("Unexpected/replayed session message: expected={}, received={:?}", cipher.next, request.requestId.0.parse::<u64>().ok())));
         }
         let CoreValue::Bytes(mut bytes) = request.args else { return Err(error("Encrypted bytes required")); };
         let nonce = cipher.nonce()?;
@@ -121,6 +143,7 @@ impl Channel {
         decodeLink(plaintext).map(Some).map_err(|e| error(e.to_string()))
     }
     pub async fn exchange(&self, request: CoreLinkRequest) -> Result<CoreLinkResponse, CoreLinkError> {
+        if let Some(d) = self.duplex() { return d.exchange(self, request).await; }
         let _guard = self.transaction.lock().await;
         self.send(PeerMessage::Request(request)).await?;
         match self.receive().await? {
@@ -142,19 +165,31 @@ pub(super) struct MultiplexedChannel {
 }
 
 /// Keeps one leased multiplexed channel alive until its operation is released.
-pub(super) struct ChannelLease {
-    channel: Arc<MultiplexedChannel>,
+pub(super) enum ChannelLease {
+    Pooled(Arc<MultiplexedChannel>),
+    Shared(Arc<Channel>),
 }
 
 impl ChannelLease {
     /// Returns the multiplexed channel selected for this operation.
-    pub(super) fn channel(&self) -> &Arc<MultiplexedChannel> { &self.channel }
+    pub(super) fn pooled(&self) -> Option<&Arc<MultiplexedChannel>> {
+        match self { Self::Pooled(channel) => Some(channel), Self::Shared(_) => None }
+    }
+    pub(super) fn shared(&self) -> Option<&Arc<Channel>> {
+        match self { Self::Shared(channel) => Some(channel), Self::Pooled(_) => None }
+    }
+    pub(super) async fn exchange(&self, request: CoreLinkRequest) -> Result<CoreLinkResponse, CoreLinkError> {
+        match self {
+            Self::Pooled(channel) => channel.exchange(request).await,
+            Self::Shared(channel) => channel.exchange(request).await,
+        }
+    }
 }
 
 impl Drop for ChannelLease {
     /// Releases one pool lease without closing the shared channel.
     fn drop(&mut self) {
-        self.channel.activeLeases.fetch_sub(1, Ordering::AcqRel);
+        if let Self::Pooled(channel) = self { channel.activeLeases.fetch_sub(1, Ordering::AcqRel); }
     }
 }
 
@@ -185,7 +220,7 @@ impl MultiplexedChannel {
     /// Acquires one logical operation lease without opening another socket.
     pub(super) fn lease(self: &Arc<Self>) -> ChannelLease {
         self.activeLeases.fetch_add(1, Ordering::AcqRel);
-        ChannelLease { channel: self.clone() }
+        ChannelLease::Pooled(self.clone())
     }
 
     /// Reports whether one pairing credential has already been offered on this channel.
@@ -311,5 +346,28 @@ fn responseKey(response: &CoreLinkResponse) -> String {
         CoreLinkResponse::Call(response) => format!("call:{}", response.requestId.0),
         CoreLinkResponse::Watch { requestId, .. } => format!("watch:{}", requestId.0),
         CoreLinkResponse::Push { pushId, .. } => format!("push:{pushId}"),
+    }
+}
+
+#[cfg(test)]
+mod aead_interop_tests {
+    use super::*;
+
+    #[test]
+    fn sealed_frames_match_external_chacha20_poly1305_vectors() {
+        let key = std::array::from_fn(|i| i as u8);
+        let mut cipher = Cipher::new(key, b"operit-link-context").unwrap();
+        for expected in [
+            "77c82743c4928bbd7a0f374cce262f43d5c3969293c8282f8597921c13035707b7e778865f7946bd138c30",
+            "062c19ab587e9516441f1502d27176763d835a27bcd48f062c55dbdf63a7d22a45973c8f8f64178815fece",
+        ] {
+            let mut bytes = b"operit-link-aead-regression".to_vec();
+            cipher.seal(&mut bytes).unwrap();
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(hex, expected);
+        }
+        assert_eq!(cipher.next, 2);
+        cipher.next = u64::MAX;
+        assert!(cipher.seal(&mut Vec::new()).is_err());
     }
 }

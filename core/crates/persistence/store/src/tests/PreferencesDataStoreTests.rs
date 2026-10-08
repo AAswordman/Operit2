@@ -1341,3 +1341,23 @@ fn preference_sync_rejects_mixed_encryption_before_loading_or_writing_files() {
     assert_eq!(host.writeCount(), 0);
     assert_eq!(host.readCount(), 0);
 }
+
+/// Node-local cleanup must invalidate every handle sharing the deleted path.
+#[test]
+fn node_local_delete_clears_shared_snapshot_and_recreates_identical_records() {
+    let host = Arc::new(MemoryStorageHost::default());
+    let path = "runtime/space/device_profiles/returning-core.preferences.json";
+    let first = super::CoreNodeStateStore::newWithStorage(host.clone(), path);
+    let second = super::CoreNodeStateStore::newWithStorage(host.clone(), path);
+    let mut snapshot = super::emptyPreferences();
+    snapshot.set(&stringPreferencesKey("record"), "unchanged-profile".to_string());
+    first.replaceRecoverably(snapshot.clone()).unwrap();
+    assert_eq!(second.data().unwrap(), snapshot);
+    first.delete().unwrap();
+    assert!(!host.exists(path).unwrap());
+    assert_eq!(second.data().unwrap(), super::emptyPreferences());
+    second.replaceRecoverably(snapshot.clone()).unwrap();
+    assert!(host.exists(path).unwrap());
+    assert_eq!(first.data().unwrap(), snapshot);
+    assert!(!host.exists("runtime/sync/operations").unwrap());
+}

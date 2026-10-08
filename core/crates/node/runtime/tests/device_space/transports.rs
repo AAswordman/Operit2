@@ -200,6 +200,7 @@ async fn real_tcp_single_pairing_admission_enables_scoped_return_channel() {
         };
         let reverse = iosPeer.call("tcp-mac", returnRequest()).await;
         assert!(reverse.result.is_ok(), "{:?}", reverse.result);
+        assert!(iosPeer.spaceClient().is_some(), "TCP grants expose the shared Space client");
         assert_eq!(iosPeer.pooledChannelCount("tcp-mac").await, 1);
         // Return credentials survive reconnect without any second confirmation.
         iosPeer.disconnectPeer("tcp-mac").await.unwrap();
@@ -407,7 +408,7 @@ async fn real_tcp_space_remove_deletes_pairing_and_allows_repairing() {
         macPeer.finishPairing(&pairing.pairingId, &code).await.unwrap();
         let request = mac.requestDeviceSpaceJoin("remove-ios".into()).await.unwrap();
         ios.incomingDeviceSpaceJoins().await.unwrap();
-        ios.decideDeviceSpaceJoin(request.requestId, request.assignmentVersion, true)
+        ios.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true)
             .await
             .unwrap();
         assert!(iosPeer.pairedPeers().unwrap().iter().any(|p| p.nodeId == "remove-mac"));
@@ -435,6 +436,8 @@ async fn real_tcp_space_remove_deletes_pairing_and_allows_repairing() {
         assert!(macPeer.pairedPeers().unwrap().iter().any(|p| p.nodeId == "remove-ios"));
         macPeer.removePairedPeer("remove-ios").await.unwrap();
         assert!(macPeer.pairedPeers().unwrap().is_empty());
+        assert!(mac.outgoingDeviceSpaceJoins().unwrap().is_empty(),
+            "forgetting credentials must also retire their old join request");
 
         // Re-pairing the same node succeeds instead of PEER_ALREADY_PAIRED.
         let repaired = macPeer
@@ -463,6 +466,8 @@ async fn real_tcp_space_remove_deletes_pairing_and_allows_repairing() {
         // The forgotten join history must not block a fresh application, and
         // approval readmits the device through the ordinary join lifecycle.
         let rejoined = mac.requestDeviceSpaceJoin("remove-ios".into()).await.unwrap();
+        assert_ne!(rejoined.requestId, request.requestId,
+            "a revoked admission must never be reused by a new pairing");
         ios.incomingDeviceSpaceJoins().await.unwrap();
         ios.decideDeviceSpaceJoin(rejoined.requestId.clone(), rejoined.assignmentVersion, true)
             .await

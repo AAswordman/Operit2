@@ -4319,6 +4319,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get spaceJoinCancel => 'Cancel request';
 
   @override
+  String get spaceJoinCancelFailed =>
+      'Could not confirm cancellation. Check the connection or try again later.';
+
+  @override
   String get spaceJoinRefreshingFailed =>
       'Cannot reach the device right now. The request is saved and will retry.';
 

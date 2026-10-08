@@ -14,7 +14,10 @@
         "cancelled_request_cannot_be_resurrected_by_an_in_flight_poll",
         "offline_cancellation_can_be_retried_after_reconnection",
         "cancellation_and_reviewer_claim_have_explicit_ordered_outcomes",
-        "repeated_cancel_reapply_cycles_preserve_files_and_keep_only_one_active_request"
+        "repeated_cancel_reapply_cycles_preserve_files_and_keep_only_one_active_request",
+        "offline_cancellation_intent_is_durable_and_stops_submission_retries_until_ack",
+        "committed_approval_wins_cancellation_and_returns_actual_joined_state",
+        "delayed_cancellation_response_preserves_joined_state_without_resubmission"
       ]
     },
     {

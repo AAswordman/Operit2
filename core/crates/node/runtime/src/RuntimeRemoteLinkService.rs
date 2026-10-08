@@ -3,13 +3,13 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::protocol::LinkDeviceInfo;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_TARGET};
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
-use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore, CoreSpaceTopologyRecord};
+use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
 use operit_store::NetworkControlStore::{
     NetworkControlAuditRecord, NetworkControlIdentityAssignment, NetworkControlRole,
     NetworkControlState, NetworkControlStore,
 };
 use operit_store::PreferencesDataStore::StateFlow;
-use operit_store::SyncOperationStore::{subscribeSyncMutations, SyncOperation};
+use operit_store::SyncOperationStore::subscribeSyncMutations;
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,53 +24,11 @@ use crate::{
     SpacePersistenceSyncService::SpacePersistenceSyncService,
 };
 
-/// Runtime 的 Space 业务对象；仍使用标准 Link Call，不新增握手消息或 HTTP 路径。
-pub(crate) const NODE_SPACE_TARGET: &str = "node.space";
-// Same-Space, authenticated routing only; never available to an unadmitted applicant.
-pub(crate) const NODE_SPACE_APPROVAL_TARGET: &str = "node.space.approval";
-
-/// Carries a complete Space projection and the policy that authorizes its members.
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct PeerSpaceSnapshot {
-    pub(crate) space: CoreSpace,
-    pub(crate) deviceProfiles: Vec<CoreSpaceDeviceProfile>,
-    pub(crate) controlOperations: Vec<SyncOperation>,
-    pub(crate) topology: Vec<CoreSpaceTopologyRecord>,
-}
-
-type PeerSpaceJoin = PeerSpaceSnapshot;
-
-/// Join approval is separate from pairing and from synchronized membership.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum SpaceJoinStatus { Pending, Approving, Approved, Rejected, Cancelled, Expired, Joined }
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpaceJoinRequest {
-    pub requestId: String,
-    pub targetDeviceId: String,
-    pub applicantDeviceId: String,
-    pub applicantName: String,
-    pub spaceName: String,
-    pub status: SpaceJoinStatus,
-    pub createdAt: i64,
-    pub expiresAt: i64,
-    pub canApprove: bool,
-    #[serde(default)]
-    pub reviewerDeviceId: Option<String>,
-    #[serde(default)]
-    pub reviewerName: Option<String>,
-    #[serde(default)]
-    pub reviewerHops: Option<u32>,
-    #[serde(default)]
-    pub assignmentVersion: u64,
-    #[serde(default)]
-    pub decisionApprove: Option<bool>,
-}
-
-#[path = "peer/space_join.rs"]
-mod space_join;
-
+// The same admission state machine is used by full Core and lightweight Edge.
+pub use crate::NodeSpaceService::{SpaceJoinRequest, SpaceJoinStatus};
+pub(crate) use crate::NodeSpaceService::PeerSpaceSnapshot;
+pub(crate) use crate::NodeSpaceService::{NODE_SPACE_TARGET, NODE_SPACE_APPROVAL_TARGET};
+use crate::NodeSpaceService::space_join;
 /// 已配对设备的展示投影；不暴露底层会话、端点或传输选择。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimePairedDevice {
@@ -529,11 +487,7 @@ impl RuntimeRemoteLinkService {
     /// Leaves the current device space while preserving all direct pairing records.
     #[allow(non_snake_case)]
     pub fn leaveDeviceSpace(&self) -> Result<CoreSpace, String> {
-        let space = self.spaceStore.leave()?;
-        // Leaving creates a new singleton Space. Its creator must receive the
-        // initial policy here, not only on the next application startup.
-        self.networkControlStore.initializeCurrentSpace()?;
-        Ok(space)
+        space_join::leave(self)
     }
 
     /// 加入直接配对节点的 Space。地址、会话与鉴权由同一个节点通信服务处理。
@@ -571,17 +525,6 @@ impl RuntimeRemoteLinkService {
         space_join::cancel(self, requestId).await
     }
 
-    async fn callPeerSpace<T: serde::de::DeserializeOwned>(
-        &self, deviceId: &str, method: &str, args: CoreValue,
-    ) -> Result<T, String> {
-        let response = self.nodeRouter.callNode(deviceId.to_string(), CoreCallRequest::new(
-            format!("node-space-{method}-{}", currentTimeMillis()),
-            NODE_SPACE_TARGET, method, args,
-        )).await;
-        fromCoreValue(response.result.map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())
-    }
-
     /// Captures member profiles and control history for direct Space propagation.
     pub(crate) fn peerSpaceSnapshot(&self) -> Result<PeerSpaceSnapshot, String> {
         let snapshot = PeerSpaceSnapshot {
@@ -596,56 +539,7 @@ impl RuntimeRemoteLinkService {
 
     /// Applies a complete peer projection, following only an approved cross-Space merge.
     pub(crate) fn observePeerSpaceSnapshot(&self, peerNodeId: &str, snapshot: PeerSpaceSnapshot) -> Result<CoreSpace, String> {
-        CoreSpaceStore::validateSpaceProfiles(&snapshot.space, &snapshot.deviceProfiles)?;
-        if !snapshot.space.members.iter().any(|node| node == peerNodeId) {
-            return Err("Paired device is not present in its announced device space".into());
-        }
-        let local = self.deviceSpace()?;
-        let crossing = local.spaceId != snapshot.space.spaceId;
-        if crossing {
-            let localOperations = self.networkControlStore.currentSpaceOperations()?;
-            let localAdmittedSource = localOperations.iter().map(|operation| {
-                serde_json::from_value::<operit_store::NetworkControlStore::NetworkControlCommandRecord>(operation.payload.clone())
-                    .map_err(|error| error.to_string())
-            }).collect::<Result<Vec<_>, _>>()?.iter().any(|record| {
-                record.spaceId == local.spaceId && matches!(&record.command,
-                    operit_store::NetworkControlStore::NetworkControlCommand::AdmitSpace { sourceSpaceId, .. }
-                    if sourceSpaceId == &snapshot.space.spaceId)
-            });
-            if localAdmittedSource {
-                self.networkControlStore.validateSpaceAdmission(&local.spaceId, &snapshot.space.spaceId,
-                    &snapshot.space.members.iter().cloned().collect(), &localOperations)?;
-                // This endpoint has already migrated; publish its target projection to the source peer.
-                self.spaceStore.importDeviceProfiles(snapshot.deviceProfiles)?;
-                return Ok(local);
-            }
-            if !snapshot.space.members.iter().any(|node| node == &self.nodeRouter.localNodeId()) {
-                // Independent paired Spaces do not merge without a target-side admission.
-                return Ok(local);
-            }
-            if !local.members.iter().any(|node| node == peerNodeId) {
-                return Err("Space migration must arrive through an existing source Space member".into());
-            }
-            self.networkControlStore.validateSpaceAdmission(&snapshot.space.spaceId,
-                &local.spaceId, &local.members.iter().cloned().collect(), &snapshot.controlOperations)?;
-        }
-        let policy = self.networkControlStore.validateSpacePolicy(&snapshot.space.spaceId, &snapshot.controlOperations)?;
-        for node in &snapshot.space.members {
-            if !policy.memberNodeIds.contains(node) {
-                return Err(format!("Space snapshot contains an unauthorized member: {node}"));
-            }
-        }
-        // Profiles and authorization must be available before any member reference is published.
-        self.spaceStore.importDeviceProfiles(snapshot.deviceProfiles)?;
-        self.spaceStore.importTopologyRecords(snapshot.topology)?;
-        for operation in &snapshot.controlOperations {
-            self.networkControlStore.applyBootstrapOperation(operation)?;
-        }
-        if crossing {
-            self.spaceStore.adopt(snapshot.space)
-        } else {
-            self.spaceStore.observePairedDeviceSpace(peerNodeId.to_string(), snapshot.space)
-        }
+        crate::NodeSpaceService::observePeerSpaceSnapshot(self, peerNodeId, snapshot)
     }
 
     /// 仅 Router 验证直接入站授权后调用；身份来自已鉴权连接，不从 args 取身份。
@@ -1178,4 +1072,22 @@ where
 #[cfg(test)]
 mod device_space_facade_tests {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/device_space/facade_state.rs"));
+}
+
+#[async_trait::async_trait(?Send)]
+impl crate::NodeSpaceService::NodeSpaceContext for RuntimeRemoteLinkService {
+    fn storage(&self) -> Arc<dyn operit_host_api::RuntimeStorageHost> { self.localRuntime.runtimeStorageHost() }
+    fn spaceStore(&self) -> &CoreSpaceStore { &self.spaceStore }
+    fn networkControlStore(&self) -> &NetworkControlStore { &self.networkControlStore }
+    fn peers(&self) -> Result<Arc<dyn crate::RuntimePeerService::RuntimePeerService>, String> {
+        Ok(self.nodeServices()?.peers())
+    }
+    fn localNodeId(&self) -> String { self.nodeRouter.localNodeId() }
+    fn nodeIsReachable(&self, node: &str) -> Result<bool, String> { self.nodeRouter.nodeIsReachable(node) }
+    async fn callNode(&self, node: String, request: CoreCallRequest) -> operit_link::CoreCallResponse {
+        self.nodeRouter.callNode(node, request).await
+    }
+    async fn afterJoined(&self, peer: String) -> Result<(), String> {
+        self.persistenceSyncService().synchronizeReachablePeer(peer, 512, true).await.map(|_| ())
+    }
 }

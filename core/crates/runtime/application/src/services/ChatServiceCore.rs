@@ -2290,12 +2290,22 @@ impl ChatServiceCore {
         self.localChatMessagesFlow(chatId)
     }
 
-    /// Returns a compact transcript for memory-constrained Edge displays.
-    /// Tool parameters and oversized result payloads never cross the Edge link.
+    /// Watches one bounded display window, addressed by an optional history cursor.
+    /// Paging uses the message index; it never transfers complete history or tool payloads.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
-    pub async fn edgeChatMessagesFlow(&self, chatId: String) -> StateFlow<Vec<ChatMessage>> {
-        self.localChatMessagesFlow(chatId).map(crate::services::core::EdgeChatProjection::compactEdgeMessages)
+    pub async fn chatMessagesWindowFlow(&self, chatId: String, beforeTimestamp: Option<i64>, beforeTextOffset: Option<u32>, textBytes: u32, textLines: u32) -> StateFlow<operit_model::ChatDisplayWindowState::ChatDisplayWindow> {
+        let manager = self.chatHistoryDelegate.chatHistoryManager.clone();
+        self.localChatMessagesFlow(chatId.clone()).map(move |live| {
+            let messages = if let Some(timestamp) = beforeTimestamp {
+                let mut page = match manager.loadChatMessagesDescUpTo(chatId.clone(), timestamp, 14) {
+                    Ok(page) => page,
+                    Err(error) => return operit_model::ChatDisplayWindowState::ChatDisplayWindow { messages:Vec::new(), older:None, error:Some(error.to_string()) },
+                };
+                page.reverse(); page
+            } else { live };
+            crate::services::core::EdgeChatProjection::chatMessageWindow(messages, beforeTimestamp, beforeTextOffset, textBytes, textLines)
+        })
     }
 
     /// Authorizes image access before generic media processing. Display limits belong to callers.

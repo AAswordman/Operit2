@@ -4149,6 +4149,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get spaceJoinCancel => '取消申请';
 
   @override
+  String get spaceJoinCancelFailed => '未能确认申请已取消，请检查连接或稍后重试。';
+
+  @override
   String get spaceJoinRefreshingFailed => '暂时无法联系设备。申请已保留，会继续重试。';
 
   @override

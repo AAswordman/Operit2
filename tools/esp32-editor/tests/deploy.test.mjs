@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import {packLayout,crc32} from '../src/layout/package-layout.mts';
 import {defaultProject} from '../src/layout/default-project.mts';
-import {deployRoute,nextLayoutSlot} from '../src/api/deploy-api.mts';
+import {deployRoute} from '../src/api/deploy-api.mts';
 import {aiRoute,previewCodeEdits} from '../src/api/ai-api.mts';
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve('http://127.0.0.1:'+server.address().port)));
 test('compact package has stable header, CRC and no JSON/parser requirement on device',()=>{
@@ -12,24 +12,17 @@ test('compact package has stable header, CRC and no JSON/parser requirement on d
  assert.equal(view.getUint32(8,true),crc32(data.slice(16)));assert.equal(data[16],8);assert.ok(data.length<4096);
  assert.throws(()=>packLayout({...defaultProject(),enabled:false}));
 });
-test('USB updates target the inactive valid slot and preserve previous data',()=>{
- const slots=Buffer.alloc(65536,255),packet=packLayout(defaultProject());
- assert.deepEqual(nextLayoutSlot(slots),{address:'0x3e0000',generation:1});
- slots.set(packet);slots.writeUInt32LE(7,32764);
- assert.deepEqual(nextLayoutSlot(slots),{address:'0x3e8000',generation:8});
- slots.set(packet,32768);slots.writeUInt32LE(8,65532);
- assert.deepEqual(nextLayoutSlot(slots),{address:'0x3e0000',generation:9});
- slots[32768+20]^=1;
- assert.deepEqual(nextLayoutSlot(slots),{address:'0x3e8000',generation:8});
- assert.throws(()=>nextLayoutSlot(slots.subarray(0,20)),/不完整/);
-});
-test('deployment sends the current project directly as binary',async t=>{
- let received;const device=http.createServer(async(req,res)=>{if(req.url==='/ui/capabilities'){res.end(JSON.stringify({protocol:1,board:'ESP32-2432S028',maxPackageBytes:28672,revision:4}));return;}const chunks=[];for await(const chunk of req)chunks.push(chunk);received={body:Buffer.concat(chunks),headers:req.headers};res.writeHead(202);res.end('{"accepted":true}');});
- const address=await listen(device),server=http.createServer((req,res)=>deployRoute(req,res,new URL(req.url,'http://localhost'))),base=await listen(server);t.after(()=>{device.close();server.close();});
- const doc=defaultProject();doc.nodes[0].text='Changed on device';
- const result=await fetch(base+'/api/deploy/layout',{method:'POST',body:JSON.stringify({address,document:doc,token:'test-token'})});
- assert.equal(result.status,200);assert.equal((await result.json()).previousRevision,4);
- assert.deepEqual(received.body,Buffer.from(packLayout(doc)));assert.equal(received.headers.authorization,'Bearer test-token');assert.equal(received.headers['x-operit-studio'],'1');
+test('fixed renderer rejects both layout deployments without contacting a device', async t => {
+ let requests=0;
+ const device=http.createServer((_req,res)=>{requests++;res.end('{}');});
+ const address=await listen(device);
+ const server=http.createServer((req,res)=>deployRoute(req,res,new URL(req.url,'http://localhost')));
+ const base=await listen(server);t.after(()=>{device.close();server.close();});
+ for(const route of ['layout','usb-layout']) {
+  const result=await fetch(base+'/api/deploy/'+route,{method:'POST',body:JSON.stringify({address,port:'not-a-port',document:defaultProject()})});
+  assert.equal(result.status,422);assert.match((await result.json()).error,/不支持动态布局/);
+ }
+ assert.equal(requests,0);
 });
 test('independent AI tool loop reads source, handles split UTF8 and validates operations',async t=>{
  let calls=0;const upstream=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;const input=JSON.parse(body);assert.equal(req.headers.authorization,'Bearer memory-key');calls++;

@@ -16,4 +16,4 @@ Display rotation `90` is used for the physical 320x240 landscape panel.
 The physical panel receives RGB565 pixels. The board still exposes an optional
 RGB332 diagnostic mirror for hosts that explicitly enable it, but the firmware
 releases that 75 KiB buffer because its current UI uses the physical panel only.
-LVGL uses one synchronous 10-line RGB565 buffer (6.25 KiB).
+The self-drawn UI uses a synchronous two-row RGB565 strip buffer (1280 bytes), without a widget-library runtime.

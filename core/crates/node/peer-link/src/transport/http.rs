@@ -2,7 +2,7 @@
 //! 连接标识仅用于关联 HTTP 请求，不作为节点身份或配对授权。
 use super::{
     inbox::{hostTask, Inbox},
-    stream::{ByteConnection, FramedPeerConnection, MAX_PEER_MESSAGE_BYTES},
+    stream::{ByteConnection, FramedPeerConnection},
 };
 use crate::{PeerConnection, PeerEndpoint, PeerListener, PeerTransport};
 use async_trait::async_trait;
@@ -77,13 +77,14 @@ pub(super) async fn connect(
     host: &HostManager,
     source: PeerEndpoint,
     target: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerConnection>, String> {
     let provider = host.httpHost.clone().ok_or("HTTP Host is not installed")?;
     let scheduler = host
         .hostRuntimeTaskSchedulerHost
         .clone()
         .ok_or("Host task scheduler is not installed")?;
-    let inbox = Inbox::new();
+    let inbox = Inbox::new(maxMessageBytes);
     let client = Arc::new(Client {
         host: provider.clone(),
         scheduler,
@@ -124,6 +125,7 @@ pub(super) async fn connect(
         target,
         PeerTransport::Http,
         client,
+        maxMessageBytes,
     ))
 }
 struct Server {
@@ -194,6 +196,7 @@ pub(super) async fn listen(
     registry: &ServerRegistry,
     host: &HostManager,
     source: PeerEndpoint,
+    maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
     let address = source.address.clone();
     let connections: Connections = Arc::new(StdMutex::new(BTreeMap::new()));
@@ -220,7 +223,7 @@ pub(super) async fn listen(
                     let (tx, rx) = mpsc::channel(32);
                     let connection = Arc::new(Server {
                         remote: request.extensions().get::<operit_host_api::HttpServer::RemoteAddress>().map(|v| v.0),
-                        incoming: Inbox::new(),
+                        incoming: Inbox::new(maxMessageBytes),
                         outgoing: Mutex::new(Some(tx)),
                     });
                     {
@@ -246,6 +249,7 @@ pub(super) async fn listen(
                         },
                         PeerTransport::Http,
                         connection,
+                        maxMessageBytes,
                     ) as Arc<dyn PeerConnection>);
                     let mut result = ServerResponse::new(StreamBody::new(body).boxed_unsync());
                     result
@@ -261,7 +265,7 @@ pub(super) async fn listen(
                     let Some(connection) = connection else {
                         return response(404);
                     };
-                    let bytes = match Limited::new(request.into_body(), MAX_PEER_MESSAGE_BYTES + 4)
+                    let bytes = match Limited::new(request.into_body(), maxMessageBytes + 4)
                         .collect()
                         .await
                     {

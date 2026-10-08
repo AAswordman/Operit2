@@ -43,10 +43,9 @@ async fn policy_replay_converges_with_duplicate_reversed_and_rotated_delivery() 
                     .applySyncedOperation(operation)
                     .unwrap();
             }
-            let received = replica
-                .networkControlStore
-                .currentSpaceOperations()
-                .unwrap();
+            // Replay the received source policy, not the replica's unrelated
+            // singleton Space policy (no membership migration occurs here).
+            let received = controlOperationsForSpace(&replica, &space.spaceId);
             assert_eq!(
                 replica
                     .networkControlStore
