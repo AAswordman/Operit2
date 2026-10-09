@@ -2091,7 +2091,7 @@ impl OperitTui {
             // Slash-command failures (bad arguments, rejected core calls) are
             // status-line material, never reasons to tear down the TUI loop.
             if let Err(error) = self.handle_local_command(&input).await {
-                self.status_message = error;
+                self.status_message = status_error_line(&error);
             }
             return Ok(());
         }
@@ -3154,7 +3154,12 @@ impl OperitTui {
                         }
                     }
                     Some(NetworkHubRow::Peer { deviceId, label, .. }) => {
-                        self.status_message = self.network_join_target(&deviceId, &label).await?;
+                        // A rejected join is ordinary peer feedback; it must
+                        // never tear down the TUI loop.
+                        match self.network_join_target(&deviceId, &label).await {
+                            Ok(message) => self.status_message = message,
+                            Err(error) => self.status_message = status_error_line(&error),
+                        }
                     }
                     Some(NetworkHubRow::Member(device)) => {
                         self.status_message = format!(
@@ -3167,10 +3172,14 @@ impl OperitTui {
             }
             KeyCode::Char('u') | KeyCode::Char('U') => {
                 if let Some(NetworkHubRow::Peer { deviceId, label, .. }) = selected_row {
-                    self.networkControl.removePairedDevice(deviceId).await?;
-                    self.set_transient_status_message(
-                        self.text().network_unpair_done(&label),
-                    );
+                    match self.networkControl.removePairedDevice(deviceId).await {
+                        Ok(()) => {
+                            self.set_transient_status_message(
+                                self.text().network_unpair_done(&label),
+                            );
+                        }
+                        Err(error) => self.status_message = status_error_line(&error),
+                    }
                     self.refresh_network_hub();
                 }
             }
@@ -3186,7 +3195,9 @@ impl OperitTui {
                 self.open_discover_list().await;
             }
             KeyCode::Char('l') | KeyCode::Char('L') => {
-                self.network_leave().await?;
+                if let Err(error) = self.network_leave().await {
+                    self.status_message = status_error_line(&error);
+                }
             }
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 match self.networkControl.localPairingToken() {
@@ -5356,6 +5367,12 @@ fn paired_device_label(device_id: &str, peer: &RuntimePairedDevice) -> String {
     }
 }
 
+/// One-line error text for the status line: peer failures arrive as
+/// CoreLinkError text whose extra lines are a location and backtrace dump.
+fn status_error_line(error: &str) -> String {
+    error.lines().next().unwrap_or_default().to_string()
+}
+
 fn paired_device_direction(inbound: bool, outbound: bool) -> &'static str {
     match (inbound, outbound) {
         (true, true) => "inbound+outbound",
@@ -5698,6 +5715,18 @@ mod tests {
             paired_device_direction(peer.inbound, peer.outbound),
             "inbound"
         );
+    }
+
+    #[test]
+    fn status_error_line_keeps_only_the_message_from_diagnostics() {
+        assert_eq!(
+            status_error_line(
+                "INTERNAL_ERROR: An active join request already exists\nRust error location: core/src/ops/function.rs:250:5\nRust backtrace:\n   0: 0x1 - <unknown>"
+            ),
+            "INTERNAL_ERROR: An active join request already exists"
+        );
+        assert_eq!(status_error_line("plain failure"), "plain failure");
+        assert_eq!(status_error_line(""), "");
     }
 
     fn hub_topology_fixture() -> RuntimeDeviceSpaceTopology {
