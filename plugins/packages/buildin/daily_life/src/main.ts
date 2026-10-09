@@ -33,3 +33,16 @@ export async function onOpen(): Promise<void> {
 export async function onResume(): Promise<void> {
   await deliverReminders();
 }
+
+/** A no-side-effect round trip through this plugin's actual Core main runtime. */
+export function test_connection(): { passed: boolean } {
+  return { passed: true };
+}
+
+/** Exercises the existing package tool dispatcher, not a fixture or direct date call. */
+export async function test_tool_call(): Promise<{ passed: boolean; message?: string }> {
+  const result = await toolCall("daily_life:get_current_date", {});
+  const value = typeof result === "string" ? JSON.parse(result) : result;
+  return { passed: !!value && typeof value.iso === "string" && typeof value.timestamp === "number",
+    message: "日期工具未返回有效结果" };
+}

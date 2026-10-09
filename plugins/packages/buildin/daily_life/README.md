@@ -50,3 +50,11 @@ node plugins/packages/buildin/workflow/node_modules/typescript/bin/tsc -p plugin
 ```
 
 The existing plugin sync process discovers `manifest.json`, emits `dist/*.js` using this package's `tsconfig.json`, and packages the directory as `daily_life.toolpkg`. The former single-file `daily_life.js` output is no longer part of the sync plan. No core or Flutter capability changes are required.
+
+## ESP32 diagnostic exports
+
+The existing main runtime exports `test_connection` for a no-side-effect
+plugin round trip, and `test_tool_call` which uses `toolCall` to execute
+`daily_life:get_current_date` through Core's existing tool permission/dispatch
+chain. Tests return only `{passed, message?}`; their raw date payload is not
+sent to the device. These exports do not register another plugin API.

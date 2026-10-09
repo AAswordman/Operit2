@@ -43,6 +43,13 @@ void operit_ui_set_conversation(unsigned index, const char *id, const char *titl
 void operit_ui_finish_conversations(unsigned count);
 void operit_ui_action_error(const char *error);
 void operit_ui_set_chat_task(const char *text);
+void operit_ui_set_plugin(unsigned index, const char *id, const char *name, unsigned status, unsigned latency_ms);
+void operit_ui_set_plugin_test(unsigned index,unsigned status,unsigned ms,const char *error);
+void operit_ui_set_plugin_testing(bool testing);
+void operit_ui_set_plugin_category(bool exclusive);
+void operit_ui_set_plugin_details(const char *id, const char *description, const char *tools,
+    unsigned offset, unsigned total, bool loading, const char *error);
+void operit_ui_finish_plugins(unsigned count, unsigned offset, unsigned total, bool loading, const char *error);
 const char *operit_ui_chat_draft(void);
 void operit_ui_set_chat_draft(const char *text);
 void operit_ui_submit_chat(void);

@@ -8,10 +8,10 @@
 #include <stdarg.h>
 #include <string.h>
 
-enum { WIDTH = 320, HEIGHT = 240, ROWS = 2, NODE_LIMIT = 10,
+enum { WIDTH = 320, HEIGHT = 240, ROWS = 2, NODE_LIMIT = 14,
        CHAT_X = 126, CHAT_W = 182, CHAT_WRAP = CHAT_W - 10, CHAT_ROWS = 6 };
 enum { ICON_NONE, ICON_MENU, ICON_CLOSE, ICON_BACK, ICON_CHAT, ICON_FACE,
-       ICON_PLUGIN, ICON_SETTINGS, ICON_LINK, ICON_SPACE, ICON_DEVICE, ICON_SEND };
+       ICON_PLUGIN, ICON_SETTINGS, ICON_LINK, ICON_SPACE, ICON_DEVICE, ICON_SEND, ICON_BOLT };
 typedef struct {
     const char *id, *text, *action;
     int16_t x, y, w, h;
@@ -19,6 +19,10 @@ typedef struct {
     uint8_t scale, icon;
     bool enabled;
 } node_t;
+typedef struct {
+    char action[128], name[43], latency[16];
+    uint8_t status;
+} plugin_t;
 typedef struct {
     operit_ui_flush_cb_t flush;
     operit_ui_action_cb_t action;
@@ -29,9 +33,19 @@ typedef struct {
     uint16_t press_x, press_y;
     unsigned node_count, message_count, chat_scroll;
     bool chat_follow_tail, chat_has_older, chat_has_newer;
-    char code[7], prompt[256], space[96], chat[2048], task[128];
+    char code[7], prompt[256], space[96], chat[1024], task[128];
     char error[192], draft[512], submitted[512];
     node_t nodes[NODE_LIMIT];
+    plugin_t plugins[6];
+    unsigned plugin_count, plugin_offset, plugin_total;
+    bool plugins_loading;
+    char plugins_error[80];
+    bool plugin_dialog, plugins_testing;
+    uint8_t plugin_selected, plugin_tool_status;
+    bool plugins_exclusive, plugin_details_loading;
+    unsigned plugin_info_scroll, plugin_tool_offset, plugin_tool_total;
+    char plugin_info[600];
+    char plugin_connect_text[24], plugin_tool_text[24], plugin_test_error[128];
 } mini_state_t;
 typedef struct {
     uint8_t kind;
@@ -43,7 +57,7 @@ typedef struct {
 static mini_state_t ui;
 static uint8_t strip[WIDTH * ROWS * 2];
 /* A bounded inspection buffer is included in the real device RAM budget. */
-static char debug_json[3072];
+static char debug_json[3584];
 static size_t json_at;
 static bool json_ok;
 _Static_assert(sizeof(ui) + sizeof(strip) + sizeof(debug_json) + sizeof(json_at) + sizeof(json_ok) <= 10 * 1024,
@@ -142,25 +156,66 @@ static void text(const node_t *node) {
         x += advance;
     }
 }
-/* Match the actual painter's wrapping, not message count or byte estimates. */
+/* RS state | name US is a bounded Core presentation token. No tool body is
+ * cached here, and cards use the same history scroll as ordinary chat rows. */
+typedef struct { const char *text; unsigned bytes; char state; bool second; } chat_row_t;
+static const char *tool_end(const char *s) {
+    if((unsigned char)s[0]!=0x1e||!s[1]||s[2]!='|'||!strchr("RSFU",s[1]))return NULL;
+    const char *end=strchr(s+3,0x1f);
+    if(!end||end==s+3||end-s>99)return NULL;
+    for(const char *p=s+3;p<end;++p)if((unsigned char)*p<32)return NULL;
+    return end;
+}
+static bool next_chat_row(const char **cursor,bool *second,chat_row_t *row) {
+    const char *s=*cursor;if(!*s)return false;
+    const char *end=tool_end(s);
+    if(end) {
+        *row=(chat_row_t){s+3,(unsigned)(end-s-3),s[1],*second};
+        if(*second){*cursor=end+1;if(**cursor=='\n')++*cursor;}
+        *second=!*second;return true;
+    }
+    const char *start=s;int x=0;
+    while(*s) {
+        const char *before=s;
+        if(tool_end(s))break;
+        uint32_t cp=decode(&s);
+        if(cp=='\n'){*cursor=s;*row=(chat_row_t){start,(unsigned)(before-start),0,false};return true;}
+        const mini_glyph_t *g=text_glyph(cp);if(!g)continue;
+        if(x+g->advance>CHAT_WRAP){s=before;break;}x+=g->advance;
+    }
+    *cursor=s;*row=(chat_row_t){start,(unsigned)(s-start),0,false};return true;
+}
 static void follow_chat_tail(void);
 static unsigned chat_lines(void) {
-    const char *s=ui.chat;unsigned lines=1;int x=0;
-    while(*s) {uint32_t cp=decode(&s);if(cp=='\n'){++lines;x=0;continue;}
-        const mini_glyph_t *g=text_glyph(cp);if(!g)continue;
-        if(x+g->advance>CHAT_WRAP){++lines;x=0;}x+=g->advance;}
-    return lines;
+    const char *s=ui.chat;bool second=false;chat_row_t row;unsigned lines=0;
+    while(next_chat_row(&s,&second,&row))++lines;
+    return lines?lines:1;
 }
 static const char *chat_line(unsigned wanted) {
-    const char *s=ui.chat;unsigned line=0;int x=0;if(!wanted)return s;
-    while(*s) {const char *before=s;uint32_t cp=decode(&s);
-        if(cp=='\n'){++line;x=0;if(line==wanted)return s;continue;}
-        const mini_glyph_t *g=text_glyph(cp);if(!g)continue;
-        if(x+g->advance>CHAT_WRAP){++line;x=0;if(line==wanted)return before;}x+=g->advance;}
+    const char *s=ui.chat;bool second=false;chat_row_t row;unsigned line=0;
+    while(next_chat_row(&s,&second,&row)){if(line++==wanted)return row.state?row.text-3:row.text;}
+    return s;
+}
+static const char *plugin_info_line(unsigned wanted) {
+    const char *s=ui.plugin_info; if(!wanted)return s; unsigned line=0; int width=0;
+    while(*s) {
+        const char *before=s; uint32_t cp=decode(&s);
+        const mini_glyph_t *g=text_glyph(cp); int advance=g?g->advance:8;
+        if(cp=='\n'){++line;width=0;}
+        else if(width+advance>294){++line;width=advance;if(line==wanted)return before;}
+        else width+=advance;
+        if(line==wanted)return s;
+    }
     return s;
 }
 static int page(void);
 static bool chat_swipe(const char *direction) {
+    if(page()==6&&ui.plugin_dialog) {
+        if(!strcmp(direction,"down"))ui.plugin_info_scroll=ui.plugin_info_scroll>3?ui.plugin_info_scroll-3:0;
+        else if(!strcmp(direction,"up")) {if(*plugin_info_line(ui.plugin_info_scroll+5))ui.plugin_info_scroll+=3;}
+        else return false;
+        invalidate();return true;
+    }
     if(page()!=2)return false;
     unsigned lines=chat_lines(),last=lines>CHAT_ROWS?lines-CHAT_ROWS:0;
     if(!strcmp(direction,"down")) {
@@ -199,6 +254,29 @@ static void icon_node(const char *id,const char *caption,const char *action,int 
 }
 static void scene(void) {
     ui.node_count=0;
+    if(page()==6&&ui.plugin_dialog&&!ui.error[0]) {
+        const plugin_t *p=ui.plugins+ui.plugin_selected;
+        node("plugin_dialog_title",p->name,NULL,8,2,260,30,true,1);
+        icon_node("plugin_dialog_close","","plugin_dialog_close",276,0,44,36,true,ICON_CLOSE);
+        node("plugin_info",ui.plugin_info,NULL,8,36,304,105,true,1);
+        if(ui.plugin_info_scroll||*plugin_info_line(5)) {
+            node("plugin_info_up","上翻","plugin_info_up",8,144,56,26,ui.plugin_info_scroll>0,1);
+            node("plugin_info_down","下翻","plugin_info_down",68,144,56,26,*plugin_info_line(ui.plugin_info_scroll+5)!=0,1);
+        }
+        if(ui.plugin_tool_total>3) {
+            node("plugin_tools_prev","前组","edge_plugin_tools_prev",192,144,56,26,!ui.plugin_details_loading&&ui.plugin_tool_offset>0,1);
+            node("plugin_tools_next","后组","edge_plugin_tools_next",252,144,56,26,!ui.plugin_details_loading&&ui.plugin_tool_offset+3<ui.plugin_tool_total,1);
+        }
+        bool enabled=ui.connected&&!ui.plugins_testing&&!ui.plugin_details_loading&&p->status!=1&&ui.plugin_tool_status!=1;
+        node("plugin_test_connection","测试连通性","plugin_test_connection",8,176,150,28,enabled,1);
+        node("plugin_connection_result",ui.plugin_connect_text,NULL,166,172,146,38,true,1);
+        if(ui.plugin_tool_total) {
+            node("plugin_test_tool","测试工具调用","plugin_test_tool",8,208,150,28,enabled,1);
+            node("plugin_tool_result",ui.plugin_tool_text,NULL,166,204,146,38,true,1);
+        }
+        if(ui.plugin_test_error[0]) node("plugin_test_error",ui.plugin_test_error,NULL,8,120,304,21,true,1);
+        return;
+    }
     if(page()==8 && !ui.error[0]) {
         node("title","Operit",NULL,10,8,118,26,true,1);
         icon_node("sidebar_toggle","","close_sidebar",136,0,44,40,true,ICON_CLOSE);
@@ -215,7 +293,8 @@ static void scene(void) {
     if(detail)icon_node("page_back","","settings",0,0,44,42,true,ICON_BACK);
     else icon_node("sidebar_toggle","","sidebar",0,0,44,42,menuEnabled,ICON_MENU);
     node("title",page_title(),NULL,44,6,142,30,true,1);
-    node("link_status",ui.connected ? "已连接" : ui.paired ? "已配对 / 离线" : "未配对",NULL,188,6,130,30,true,1);
+    if(page()==6)icon_node("plugins_test_all","","edge_plugins_test_all",276,0,44,42,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing,ICON_BOLT);
+    else node("link_status",ui.connected ? "已连接" : ui.paired ? "已配对 / 离线" : "未配对",NULL,188,6,130,30,true,1);
     if (ui.error[0] && !ui.code[0] && !ui.prompt[0]) {
         node("error",ui.error,NULL,16,50,288,122,true,1);
         node("dismiss_error","返回","dismiss",16,184,288,40,true,1);
@@ -252,8 +331,19 @@ static void scene(void) {
         icon_node("edge_new","新建对话","edge_new",14,66,292,44,ui.connected&&!ui.sending,ICON_CHAT);
         icon_node("edge_unpair","解除配对","edge_unpair",14,122,292,44,ui.paired,ICON_LINK);
     } else if (page()==6) {
-        icon_node("plugins_icon","",NULL,145,95,30,30,true,ICON_PLUGIN);
-        node("plugins_empty","暂无插件",NULL,126,138,94,26,true,1);
+        bool tabs=ui.connected&&!ui.plugins_loading&&!ui.plugins_testing;
+        node("plugins_exclusive","专属","edge_plugins_exclusive",10,40,146,32,tabs,1);
+        node("plugins_general","一般","edge_plugins_general",164,40,146,32,tabs,1);
+        static const char *ids[]={"plugin_probe_0","plugin_probe_1","plugin_probe_2","plugin_probe_3","plugin_probe_4","plugin_probe_5"};
+        for(unsigned i=0;i<ui.plugin_count;++i) {
+            plugin_t *p=ui.plugins+i;
+            node(ids[i],p->name,p->action,10+(i%2)*154,76+(i/2)*40,146,38,ui.connected&&!ui.plugins_loading,1);
+            ui.nodes[ui.node_count-1].icon=ICON_PLUGIN;
+        }
+        if(!ui.plugin_count)node("plugins_empty",ui.plugins_error[0]?ui.plugins_error:ui.plugins_loading?"读取 Core 插件…":ui.connected?(ui.plugins_exclusive?"暂无开启的专属插件":"暂无开启的一般插件"):"等待 Core 连接",NULL,22,84,276,76,true,1);
+        node("plugins_prev","上一页","edge_plugins_prev",10,199,70,32,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing&&ui.plugin_offset>0,1);
+        node("plugins_refresh",ui.plugins_testing?"测试中":ui.plugins_loading?"读取中":"刷新","edge_plugins_refresh",123,199,70,32,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing,1);
+        node("plugins_next","下一页","edge_plugins_next",240,199,70,32,ui.connected&&!ui.plugins_loading&&!ui.plugins_testing&&ui.plugin_offset+ui.plugin_count<ui.plugin_total,1);
     } else if (page()==7) {
         node("expression_face","",NULL,70,68,180,112,true,1);
         node("expression_caption","Operit",NULL,134,191,100,26,true,1);
@@ -401,6 +491,12 @@ static const icon_line_t icon_lines[] = {
     {ICON_DEVICE, 19, 22, 5, 22},
     {ICON_DEVICE, 5, 22, 5, 2},
     {ICON_DEVICE, 9, 18, 15, 18},
+    {ICON_BOLT, 14, 2, 5, 13},
+    {ICON_BOLT, 5, 13, 12, 13},
+    {ICON_BOLT, 12, 13, 9, 22},
+    {ICON_BOLT, 9, 22, 20, 10},
+    {ICON_BOLT, 20, 10, 13, 10},
+    {ICON_BOLT, 13, 10, 14, 2},
     {ICON_SEND, 3, 11, 21, 3},
     {ICON_SEND, 21, 3, 13, 21},
     {ICON_SEND, 13, 21, 11, 11},
@@ -422,10 +518,74 @@ static void outline(int x,int y,int w,int h,uint16_t color) {
 }
 static bool same(const char *a,const char *b){return !strcmp(a,b);}
 static bool is_face(const node_t *n){return same(n->id,"home_face")||same(n->id,"sidebar_face")||same(n->id,"expression_face");}
+static const char *tool_status(char state) {
+    return state=='S'?"成功":state=='F'?"失败":state=='R'?"调用中":"未完成";
+}
+static uint16_t tool_color(char state) {
+    return rgb(state=='S'?0x71e5a2:state=='F'?0xf07878:state=='R'?0xe4c778:0x849c8d);
+}
+static void paint_chat(const node_t *item) {
+    if(!ui.chat[0]){text(item);return;}
+    const char *s=ui.chat;bool second=false;chat_row_t row;unsigned line=0;
+    while(next_chat_row(&s,&second,&row)) {
+        unsigned at=line++;if(at<ui.chat_scroll)continue;
+        unsigned visible=at-ui.chat_scroll;if(visible>=CHAT_ROWS)break;
+        int y=item->y+(int)visible*21;
+        node_t label=*item;label.y=y-1;label.h=22;
+        char name[256];unsigned n=row.bytes<sizeof(name)-1?row.bytes:sizeof(name)-1;
+        while(n&&((unsigned char)row.text[n]&0xc0)==0x80)--n;
+        memcpy(name,row.text,n);name[n]=0;label.text=name;
+        if(row.state) {
+            uint16_t border=rgb(0x344d3d);
+            rect(item->x,y,item->w,21,rgb(0x17271f));
+            rect(item->x,y,1,21,border);rect(item->x+item->w-1,y,1,21,border);
+            rect(item->x,y+(row.second?20:0),item->w,1,border);
+            if(!row.second)draw_icon(ICON_PLUGIN,item->x+5,y+3,16,rgb(0xb1c7b8));
+            label.x+=23;label.w-=26;
+            // The package namespace is routing metadata, not another card field.
+            if(!row.second){const char *short_name=strrchr(name,':');if(short_name&&short_name[1])label.text=short_name+1;}
+            if(row.second){label.text=tool_status(row.state);label.color=tool_color(row.state);}
+        }
+        text(&label);
+    }
+}
 static void paint_nodes(void) {
     for(unsigned i=0;i<ui.node_count;++i) {
         const node_t *item=ui.nodes+i;
         node_t label=*item;
+        if(same(item->id,"chat_text")){paint_chat(item);continue;}
+        if(same(item->id,"plugin_dialog_title")){draw_icon(ICON_PLUGIN,item->x+6,item->y+7,16,rgb(0xb1c7b8));label.x+=24;label.w-=24;}
+        if(same(item->id,"plugin_info")){label.text=plugin_info_line(ui.plugin_info_scroll);if(ui.plugin_test_error[0])label.h=84;text(&label);continue;}
+        if(same(item->id,"plugins_exclusive")||same(item->id,"plugins_general")) {
+            bool selected=same(item->id,"plugins_exclusive")==ui.plugins_exclusive;
+            if(selected){rect(item->x,item->y,item->w,item->h,rgb(0x263e31));rect(item->x,item->y+item->h-2,item->w,2,rgb(0xb1f2d8));}
+        }
+        if(!strncmp(item->id,"plugin_probe_",13)) {
+            unsigned index=(unsigned)(item->id[strlen(item->id)-1]-'0');
+            const plugin_t *p=ui.plugins+index;
+            rect(item->x,item->y,item->w,item->h,rgb(0x17271f));
+            outline(item->x,item->y,item->w,item->h,rgb(0x344d3d));
+            label.x+=1;label.y-=1;label.w-=8;label.h=22;
+            text(&label);
+            draw_icon(ICON_PLUGIN,item->x+6,item->y+23,14,rgb(0xb1c7b8));
+            label.text=p->latency;label.x=item->x+25;label.y=item->y+18;label.w=item->w-32;label.h=22;
+            label.color=rgb(p->status==2?0x71e5a2:p->status==3?0xf07878:0x849c8d);
+            /* Right-align the numeric result in its own plugin cell. */
+            int width=0;for(const char *t=label.text;*t;){uint32_t cp=decode(&t);const mini_glyph_t *g=text_glyph(cp);width+=g?g->advance:8;}
+            width+=10;if(width<label.w){label.x+=label.w-width;label.w=width;}
+            text(&label);continue;
+        }
+        if(same(item->id,"plugins_test_all")) {
+            draw_icon(ICON_BOLT,item->x+12,item->y+9,20,rgb(0xffffff));continue;
+        }
+        if(same(item->id,"plugin_test_connection")||same(item->id,"plugin_test_tool")) {
+            outline(item->x,item->y,item->w,item->h,rgb(item->enabled?0x50745c:0x344d3d));
+        }
+        if(same(item->id,"plugin_connection_result")||same(item->id,"plugin_tool_result")) {
+            unsigned state=same(item->id,"plugin_connection_result")?ui.plugins[ui.plugin_selected].status:ui.plugin_tool_status;
+            label.color=rgb(state==2?0x71e5a2:state==3?0xf07878:state==1?0xe4c778:0x849c8d);
+        }
+        if(same(item->id,"plugin_test_error"))label.color=rgb(0xf07878);
         bool footer=same(item->id,"sidebar_plugins")||same(item->id,"sidebar_settings");
         bool row=item->icon&&!footer&&item->text[0];
         bool active=(same(item->id,"sidebar_chat")&&ui.page==2)||(same(item->id,"sidebar_expression")&&ui.page==7);
@@ -478,6 +638,25 @@ static int hit(unsigned x,unsigned y) {
     return -1;
 }
 static void activate(const char *action) {
+    if(!strcmp(action,"plugin_dialog_close")){ui.plugin_dialog=false;if(ui.action)ui.action("edge_plugin_close",ui.context);invalidate();return;}
+    if(!strcmp(action,"plugin_info_up")||!strcmp(action,"plugin_info_down")){chat_swipe(!strcmp(action,"plugin_info_up")?"down":"up");return;}
+    if(!strcmp(action,"plugin_test_connection")||!strcmp(action,"plugin_test_tool")) {
+        char request[131];snprintf(request,sizeof(request),"%s%.108s",!strcmp(action,"plugin_test_tool")?"edge_plugin_tool_test:":"edge_plugin_probe:",ui.plugins[ui.plugin_selected].action+17);
+        if(ui.action)ui.action(request,ui.context);return;
+    }
+    if(!strncmp(action,"edge_plugin_open:",17)) {
+        for(unsigned i=0;i<ui.plugin_count;++i)if(!strcmp(action,ui.plugins[i].action)) {
+            ui.plugin_selected=(uint8_t)i;ui.plugin_dialog=true;ui.plugin_tool_status=0;
+            copy(ui.plugin_tool_text,sizeof(ui.plugin_tool_text),"未测试");ui.plugin_test_error[0]=0;
+            copy(ui.plugin_connect_text,sizeof(ui.plugin_connect_text),ui.plugins[i].status==1?"测试中":ui.plugins[i].status==2?"成功":ui.plugins[i].status==3?"失败":"未测试");
+            ui.plugin_info_scroll=0;ui.plugin_tool_total=0;ui.plugin_details_loading=true;
+            snprintf(ui.plugin_info,sizeof(ui.plugin_info),"包 ID: %.108s\n读取 Core 详情…",action+17);
+            if(ui.plugins[i].status==2||ui.plugins[i].status==3)
+                snprintf(ui.plugin_connect_text,sizeof(ui.plugin_connect_text),"%s %s",ui.plugins[i].status==2?"成功":"失败",ui.plugins[i].latency);
+            if(ui.action)ui.action(action,ui.context);invalidate();return;
+        }
+        return;
+    }
     if (!strcmp(action,"dismiss")) ui.error[0]=0;
     else if (!strcmp(action,"sidebar")) ui.sidebar=!ui.sidebar;
     else if (!strcmp(action,"close_sidebar")) ui.sidebar=false;
@@ -485,7 +664,7 @@ static void activate(const char *action) {
     else if (!strcmp(action,"connection")) {ui.sidebar=false;ui.page=9;}
     else if (!strcmp(action,"space_settings")) {ui.sidebar=false;ui.page=10;}
     else if (!strcmp(action,"operations")) {ui.sidebar=false;ui.page=11;}
-    else if (!strcmp(action,"plugins")) {ui.sidebar=false;ui.page=6;}
+    else if (!strcmp(action,"plugins")) {ui.sidebar=false;ui.page=6;if(ui.action&&ui.connected)ui.action("edge_plugins_refresh",ui.context);}
     else if (!strcmp(action,"expression")) {ui.sidebar=false;ui.page=7;}
     else if (!strcmp(action,"pairing")) ui.page=0;
     else if (!strcmp(action,"chat")) {ui.sidebar=false;ui.page=2;}
@@ -511,7 +690,9 @@ void operit_ui_pump(uint32_t elapsed) {
     /* Bound SPI work per main-loop iteration; no whole-frame stack buffer. */
     for (unsigned n=0;n<8&&ui.render_y<HEIGHT;++n) {
         memset(strip,0,sizeof(strip));
-        if(page()==8&&!ui.error[0]) {
+        if(page()==6&&ui.plugin_dialog&&!ui.error[0]) {
+            rect(0,0,WIDTH,HEIGHT,rgb(0x11171b));paint_nodes();
+        } else if(page()==8&&!ui.error[0]) {
             // Paint the real current page underneath, then the full-height
             // drawer. Scrim is a fixed RGB565 darken, not an alpha buffer.
             ui.sidebar=false;ui.dimmed=true;scene();paint_page();
@@ -536,6 +717,7 @@ void operit_ui_set_touch(uint16_t x,uint16_t y,bool down) {
         int found=hit(x,y),previous=ui.pressed_node;
         int dx=(int)x-ui.press_x,dy=(int)y-ui.press_y;
         ui.pressed=false;ui.pressed_node=-1;
+        if(page()==6&&ui.plugin_dialog&&ui.press_y>=36&&ui.press_y<144&&dx<48&&dx>-48&&(dy>24||dy<-24)){chat_swipe(dy>0?"down":"up");return;}
         if(page()==2&&ui.press_x>=CHAT_X&&x>=CHAT_X&&dx<48&&dx>-48&&(dy>24||dy<-24)){chat_swipe(dy>0?"down":"up");return;}
         if(previous>=0&&previous==found&&dx<16&&dx>-16&&dy<16&&dy>-16) activate(ui.nodes[found].action);
         return;
@@ -598,7 +780,7 @@ void operit_ui_set_message(unsigned index,bool user,const char *text){
     size_t n=strlen(ui.chat);
     if(n&&n+1<sizeof(ui.chat))ui.chat[n++]='\n';
     ui.chat[n]=0;
-    const char *prefix=user?"You: ":"AI: ";
+    const char *prefix=tool_end(text)?"":user?"You: ":"AI: ";
     size_t count=strlen(prefix);
     if(n+count+1<sizeof(ui.chat)){memcpy(ui.chat+n,prefix,count);n+=count;ui.chat[n]=0;}
     copy(ui.chat+n,sizeof(ui.chat)-n,text);invalidate();
@@ -614,6 +796,64 @@ void operit_ui_finish_messages(unsigned count){
     ui.message_count=count;invalidate();
 }
 
+/* Bounded, volatile display projection. No business objects persisted here. */
+void operit_ui_set_plugin(unsigned index,const char *id,const char *name,unsigned status,unsigned ms){
+    if(index>=6)return;
+    plugin_t *p=ui.plugins+index;
+    char action[128]="",latency[16]="";
+    snprintf(action,sizeof(action),"edge_plugin_open:%.108s",id?id:"");
+    if(status==1)copy(latency,sizeof(latency),"…");
+    else if(status==2||status==3)snprintf(latency,sizeof(latency),"%u ms",ms>99999?99999:ms);
+    else copy(latency,sizeof(latency),"-- ms");
+    bool changed=copy(p->action,sizeof(p->action),action);
+    if(changed&&ui.plugin_dialog&&index==ui.plugin_selected)ui.plugin_dialog=false;
+    changed=copy(p->name,sizeof(p->name),name)||changed;
+    changed=copy(p->latency,sizeof(p->latency),latency)||changed;
+    if(p->status!=status){p->status=status;changed=true;}
+    if(ui.plugin_dialog&&index==ui.plugin_selected) {
+        char result[24]="";
+        if(status==2||status==3)snprintf(result,sizeof(result),"%s %u ms",status==2?"成功":"失败",ms>99999?99999:ms);
+        else copy(result,sizeof(result),status==1?"测试中":"未测试");
+        changed=copy(ui.plugin_connect_text,sizeof(ui.plugin_connect_text),result)||changed;
+    }
+    if(changed)invalidate();
+}
+void operit_ui_set_plugin_test(unsigned index,unsigned status,unsigned ms,const char *error) {
+    if(!ui.plugin_dialog||index!=ui.plugin_selected)return;
+    char result[24]="";
+    if(status==2||status==3)snprintf(result,sizeof(result),"%s %u ms",status==2?"成功":"失败",ms>99999?99999:ms);
+    else copy(result,sizeof(result),status==1?"测试中":"未测试");
+    bool changed=copy(ui.plugin_tool_text,sizeof(ui.plugin_tool_text),result);
+    changed=copy(ui.plugin_test_error,sizeof(ui.plugin_test_error),error)||changed;
+    if(ui.plugin_tool_status!=status){ui.plugin_tool_status=(uint8_t)status;changed=true;}
+    if(changed)invalidate();
+}
+void operit_ui_set_plugin_category(bool exclusive) {
+    if(ui.plugins_exclusive!=exclusive){ui.plugins_exclusive=exclusive;ui.plugin_dialog=false;invalidate();}
+}
+/* One bounded selected-package projection, shared by firmware and WASM. */
+void operit_ui_set_plugin_details(const char *id,const char *description,const char *tools,unsigned offset,unsigned total,bool loading,const char *error) {
+    if(!ui.plugin_dialog||strcmp(id?id:"",ui.plugins[ui.plugin_selected].action+17))return;
+    char info[600],heading[48]="";
+    unsigned last=offset>=total?total:total-offset>3?offset+3:total;
+    if(total)snprintf(heading,sizeof(heading),"\n工具: %u-%u / %u\n",offset+1,last,total);
+    snprintf(info,sizeof(info),"包 ID: %.108s\n简介: %s%s%s",id,loading?"读取 Core 详情…":error&&error[0]?error:description&&description[0]?description:"暂无简介",
+        heading,total&&tools?tools:"");
+    bool changed=copy(ui.plugin_info,sizeof(ui.plugin_info),info);
+    if(ui.plugin_tool_offset!=offset){ui.plugin_info_scroll=0;changed=true;}
+    if(ui.plugin_tool_total!=total||ui.plugin_details_loading!=loading)changed=true;
+    ui.plugin_tool_offset=offset;ui.plugin_tool_total=total;ui.plugin_details_loading=loading;
+    if(changed)invalidate();
+}
+void operit_ui_set_plugin_testing(bool testing){if(ui.plugins_testing!=testing){ui.plugins_testing=testing;invalidate();}}
+void operit_ui_finish_plugins(unsigned count,unsigned offset,unsigned total,bool loading,const char *error){
+    if(count>6)count=6;
+    if(ui.plugin_dialog&&(ui.plugin_selected>=count||!ui.connected||loading))ui.plugin_dialog=false;
+    bool changed=copy(ui.plugins_error,sizeof(ui.plugins_error),error);
+    if(ui.plugin_count!=count||ui.plugin_offset!=offset||ui.plugin_total!=total||ui.plugins_loading!=loading)changed=true;
+    ui.plugin_count=count;ui.plugin_offset=offset;ui.plugin_total=total;ui.plugins_loading=loading;
+    if(changed)invalidate();
+}
 void operit_ui_set_conversation(unsigned index,const char *id,const char *title,const char *character,bool selected){(void)index;(void)id;(void)title;(void)character;(void)selected;}
 void operit_ui_finish_conversations(unsigned count){(void)count;}
 /* The renderer explicitly rejects dynamic layout editing. Never silently
@@ -643,19 +883,42 @@ static void string(const char *value) {
     }
     append("\"");
 }
-static const char *inspect(void) {
+static const char *inspect_format(bool compact) {
     scene();json_at=0;json_ok=true;
     append("{\"renderer\":\"mini\",\"page\":");string(operit_ui_current_page());
     append(",\"width\":320,\"height\":240,\"staticBytes\":%u,\"drawBytes\":%u,\"heapBytes\":0,\"pairingCode\":",(unsigned)operit_mini_static_bytes(),(unsigned)sizeof(strip));string(ui.code);
+    append(",\"pluginDialogOpen\":%s,\"pluginsTesting\":%s,\"pluginCategory\":\"%s\",\"pluginInfoScroll\":%u",ui.plugin_dialog?"true":"false",ui.plugins_testing?"true":"false",ui.plugins_exclusive?"exclusive":"general",ui.plugin_info_scroll);
     append(",\"sidebarOpen\":%s,\"expression\":%u,\"chatWrapWidth\":%u,\"chatVisibleLines\":%u",ui.sidebar?"true":"false",ui.expression,CHAT_WRAP,CHAT_ROWS);
     append(",\"chatCachedBytes\":%u,\"chatCachedLines\":%u,\"chatScrollLine\":%u,\"nodes\":[",(unsigned)strlen(ui.chat),chat_lines(),ui.chat_scroll);
     for(unsigned i=0;i<ui.node_count;++i){
         node_t *n=ui.nodes+i;
         append("%s{\"id\":",i?",":"");string(n->id);append(",\"text\":");string(n->text);
-        append(",\"action\":");string(n->action);append(",\"role\":\"%s\",\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"visible\":true,\"enabled\":%s,\"clickable\":%s}",n->action?"button":"label",n->x,n->y,n->w,n->h,n->enabled?"true":"false",n->action?"true":"false");
+        if(!strncmp(n->id,"plugin_probe_",13)){plugin_t *p=ui.plugins+(n->id[strlen(n->id)-1]-'0');append(",\"probeState\":%u,\"latency\":",p->status);string(p->latency);append(",\"latencyColor\":%u",(unsigned)rgb(p->status==2?0x71e5a2:p->status==3?0xf07878:0x849c8d));}
+        if(same(n->id,"plugins_test_all"))append(",\"iconColor\":%u",(unsigned)rgb(0xffffff));
+        append(",\"action\":");string(n->action);
+        if(!compact)append(",\"role\":\"%s\",\"visible\":true,\"clickable\":%s",n->action?"button":"label",n->action?"true":"false");
+        append(",\"rect\":{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d},\"enabled\":%s}",n->x,n->y,n->w,n->h,n->enabled?"true":"false");
+    }
+    append("],\"toolCards\":[");
+    if(page()==2&&!ui.sidebar) {
+        const char *s=ui.chat;bool second=false;chat_row_t row;unsigned line=0,count=0;
+        while(next_chat_row(&s,&second,&row)) {
+            unsigned at=line++;
+            if(!row.state||row.second||at+1<ui.chat_scroll||at>=ui.chat_scroll+CHAT_ROWS)continue;
+            char name[100];memcpy(name,row.text,row.bytes);name[row.bytes]=0;
+            append("%s{\"icon\":\"plugin\",\"name\":",count++?",":"");string(name);
+            append(",\"status\":");string(tool_status(row.state));
+            append(",\"statusColor\":%u,\"line\":%u}",(unsigned)tool_color(row.state),at);
+        }
     }
     append("]}");
     return json_ok?debug_json:"{\"renderer\":\"mini\",\"error\":\"inspection capacity exceeded\",\"nodes\":[]}";
+}
+/* Very long package IDs may need the compact node schema; retain every hit
+ * target and its real action rather than returning an empty inspection. */
+static const char *inspect(void) {
+    const char *result=inspect_format(false);
+    return json_ok?result:inspect_format(true);
 }
 const char *operit_ui_debug_tree(void){return inspect();}
 const char *operit_ui_debug_snapshot(void){return inspect();}

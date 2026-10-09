@@ -40,6 +40,29 @@ when updating only the application image.
   pairing socket and background receivers survive between commands. The Rust
   DLL requires a native rebuild and application restart, not Dart hot reload.
 
+## Space chat routing
+
+After admission, the shared Edge return client sends annotated calls and watches
+through the adjacent Core's Binding resolver. Resolved execution remains in the
+existing Space route namespace; plugin execution and permission checks stay on
+Core. Embedded streams reopen through their annotated source and source arguments,
+not as ordinary chat properties. Push sessions retain their existing router path.
+
+The first session generates a volatile chat ID and calls the existing explicit
+`ensureRoutedChat` creation route. Core selects an authorized executor and owns the
+Binding and chat metadata. Message/state subscriptions and sending are enabled
+only after successful creation acknowledgement. Read and send operations never
+allocate a missing Binding implicitly.
+
+Firmware and simulator share entry-identity polling. Replacing the Core entry or
+its admitted session reopens subscriptions even without an observed offline gap.
+The selected chat ID survives a reconnect within the same Space, but is reset
+when the Space changes or the device explicitly leaves/unpairs. Closed primary
+watches and unexpectedly closed embedded streams trigger bounded subscription
+recovery; user sends and non-idempotent new-chat requests are never replayed.
+Only bounded display data and the selected ID live in volatile Edge memory; no
+chat business replica is persisted on the device.
+
 ## Verification and current limitations
 
 Native scheduler regression tests cover socket reuse across requests, receiver
@@ -91,10 +114,28 @@ paged in full. Each new window replaces the old one in RAM. Live replies update
 incrementally and retain a bounded tail instead of freezing at the text limit.
 Chat text/windows are never written to NVS.
 
-The display has a 2048-byte static text buffer for the 640-byte payload plus
+The display has a 1024-byte static text buffer for the 640-byte payload plus
 sender labels. Cursor history is bounded; it does not retain past page text.
 UART `device:screen` exposes `chatCachedBytes`, `chatCachedLines`, and
 `chatScrollLine` for checking the real device without a screenshot request.
+
+### Tool-call cards
+
+Chat tool calls use a compact, two-row wrapper with the existing plugin icon.
+Only the tool name and invocation state are painted: 调用中 (amber), 成功
+(green), 失败 (red), or 未完成 (muted). The package namespace is omitted from
+its painted name; arguments and raw result bodies stay on Core. Ordinary model
+reply prose is still displayed normally, including summaries of tool results.
+
+The chat-owned projection pairs persisted results by call ID and emits bounded
+private presentation tokens in the existing display text/stream. They do not
+expose a plugin invocation endpoint or change Binding permissions. Tokens are
+atomic across Core history pages; clipped live-tail tokens are discarded. Live
+status events replace a pending wrapper rather than adding a second result
+message; reset/rollback and the final persisted snapshot restore its status.
+Cards share the normal chat scroll and require no new static tool cache or UI
+heap. `device:screen` / simulator inspection include visible `toolCards` with
+name, status and the plugin icon for verification.
 
 ## UI backend
 
@@ -161,3 +202,48 @@ contacting the device, while independent project editing/export is retained.
 
 Image messages use a visible text placeholder. No dormant image decoder,
 preview subscription or image-chunk UI ABI remains in the firmware.
+
+## Core plugin page
+
+The fixed plugin screen reads a six-item, two-column page from the current
+chat's execution Core using read-only Binding routes. Only enabled ToolPkg
+containers are listed; refresh and previous/next page actions never enable,
+disable or install a plugin. Plugin summaries and test results are volatile.
+
+The white lightning button at the top right runs connectivity tests for **all**
+enabled containers, paging six at a time and executing sequentially. A plugin
+cell opens a modal with separate connectivity and tool-call tests. Connectivity
+executes that container's `test_connection` export in the existing Core ToolPkg
+main runtime. Tool testing executes its `test_tool_call` export; the daily-life
+plugin exercises `daily_life:get_current_date` through the existing tool dispatcher.
+UI/prompt-only plugins explicitly report that they have no business tools.
+Missing exports, failed tests, disabled packages and exceptions are failures,
+never fallback successes based on file readability.
+
+The diagnostic route is chat Binding-owned and requires `caller:chat.write`;
+the read-only list still requires `caller:chat.read`. Edge cannot choose an
+arbitrary function/tool name or arguments. Only bounded success/message data
+returns, not tool payloads or JavaScript stack/source. Green/red numbers are the
+Edge-to-Core round trip **including that test function**, not a pure network
+ping or a guarantee that every plugin tool can run. Core's diagnostic timeout
+is 6 seconds; Edge's UI deadline is 8 seconds and drains outstanding Link
+acknowledgements without cancelling an ambiguous transaction. No timed-out or
+retired session/page/probe result can overwrite a newer attempt. Batch runs are
+not automatically replayed after reconnect. Results remain volatile.
+
+### ESP32 plugin browser
+
+The shared device/WASM screen lists enabled Core ToolPkg plugins in two columns,
+with **专属 / 一般** tabs. General is selected by default. A ToolPkg manifest may
+opt into the exclusive category with `"esp32": {"exclusive": true}`; without this
+explicit marker it remains general. This is display classification, not a new
+execution runtime, permission grant, or a native ESP32 plugin implementation.
+Device telemetry/debug services are not listed as user plugins.
+
+Selecting a package reads its ID, localized description (192 UTF-8 bytes maximum),
+and active tools (three names per page, 64 bytes each) through the chat's existing
+Core Binding. Long details can be scrolled; tool pages use 前组 / 后组. Empty tool
+lists omit the tools section and tool-test button. The white top-right lightning
+sequentially tests connectivity for all enabled plugins in the selected category.
+Individual tests continue to run the existing fixed Core diagnostic exports;
+no scripts, arguments or result payloads are copied to the device.

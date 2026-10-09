@@ -98,3 +98,11 @@ if (typeof exports !== "undefined") {
   exports.onInputMenuToggle = onInputMenuToggle;
   exports.onSystemPromptCompose = onSystemPromptCompose;
 }
+
+// These exports run in the same plugin runtime as the existing prompt hooks.
+function test_connection() { return { passed: true }; }
+function test_tool_call() { return { passed: false, message: "此插件仅提供提示词钩子，没有业务工具" }; }
+if (typeof exports !== "undefined") {
+  exports.test_connection = test_connection;
+  exports.test_tool_call = test_tool_call;
+}

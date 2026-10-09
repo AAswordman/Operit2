@@ -7,6 +7,7 @@ publish = false
 [workspace]
 
 [dependencies]
+uuid = { version = "1", features = ["v4"] }
 operit-node-runtime = { path = "../../../core/crates/node/runtime", default-features = false }
 operit-host-native-common = { path = "../../../hosts/common/operit-host-native-common", features = ["tcp", "storage"] }
 operit-host-native-scheduler = { path = "../../../hosts/common/operit-host-native-scheduler", default-features = false, features = ["esp32-compat"] }

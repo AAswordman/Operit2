@@ -54,6 +54,13 @@ unsafe extern "C" {
     fn operit_ui_finish_conversations(count: u32);
     fn operit_ui_action_error(error: *const c_char);
     fn operit_ui_set_chat_task(text: *const c_char);
+    fn operit_ui_set_plugin(index: u32, id: *const c_char, name: *const c_char, status: u32, latency_ms: u32);
+    fn operit_ui_set_plugin_test(index: u32, status: u32, ms: u32, error: *const c_char);
+    fn operit_ui_set_plugin_testing(testing: bool);
+    fn operit_ui_set_plugin_category(exclusive: bool);
+    fn operit_ui_set_plugin_details(id: *const c_char, description: *const c_char, tools: *const c_char,
+        offset: u32, total: u32, loading: bool, error: *const c_char);
+    fn operit_ui_finish_plugins(count: u32, offset: u32, total: u32, loading: bool, error: *const c_char);
     fn operit_ui_chat_send_result(ok: bool, error: *const c_char);
     fn operit_ui_set_chat_draft(value: *const c_char);
     fn operit_ui_chat_draft() -> *const c_char;
@@ -162,6 +169,37 @@ impl Esp32Ui {
     }
     pub fn actionError(&mut self, error: &str) {
         setText(error, operit_ui_action_error);
+    }
+
+    /// Transfers only the six visible plugin summaries to the fixed renderer.
+    pub fn setPlugins(&mut self, state: &serde_json::Value) {
+        let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
+        unsafe { operit_ui_set_plugin_category(state["category"] == "exclusive"); }
+        let items = state["items"].as_array().into_iter().flatten().take(6).collect::<Vec<_>>();
+        for (index, item) in items.iter().enumerate() {
+            let status = match item["status"].as_str() {
+                Some("probing") => 1, Some("success") => 2, Some("failure") => 3, _ => 0,
+            };
+            let toolStatus = match item["toolStatus"].as_str() {
+                Some("probing") => 1, Some("success") => 2, Some("failure") => 3, _ => 0,
+            };
+            unsafe { operit_ui_set_plugin(index as u32, string(item["id"].as_str().unwrap_or("")).as_ptr(),
+                string(item["name"].as_str().unwrap_or("")).as_ptr(), status,
+                item["latencyMs"].as_u64().unwrap_or(0).min(99999) as u32); }
+            unsafe { operit_ui_set_plugin_test(index as u32, toolStatus,
+                item["toolLatencyMs"].as_u64().unwrap_or(0).min(99999) as u32,
+                string(item["testError"].as_str().unwrap_or("")).as_ptr()); }
+        }
+        let details = &state["details"];
+        let tools = details["tools"].as_array().into_iter().flatten().take(3).filter_map(|v| v.as_str()).collect::<Vec<_>>().join("\n");
+        unsafe { operit_ui_set_plugin_details(string(details["id"].as_str().unwrap_or("")).as_ptr(),
+            string(details["description"].as_str().unwrap_or("")).as_ptr(), string(&tools).as_ptr(),
+            details["toolOffset"].as_u64().unwrap_or(0) as u32, details["toolTotal"].as_u64().unwrap_or(0) as u32,
+            details["loading"] == true, string(details["error"].as_str().unwrap_or("")).as_ptr()); }
+        unsafe { operit_ui_set_plugin_testing(state["testing"] == true); }
+        unsafe { operit_ui_finish_plugins(items.len() as u32, state["offset"].as_u64().unwrap_or(0) as u32,
+            state["total"].as_u64().unwrap_or(0) as u32, state["loading"] == true,
+            string(state["error"].as_str().unwrap_or("")).as_ptr()); }
     }
 
     pub fn setChatState(&mut self, state: &serde_json::Value) {
