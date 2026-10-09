@@ -3138,8 +3138,8 @@ impl OperitTui {
             }
             KeyCode::Enter | KeyCode::Char('j') | KeyCode::Char('J') => {
                 match selected_row {
-                    Some(NetworkHubRow::Member(_)) if key.code == KeyCode::Enter => {
-                        self.open_device_manager().await;
+                    Some(NetworkHubRow::Member(device)) if key.code == KeyCode::Enter => {
+                        self.open_device_manager_for(&device.deviceId).await;
                     }
                     Some(NetworkHubRow::Peer { deviceId, label, .. }) => {
                         self.status_message = self.network_join_target(&deviceId, &label).await?;
@@ -3465,6 +3465,26 @@ impl OperitTui {
             .unwrap_or(2);
         self.open_pair_wizard(candidate.address.clone(), transport_index, String::new(), false);
         self.pair_wizard_start().await;
+    }
+
+    /// Opens the device manager focused on one device and jumps straight
+    /// into its action menu: the hub row already was the selection step.
+    async fn open_device_manager_for(&mut self, device_id: &str) {
+        self.open_device_manager().await;
+        let Some(modal) = self.device_manager.as_mut() else {
+            return;
+        };
+        let Some(position) = modal.rows().iter().position(|row| row.id() == device_id) else {
+            return;
+        };
+        modal.selected = position;
+        // Mirror the browse-Enter rule: no applicable action (the local
+        // device with no roles defined) means no menu to open.
+        if !modal.menu_actions(device_id).is_empty() {
+            modal.mode = DeviceManagerMode::ActionMenu;
+            modal.menu_device_id = Some(device_id.to_string());
+            modal.menu_index = 0;
+        }
     }
 
     async fn open_device_manager(&mut self) {
