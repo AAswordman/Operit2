@@ -73,3 +73,9 @@ mod doctor {
         "/tests/device_space/doctor.rs"
     ));
 }
+mod convergence_properties {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/convergence_properties.rs"
+    ));
+}
