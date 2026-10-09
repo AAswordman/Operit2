@@ -354,6 +354,85 @@ async fn lost_submission_reply_reuses_request_and_does_not_duplicate_receiver_in
     );
 }
 
+/// Exercises a target advertising the applicant's own space identity without the
+/// applicant as a member is a membership split, never a joinable target through
+/// isolated runtime stores.
+#[tokio::test]
+async fn join_request_rejects_target_advertising_the_local_space_without_membership() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let pair = IndependentPair::new("split-join");
+    // Diverge the member tables on one shared space identity: the applicant's
+    // projection carries the receiver's space identity while the receiver's own
+    // snapshot still lists only itself, so neither side admits the applicant.
+    let receiverSpace = pair.b.spaceStore.space().unwrap();
+    pair.a
+        .spaceStore
+        .adopt(operit_store::CoreSpaceStore::CoreSpace {
+            spaceId: receiverSpace.spaceId.clone(),
+            spaceName: receiverSpace.spaceName.clone(),
+            spaceRevision: receiverSpace.spaceRevision + 1,
+            members: vec![pair.a.localNodeId()],
+        })
+        .unwrap();
+    let error = pair
+        .applicant
+        .requestDeviceSpaceJoin(pair.b.localNodeId())
+        .await
+        .unwrap_err();
+    assert!(
+        error.contains("reconcile the split membership"),
+        "unexpected error: {error}"
+    );
+    // A same-identity target must not leave behind a durable join request.
+    assert!(pair
+        .applicant
+        .outgoingDeviceSpaceJoins()
+        .unwrap()
+        .is_empty());
+    assert!(protocolRecords(&pair.b, INBOUND_RECORDS).is_empty());
+}
+
+/// Exercises the gateway refuses a submission whose source Space equals its own
+/// target Space instead of admitting an unreviewable request through isolated
+/// runtime stores.
+#[tokio::test]
+async fn gateway_rejects_a_submission_whose_source_equals_the_target_space() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let pair = IndependentPair::new("self-merge");
+    let targetSpaceId = pair.b.spaceStore.space().unwrap().spaceId;
+    let applicant = pair.a.localNodeId();
+    let profile = serde_json::json!({
+        "nodeId": applicant, "displayName": "Applicant", "userName": "",
+        "platform": "test", "model": "test", "coreVersion": null, "updatedAt": 1,
+    });
+    let args = operit_link::toCoreValue(serde_json::json!({
+        "requestId": uuid::Uuid::new_v4().to_string(),
+        "sourceSpaceId": targetSpaceId,
+        "sourceRevision": 3,
+        "targetSpaceId": targetSpaceId,
+        "profile": profile,
+        "source": {
+            "space": {"spaceId": targetSpaceId, "spaceName": "Shared", "spaceRevision": 3,
+                      "members": [applicant]},
+            "deviceProfiles": [profile],
+            "controlOperations": [],
+            "topology": [],
+        },
+    }))
+    .unwrap();
+    let response = directCommand(&pair.a, &pair.b.localNodeId(), "requestJoin", args).await;
+    let error = response.result.unwrap_err();
+    assert!(
+        error.message.contains("distinct source Space"),
+        "unexpected error: {}",
+        error.message
+    );
+    // The rejected submission leaves no durable inbound record behind.
+    assert!(protocolRecords(&pair.b, INBOUND_RECORDS).is_empty());
+}
+
 /// Leaving is local, so a target that keeps hosting its Space still holds the
 /// earlier admission. A re-application from the forked source Space must
 /// retire that stale record and go through a fresh review instead of being

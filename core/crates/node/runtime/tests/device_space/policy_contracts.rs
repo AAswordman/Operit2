@@ -166,3 +166,37 @@ async fn permission_revocation_invalidates_a_stale_reviewer_action() {
         SpaceJoinStatus::Cancelled
     );
 }
+
+/// Exercises a self-referential review admission is rejected before any control
+/// operation reaches the durable log through isolated runtime stores.
+#[tokio::test]
+async fn review_admission_rejects_a_self_referential_space_before_the_log_append() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (owner, _) = approvalService("review-self");
+    let spaceId = owner.spaceStore.space().unwrap().spaceId;
+    let before = owner
+        .networkControlStore
+        .spaceOperations(&spaceId)
+        .unwrap()
+        .len();
+    let error = owner
+        .networkControlStore
+        .admitSpaceForReview(
+            spaceId.clone(),
+            std::collections::BTreeSet::from(["review-self-member".into()]),
+            "self-review",
+        )
+        .unwrap_err();
+    assert!(error.contains("distinct source"), "unexpected error: {error}");
+    // The malformed admission must never enter the synchronization log: one
+    // decoded-op failure would otherwise break every later state replay.
+    assert_eq!(
+        owner
+            .networkControlStore
+            .spaceOperations(&spaceId)
+            .unwrap()
+            .len(),
+        before
+    );
+}
