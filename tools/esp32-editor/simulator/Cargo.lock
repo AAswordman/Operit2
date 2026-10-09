@@ -1051,6 +1051,7 @@ dependencies = [
  "operit-store",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

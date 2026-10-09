@@ -4,6 +4,8 @@ exports.registerToolPkg = registerToolPkg;
 exports.onClock = onClock;
 exports.onOpen = onOpen;
 exports.onResume = onResume;
+exports.test_connection = test_connection;
+exports.test_tool_call = test_tool_call;
 const reminders_1 = require("./reminders");
 // Tools, clock events and lifecycle events share this main-runtime storage owner.
 ToolPkg.ipc.on("daily_life.reminders", reminders_1.receiveReminder);
@@ -33,4 +35,15 @@ async function onOpen() {
 /** Checks persisted overdue reminders when the application resumes. */
 async function onResume() {
     await (0, reminders_1.deliverReminders)();
+}
+/** A no-side-effect round trip through this plugin's actual Core main runtime. */
+function test_connection() {
+    return { passed: true };
+}
+/** Exercises the existing package tool dispatcher, not a fixture or direct date call. */
+async function test_tool_call() {
+    const result = await toolCall("daily_life:get_current_date", {});
+    const value = typeof result === "string" ? JSON.parse(result) : result;
+    return { passed: !!value && typeof value.iso === "string" && typeof value.timestamp === "number",
+        message: "日期工具未返回有效结果" };
 }

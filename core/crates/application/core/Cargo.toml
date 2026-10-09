@@ -13,3 +13,7 @@ operit-proxy-local = { path = "../../proxy/local" }
 operit-plugin-sdk-ipc = { path = "../../plugin/sdk-ipc" }
 operit-plugin-sdk-ipc-bridge = { path = "../../plugin/sdk-ipc-bridge" }
 operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"] }
+operit-tools = { path = "../../tool/services" }
+operit-plugin-sdk = { path = "../../plugin/sdk" }
+tokio = { workspace = true, features = ["sync"] }
+serde_json.workspace = true

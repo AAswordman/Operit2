@@ -61,7 +61,7 @@ pub fn buildRuntimeBootstrapModules() -> Vec<JsBootstrapModule> {
         JsBootstrapModule::new(
             "quickjs/init/tools.js",
             getJsToolsDefinition().to_string(),
-            &["Tools"],
+            &["Tools", "tools"],
         ),
         JsBootstrapModule::new(
             "assets/js/PluginConfig.js",

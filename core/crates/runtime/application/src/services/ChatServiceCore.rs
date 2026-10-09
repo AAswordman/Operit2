@@ -138,6 +138,44 @@ pub struct ChatInputMenuSummary {
     pub maxContextLength: f64,
 }
 
+/// Bounded read-only plugin projection for the chat's execution Core.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatPluginItem {
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatPluginTestResult {
+    pub success: bool,
+    pub message: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatPluginPage {
+    pub items: Vec<ChatPluginItem>,
+    pub total: u32,
+}
+
+/// One selected package, never scripts/parameters or an unbounded tool catalog.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ChatPluginDetails {
+    pub id: String,
+    pub description: String,
+    pub tools: Vec<String>,
+    pub toolOffset: u32,
+    pub toolTotal: u32,
+    pub error: String,
+}
+fn pluginDisplayText(text: &str, bytes: usize) -> String {
+    let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+    let mut end = clean.len().min(bytes);
+    while !clean.is_char_boundary(end) { end -= 1; }
+    clean[..end].to_string()
+}
+fn pluginExclusive(extensions: &std::collections::BTreeMap<String, serde_json::Value>) -> bool {
+    extensions.get("esp32").and_then(|v| v.get("exclusive")).and_then(|v| v.as_bool()) == Some(true)
+}
+
 /// Describes the runtime state of one explicitly routed chat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChatState {
@@ -2404,6 +2442,111 @@ impl ChatServiceCore {
         flow
     }
 
+    fn pluginPageManager(&self) -> operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager {
+        let handler = self.runtimeToolHandler();
+        ToolPkgBridgeRuntime::new(handler.clone(), handler.getContext()).package_manager()
+    }
+
+    /// Uses the existing package runtime; never exposes plugin management to Edge.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub fn chatAvailablePlugins(&self, chatId: String, offset: u32, category: Option<String>) -> ChatPluginPage {
+        let _ = chatId;
+        let manager = self.pluginPageManager();
+        let plugins = manager.getToolPkgContainerRuntimes().into_iter()
+            .filter(|plugin| manager.isPackageEnabled(&plugin.packageName) && plugin.packageName.len() <= 108)
+            .filter(|plugin| match category.as_deref() {
+                Some("exclusive") => pluginExclusive(&plugin.manifestExtensions),
+                Some("general") => !pluginExclusive(&plugin.manifestExtensions),
+                None => true, // Backwards-compatible existing Core readers.
+                _ => false,
+            })
+            .collect::<Vec<_>>();
+        ChatPluginPage {
+            total: plugins.len().min(u32::MAX as usize) as u32,
+            items: plugins.into_iter().skip(offset as usize).take(6).map(|plugin| ChatPluginItem {
+                available: plugin.dependencyIssues.is_empty() &&
+                    manager.getRegisteredToolPkgMainScript(&plugin.packageName).is_some(),
+                id: plugin.packageName,
+                name: pluginDisplayText(&plugin.displayName.resolve(false), 42),
+            }).collect(),
+        }
+    }
+
+    /// Bounded metadata only, under the same chat read Binding as the list.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub fn chatPluginDetails(&self, chatId: String, packageName: String, toolOffset: u32) -> ChatPluginDetails {
+        let _ = chatId;
+        let manager = self.pluginPageManager();
+        let Some(plugin) = manager.getToolPkgContainerRuntimes().into_iter()
+            .find(|p| p.packageName == packageName && p.packageName.len() <= 108 && manager.isPackageEnabled(&p.packageName)) else {
+            return ChatPluginDetails { error: "插件已关闭或不可用".into(), ..Default::default() };
+        };
+        let mut tools = Vec::new();
+        for sub in &plugin.subpackages {
+            if !manager.isPackageEnabled(&sub.packageName) { continue; }
+            if let Some(package) = manager.getEffectivePackageTools(&sub.packageName) {
+                tools.extend(package.tools.into_iter().map(|tool| pluginDisplayText(&tool.name, 64)));
+            }
+        }
+        tools.sort(); tools.dedup();
+        let total = tools.len().min(u32::MAX as usize) as u32;
+        let offset = toolOffset.min(total.saturating_sub(1) / 3 * 3);
+        ChatPluginDetails {
+            id: plugin.packageName,
+            description: pluginDisplayText(&plugin.description.resolve(false), 192),
+            tools: tools.into_iter().skip(offset as usize).take(3).collect(),
+            toolOffset: offset, toolTotal: total, error: String::new(),
+        }
+    }
+
+    /// Runs only the plugin-owned diagnostic export in its existing main runtime.
+    /// This is execution, not a read-only module-existence check or generic invoke API.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.write")]
+    pub async fn chatPluginStatus(&self, chatId: String, packageName: String, testKind: Option<String>) -> ChatPluginTestResult {
+        // Expected diagnostic failures are bounded data, not a service exception
+        // which could attach a large JS stack/source to a constrained Link frame.
+        let result = self.runChatPluginTest(chatId, packageName, testKind).await;
+        ChatPluginTestResult {
+            success: result.is_ok(),
+            message: result.err().unwrap_or_default().chars().take(80).collect(),
+        }
+    }
+
+    async fn runChatPluginTest(&self, chatId: String, packageName: String, testKind: Option<String>) -> Result<(), String> {
+        let function = match testKind.as_deref().unwrap_or("connection") {
+            "connection" => "test_connection",
+            "tool" => "test_tool_call",
+            _ => return Err("不支持的插件测试类型".into()),
+        };
+        let manager = self.pluginPageManager();
+        let plugin = manager.getToolPkgContainerRuntimes().into_iter()
+            .find(|plugin| plugin.packageName == packageName)
+            .ok_or_else(|| "插件未在 Core 注册".to_string())?;
+        if !manager.isPackageEnabled(&packageName) { return Err("插件已关闭".into()); }
+        if !plugin.dependencyIssues.is_empty() { return Err("插件依赖不可用".into()); }
+        if manager.getRegisteredToolPkgMainScript(&packageName).is_none() {
+            return Err("插件主模块不可用".into());
+        }
+        // Fixed export names and no user-supplied tool name/arguments. Existing
+        // ToolPkg hook runtime and nested tool permission checks remain in force.
+        let raw = manager.runToolPkgMainHookWithTimeoutMillis(
+            &packageName, function,
+            operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_CORE_COMMAND,
+            Some("core_command"), None, None,
+            serde_json::json!({"chatId":chatId,"diagnostic":true}),
+            None, None, None, 6000,
+        ).await.map_err(|_| "插件测试函数不可用、执行失败或超时".to_string())?
+            .ok_or_else(|| "插件未提供测试结果".to_string())?;
+        let value: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|_| "插件测试结果格式错误".to_string())?;
+        // Do not use the JS engine's reserved `success` result-envelope field
+        // for a negative diagnostic: it promotes false to an execution exception.
+        if value["passed"] != true {
+            return Err(value["message"].as_str().unwrap_or("插件测试未通过").chars().take(80).collect());
+        }
+        Ok(())
+    }
+
     fn inputMenuBridge(&self) -> ToolPkgInputMenuToggleBridge {
         let handler = self.runtimeToolHandler();
         ToolPkgInputMenuToggleBridge::new(ToolPkgBridgeRuntime::new(
@@ -3293,5 +3436,24 @@ mod image_access_tests {
         assert!(authorizeChatImage(&[], "image-1").is_err());
         assert!(authorizeChatImage(&messages, "image-2").is_err());
         assert!(authorizeChatImage(&messages, "").is_err());
+    }
+}
+
+#[cfg(test)]
+mod edge_plugin_metadata_tests {
+    use super::*;
+    #[test]
+    fn explicit_manifest_classification_and_utf8_projection() {
+        let mut extensions = std::collections::BTreeMap::new();
+        assert!(!pluginExclusive(&extensions));
+        extensions.insert("esp32".into(), serde_json::json!({"exclusive":true}));
+        assert!(pluginExclusive(&extensions));
+        extensions.insert("esp32".into(), serde_json::json!({"exclusive":"true"}));
+        assert!(!pluginExclusive(&extensions));
+        assert_eq!(pluginDisplayText("中".repeat(100).as_str(), 191).len(), 189);
+        assert_eq!(pluginDisplayText("a\u{1e}b\n", 42), "ab");
+        let details = ChatPluginDetails { id:"a".repeat(108),description:"中".repeat(64),
+            tools:vec!["a".repeat(64);3],toolTotal:999, ..Default::default() };
+        assert!(serde_json::to_vec(&details).unwrap().len() < 768);
     }
 }

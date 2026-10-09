@@ -28,50 +28,32 @@ fn bounded(source: &str, limit: usize) -> String {
     result
 }
 
+// Private display tokens, not plugin invocations. They share the bounded text
+// cursor/stream with prose so ordering and paging need no second business cache.
+// RS <state> | <tool name> US; never parameters, call payloads or result bodies.
+fn toolDisplay(name: &str, status: &str) -> String {
+    let state = match status {
+        "success" | "succeeded" | "ok" => 'S',
+        "error" | "failed" | "failure" | "cancelled" | "canceled" => 'F',
+        "running" | "pending" => 'R',
+        _ => 'U',
+    };
+    let mut displayName = String::new();
+    for c in name.chars().filter(|c| !c.is_control() && *c != '<' && *c != '>') {
+        if displayName.len() + c.len_utf8() > EDGE_ID_LIMIT { break; }
+        displayName.push(c);
+    }
+    format!("\x1e{state}|{displayName}\x1f")
+}
+
+fn visitProse(source: &str, mut emit: impl FnMut(&str)) {
+    // Only this projection may create card delimiters. Model/user text cannot.
+    for text in source.split(['\x1e', '\x1f']) { emit(text); }
+}
+
 pub fn visibleEdgeText(source: &str) -> String {
     let mut result = String::new();
-    let mut rest = source;
-    while !rest.is_empty() && result.len() < EDGE_TEXT_LIMIT {
-        let Some(open) = rest.find('<') else {
-            appendBounded(&mut result, rest, EDGE_TEXT_LIMIT);
-            break;
-        };
-        appendBounded(&mut result, &rest[..open], EDGE_TEXT_LIMIT);
-        rest = &rest[open..];
-        let Some(close) = rest.find('>') else { break; };
-        let tag = &rest[1..close];
-        let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("");
-        if name == "link" && (tag.contains("type=\"image\"") || tag.contains("type='image'")) {
-            let after_tag = &rest[close + 1..];
-            let Some(end) = after_tag.find("</link>") else { break; };
-            appendBounded(&mut result, &rest[..=close], EDGE_TEXT_LIMIT);
-            appendBounded(&mut result, "</link>", EDGE_TEXT_LIMIT);
-            rest = &after_tag[end + "</link>".len()..];
-            continue;
-        }
-        if name == "tool" && !tag.starts_with('/') {
-            let tool = tag.split_once("name=\"").and_then(|(_, tail)| tail.split_once('"').map(|(name, _)| name))
-                .or_else(|| tag.split_once("name='").and_then(|(_, tail)| tail.split_once('\'').map(|(name, _)| name)));
-            if let Some(tool) = tool.filter(|value| !value.is_empty()) {
-                if !result.is_empty() { result.push('\n'); }
-                appendBounded(&mut result, "调用工具：", EDGE_TEXT_LIMIT);
-                let end = tool.len().min(96);
-                let end = (0..=end).rev().find(|index| tool.is_char_boundary(*index)).unwrap_or(0);
-                appendBounded(&mut result, &tool[..end], EDGE_TEXT_LIMIT);
-            }
-        }
-        rest = &rest[close + 1..];
-        if !tag.starts_with('/') && !name.is_empty() {
-            let closing = format!("</{name}>");
-            if let Some(end) = rest.find(&closing) { rest = &rest[end + closing.len()..]; }
-            else if !tag.trim_end().ends_with('/') { break; }
-        }
-    }
-    if result.len() > EDGE_TEXT_LIMIT {
-        let end = (0..=EDGE_TEXT_LIMIT.min(result.len())).rev()
-            .find(|index| result.is_char_boundary(*index)).unwrap_or(0);
-        result.truncate(end);
-    }
+    visitVisibleText(source, |text| appendBounded(&mut result, text, EDGE_TEXT_LIMIT));
     result
 }
 
@@ -80,8 +62,8 @@ pub fn visibleEdgeText(source: &str) -> String {
 fn visitVisibleText(source: &str, mut emit: impl FnMut(&str)) {
     let mut rest = source;
     while !rest.is_empty() {
-        let Some(open) = rest.find('<') else { emit(rest); break; };
-        emit(&rest[..open]); rest = &rest[open..];
+        let Some(open) = rest.find('<') else { visitProse(rest, &mut emit); break; };
+        visitProse(&rest[..open], &mut emit); rest = &rest[open..];
         let Some(close) = rest.find('>') else { break; };
         let tag = &rest[1..close];
         let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("");
@@ -91,8 +73,9 @@ fn visitVisibleText(source: &str, mut emit: impl FnMut(&str)) {
             emit(&rest[..=close]); emit("</link>"); rest = &after[end + 7..]; continue;
         }
         if name == "tool" && !tag.starts_with('/') {
-            if let Some(tool) = tag.split_once("name=\"").and_then(|(_, t)| t.split_once('"').map(|(n, _)| n)) {
-                emit("\n调用工具："); emit(&bounded(tool, EDGE_ID_LIMIT)); emit("\n");
+            if let Some(tool) = tag.split_once("name=\"").and_then(|(_, t)| t.split_once('"').map(|(n, _)| n))
+                .or_else(|| tag.split_once("name='").and_then(|(_, t)| t.split_once('\'').map(|(n, _)| n))) {
+                emit("\n"); emit(&toolDisplay(tool, "running")); emit("\n");
             }
         }
         rest = &rest[close + 1..];
@@ -105,7 +88,8 @@ fn visitVisibleText(source: &str, mut emit: impl FnMut(&str)) {
 }
 fn visitMessageText(message: &ChatMessage, mut emit: impl FnMut(&str)) {
     let mut first = true;
-    for part in MessagePartCodec::orderedParts(&message.parts) {
+    let parts = MessagePartCodec::orderedParts(&message.parts);
+    for (index, part) in parts.iter().enumerate() {
         match part.kind {
             MessagePartKind::Markdown | MessagePartKind::Status => {
                 if !first { emit("\n"); } first = false;
@@ -113,7 +97,16 @@ fn visitMessageText(message: &ChatMessage, mut emit: impl FnMut(&str)) {
             }
             MessagePartKind::ToolCall => {
                 if !first { emit("\n"); } first = false;
-                emit("调用工具："); emit(&bounded(part.toolName.as_deref().unwrap_or("未知工具"), EDGE_ID_LIMIT));
+                let following = &parts[index + 1..];
+                let result = part.toolCallId.as_ref().and_then(|id| following.iter().find(|next|
+                    next.kind == MessagePartKind::ToolResult && next.toolCallId.as_ref() == Some(id)))
+                    .or_else(|| following.iter()
+                        .take_while(|next| !(next.kind == MessagePartKind::ToolCall && next.toolName == part.toolName))
+                        .find(|next| next.kind == MessagePartKind::ToolResult && next.toolName == part.toolName &&
+                            (part.toolCallId.is_none() || next.toolCallId.is_none())));
+                let status = result.and_then(|p| p.attributes.get("status")).map(String::as_str)
+                    .unwrap_or(if message.contentStream.is_some() { "running" } else { "unknown" });
+                emit(&toolDisplay(part.toolName.as_deref().unwrap_or("未知工具"), status));
             }
             _ => {}
         }
@@ -151,6 +144,10 @@ pub fn chatMessageWindow(messages: Vec<ChatMessage>, beforeTimestamp: Option<i64
             let mut hi = end.saturating_sub(at).min(s.len());
             while lo < s.len() && !s.is_char_boundary(lo) { lo += 1; }
             while hi > 0 && !s.is_char_boundary(hi) { hi -= 1; }
+            if s.starts_with('\x1e') && (lo > 0 || hi < s.len()) {
+                if hi == s.len() { actualStart = actualStart.min(at + s.len()); }
+                at += s.len(); return;
+            }
             if lo < hi { actualStart = actualStart.min(at + lo); text.push_str(&s[lo..hi]); }
             at += s.len();
         });
@@ -181,6 +178,41 @@ pub fn compactEdgeHistories(histories: Vec<ChatHistoryListItem>) -> Vec<ChatHist
     }).collect()
 }
 
+fn projectStreamFields(fields: &BTreeMap<String, CoreValue>, tools: &mut std::collections::BTreeSet<String>) -> Option<BTreeMap<String, CoreValue>> {
+    if fields.get("parentBlockId").is_some_and(|v| *v != CoreValue::Null) { return None; }
+    let kind = match fields.get("type") { Some(CoreValue::String(v)) => v.as_str(), _ => return None };
+    let mut output = BTreeMap::new();
+    let text = if let Some(CoreValue::Map(xml)) = fields.get("xml") {
+        let tag = match xml.get("tagName") { Some(CoreValue::String(name)) => name.as_str(), _ => return None };
+        if !matches!(tag, "tool" | "tool_result") { return None; }
+        let Some(CoreValue::Map(attrs)) = xml.get("attributes") else { return None; };
+        let Some(CoreValue::String(name)) = attrs.get("name") else { return None; };
+        let status = if tag == "tool" { "running" } else {
+            match attrs.get("status") { Some(CoreValue::String(status)) => status.as_str(), _ => "unknown" }
+        };
+        let token = toolDisplay(name, status);
+        let block = fields.get("blockId").cloned().unwrap_or(CoreValue::Null);
+        let key = format!("{block:?}:{token}");
+        if tools.contains(&key) || tools.len() >= EDGE_PART_LIMIT * 2 { return None; }
+        tools.insert(key);
+        output.insert("type".into(), CoreValue::String(if tag == "tool" { "chunk" } else { "toolStatus" }.into()));
+        if tag == "tool" { format!("\n{token}\n") } else { token }
+    } else {
+        if !matches!(kind, "chunk" | "reset" | "savepoint" | "rollback") { return None; }
+        output.insert("type".into(), CoreValue::String(kind.into()));
+        if matches!(kind, "reset" | "rollback") { tools.clear(); }
+        if let Some(CoreValue::String(id)) = fields.get("id") {
+            output.insert("id".into(), CoreValue::String(bounded(id, EDGE_ID_LIMIT)));
+        }
+        match fields.get("value") {
+            Some(CoreValue::String(value)) => visibleEdgeText(value),
+            _ => String::new(),
+        }
+    };
+    output.insert("value".into(), CoreValue::String(text));
+    Some(output)
+}
+
 /// Wraps the local source; raw XML bodies never enter the Edge stream.
 fn compactStream(stream: CoreStream<MarkdownStreamEvent>) -> Option<CoreStream<MarkdownStreamEvent>> {
     let source = stream.localSource()?;
@@ -190,7 +222,6 @@ fn compactStream(stream: CoreStream<MarkdownStreamEvent>) -> Option<CoreStream<M
         let (sender, receiver) = CoreEventStream::channel();
         defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask("edge-chat-stream", Box::new(move || {
             Box::pin(async move {
-                let remaining = EDGE_TEXT_LIMIT;
                 let mut tools = std::collections::BTreeSet::new();
                 loop {
                     let mut event = tokio::select! {
@@ -206,32 +237,7 @@ fn compactStream(stream: CoreStream<MarkdownStreamEvent>) -> Option<CoreStream<M
                         break;
                     }
                     let CoreValue::Map(fields) = &event.value else { continue; };
-                    if fields.get("parentBlockId").is_some_and(|v| *v != CoreValue::Null) { continue; }
-                    let kind = match fields.get("type") { Some(CoreValue::String(v)) => v.as_str(), _ => continue };
-                    let mut output = BTreeMap::new();
-                    let text = if let Some(CoreValue::Map(xml)) = fields.get("xml") {
-                        let tool = matches!(xml.get("tagName"), Some(CoreValue::String(name)) if name == "tool");
-                        let block = fields.get("blockId").cloned().unwrap_or(CoreValue::Null);
-                        let key = format!("{block:?}");
-                        if !tool || tools.contains(&key) || tools.len() >= EDGE_PART_LIMIT { continue; }
-                        tools.insert(key);
-                        let Some(CoreValue::Map(attrs)) = xml.get("attributes") else { continue; };
-                        let Some(CoreValue::String(name)) = attrs.get("name") else { continue; };
-                        output.insert("type".into(), CoreValue::String("chunk".into()));
-                        bounded(&format!("\n调用工具：{}\n", bounded(name, EDGE_ID_LIMIT)), remaining)
-                    } else {
-                        if !matches!(kind, "chunk" | "reset" | "savepoint" | "rollback") { continue; }
-                        output.insert("type".into(), CoreValue::String(kind.into()));
-                        if kind == "reset" { tools.clear(); }
-                        if let Some(CoreValue::String(id)) = fields.get("id") {
-                            output.insert("id".into(), CoreValue::String(bounded(id, EDGE_ID_LIMIT)));
-                        }
-                        match fields.get("value") {
-                            Some(CoreValue::String(value)) => bounded(&visibleEdgeText(value), remaining),
-                            _ => String::new(),
-                        }
-                    };
-                    output.insert("value".into(), CoreValue::String(text));
+                    let Some(output) = projectStreamFields(fields, &mut tools) else { continue; };
                     event.value = CoreValue::Map(output);
                     if sender.send(event).is_err() { break; }
                 }
@@ -305,5 +311,72 @@ mod window_tests {
             timestamp=page["older"]["timestamp"].as_i64();offset=page["older"]["offset"].as_u64().map(|v|v as u32);
         }
         assert_eq!(seen.len(),30);
+    }
+}
+
+#[cfg(test)]
+mod tool_display_tests {
+    use super::*;
+    fn call(id: &str, sequence: i32) -> MessagePart {
+        MessagePart::toolCall(id.into(), sequence, id.into(), "daily_life:get_current_date".into(),
+            BTreeMap::from([("secret".into(), "PRIVATE-ARGUMENT".into())]))
+    }
+    fn result(id: &str, sequence: i32, status: &str) -> MessagePart {
+        MessagePart::toolResult(format!("result-{id}"), sequence, Some(id.into()),
+            "daily_life:get_current_date".into(), status.into(), "PRIVATE-RESULT-BODY".into())
+    }
+    #[test]
+    fn tool_cards_pair_by_call_id_without_exposing_parameters_or_result_bodies() {
+        let mut message = ChatMessage::new_with_markdown_timestamp("assistant".into(), "".into(), 1);
+        message.parts = vec![call("a", 0), call("b", 1), result("b", 2, "error"), result("a", 3, "success")];
+        let page = chatMessageWindow(vec![message], None, None, 640, 15);
+        assert_eq!(page.messages[0].text, "\x1eS|daily_life:get_current_date\x1f\n\x1eF|daily_life:get_current_date\x1f");
+        let wire = serde_json::to_string(&page).unwrap();
+        assert!(!wire.contains("PRIVATE")); assert!(!wire.contains("toolCallId"));
+    }
+    #[test]
+    fn display_tokens_are_atomic_under_utf8_paging_and_do_not_leak_markup_bodies() {
+        let original = format!("前{}\n<tool name='插件:{}'><param>PRIVATE-ARGUMENT</param></tool>\n后{}",
+            "文".repeat(90), "名".repeat(60), "文".repeat(90));
+        let message = ChatMessage::new_with_markdown_timestamp("assistant".into(), original, 10);
+        let (mut timestamp, mut offset) = (None, None); let mut pages = Vec::new();
+        loop {
+            let page = chatMessageWindow(vec![message.clone()], timestamp, offset, 128, 6);
+            let text = page.messages[0].text.clone();
+            assert!(text.len() <= 128);
+            assert_eq!(text.matches('\x1e').count(), text.matches('\x1f').count());
+            assert!(!text.contains("PRIVATE"));
+            pages.push(text);
+            let Some(cursor) = page.older else { break; };
+            timestamp = Some(cursor.timestamp); offset = Some(cursor.offset);
+            assert!(pages.len() < 30);
+        }
+        pages.reverse(); let text = pages.concat();
+        assert_eq!(text.matches('\x1e').count(), 1);
+        assert!(text.contains("\x1eR|插件:"));
+        assert!(!visibleEdgeText("user\x1eS|fake\x1f").contains('\x1e'));
+    }
+    #[test]
+    fn live_xml_projection_only_sends_names_and_normalized_states() {
+        let mut tools = std::collections::BTreeSet::new();
+        let event = |tag: &str, status: &str, block: u32| {
+            let CoreValue::Map(fields) = operit_link::toCoreValue(serde_json::json!({
+                "type":"markdownBlockChunk", "blockId":block,
+                "value":"PRIVATE-RAW-XML", "xml": {"tagName":tag,
+                    "bodyChunk":"PRIVATE-RESULT", "children":[{"bodyChunk":"PRIVATE-ARGUMENT"}],
+                    "attributes":{"name":"daily_life:get_current_date","status":status,"secret":"PRIVATE"}}
+            })).unwrap() else { panic!() }; fields
+        };
+        let pending = event("tool", "", 1);
+        let call = projectStreamFields(&pending, &mut tools).unwrap();
+        assert_eq!(call["value"], CoreValue::String("\n\x1eR|daily_life:get_current_date\x1f\n".into()));
+        assert!(projectStreamFields(&pending, &mut tools).is_none());
+        let result = projectStreamFields(&event("tool_result", "success", 2), &mut tools).unwrap();
+        assert_eq!(result["type"], CoreValue::String("toolStatus".into()));
+        assert_eq!(result["value"], CoreValue::String("\x1eS|daily_life:get_current_date\x1f".into()));
+        assert!(!format!("{call:?}{result:?}").contains("PRIVATE"));
+        let CoreValue::Map(rollback) = operit_link::toCoreValue(serde_json::json!({"type":"rollback","id":"a"})).unwrap() else { panic!() };
+        projectStreamFields(&rollback, &mut tools).unwrap();
+        assert!(projectStreamFields(&pending, &mut tools).is_some());
     }
 }

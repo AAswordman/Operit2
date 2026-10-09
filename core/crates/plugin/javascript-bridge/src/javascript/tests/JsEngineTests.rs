@@ -100,6 +100,7 @@ pub(super) fn newTestJsEngineState(
 #[derive(Default)]
 struct TestPluginConfigExecutionHost {
     gatedToolCalls: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<JsToolCallResult>>>>,
+    edgePortCalls: Arc<Mutex<Vec<Value>>>,
     gatedToolStarted: Arc<tokio::sync::Notify>,
     toolPkgTextResourceReads: AtomicUsize,
     registrationConfigReads: AtomicUsize,
@@ -146,7 +147,18 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
     ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsToolCallResult> {
         let gatedToolCalls = self.gatedToolCalls.clone();
         let gatedToolStarted = self.gatedToolStarted.clone();
+        let edgePortCalls = self.edgePortCalls.clone();
         Box::pin(async move {
+            if matches!(request.tool_name.as_str(),"edge_execute"|"io_execute") {
+                edgePortCalls.lock().unwrap().push(serde_json::json!({"tool":request.tool_name,"params":request.parameters}));
+                let node = request.parameters["node_id"].as_str().unwrap_or("");
+                return if node == "unauthorized" {
+                    JsToolCallResult {success:false,data:JsToolCallResultData::Value(Value::Null),error:Some("Edge node access denied".into())}
+                } else {
+                    JsToolCallResult {success:true,data:JsToolCallResultData::Value(serde_json::json!({"nodeId":node,"data":{"ok":true}})),error:None}
+                };
+            }
+
             if request.tool_name == "echo" {
                 return JsToolCallResult {
                     success: true,
@@ -3124,6 +3136,32 @@ async fn promise_jobs_restore_execution_host_for_native_calls() {
         Some("workflow")
     );
     engine.destroy();
+}
+
+/// Exercises real QuickJS bootstrap and generated positional-to-tool bindings.
+#[tokio::test(flavor = "current_thread")]
+async fn edge_io_sdk_aliases_forward_node_interface_args_and_reject_failures() {
+    let host=Arc::new(TestPluginConfigExecutionHost::default());
+    let engine=newTestJsEngine(host.clone());
+    let output=engine.execute_script_function(r#"
+        exports.ports = async function() {
+            if (tools !== Tools) throw Error('different Tools object');
+            const edge=await tools.edge.execute('edge-one',{pluginId:'device.status',action:'read'},{text:'ping'});
+            const io=await Tools.io.execute('edge-two',{port:'gpio',operation:'read'},{pin:2});
+            let failure='';
+            try { await tools.edge.execute('unauthorized',{pluginId:'device.status',action:'read'}); }
+            catch(error) { failure=String(error.message || error); }
+            return {edge:edge.nodeId,io:io.nodeId,failure};
+        };
+    "#,"ports",&testParams(),&BTreeMap::new(),None,true,2000,None).await.unwrap().unwrap();
+    let result:Value=serde_json::from_str(&output).unwrap();
+    assert_eq!(result,serde_json::json!({"edge":"edge-one","io":"edge-two","failure":"Edge node access denied"}));
+    let calls=host.edgePortCalls.lock().unwrap();
+    assert_eq!(calls.len(),3);
+    assert_eq!(calls[0],serde_json::json!({"tool":"edge_execute","params":{"node_id":"edge-one","interface_info":{"pluginId":"device.status","action":"read"},"args":{"text":"ping"}}}));
+    assert_eq!(calls[1],serde_json::json!({"tool":"io_execute","params":{"node_id":"edge-two","interface_info":{"port":"gpio","operation":"read"},"args":{"pin":2}}}));
+    assert!(calls[2]["params"].get("args").is_none()||calls[2]["params"]["args"].is_null());
+    drop(calls);engine.destroy();
 }
 
 /// Both protocols retain the public tool result and JSON-compatible parameter

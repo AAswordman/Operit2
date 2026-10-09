@@ -95,7 +95,10 @@ impl Cipher {
     }
 }
 /// 两方向独立密钥、单调 nonce。收到明文、乱序、重放或错误 tag 一律断开。
+static CHANNEL_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
 pub(super) struct Channel {
+    pub generation: u32,
     pub raw: Arc<dyn PeerConnection>,
     send: Mutex<Cipher>, receive: Mutex<Cipher>,
     pub transaction: Mutex<()>,
@@ -106,7 +109,7 @@ impl Channel {
     pub fn new(raw: Arc<dyn PeerConnection>, key: &[u8], context: &[u8], client: bool) -> Result<Arc<Self>, CoreLinkError> {
         let c2s = derive(key, context, b"operit-link-client-to-server-v1")?;
         let s2c = derive(key, context, b"operit-link-server-to-client-v1")?;
-        Ok(Arc::new(Self { raw, send: Mutex::new(Cipher::new(if client { c2s } else { s2c }, context)?),
+        Ok(Arc::new(Self { generation: CHANNEL_GENERATION.fetch_add(1, Ordering::Relaxed), raw, send: Mutex::new(Cipher::new(if client { c2s } else { s2c }, context)?),
             receive: Mutex::new(Cipher::new(if client { s2c } else { c2s }, context)?), transaction: Mutex::new(()), duplex: std::sync::Mutex::new(None), returnScope: std::sync::Mutex::new(None) }))
     }
     pub async fn send(&self, message: PeerMessage) -> Result<(), CoreLinkError> {

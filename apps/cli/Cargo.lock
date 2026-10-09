@@ -2383,10 +2383,14 @@ dependencies = [
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
+ "operit-plugin-sdk",
  "operit-plugin-sdk-ipc",
  "operit-plugin-sdk-ipc-bridge",
  "operit-proxy-local",
  "operit-runtime",
+ "operit-tools",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

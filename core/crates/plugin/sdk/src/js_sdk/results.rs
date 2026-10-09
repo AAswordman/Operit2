@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "__type")]
 pub enum ToolResultData {
+    EdgePortResultData(EdgePortResultData),
     BooleanResultData(BooleanResultData),
     StringResultData(StringResultData),
     SleepResultData(SleepResultData),
@@ -81,6 +82,7 @@ impl ToolResultData {
     #[allow(non_snake_case)]
     pub fn toString(&self) -> String {
         match self {
+            Self::EdgePortResultData(data) => serde_json::to_string(data).expect("Edge port result serialization failed"),
             Self::BooleanResultData(data) => data.value.to_string(),
             Self::StringResultData(data) => data.value.clone(),
             Self::SleepResultData(data) => data.toString(),
@@ -2735,4 +2737,13 @@ fn formatTimestamp(timestamp: i64) -> String {
         .expect("valid timestamp millis")
         .format("%Y-%m-%d %H:%M:%S")
         .to_string()
+}
+
+/// Bounded hardware reply. Transport/authentication failures reject the plugin promise.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EdgePortResultData {
+    /// Exact node selected by the caller; never a guessed default or local fallback.
+    pub nodeId: String,
+    /// Native Edge action/port result; no JavaScript source or local serial handle.
+    pub data: crate::js_sdk::JsAny,
 }

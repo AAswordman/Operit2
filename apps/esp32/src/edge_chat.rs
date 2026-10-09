@@ -160,6 +160,9 @@ struct ChatSession {
     histories: Mutex<UiValue>,
     tasks: Mutex<Vec<NodeUiTask>>,
     chatId: String,
+    ready: AtomicBool,
+    retired: AtomicBool,
+    needsReconnect: AtomicBool,
     messages: Mutex<UiValue>,
     window: tokio::sync::watch::Sender<Option<PageCursor>>,
     older: Mutex<Option<PageCursor>>,
@@ -172,6 +175,76 @@ struct ChatSession {
     subscriptionsClosed: AtomicBool,
     streams: Mutex<BTreeMap<String, StreamText>>,
     streamTasks: Mutex<BTreeMap<String, NodeUiTask>>,
+    plugins: Mutex<PluginUiState>,
+}
+
+impl ChatSession {
+    fn addTask(&self, task: NodeUiTask) {
+        let mut tasks = self.tasks.lock().unwrap();
+        if self.retired.load(Ordering::Acquire) { task.abort(); }
+        else { tasks.push(task); }
+    }
+}
+
+/// Reconnects the volatile UI even when entry replacement happens between polls.
+/// Retains only the selected ID in the same Space, never a transcript replica.
+#[derive(Default)]
+pub struct SpaceChatRoute {
+    identity: Option<operit_node_runtime::NodeServices::SpaceClientIdentity>,
+    chatId: String,
+    provision: bool,
+    installed: bool,
+    lastAttempt: Option<std::time::Instant>,
+}
+impl SpaceChatRoute {
+    pub fn reset(&mut self) { clear(); *self = Self::default(); }
+    pub fn poll(&mut self, services: NodeServices) {
+        let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone();
+        if self.installed {
+            if let Some(session) = &session {
+                self.chatId = session.chatId.clone();
+                self.provision = !session.ready.load(Ordering::Acquire);
+            }
+        }
+        let Some(connection) = services.peers().spaceConnection() else {
+            if self.installed { clear(); self.installed = false; }
+            return;
+        };
+        let changed = self.identity.as_ref() != Some(&connection.identity);
+        if changed { self.provision = true; }
+        if self.identity.as_ref().is_none_or(|old| old.spaceId != connection.identity.spaceId) {
+            self.chatId = uuid::Uuid::new_v4().to_string();
+            self.provision = true;
+        }
+        let ended = session.as_ref().is_some_and(|s| s.needsReconnect.load(Ordering::Acquire)
+            || s.subscriptionsClosed.load(Ordering::Acquire));
+        let retryDue = self.lastAttempt.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(3));
+        if changed || !self.installed || (ended && retryDue) || session.is_none() {
+            installSession(connection.client, services, self.chatId.clone(), self.provision);
+            self.identity = Some(connection.identity);
+            self.installed = true;
+            self.lastAttempt = Some(std::time::Instant::now());
+        }
+    }
+}
+
+fn currentSession(session: &Arc<ChatSession>) -> bool {
+    SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, session))
+}
+
+// Normal termination of a primary watch requires fresh snapshots/subscriptions.
+// Intentional cancellation of an obsolete session must not restart it.
+struct SubscriptionLifetime {
+    session: Arc<ChatSession>,
+    cancelled: tokio::sync::watch::Receiver<bool>,
+}
+impl Drop for SubscriptionLifetime {
+    fn drop(&mut self) {
+        if !*self.cancelled.borrow() {
+            self.session.needsReconnect.store(true, Ordering::Release);
+        }
+    }
 }
 
 fn isMissingSpaceRoute(error: &operit_link::CoreLinkError) -> bool {
@@ -235,6 +308,17 @@ impl StreamText {
                 event.get("value").and_then(|v| v.as_str()).unwrap_or(""),
                 MAX_CHAT_STRING_BYTES,
             ),
+            Some("toolStatus") => {
+                // A read-only Core display event replaces the most recent pending
+                // call with this name. No result body or call arguments are retained.
+                let token = event.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(name) = toolTokenName(token) {
+                    let running = format!("\x1eR|{name}\x1f");
+                    if let Some(at) = self.text.rfind(&running) {
+                        self.text.replace_range(at..at + running.len(), token);
+                    }
+                }
+            }
             Some("savepoint") => {
                 if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
                     if self.savepoints.len() >= 4 {
@@ -368,7 +452,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
             );
             args.insert(
                 operit_link::CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT.into(),
-                windowArgs(&session.chatId, None),
+                windowArgs(&session.chatId, *session.window.borrow()),
             );
             let result = openUiSubscription(&cancelled, session
                 .client
@@ -382,8 +466,10 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
             match result {
                 Ok(None) => return,
                 Ok(Some(mut stream)) => {
+                    let mut completed = false;
                     while let Some(event) = nextUiEvent(&mut stream, &mut cancelled).await {
                         if event.kind == CoreEventKind::Completed {
+                            completed = true;
                             break;
                         }
                         if let Some(text) = session
@@ -396,8 +482,12 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
                             UI_REVISION.fetch_add(1, Ordering::Relaxed);
                         }
                     }
+                    if !completed && !*cancelled.borrow() {
+                        session.needsReconnect.store(true, Ordering::Release);
+                    }
                 }
                 Err(error) => {
+                    session.needsReconnect.store(true, Ordering::Release);
                     *session.error.lock().unwrap() = Some(error.to_string());
                     UI_REVISION.fetch_add(1, Ordering::Relaxed);
                 }
@@ -411,7 +501,9 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
                 text.completed = true;
             }
         });
-        owner.streamTasks.lock().unwrap().insert(streamId, task);
+        let mut tasks = owner.streamTasks.lock().unwrap();
+        if owner.retired.load(Ordering::Acquire) { task.abort(); }
+        else { tasks.insert(streamId, task); }
     }
 }
 
@@ -468,6 +560,35 @@ fn appendBounded(target: &mut String, value: &str, limit: usize) {
     target.push_str(&value[..end]);
 }
 
+// Presentation delimiters are generated by the chat-owned Core projection.
+// An incomplete token at a bounded page/stream edge must never become prose.
+fn toolTokenName(token: &str) -> Option<&str> {
+    let bytes = token.as_bytes();
+    if bytes.len() < 5 || bytes[0] != 0x1e || bytes[2] != b'|' ||
+        !matches!(bytes[1], b'R' | b'S' | b'F' | b'U') || !token.ends_with('\x1f') {
+        return None;
+    }
+    let name = &token[3..token.len() - 1];
+    (name.len() <= 96 && !name.chars().any(char::is_control)).then_some(name)
+}
+fn completeDisplayTokens(text: &str) -> String {
+    let mut rest = text;
+    if let Some(end) = rest.find('\x1f') {
+        if rest.find('\x1e').is_none_or(|start| start > end) { rest = &rest[end + 1..]; }
+    }
+    let mut output = String::new();
+    while let Some(at) = rest.find('\x1e') {
+        output.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let Some(end) = rest.find('\x1f') else { return output; };
+        let token = &rest[..end + 1];
+        if toolTokenName(token).is_some() { output.push_str(token); }
+        rest = &rest[end + 1..];
+    }
+    output.push_str(rest);
+    output
+}
+
 fn visibleEdgeText(source: &str) -> String {
     let mut result = String::new();
     let mut rest = source;
@@ -509,8 +630,11 @@ fn visibleEdgeText(source: &str) -> String {
                 if !result.is_empty() {
                     appendBounded(&mut result, "\n", MAX_CHAT_STRING_BYTES);
                 }
-                appendBounded(&mut result, "调用工具：", MAX_CHAT_STRING_BYTES);
-                appendBounded(&mut result, tool, MAX_CHAT_STRING_BYTES);
+                let name: String = tool.chars().filter(|c| !c.is_control() && *c != '<' && *c != '>').take(96).collect();
+                let name = boundedText(&name);
+                let mut end = name.len().min(96);
+                while !name.is_char_boundary(end) { end -= 1; }
+                appendBounded(&mut result, &format!("\x1eR|{}\x1f\n", &name[..end]), MAX_CHAT_STRING_BYTES);
             }
         }
         rest = &rest[close + 1..];
@@ -580,12 +704,24 @@ pub fn install(
     services: NodeServices,
     chatId: String,
 ) {
+    let provision = chatId.trim().is_empty();
+    let chatId = if provision { uuid::Uuid::new_v4().to_string() } else { chatId };
+    installSession(client, services, chatId, provision);
+}
+
+fn installSession(
+    client: Arc<dyn CoreLinkSharedClient + Send + Sync>, services: NodeServices,
+    chatId: String, provision: bool,
+) {
     clear();
-    let (window, mut pageChanges) = tokio::sync::watch::channel(None);
+    let (window, _) = tokio::sync::watch::channel(None);
     let session = Arc::new(ChatSession {
         client,
         services,
         chatId,
+        ready: AtomicBool::new(!provision),
+        retired: AtomicBool::new(false),
+        needsReconnect: AtomicBool::new(false),
         histories: Mutex::new(UiValue::default()),
         tasks: Mutex::new(Vec::new()),
         messages: Mutex::new(UiValue::default()),
@@ -598,14 +734,45 @@ pub fn install(
         subscriptionsClosed: AtomicBool::new(false),
         streams: Mutex::new(BTreeMap::new()),
         streamTasks: Mutex::new(BTreeMap::new()),
+        plugins: Mutex::new(PluginUiState::default()),
     });
     *SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(session.clone());
+    if provision {
+        let owner = session.clone();
+        let task = spawnNodeUiSubscription(move |cancelled| async move {
+            if *cancelled.borrow() { return; }
+            // Idempotent explicit creation. Never cancel the in-flight call or
+            // turn an ordinary read/send into implicit object creation.
+            let result = session.client.call(CoreCallRequest::new(
+                operit_link::nextCoreRouteRequestId("ensureRoutedChat"), CORE_INTERNAL_TARGET,
+                "ensureRoutedChat", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+            )).await.result;
+            if *cancelled.borrow() || !currentSession(&session) { return; }
+            match result {
+                Ok(_) => {
+                    session.ready.store(true, Ordering::Release);
+                    startSubscriptions(session);
+                }
+                Err(error) => {
+                    *session.error.lock().unwrap() = Some(format!("初始化远端对话失败：{error}"));
+                    session.needsReconnect.store(true, Ordering::Release);
+                }
+            }
+            UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        });
+        owner.addTask(task);
+    } else { startSubscriptions(session); }
+}
+
+fn startSubscriptions(session: Arc<ChatSession>) {
+    if PLUGINS_REQUESTED.load(Ordering::Acquire) { let _ = pluginsAction("edge_plugins_refresh"); }
+    let mut pageChanges = session.window.subscribe();
     let owner = session.clone();
     #[cfg(not(target_os = "espidf"))]
     let historySession = session.clone();
     let stateSession = session.clone();
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
-        if session.chatId.is_empty() { return; }
+        let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
         loop {
             let cursor = *pageChanges.borrow_and_update();
             let result = openUiSubscription(&cancelled, watchChatMessages(&session.client, &session.chatId, cursor)).await;
@@ -666,13 +833,14 @@ pub fn install(
             }
         }
     });
-    owner.tasks.lock().unwrap().push(task);
+    owner.addTask(task);
     // The standalone device UI has no conversation shelf/selector. Do not
     // subscribe to 24 unused history rows on ESP32; simulator owns that surface.
     #[cfg(not(target_os = "espidf"))]
     {
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let session = historySession;
+        let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
         let result = openUiSubscription(&cancelled, session
             .client
             .watch(CoreWatchRequest::new(
@@ -715,11 +883,11 @@ pub fn install(
             }
         }
     });
-    owner.tasks.lock().unwrap().push(task);
+    owner.addTask(task);
     }
     let task = spawnNodeUiSubscription(move |mut cancelled| async move {
         let session = stateSession;
-        if session.chatId.is_empty() { return; }
+        let _lifetime = SubscriptionLifetime { session: session.clone(), cancelled: cancelled.clone() };
         let result = openUiSubscription(&cancelled, session.client.watch(CoreWatchRequest::new(
             operit_link::nextCoreRouteRequestId("edge-chat-state"), CORE_INTERNAL_TARGET,
             "chatStateFlow", operit_link::toCoreValue(serde_json::json!({"chatId": session.chatId})).unwrap(),
@@ -762,7 +930,7 @@ pub fn install(
             }
         }
     });
-    owner.tasks.lock().unwrap().push(task);
+    owner.addTask(task);
 }
 
 /// Keep only the execution summary for the device UI; model execution stays on Core.
@@ -786,27 +954,16 @@ fn recordSubscriptionEnd(closed: &AtomicBool, cancelled: &tokio::sync::watch::Re
 
 pub fn needsReconnect() -> bool {
     SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
-        .is_some_and(|session| session.subscriptionsClosed.load(Ordering::Acquire))
+        .is_some_and(|session| session.needsReconnect.load(Ordering::Acquire)
+            || session.subscriptionsClosed.load(Ordering::Acquire))
 }
 
 /// Returns the live Space route state, rather than whether the pairing
 /// listener is enabled.
 pub fn isConnected() -> bool {
-    SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .ok()
-        .and_then(|session| {
-            session.as_ref().map(|session| {
-                !session.subscriptionsClosed.load(Ordering::Acquire) && !session
-                    .services
-                    .peers()
-                    .activePeerNodeIds()
-                    .unwrap_or_default()
-                    .is_empty()
-            })
-        })
-        .unwrap_or(false)
+    SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
+        .is_some_and(|session| !session.subscriptionsClosed.load(Ordering::Acquire)
+            && session.services.peers().spaceConnection().is_some())
 }
 
 /// Returns a monotonic version for display consumers that repaint on change.
@@ -824,6 +981,7 @@ pub fn clear() {
         .ok()
         .and_then(|mut session| session.take());
     if let Some(session) = session {
+        session.retired.store(true, Ordering::Release);
         for task in std::mem::take(&mut *session.tasks.lock().unwrap()) {
             task.abort();
         }
@@ -831,6 +989,298 @@ pub fn clear() {
             task.abort();
         }
     }
+}
+
+static PLUGINS_REQUESTED: AtomicBool = AtomicBool::new(false);
+static PLUGINS_EXCLUSIVE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Default)]
+struct PluginUiState {
+    items: Vec<serde_json::Value>, total: u32, offset: u32,
+    loading: bool, error: Option<String>, generation: u64,
+    testing: bool, batchId: String, tested: u32, failed: u32,
+    details: serde_json::Value, detailGeneration: u64,
+}
+
+pub fn pluginsSnapshot() -> serde_json::Value {
+    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone();
+    let Some(session) = session.filter(|s| s.ready.load(Ordering::Acquire)) else {
+        return serde_json::json!({"items":[],"total":0,"offset":0,"loading":false,"error":"等待 Core 连接","category":if PLUGINS_EXCLUSIVE.load(Ordering::Acquire){"exclusive"}else{"general"}});
+    };
+    let state = session.plugins.lock().unwrap();
+    serde_json::json!({"items":state.items,"total":state.total,"offset":state.offset,"loading":state.loading,"error":state.error,
+        "testing":state.testing,"tested":state.tested,"failed":state.failed,
+        "category":if PLUGINS_EXCLUSIVE.load(Ordering::Acquire) {"exclusive"} else {"general"},"details":state.details})
+}
+
+// All execution still goes to the selected chat's Core Binding. Only the two
+// fixed plugin diagnostic functions are reachable, not arbitrary tool invokes.
+pub fn pluginsAction(action: &str) -> Result<(), String> {
+    PLUGINS_REQUESTED.store(true, Ordering::Release);
+    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
+        .filter(|s| s.ready.load(Ordering::Acquire)).ok_or("等待 Core 连接")?;
+    if let Some(id) = action.strip_prefix("edge_plugin_open:") {
+        if !session.plugins.lock().unwrap().items.iter().any(|item| item["id"] == id) {
+            return Err("插件列表已变化，请刷新".into());
+        }
+        return startPluginDetails(session, id.to_owned(), 0);
+    }
+    if action == "edge_plugin_close" {
+        let mut state = session.plugins.lock().unwrap();
+        state.detailGeneration += 1; state.details = serde_json::Value::Null;
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        return Ok(());
+    }
+    if action == "edge_plugin_tools_next" || action == "edge_plugin_tools_prev" {
+        let (id, offset) = {
+            let state = session.plugins.lock().unwrap();
+            if state.details["loading"] == true { return Ok(()); }
+            let id = state.details["id"].as_str().ok_or("请重新打开插件")?.to_owned();
+            let current = state.details["toolOffset"].as_u64().unwrap_or(0) as u32;
+            let total = state.details["toolTotal"].as_u64().unwrap_or(0) as u32;
+            (id, if action.ends_with("next") { if current + 3 < total {current + 3} else {current} } else {current.saturating_sub(3)})
+        };
+        return startPluginDetails(session, id, offset);
+    }
+    if action == "edge_plugins_test_all" { return startPluginBatch(session); }
+    if let Some(id) = action.strip_prefix("edge_plugin_probe:") {
+        return startPluginTest(session, id, false);
+    }
+    if let Some(id) = action.strip_prefix("edge_plugin_tool_test:") {
+        return startPluginTest(session, id, true);
+    }
+    let (offset, generation) = {
+        let mut state = session.plugins.lock().unwrap();
+        if state.loading || state.testing { return Ok(()); }
+        let offset = match action {
+            "edge_plugins_next" => if state.offset + 6 < state.total { state.offset + 6 } else { state.offset },
+            "edge_plugins_prev" => state.offset.saturating_sub(6),
+            "edge_plugins_refresh" => state.offset,
+            "edge_plugins_exclusive" | "edge_plugins_general" => {
+                PLUGINS_EXCLUSIVE.store(action == "edge_plugins_exclusive", Ordering::Release); 0
+            }
+            _ => return Err("Unknown plugin page action".into()),
+        };
+        state.loading = true; state.error = None; state.generation += 1;
+        state.details = serde_json::Value::Null; state.detailGeneration += 1;
+        (offset, state.generation)
+    };
+    let category = if PLUGINS_EXCLUSIVE.load(Ordering::Acquire) {"exclusive"} else {"general"};
+    UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    let deadlineSession = session.clone();
+    spawnNodeUiSubscription(move |_| async move {
+        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+        if !currentSession(&deadlineSession) { return; }
+        let mut state = deadlineSession.plugins.lock().unwrap();
+        if state.generation == generation && state.loading {
+            state.loading = false; state.error = Some("插件列表读取超时，请刷新".into());
+            state.generation += 1; UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+    spawnNodeUiSubscription(move |_| async move {
+        let result = session.client.call(CoreCallRequest::new(
+            operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET,
+            "chatAvailablePlugins", operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"offset":offset,"category":category})).unwrap(),
+        )).await.result;
+        if !currentSession(&session) { return; }
+        let mut state = session.plugins.lock().unwrap();
+        if state.generation != generation { return; }
+        state.loading = false;
+        match result {
+            Ok(value) => {
+                let value = serde_json::to_value(value).unwrap_or_default();
+                state.total = value["total"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+                state.offset = offset;
+                state.items = value["items"].as_array().into_iter().flatten().take(6).filter_map(|item| {
+                    let id = item["id"].as_str()?;
+                    if id.len() > 108 { return None; }
+                    let text = item["name"].as_str().unwrap_or(id);
+                    let mut end = text.len().min(42);
+                    while !text.is_char_boundary(end) { end -= 1; }
+                    Some(serde_json::json!({"id":id,"name":text[..end],
+                        "available":item["available"] == true,"status":"untested","latencyMs":null,
+                        "toolStatus":"untested","toolLatencyMs":null,"testError":""}))
+                }).collect();
+            }
+            Err(error) => { state.items.clear(); state.error = Some(boundedText(&error.to_string())); }
+        }
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    });
+    Ok(())
+}
+// Single selected, bounded metadata projection. Closing/changing tabs invalidates
+// old replies; deadline drains the underlying Link call just like diagnostics.
+fn startPluginDetails(session: Arc<ChatSession>, id: String, offset: u32) -> Result<(), String> {
+    let generation = {
+        let mut state = session.plugins.lock().unwrap();
+        if state.loading || !state.items.iter().any(|item| item["id"] == id) { return Err("插件列表已变化".into()); }
+        state.detailGeneration += 1;
+        state.details = serde_json::json!({"id":id,"loading":true,"tools":[],"toolTotal":0,"toolOffset":offset});
+        state.detailGeneration
+    };
+    UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    spawnNodeUiSubscription(move |_| async move {
+        let reply = pluginCallDeadline(&session, CoreCallRequest::new(
+            operit_link::nextCoreRouteRequestId("chatPluginDetails"), CORE_INTERNAL_TARGET,"chatPluginDetails",
+            operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"packageName":id,"toolOffset":offset})).unwrap(),
+        )).await;
+        if !currentSession(&session) {return;}
+        let mut state = session.plugins.lock().unwrap();
+        if state.detailGeneration != generation {return;}
+        let value = match reply {
+            Ok(value) => serde_json::to_value(value).unwrap_or_default(),
+            Err(_) => serde_json::json!({"error":"插件详情读取失败或超时"}),
+        };
+        let text = |text: &str, max: usize| {
+            let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+            let mut end = clean.len().min(max);
+            while !clean.is_char_boundary(end) {end -= 1;}
+            clean[..end].to_owned()
+        };
+        state.details = serde_json::json!({"id":id,"loading":false,
+            "description":text(value["description"].as_str().unwrap_or(""),192),
+            "tools":value["tools"].as_array().into_iter().flatten().take(3)
+                .filter_map(|tool| tool.as_str().map(|s|text(s,64))).collect::<Vec<_>>(),
+            "toolOffset":value["toolOffset"].as_u64().unwrap_or(offset as u64).min(u32::MAX as u64),
+            "toolTotal":value["toolTotal"].as_u64().unwrap_or(0).min(u32::MAX as u64),
+            "error":text(value["error"].as_str().unwrap_or(""),80)});
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    });
+    Ok(())
+}
+fn preparePluginTest(session: &Arc<ChatSession>, id: &str, probeId: &str, tool: bool) {
+    let mut state = session.plugins.lock().unwrap();
+    if let Some(item) = state.items.iter_mut().find(|item| item["id"] == id) {
+        let (status, request, latency) = if tool { ("toolStatus", "toolProbeId", "toolLatencyMs") } else { ("status", "probeId", "latencyMs") };
+        item[status] = "probing".into(); item[request] = probeId.into();
+        item[latency] = serde_json::Value::Null; item["testError"] = "".into();
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+async fn pluginCallDeadline(session: &Arc<ChatSession>, request: CoreCallRequest) -> Result<CoreValue, String> {
+    pluginCallDeadlineWithLimit(session, request, std::time::Duration::from_secs(8)).await
+}
+async fn pluginCallDeadlineWithLimit(session: &Arc<ChatSession>, request: CoreCallRequest, limit: std::time::Duration) -> Result<CoreValue, String> {
+    let client = session.client.clone();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    // A UI deadline must never drop an ambiguous in-flight Link transaction:
+    // Duplex deliberately closes the session if that happens. Drain its ack
+    // on a separate task; timed-out results cannot mutate a newer UI attempt.
+    spawnNodeUiSubscription(move |_| async move {
+        let response = client.call(request).await;
+        let _ = sender.send(response.result);
+    });
+    match tokio::time::timeout(limit, receiver).await {
+        Ok(Ok(result)) => result.map_err(|e| e.to_string()),
+        Ok(Err(_)) => Err("插件测试连接已关闭".into()),
+        Err(_) => Err("插件测试超时".into()),
+    }
+}
+async fn callPluginTest(session: &Arc<ChatSession>, id: &str, probeId: &str, tool: bool) -> (bool, u64, String) {
+    let started = std::time::Instant::now();
+    let result = pluginCallDeadline(session, CoreCallRequest::new(
+        probeId, CORE_INTERNAL_TARGET, "chatPluginStatus",
+        operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"packageName":id,
+            "testKind":if tool { "tool" } else { "connection" }})).unwrap(),
+    )).await;
+    let (ok, error) = match result {
+        Ok(value) => {
+            let value = serde_json::to_value(value).unwrap_or_default();
+            (value["success"] == true, value["message"].as_str().unwrap_or("插件测试结果无效").to_owned())
+        },
+        Err(error) => (false, error),
+    };
+    (ok, started.elapsed().as_millis().min(99999) as u64, error)
+}
+fn startPluginTest(session: Arc<ChatSession>, id: &str, tool: bool) -> Result<(), String> {
+    let generation;
+    {
+        let state = session.plugins.lock().unwrap();
+        if state.testing || state.loading { return Ok(()); }
+        let item = state.items.iter().find(|item| item["id"] == id).ok_or("插件列表已变化，请刷新")?;
+        if item["status"] == "probing" || item["toolStatus"] == "probing" { return Ok(()); }
+        generation = state.generation;
+    }
+    let id = id.to_owned(); let probeId = operit_link::nextCoreRouteRequestId("chatPluginStatus");
+    preparePluginTest(&session, &id, &probeId, tool);
+    spawnNodeUiSubscription(move |_| async move {
+        let (ok, ms, error) = callPluginTest(&session, &id, &probeId, tool).await;
+        finishPluginTest(&session, generation, &id, &probeId, tool, ok, ms, &error);
+    });
+    Ok(())
+}
+fn finishPluginTest(session: &Arc<ChatSession>, generation: u64, id: &str, probeId: &str, tool: bool, ok: bool, ms: u64, error: &str) {
+    if !currentSession(session) { return; }
+    let mut state = session.plugins.lock().unwrap();
+    if state.generation != generation { return; }
+    let (status, request, latency) = if tool { ("toolStatus", "toolProbeId", "toolLatencyMs") } else { ("status", "probeId", "latencyMs") };
+    if let Some(item) = state.items.iter_mut().find(|item| item["id"] == id && item[status] == "probing" && item[request] == probeId) {
+        item[status] = if ok { "success" } else { "failure" }.into();
+        item[latency] = ms.into(); item["testError"] = boundedText(error).into();
+        if !tool { item["error"] = boundedText(error).into(); }
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+#[cfg(test)]
+fn finishPluginProbe(session: &Arc<ChatSession>, generation: u64, id: &str, probeId: &str, ok: bool, ms: u64, error: &str) {
+    finishPluginTest(session, generation, id, probeId, false, ok, ms, error);
+}
+fn startPluginBatch(session: Arc<ChatSession>) -> Result<(), String> {
+    let category = if PLUGINS_EXCLUSIVE.load(Ordering::Acquire) {"exclusive"} else {"general"};
+    let (generation, batchId) = {
+        let mut state = session.plugins.lock().unwrap();
+        if state.testing || state.loading { return Ok(()); }
+        if state.items.iter().any(|item| item["status"] == "probing" || item["toolStatus"] == "probing") {
+            return Err("请等待当前测试完成".into());
+        }
+        state.testing = true; state.tested = 0; state.failed = 0; state.error = None;
+        state.batchId = operit_link::nextCoreRouteRequestId("pluginBatch");
+        (state.generation, state.batchId.clone())
+    };
+    UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    spawnNodeUiSubscription(move |_| async move {
+        let mut offset = 0;
+        let mut error = None;
+        // Fetch one bounded page at a time, never retain the complete package catalog.
+        'pages: loop {
+            if !pluginBatchCurrent(&session, generation, &batchId) { return; }
+            let reply = pluginCallDeadline(&session, CoreCallRequest::new(
+                operit_link::nextCoreRouteRequestId("chatAvailablePlugins"), CORE_INTERNAL_TARGET, "chatAvailablePlugins",
+                operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId,"offset":offset,"category":category})).unwrap(),
+            )).await;
+            let page = match reply {
+                Ok(value) => serde_json::to_value(value).unwrap_or_default(),
+                Err(e) => { error = Some(boundedText(&e)); break; }
+            };
+            let items = page["items"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            if items.is_empty() { break; }
+            for item in items.iter().take(6) {
+                if !pluginBatchCurrent(&session, generation, &batchId) { return; }
+                let Some(id) = item["id"].as_str().filter(|id| id.len() <= 108) else {
+                    error = Some("插件标识超出设备限制".into()); break 'pages;
+                };
+                let probeId = operit_link::nextCoreRouteRequestId("chatPluginStatus");
+                preparePluginTest(&session, id, &probeId, false);
+                let (ok, ms, message) = callPluginTest(&session, id, &probeId, false).await;
+                if !pluginBatchCurrent(&session, generation, &batchId) { return; }
+                finishPluginTest(&session, generation, id, &probeId, false, ok, ms, &message);
+                let mut state = session.plugins.lock().unwrap();
+                state.tested += 1; if !ok { state.failed += 1; }
+                UI_REVISION.fetch_add(1, Ordering::Relaxed);
+            }
+            offset += items.len().min(6) as u32;
+            if offset >= page["total"].as_u64().unwrap_or(0) as u32 { break; }
+        }
+        if !pluginBatchCurrent(&session, generation, &batchId) { return; }
+        let mut state = session.plugins.lock().unwrap(); state.testing = false; state.error = error;
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    });
+    Ok(())
+}
+fn pluginBatchCurrent(session: &Arc<ChatSession>, generation: u64, batchId: &str) -> bool {
+    if !currentSession(session) { return false; }
+    let state = session.plugins.lock().unwrap();
+    state.generation == generation && state.testing && state.batchId == batchId
 }
 
 pub fn snapshot() -> serde_json::Value {
@@ -849,7 +1299,8 @@ pub fn snapshot() -> serde_json::Value {
             let error = session.error.lock().unwrap().clone()
                 .or_else(|| session.executionError.lock().unwrap().clone());
             serde_json::json!({
-                "connected": !session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty(), "chatId": session.chatId,
+                "connected": session.services.peers().spaceConnection().is_some(), "chatId": session.chatId,
+                "initializing": !session.ready.load(Ordering::Acquire),
                 "conversations": conversations,
                 "hasOlder": session.older.lock().unwrap().is_some(),
                 "hasNewer": !session.windowHistory.lock().unwrap().is_empty(),
@@ -943,6 +1394,7 @@ pub fn newChat() -> Result<(), String> {
     {
         return Err("设备已离线".into());
     }
+    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
     if session.sending.swap(true, Ordering::AcqRel) {
         return Err("请等待当前操作完成".into());
     }
@@ -964,7 +1416,7 @@ pub fn newChat() -> Result<(), String> {
             .await;
         session.sending.store(false, Ordering::Release);
         match response.result {
-            Ok(CoreValue::String(id)) => {
+            Ok(CoreValue::String(id)) if !id.trim().is_empty() => {
                 let current = SESSION.get().unwrap().lock().unwrap().clone();
                 if current
                     .as_ref()
@@ -1072,7 +1524,7 @@ fn projectMessages(value: &CoreValue) -> serde_json::Value {
             },
             _ => "",
         };
-        let text = displayText(&text);
+        let text = completeDisplayTokens(&displayText(&text));
         if text.trim().is_empty() && streamId.is_empty() {
             continue;
         }
@@ -1089,8 +1541,8 @@ fn renderMessages(mut rows: serde_json::Value, streams: &BTreeMap<String, Stream
     let Some(items) = rows.as_array_mut() else { return serde_json::json!([]); };
     for row in items.iter_mut() {
         if let Some(stream) = row["streamId"].as_str().and_then(|id| streams.get(id)) {
-            if !stream.text.is_empty() {
-                let text = displayText(&visibleEdgeText(&stream.text));
+            if !stream.completed && !stream.text.is_empty() {
+                let text = completeDisplayTokens(&displayText(&visibleEdgeText(&stream.text)));
                 row["text"] = serde_json::Value::String(text);
             }
         }
@@ -1107,6 +1559,9 @@ fn renderMessages(mut rows: serde_json::Value, streams: &BTreeMap<String, Stream
         let lineStart = text.match_indices('\n').rev().nth(lines - 1).map(|(at, _)| at + 1).unwrap_or(0);
         let mut start = text.len().saturating_sub(bytes).max(lineStart);
         while !text.is_char_boundary(start) { start += 1; }
+        if let Some(end) = text[start..].find('\x1f') {
+            if text[start..].find('\x1e').is_none_or(|open| open > end) { start += end + 1; }
+        }
         let tail = &text[start..];
         bytes = bytes.saturating_sub(tail.len());
         lines = lines.saturating_sub(1 + tail.matches('\n').count());
@@ -1163,6 +1618,7 @@ pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
     {
         return Err("设备已离线".into());
     }
+    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
     if session.sending.swap(true, Ordering::AcqRel) {
         return Err("请等待当前消息发送完成".into());
     }
@@ -1222,6 +1678,7 @@ pub fn send(text: String) -> Result<(), String> {
     {
         return Err("设备已离线".into());
     }
+    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
     if session.sending.swap(true, Ordering::AcqRel) {
         return Err("上一条消息仍在发送".into());
     }
@@ -1533,5 +1990,45 @@ mod attachment_display_tests {
         assert_eq!(displayText("前<link id='a' type='image'></link>后"), "前[图片：请在 Core 端查看]后");
         assert_eq!(displayText("<link type=\"file\" id=\"a\"></link>"), "<link type=\"file\" id=\"a\"></link>");
         assert_eq!(displayText("前<link type=\"image\""), "前<link type=\"image\"");
+    }
+}
+
+
+#[cfg(all(test, not(target_os = "espidf")))]
+#[path = "edge_chat_session_tests.rs"]
+mod session_tests;
+
+#[cfg(test)]
+mod plugin_card_tests {
+    use super::*;
+    #[test]
+    fn live_tool_status_replaces_pending_card_and_survives_savepoint_rollback() {
+        let mut stream = StreamText::default();
+        stream.apply(&serde_json::json!({"type":"chunk","value":"\x1eR|daily_life:get_current_date\x1f\n"}));
+        stream.apply(&serde_json::json!({"type":"savepoint","id":"before-result"}));
+        stream.apply(&serde_json::json!({"type":"toolStatus","value":"\x1eS|daily_life:get_current_date\x1f"}));
+        assert_eq!(stream.text.matches('\x1e').count(), 1);
+        assert!(stream.text.contains("\x1eS|"));
+        stream.apply(&serde_json::json!({"type":"rollback","id":"before-result"}));
+        assert!(stream.text.contains("\x1eR|"));
+        stream.apply(&serde_json::json!({"type":"toolStatus","value":"\x1eF|daily_life:get_current_date\x1f"}));
+        assert!(stream.text.contains("\x1eF|"));
+        stream.apply(&serde_json::json!({"type":"toolStatus","value":"\x1eS|wrong_tool\x1f"}));
+        assert!(!stream.text.contains("wrong_tool"));
+        stream.apply(&serde_json::json!({"type":"reset"})); assert!(stream.text.is_empty());
+    }
+    #[test]
+    fn completed_stream_yields_to_final_core_status_and_bounded_tokens_remain_complete() {
+        let mut streams = BTreeMap::new();
+        streams.insert("s".into(), StreamText {text:"\x1eR|date\x1f".into(), completed:true, ..Default::default()});
+        let rows = renderMessages(serde_json::json!([{"sender":"ai","text":"\x1eS|date\x1f","streamId":"s"}]), &streams);
+        assert_eq!(rows[0]["text"], "\x1eS|date\x1f");
+        assert_eq!(completeDisplayTokens("cut-name\x1f\nreply"), "\nreply");
+        assert_eq!(completeDisplayTokens("reply\n\x1eR|partial"), "reply\n");
+        let large = format!("{}\x1eR|{}\x1f\n{}", "a".repeat(600), "x".repeat(96), "b".repeat(600));
+        let rows = renderMessages(serde_json::json!([{"sender":"ai","text":large}]), &BTreeMap::new());
+        let text = rows[0]["text"].as_str().unwrap();
+        assert!(text.len() <= MAX_CHAT_STRING_BYTES);
+        assert_eq!(text.matches('\x1e').count(), text.matches('\x1f').count());
     }
 }

@@ -10,7 +10,7 @@ default = ["full"]
 # Shared routing/permission metadata, without the application execution runtime.
 route-catalog = []
 # Shared pairing/session engine; no ChatServiceCore, Provider or ToolPkg.
-peer-runtime = ["peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "tokio/time", "tokio/net"]
+peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "tokio/time", "tokio/net"]
 peer-state = ["dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
 full = ["route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "tokio/rt-multi-thread", "tokio/time", "tokio/net"]
 test-support = []
