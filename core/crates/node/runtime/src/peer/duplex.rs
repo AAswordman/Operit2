@@ -239,49 +239,71 @@ impl HostRuntimePeerService {
         self.state.sharedSessions.lock().unwrap().get(peer).filter(|c| c.isOpen()).cloned()
     }
 }
-struct SessionSpaceClient { service: HostRuntimePeerService, peer: String }
+// Select once and bind each client to that admission/session generation. An old
+// client must not silently acquire authority in a different Space on reconnect.
+fn entryIdentity(service: &HostRuntimePeerService, peer: &str) -> Option<crate::NodeServices::SpaceClientIdentity> {
+    service.requirePeerConnectionAllowed(peer).ok()?;
+    let (spaceId, generation) = if let Some(channel) = service.cachedSession(peer) {
+        if !service.sessionScopeAllowed(peer, &channel).ok()? { return None; }
+        (channel.returnScope.lock().unwrap().clone()?, format!("session:{}", channel.generation))
+    } else {
+        if !service.activePeerNodeIds().ok()?.contains(peer) { return None; }
+        let grant = service.spaceOutbound(peer).ok()?;
+        (grant.spaceId, format!("grant:{}:{:?}:{}", grant.id, grant.transport, grant.endpoint))
+    };
+    Some(crate::NodeServices::SpaceClientIdentity { spaceId, peerNodeId: peer.into(), generation })
+}
+struct SessionSpaceClient { service: HostRuntimePeerService, identity: crate::NodeServices::SpaceClientIdentity }
 impl SessionSpaceClient {
-    fn route<T>(&self, payload: T) -> Result<RoutedCoreRequest<T>, CoreLinkError> {
-        self.service.requirePeerConnectionAllowed(&self.peer)?;
-        let spaceId = if let Some(c) = self.service.cachedSession(&self.peer) {
-            if !self.service.sessionScopeAllowed(&self.peer, &c)? { return Err(error("Session Space scope revoked")); }
-            c.returnScope.lock().unwrap().clone().ok_or_else(|| error("Session return scope missing"))?
-        } else {
-            // Network transports already negotiate scoped callback grants.
-            // Reuse that authority instead of requiring a UART-only session.
-            self.service.spaceOutbound(&self.peer)?.spaceId
-        };
-        Ok(RoutedCoreRequest { spaceId, originNodeId: self.service.state.nodeId.clone(), targetNodeId: self.peer.clone(),
-            ttl: 4, routeKind: RoutedCoreRequestKind::SpaceRoute, payload })
+    fn route<T>(&self, payload: T, routeKind: RoutedCoreRequestKind) -> Result<RoutedCoreRequest<T>, CoreLinkError> {
+        if entryIdentity(&self.service, &self.identity.peerNodeId).as_ref() != Some(&self.identity) {
+            return Err(CoreLinkError::new("SPACE_ENTRY_CHANGED", "Space entry was replaced or revoked"));
+        }
+        Ok(RoutedCoreRequest { spaceId: self.identity.spaceId.clone(), originNodeId: self.service.state.nodeId.clone(),
+            targetNodeId: self.identity.peerNodeId.clone(), ttl: 4, routeKind, payload })
     }
+}
+fn callRouteKind(request: &CoreCallRequest) -> RoutedCoreRequestKind {
+    // Includes explicit create_binding commands; only Core allocates the Binding.
+    if crate::generated_space_call_route(request).is_some() { RoutedCoreRequestKind::SpaceBinding }
+    else { RoutedCoreRequestKind::SpaceRoute }
+}
+fn watchRouteKind(request: &CoreWatchRequest, snapshot: bool) -> RoutedCoreRequestKind {
+    // Embedded streams are reopened via their source, not treated as ordinary
+    // annotated properties. Snapshot has no source-reopen semantics in Core.
+    if crate::generated_space_watch_route(request).is_some()
+        || (!snapshot && request.target == operit_link::CORE_STREAM_TARGET) {
+        RoutedCoreRequestKind::SpaceBinding
+    } else { RoutedCoreRequestKind::SpaceRoute }
 }
 #[async_trait(?Send)]
 impl CoreLinkSharedClient for SessionSpaceClient {
     async fn call(&self, mut r: CoreCallRequest) -> CoreCallResponse {
         r.requestId = CoreRequestId::new(nextCoreRouteRequestId("edge-ui"));
         let id = r.requestId.clone();
-        match self.route(r) { Ok(route) => self.service.call(&self.peer, route).await, Err(e) => CoreCallResponse::err(id, e) }
+        let kind = callRouteKind(&r);
+        match self.route(r, kind) { Ok(route) => self.service.call(&self.identity.peerNodeId, route).await, Err(e) => CoreCallResponse::err(id, e) }
     }
     async fn watchSnapshot(&self, mut r: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
         r.requestId = CoreRequestId::new(nextCoreRouteRequestId("edge-snapshot"));
-        self.service.watchSnapshot(&self.peer, self.route(r)?).await
+        let kind = watchRouteKind(&r, true);
+        self.service.watchSnapshot(&self.identity.peerNodeId, self.route(r, kind)?).await
     }
     async fn watch(&self, mut r: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         r.requestId = CoreRequestId::new(nextCoreRouteRequestId("edge-watch"));
-        self.service.watch(&self.peer, self.route(r)?).await
+        let kind = watchRouteKind(&r, false);
+        self.service.watch(&self.identity.peerNodeId, self.route(r, kind)?).await
     }
 }
+pub(super) fn spaceConnection(service: &HostRuntimePeerService) -> Option<crate::NodeServices::SpaceClientConnection> {
+    let candidates: BTreeSet<String> = service.state.sharedSessions.lock().unwrap().keys().cloned()
+        .chain(service.activePeerNodeIds().ok()?.into_iter()).collect();
+    let identity = candidates.iter().find_map(|peer| entryIdentity(service, peer))?;
+    let client = Arc::new(SessionSpaceClient { service: service.clone(), identity: identity.clone() });
+    Some(crate::NodeServices::SpaceClientConnection { identity, client })
+}
 pub(super) fn spaceClient(service: &HostRuntimePeerService) -> Option<Arc<dyn CoreLinkSharedClient + Send + Sync>> {
-    let sessionPeer = {
-        let sessions = service.state.sharedSessions.lock().unwrap();
-        sessions.iter().find(|(peer, c)| c.isOpen() && service.sessionScopeAllowed(peer, c).unwrap_or(false))
-            .map(|(peer, _)| peer.clone())
-    };
-    let peer = sessionPeer.or_else(|| {
-        let active = service.activePeerNodeIds().ok()?;
-        active.into_iter().find(|peer| service.requirePeerConnectionAllowed(peer).is_ok() && service.spaceOutbound(peer).is_ok())
-    })?;
-    Some(Arc::new(SessionSpaceClient { service: service.clone(), peer }))
+    spaceConnection(service).map(|connection| connection.client)
 }
 
 #[cfg(test)]
@@ -530,11 +552,71 @@ mod tests {
         service.state.store.putRecord("runtime/link_access/space_channel_outbound.preferences.json", "return", &grant).unwrap();
         service.state.active.lock().unwrap().insert("core".into());
         assert!(spaceClient(&service).is_some());
-        let client = SessionSpaceClient { service: service.clone(), peer: "core".into() };
-        assert_eq!(client.route(()).unwrap().spaceId, "space");
+        let client = SessionSpaceClient { service: service.clone(), identity: entryIdentity(&service, "core").unwrap() };
+        assert_eq!(client.route((), RoutedCoreRequestKind::SpaceRoute).unwrap().spaceId, "space");
         *router.scope.lock().unwrap() = None;
-        assert!(client.route(()).is_err());
+        assert!(client.route((), RoutedCoreRequestKind::SpaceRoute).is_err());
         assert!(spaceClient(&service).is_none());
+    }
+    #[test]
+    fn edge_route_classes_do_not_turn_every_request_into_a_binding() {
+        let args = CoreValue::Map(BTreeMap::from([("chatId".into(), CoreValue::String("chat".into()))]));
+        let call = |method| CoreCallRequest::new("test", CORE_INTERNAL_TARGET, method, args.clone());
+        assert_eq!(callRouteKind(&call("ensureRoutedChat")), RoutedCoreRequestKind::SpaceBinding);
+        assert!(!crate::generated_space_call_route(&call("ensureRoutedChat")).unwrap().createBindingCapability.is_empty());
+        assert_eq!(callRouteKind(&call("createRoutedChat")), RoutedCoreRequestKind::SpaceBinding);
+        // Metadata reads and diagnostic execution must keep distinct permissions.
+        for (method, permission) in [
+            ("chatAvailablePlugins", "chat.read"),
+            ("chatPluginDetails", "chat.read"),
+            ("chatPluginStatus", "chat.write"),
+        ] {
+            let request = call(method);
+            assert_eq!(callRouteKind(&request), RoutedCoreRequestKind::SpaceBinding);
+            let route = crate::generated_space_call_route(&request).unwrap();
+            assert_eq!(route.permissionCapability, permission);
+            assert!(route.createBindingCapability.is_empty());
+        }
+        assert!(crate::generated_space_call_route(&call("createRoutedChat")).unwrap().createBindingCapability.is_empty());
+        assert_eq!(callRouteKind(&CoreCallRequest::new("test", "device.status", "read", CoreValue::Null)), RoutedCoreRequestKind::SpaceRoute);
+        let watch = CoreWatchRequest::new("test", CORE_INTERNAL_TARGET, "chatStateFlow", args);
+        assert_eq!(watchRouteKind(&watch, false), RoutedCoreRequestKind::SpaceBinding);
+        assert_eq!(watchRouteKind(&watch, true), RoutedCoreRequestKind::SpaceBinding);
+        let embedded = CoreWatchRequest::new("test", CORE_STREAM_TARGET, "events", CoreValue::Null);
+        assert_eq!(watchRouteKind(&embedded, false), RoutedCoreRequestKind::SpaceBinding);
+        assert_eq!(watchRouteKind(&embedded, true), RoutedCoreRequestKind::SpaceRoute);
+        assert_eq!(watchRouteKind(&CoreWatchRequest::new("test", "unknown", "events", CoreValue::Null), false), RoutedCoreRequestKind::SpaceRoute);
+    }
+    #[tokio::test]
+    async fn replaced_entry_invalidates_old_clients_without_an_offline_poll() {
+        let (service, router) = service("edge");
+        // Emulate an authenticated inbound pairing with an admitted return grant.
+        service.state.store.putRecord(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, "pairing", &StoredInbound {
+            deviceId: "core".into(), deviceInfo: service.state.info.clone(), pairingServiceVersion: PAIRING_SERVICE_VERSION,
+            sessionSecret: BASE64.encode([1;32]),
+        }).unwrap();
+        let (first, remote) = pair();
+        let firstPump = start(&first); let remotePump = start(&remote);
+        *first.returnScope.lock().unwrap() = Some("space".into());
+        service.state.sharedSessions.lock().unwrap().insert("core".into(), first.clone());
+        let old = spaceConnection(&service).unwrap();
+        let unchanged = spaceConnection(&service).unwrap();
+        assert_eq!(old.identity, unchanged.identity);
+        let (replacement, remote2) = pair();
+        let replacementPump = start(&replacement); let remote2Pump = start(&remote2);
+        *replacement.returnScope.lock().unwrap() = Some("space".into());
+        service.state.sharedSessions.lock().unwrap().insert("core".into(), replacement.clone());
+        let new = spaceConnection(&service).unwrap();
+        assert_ne!(old.identity, new.identity);
+        assert_eq!(old.identity.spaceId, new.identity.spaceId);
+        let result = old.client.call(CoreCallRequest::new("stale", CORE_INTERNAL_TARGET, "ensureRoutedChat", CoreValue::Null)).await;
+        assert_eq!(result.result.unwrap_err().code, "SPACE_ENTRY_CHANGED");
+        *router.scope.lock().unwrap() = Some("other-space".into());
+        *replacement.returnScope.lock().unwrap() = Some("other-space".into());
+        assert_eq!(spaceConnection(&service).unwrap().identity.spaceId, "other-space");
+        assert_eq!(new.client.call(CoreCallRequest::new("stale-space", "unknown", "send", CoreValue::Null)).await.result.unwrap_err().code, "SPACE_ENTRY_CHANGED");
+        first.close().await; remote.close().await; replacement.close().await; remote2.close().await;
+        firstPump.await.unwrap(); remotePump.await.unwrap(); replacementPump.await.unwrap(); remote2Pump.await.unwrap();
     }
     #[test]
     fn peer_service_does_not_keep_router_alive() {

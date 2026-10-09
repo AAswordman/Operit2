@@ -52,3 +52,6 @@ pub mod skill;
 
 #[path = "skill_runtime/mod.rs"]
 pub mod skill_runtime;
+
+#[path = "EdgePortTool.rs"]
+pub mod EdgePortTool;

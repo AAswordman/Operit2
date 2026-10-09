@@ -167,6 +167,17 @@ pub fn expect_js_output(output: JsExecutionResult<Option<String>>, context: &str
 #[macro_export]
 macro_rules! impl_rejecting_js_tools_host {
     ($host:ty) => {
+        impl operit_plugin_sdk::js_sdk::edge::EdgeHost for $host {
+            fn execute(&self, _nodeId: String, _interfaceInfo: operit_plugin_sdk::js_sdk::edge::EdgeInterfaceInfo, _args: Option<serde_json::Value>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::EdgePortResultData> {
+                Box::pin(async { Err(operit_plugin_sdk::js_sdk::JsHostError::new("Edge port is unavailable in this test host")) })
+            }
+        }
+        impl operit_plugin_sdk::js_sdk::edge::IoHost for $host {
+            fn execute(&self, _nodeId: String, _interfaceInfo: operit_plugin_sdk::js_sdk::edge::IoInterfaceInfo, _args: Option<serde_json::Value>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::EdgePortResultData> {
+                Box::pin(async { Err(operit_plugin_sdk::js_sdk::JsHostError::new("I/O port is unavailable in this test host")) })
+            }
+        }
+
         #[allow(non_snake_case)]
         impl operit_plugin_sdk::js_sdk::files::FilesHost for $host {
             /// Rejects directory listing in this test host.

@@ -3,7 +3,7 @@
 /**
  * Contains every concrete payload returned by the built-in tool runtime.
  */
-export type ToolResultData = BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
+export type ToolResultData = EdgePortResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
 
 /**
  * Captures the UI node and Android surface reached when an automation run finishes.
@@ -1556,4 +1556,18 @@ export interface MemoryLinkQueryResultData {
    * Formats each queried memory link with identifiers, relationship metadata, and description.
    */
   toString(): string;
+}
+
+/**
+ * Bounded hardware reply. Transport/authentication failures reject the plugin promise.
+ */
+export interface EdgePortResultData {
+  /**
+   * Exact node selected by the caller; never a guessed default or local fallback.
+   */
+  nodeId: string;
+  /**
+   * Native Edge action/port result; no JavaScript source or local serial handle.
+   */
+  data: any;
 }

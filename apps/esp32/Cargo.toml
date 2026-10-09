@@ -11,6 +11,7 @@ name = "operit-esp32"
 path = "src/main.rs"
 
 [dependencies]
+uuid = { version = "1", features = ["v4"] }
 operit-node-runtime = { path = "../../core/crates/node/runtime", default-features = false, features = ["peer-runtime"] }
 operit-host-native-scheduler = { path = "../../hosts/common/operit-host-native-scheduler", default-features = false }
 operit-peer-link = { path = "../../core/crates/node/peer-link" }

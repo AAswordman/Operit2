@@ -9,3 +9,13 @@ export {
 } from "./plugin/plan_mode_plugin.js";
 export { onPlanaskXmlRender } from "./plugin/planask-xml-render-plugin.js";
 export { onPlantodoXmlRender } from "./plugin/plantodo-xml-render-plugin.js";
+
+/** Connectivity proves the existing plugin main runtime actually executed this function. */
+export function test_connection(): { passed: boolean } {
+  return { passed: true };
+}
+
+/** Never invoke state-changing hooks or fabricate a tool success for a UI-only plugin. */
+export function test_tool_call(): { passed: boolean; message: string } {
+  return { passed: false, message: "此插件仅提供界面或聊天钩子，没有业务工具" };
+}

@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerToolPkg = registerToolPkg;
 exports.openTranslateDialog = openTranslateDialog;
+exports.test_connection = test_connection;
+exports.test_tool_call = test_tool_call;
 const TRANSLATE_DIALOG_SCREEN = "dist/ui/translate_dialog.ui.js";
 /** Registers translation for both user and assistant message menus. */
 function registerToolPkg() {
@@ -41,4 +43,12 @@ function openTranslateDialog(event) {
             },
         },
     };
+}
+/** Connectivity proves the existing plugin main runtime actually executed this function. */
+function test_connection() {
+    return { passed: true };
+}
+/** Never invoke state-changing hooks or fabricate a tool success for a UI-only plugin. */
+function test_tool_call() {
+    return { passed: false, message: "此插件仅提供界面或聊天钩子，没有业务工具" };
 }

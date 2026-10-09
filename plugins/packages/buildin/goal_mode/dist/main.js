@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerToolPkg = exports.onPromptFinalize = exports.onInputMenuToggle = exports.onGoalCommand = exports.onChatViewEvent = exports.onChatInput = void 0;
+exports.test_connection = test_connection;
+exports.test_tool_call = test_tool_call;
 var goal_mode_plugin_js_1 = require("./plugin/goal_mode_plugin.js");
 Object.defineProperty(exports, "onChatInput", { enumerable: true, get: function () { return goal_mode_plugin_js_1.onChatInput; } });
 Object.defineProperty(exports, "onChatViewEvent", { enumerable: true, get: function () { return goal_mode_plugin_js_1.onChatViewEvent; } });
@@ -8,3 +10,11 @@ Object.defineProperty(exports, "onGoalCommand", { enumerable: true, get: functio
 Object.defineProperty(exports, "onInputMenuToggle", { enumerable: true, get: function () { return goal_mode_plugin_js_1.onInputMenuToggle; } });
 Object.defineProperty(exports, "onPromptFinalize", { enumerable: true, get: function () { return goal_mode_plugin_js_1.onPromptFinalize; } });
 Object.defineProperty(exports, "registerToolPkg", { enumerable: true, get: function () { return goal_mode_plugin_js_1.registerToolPkg; } });
+/** Connectivity proves the existing plugin main runtime actually executed this function. */
+function test_connection() {
+    return { passed: true };
+}
+/** Never invoke state-changing hooks or fabricate a tool success for a UI-only plugin. */
+function test_tool_call() {
+    return { passed: false, message: "此插件仅提供界面或聊天钩子，没有业务工具" };
+}

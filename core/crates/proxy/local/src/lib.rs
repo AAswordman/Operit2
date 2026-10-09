@@ -14,7 +14,7 @@ pub use operit_rslink_runtime::{CoreReverseStreamSession, CoreStreamPool};
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_tools::runtime_support::{
-    CoreNodeToolRuntime, CoreRouteChangeHandler, ToolRuntimeSupport,
+    EdgeToolRuntime, CoreNodeToolRuntime, CoreRouteChangeHandler, ToolRuntimeSupport,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -78,6 +78,11 @@ impl LocalCoreProxy {
         self.toolRuntimeSupport
             .bindCoreNodeToolRuntime(runtime)
             .map_err(CoreLinkError::internal)
+    }
+
+    /// Installs the explicit-node hardware capability owned by the Core tree.
+    pub fn bindEdgeToolRuntime(&self, runtime: Arc<dyn EdgeToolRuntime>) -> Result<(), String> {
+        self.toolRuntimeSupport.bindEdgeToolRuntime(runtime)
     }
 
     /// Installs the route change controller used after a completed AI turn.

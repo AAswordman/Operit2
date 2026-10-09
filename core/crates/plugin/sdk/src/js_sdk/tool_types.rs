@@ -4,6 +4,8 @@ use super::results::*;
 
 /// Maps every built-in tool name to its concrete public result type.
 pub struct ToolResultMap {
+    pub edge_execute: EdgePortResultData,
+    pub io_execute: EdgePortResultData,
     pub list_files: DirectoryListingData,
     pub read_file: FileContentData,
     pub read_file_part: FilePartContentData,

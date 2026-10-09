@@ -6,6 +6,7 @@
  */
 
 // Import types that will be used in global declarations
+import { edge as EdgeType, io as IoType } from './edge';
 import { ToolReturnType, ToolCatalogEntry } from './core';
 import {
     JavaBridgeApi as JavaBridgeApiType,
@@ -112,6 +113,8 @@ export { UI, UINode } from './ui';
 export { ToolPkg } from './toolpkg';
 export { Chat } from './chat';
 export { Memory } from './memory';
+export { edge, io } from './edge';
+export type { EdgeInterfaceInfo, IoInterfaceInfo } from './edge';
 
 // Export Android utilities
 export {
@@ -283,7 +286,12 @@ declare global {
         UI: typeof UIType;
         Chat: typeof ChatType;
         Memory: typeof MemoryType;
+        edge: typeof EdgeType;
+        io: typeof IoType;
     };
+
+    /** Lowercase alias of the existing Core plugin Tools object. */
+    const tools: typeof Tools;
 
     // CommonJS exports
     const exports: Record<string, any>;

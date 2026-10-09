@@ -43,6 +43,7 @@ let pressed = false;
 let sourceHash = '';
 let miniStaticBytes = 0;
 interface DeviceState {
+  plugins?: {category?: string; details?: {id?: string; description?: string; tools?: string[]; toolOffset?: number; toolTotal?: number; loading?: boolean; error?: string}; items?: {id: string; name: string; status?: string; latencyMs?: number; toolStatus?: string; toolLatencyMs?: number; testError?: string}[]; offset?: number; total?: number; loading?: boolean; testing?: boolean; error?: string | null};
   running?: boolean; connected?: boolean; paired?: boolean; pairingCode?: string; spaceState?: string;
   spaceJoinPrompt?: string; spaceJoinBusy?: boolean;
   spaceJoinRequestId?: string; spaceJoinAssignmentVersion?: number;
@@ -180,6 +181,24 @@ function setDeviceState(state: DeviceState): void {
       [index, item.id, item.title, item.characterCardName ?? '', item.id === chat.chatId ? 1 : 0]));
     runtime.ccall('operit_ui_finish_conversations', null, ['number'], [conversations.length]);
   }
+  const plugins = state.plugins;
+  runtime.ccall('operit_ui_set_plugin_category', null, ['number'], [plugins?.category === 'exclusive' ? 1 : 0]);
+  const items = (plugins?.items ?? []).slice(0, 6);
+  items.forEach((item, index) => {
+    const status = item.status === 'probing' ? 1 : item.status === 'success' ? 2 : item.status === 'failure' ? 3 : 0;
+    const toolStatus = item.toolStatus === 'probing' ? 1 : item.toolStatus === 'success' ? 2 : item.toolStatus === 'failure' ? 3 : 0;
+    runtime!.ccall('operit_ui_set_plugin', null, ['number', 'string', 'string', 'number', 'number'],
+      [index, item.id, item.name, status, item.latencyMs ?? 0]);
+    runtime!.ccall('operit_ui_set_plugin_test', null, ['number', 'number', 'number', 'string'],
+      [index, toolStatus, item.toolLatencyMs ?? 0, item.testError ?? '']);
+  });
+  const details = plugins?.details;
+  runtime.ccall('operit_ui_set_plugin_details', null, ['string', 'string', 'string', 'number', 'number', 'number', 'string'],
+    [details?.id ?? '', details?.description ?? '', (details?.tools ?? []).slice(0, 3).join('\n'), details?.toolOffset ?? 0,
+      details?.toolTotal ?? 0, details?.loading ? 1 : 0, details?.error ?? '']);
+  runtime.ccall('operit_ui_set_plugin_testing', null, ['number'], [plugins?.testing ? 1 : 0]);
+  runtime.ccall('operit_ui_finish_plugins', null, ['number', 'number', 'number', 'number', 'string'],
+    [items.length, plugins?.offset ?? 0, plugins?.total ?? 0, plugins?.loading ? 1 : 0, plugins?.error ?? '']);
   runtime.ccall('operit_ui_set_chat_screen', null, ['string'], [state.chatScreen ?? '连接 Operit 后开始聊天']);
   runtime.ccall('operit_ui_set_chat_task', null, ['string'], [state.chatTask ?? '离线']);
   if (state.chatSendResult) finishSend(state.chatSendResult.ok, state.chatSendResult.error);

@@ -65,6 +65,12 @@ const exports = [
   '_operit_ui_finish_messages',
   '_operit_ui_set_conversation',
   '_operit_ui_finish_conversations',
+  '_operit_ui_set_plugin',
+  '_operit_ui_set_plugin_test',
+  '_operit_ui_set_plugin_testing',
+  '_operit_ui_set_plugin_category',
+  '_operit_ui_set_plugin_details',
+  '_operit_ui_finish_plugins',
   '_operit_ui_action_error',
 
   '_operit_ui_set_chat_task',

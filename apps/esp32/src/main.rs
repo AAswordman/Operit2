@@ -381,8 +381,7 @@ fn runFirmware(
     logRuntimeHealth("ready");
     let mut lastChatRevision = u32::MAX;
     let mut lastChatConnected = false;
-    let mut chatRouteInstalled = false;
-    let mut reconnectChatId = String::new();
+    let mut chatRoute = crate::edge_chat::SpaceChatRoute::default();
     let mut nextChatRoutePoll = std::time::Instant::now();
     loop {
         if std::time::Instant::now() >= nextWifiPoll {
@@ -478,12 +477,15 @@ fn runFirmware(
                     })();
                     match result {
                         Ok(()) => {
-                            crate::edge_chat::clear();
+                            chatRoute.reset();
                             status.setPairingCode("");
                             setExpression("neutral")?;
                         }
                         Err(error) => ui.actionError(&error),
                     }
+                }
+                action if action.starts_with("edge_plugins_") || action.starts_with("edge_plugin_") => {
+                    if let Err(error) = crate::edge_chat::pluginsAction(action) { ui.actionError(&error); }
                 }
                 "edge_chat" => {}
                 "edge_history_older" | "edge_history_newer" => {
@@ -522,19 +524,7 @@ fn runFirmware(
         // display in the same loop iteration.
         if std::time::Instant::now() >= nextChatRoutePoll {
             nextChatRoutePoll = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            if let Some(client) = peerService.spaceClient() {
-                if !chatRouteInstalled || crate::edge_chat::needsReconnect() {
-                    if chatRouteInstalled {
-                        reconnectChatId = crate::edge_chat::snapshot()["chatId"].as_str().unwrap_or("").to_owned();
-                    }
-                    crate::edge_chat::install(client, NodeServices::new(peerService.clone()), reconnectChatId.clone());
-                    chatRouteInstalled = true;
-                }
-            } else if chatRouteInstalled {
-                reconnectChatId = crate::edge_chat::snapshot()["chatId"].as_str().unwrap_or("").to_owned();
-                crate::edge_chat::clear();
-                chatRouteInstalled = false;
-            }
+            chatRoute.poll(NodeServices::new(peerService.clone()));
         }
         let edgeReady = crate::edge_chat::isConnected();
         let mut pairingChanged = false;
@@ -580,6 +570,7 @@ fn runFirmware(
         if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
             let chatState = crate::edge_chat::snapshot();
             ui.setChatState(&chatState);
+            ui.setPlugins(&crate::edge_chat::pluginsSnapshot());
             ui.setChatScreen(&crate::edge_chat::screenTextFromSnapshot(&chatState));
             ui.setChatTask(&crate::edge_chat::taskStatus());
             lastChatRevision = chatRevision;

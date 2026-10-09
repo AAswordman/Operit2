@@ -31,6 +31,8 @@ const HOST_TRAITS: &[(&str, &str, &str)] = &[
     ),
     ("js_sdk/chat.rs", "ChatHost", "Chat"),
     ("js_sdk/memory.rs", "MemoryHost", "Memory"),
+    ("js_sdk/edge.rs", "EdgeHost", "edge"),
+    ("js_sdk/edge.rs", "IoHost", "io"),
 ];
 
 /// Generates concrete active Tools host trait implementations from canonical Rust signatures.
@@ -346,6 +348,7 @@ pub fn generate_js_tools_runtime(
     let mut output = String::from(
         r#"// Generated from canonical Rust Tools traits and bindings. Do not edit.
 var Tools = {};
+var tools = Tools;
 
 function __operitToolsSnakeCase(name) {
     return String(name).replace(/[A-Z]/g, function(character) {

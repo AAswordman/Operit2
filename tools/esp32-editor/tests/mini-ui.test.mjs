@@ -307,3 +307,134 @@ test('drawer scrim cannot trigger the underlying send, and closing preserves the
   assert.equal(inspect().nodes.find(n=>n.id==='chat_draft').text,'草稿');
   assert.equal(tap('edge_send'),1);assert.deepEqual(actions,['edge_send']);
 });
+
+test('Core plugin page uses two columns and colored per-plugin latency without UI allocation',options,async()=>{
+  const {call,inspect,tap,actions,frame}=await fixture();
+  call('set_connection',['number','number'],[1,1]);
+  for(let index=0;index<6;index++)call('set_plugin',['number','string','string','number','number'],
+    [index,'com.test.'+index,'插件 '+index,index===0?2:index===1?3:0,index===0?42:8000]);
+  call('finish_plugins',['number','number','number','number','string'],[6,0,8,0,'']);
+  tap('sidebar_toggle');tap('sidebar_plugins');
+  assert.deepEqual(actions,['edge_plugins_refresh']);
+  const nodes=inspect().nodes.filter(node=>node.id.startsWith('plugin_probe_'));
+  assert.equal(nodes.length,6);assert.equal(new Set(nodes.map(node=>node.rect.x)).size,2);
+  assert.equal(new Set(nodes.map(node=>node.rect.y)).size,3);
+  assert.equal(nodes[0].latency,'42 ms');assert.equal(nodes[1].latency,'8000 ms');
+  assert.notEqual(nodes[0].latencyColor,nodes[1].latencyColor);
+  assert.equal(nodes[0].probeState,2);assert.equal(nodes[1].probeState,3);
+  assert.equal(tap('plugin_probe_0'),1);assert.equal(actions.at(-1),'edge_plugin_open:com.test.0');
+  assert.equal(inspect().pluginDialogOpen,true);assert.equal(tap('plugin_dialog_close'),1);
+  call('set_plugin',['number','string','string','number','number'],[0,'com.test.0','插件 0',1,0]);
+  assert.equal(tap('plugin_probe_0'),1,'a running plugin still opens its status dialog');
+  assert.equal(tap('plugin_test_connection'),0,'in-flight probes must reject duplicate test taps');
+  tap('plugin_dialog_close');
+  assert.equal(tap('plugins_next'),1);assert.equal(actions.at(-1),'edge_plugins_next');
+  assert.equal(tap('plugins_prev'),0);
+  const pixels=frame();const first=nodes[0].rect;
+  let namePixels=0;for(let y=first.y+2;y<first.y+20;y++)for(let x=first.x+6;x<first.x+first.w-6;x++){
+    const color=pixels.readUInt16LE((y*320+x)*2);if(color===0xef9e||color===0x63ed)namePixels++;
+  }
+  assert(namePixels>0,'plugin names must actually paint, not merely exist in debug nodes');
+  assert.equal(pixels.length,320*240*2);assert(inspect().staticBytes<10*1024);
+});
+test('plugin names remain UTF-8 bounded and offline clears actionable stale rows',options,async()=>{
+  const {call,inspect,tap}=await fixture();
+  call('set_plugin',['number','string','string','number','number'],[0,'com.test','中'.repeat(100),0,0]);
+  call('finish_plugins',['number','number','number','number','string'],[1,0,1,0,'']);
+  tap('sidebar_toggle');tap('sidebar_plugins');
+  assert(!inspect().nodes.find(node=>node.id==='plugin_probe_0').text.includes('\ufffd'));
+  assert.equal(tap('plugin_probe_0'),0);
+  call('finish_plugins',['number','number','number','number','string'],[0,0,0,0,'等待 Core 连接']);
+  assert(!inspect().nodes.some(node=>node.id.startsWith('plugin_probe_')));
+  assert(inspect().nodes.some(node=>node.id==='plugins_empty'&&node.text==='等待 Core 连接'));
+});
+
+test('chat tool wrappers show a plugin icon, tool name and colored status in the shared scroll',options,async()=>{
+  const {call,inspect,frame,ui}=await fixture();call('set_paired',['number'],[1]);
+  const states=[['R','调用中',0xe4c778],['S','成功',0x71e5a2],['F','失败',0xf07878],['U','未完成',0x849c8d]];
+  const rgb565=c=>((c>>8)&0xf800)|((c>>5)&0x07e0)|((c>>3)&31);
+  const frames=[];
+  for(const [state,label,color] of states){
+    call('set_message',['number','number','string'],[0,0,`\x1e${state}|daily_life:get_current_date\x1f`]);
+    call('finish_messages',['number'],[1]);
+    const snapshot=inspect();assert.equal(snapshot.chatCachedLines,2);
+    assert.deepEqual(snapshot.toolCards,[{icon:'plugin',name:'daily_life:get_current_date',status:label,statusColor:rgb565(color),line:0}]);
+    frames.push(frame().toString('hex'));
+  }
+  assert.equal(new Set(frames).size,4,'all states must actually paint different pixels');
+  call('set_message',['number','number','string'],[0,0,'前文\n'.repeat(8)+'\x1eS|daily_life:get_current_date\x1f\n后文']);
+  call('finish_messages',['number'],[1]);assert.equal(inspect().toolCards.length,1);
+  assert.equal(ui.ccall('operit_ui_debug_swipe','number',['string'],['down']),1);
+  frame();assert.equal(inspect().toolCards.length,0);
+  assert.equal(ui.ccall('operit_ui_debug_swipe','number',['string'],['up']),1);
+  frame();assert.equal(inspect().toolCards.length,1);
+  assert(inspect().staticBytes<10*1024);assert.equal(ui._simulator_heap_used(),0);
+});
+
+test('white top-right lightning runs all connectivity tests while plugin cells open a modal',options,async()=>{
+  const {call,inspect,tap,actions,frame}=await fixture();
+  call('set_connection',['number','number'],[1,1]);
+  call('set_plugin',['number','string','string','number','number'],[0,'com.operit.daily_life','日常生活工具包',0,0]);
+  call('finish_plugins',['number','number','number','number','string'],[1,0,1,0,'']);
+  tap('sidebar_toggle');tap('sidebar_plugins');
+  const bolt=inspect().nodes.find(n=>n.id==='plugins_test_all');
+  assert.equal(bolt.rect.x,276);assert.equal(bolt.iconColor,0xffff);
+  const pixels=frame();let white=0;
+  for(let y=bolt.rect.y;y<bolt.rect.y+bolt.rect.h;y++)for(let x=bolt.rect.x;x<bolt.rect.x+bolt.rect.w;x++)
+    if(pixels.readUInt16LE((y*320+x)*2)===0xffff)white++;
+  assert(white>10,'the lightning must paint real white pixels');
+  tap('plugins_test_all');assert.equal(actions.at(-1),'edge_plugins_test_all');
+  call('set_plugin_testing',['number'],[1]);assert.equal(tap('plugins_test_all'),0);
+  assert.equal(tap('plugins_refresh'),0,'batch tests cannot race a page refresh');
+  call('set_plugin_testing',['number'],[0]);
+  tap('plugin_probe_0');assert.equal(actions.at(-1),'edge_plugin_open:com.operit.daily_life');
+  assert.equal(inspect().pluginDialogOpen,true);
+  assert.equal(tap('plugins_test_all'),0,'underlying page must not remain hit-testable through modal');
+  assert.equal(tap('plugin_test_connection'),0,'wait for Core metadata before testing');
+  call('set_plugin_details',['string','string','string','number','number','number','string'],
+    ['com.operit.daily_life','日常生活工具','daily_life:get_current_date',0,1,0,'']);
+  tap('plugin_test_connection');assert.equal(actions.at(-1),'edge_plugin_probe:com.operit.daily_life');
+  call('set_plugin',['number','string','string','number','number'],[0,'com.operit.daily_life','日常生活工具包',1,0]);
+  assert.equal(tap('plugin_test_tool'),0);
+  call('set_plugin',['number','string','string','number','number'],[0,'com.operit.daily_life','日常生活工具包',2,17]);
+  assert.match(inspect().nodes.find(n=>n.id==='plugin_connection_result').text,/成功[\s\S]*17 ms/);
+  tap('plugin_test_tool');assert.equal(actions.at(-1),'edge_plugin_tool_test:com.operit.daily_life');
+  call('set_plugin_test',['number','number','number','string'],[0,3,30,'插件没有业务工具']);
+  assert.match(inspect().nodes.find(n=>n.id==='plugin_tool_result').text,/失败/);
+  assert.equal(inspect().nodes.find(n=>n.id==='plugin_test_error').text,'插件没有业务工具');
+  frame();assert(inspect().staticBytes<10*1024);assert.equal(inspect().heapBytes,0);
+  call('set_connection',['number','number'],[1,0]);
+  call('finish_plugins',['number','number','number','number','string'],[0,0,0,0,'等待 Core 连接']);
+  assert.equal(inspect().pluginDialogOpen,false);
+});
+
+test('exclusive/general tabs and simple package details hide absent tools and retain bounded scroll',options,async()=>{
+  const {call,inspect,tap,actions,frame,ui}=await fixture();
+  call('set_connection',['number','number'],[1,1]);
+  for(let i=0;i<6;i++)call('set_plugin',['number','string','string','number','number'],[i,'p'.repeat(107)+i,'中'.repeat(14),0,0]);
+  call('finish_plugins',['number','number','number','number','string'],[6,0,6,0,'']);
+  tap('sidebar_toggle');tap('sidebar_plugins');
+  assert.equal(inspect().nodes.filter(n=>n.id.startsWith('plugin_probe_')).length,6,'long identifiers do not erase the inspector');
+  const tabs=inspect().nodes.filter(n=>n.id==='plugins_exclusive'||n.id==='plugins_general');
+  assert.deepEqual(tabs.map(n=>n.text),['专属','一般']);assert.equal(inspect().pluginCategory,'general');
+  tap('plugins_exclusive');assert.equal(actions.at(-1),'edge_plugins_exclusive');
+  call('set_plugin_category',['number'],[1]);call('finish_plugins',['number','number','number','number','string'],[0,0,0,0,'']);
+  assert.match(inspect().nodes.find(n=>n.id==='plugins_empty').text,/专属/);
+  tap('plugins_general');assert.equal(actions.at(-1),'edge_plugins_general');
+  call('set_plugin_category',['number'],[0]);
+  call('set_plugin',['number','string','string','number','number'],[0,'com.test','测试包',0,0]);
+  call('finish_plugins',['number','number','number','number','string'],[1,0,1,0,'']);tap('plugin_probe_0');
+  call('set_plugin_details',['string','string','string','number','number','number','string'],['com.test','中文简介'.repeat(16),'',0,0,0,'']);
+  assert.equal(inspect().nodes.find(n=>n.id==='plugin_dialog_title').text,'测试包');
+  assert.match(inspect().nodes.find(n=>n.id==='plugin_info').text,/包 ID: com.test[\s\S]*简介:/);
+  assert(!inspect().nodes.some(n=>n.id==='plugin_test_tool'));
+  assert(!inspect().nodes.find(n=>n.id==='plugin_info').text.includes('工具:'));
+  call('set_plugin_details',['string','string','string','number','number','number','string'],['com.test','a'.repeat(192),'',0,0,0,'']);
+  assert.equal(ui.ccall('operit_ui_debug_swipe','number',['string'],['up']),1);assert(inspect().pluginInfoScroll>0);
+  call('set_plugin_details',['string','string','string','number','number','number','string'],['com.test','中文简介','pack:first\npack:second\npack:third',0,4,0,'']);
+  assert(inspect().nodes.some(n=>n.id==='plugin_test_tool'));tap('plugin_tools_next');assert.equal(actions.at(-1),'edge_plugin_tools_next');
+  call('set_plugin_details',['string','string','string','number','number','number','string'],['com.test','中文简介','pack:last',3,4,0,'']);
+  assert.equal(inspect().pluginInfoScroll,0);assert.equal(tap('plugin_tools_next'),0);assert.equal(tap('plugin_tools_prev'),1);
+  frame();assert(inspect().staticBytes<10*1024);assert.equal(inspect().heapBytes,0);
+  tap('plugin_dialog_close');assert.equal(actions.at(-1),'edge_plugin_close');
+});
