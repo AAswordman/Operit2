@@ -72,6 +72,12 @@ struct ReconciliationOutcome {
     /// means it did not fit and the initiator must send everything, paged.
     #[serde(default)]
     haveOpIds: Option<Vec<String>>,
+    /// Size of the responder's merged set. With an unset haveOpIds this is
+    /// the only termination signal: after a completed (more=false) full send
+    /// the responder's set is a subset of the initiator's union, so equal
+    /// counts prove the sets - and therefore both directions - are complete.
+    #[serde(default)]
+    haveCount: Option<u64>,
 }
 
 /// What one initiator knows after an exchange: the converged membership and
@@ -254,12 +260,14 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
         more: None,
         historyGap: None,
         haveOpIds: None,
+        haveCount: None,
     };
     if v2 {
         outcome.more = Some(more);
         // None keeps meaning "set too large": the initiator then sends its
         // full paged list next round instead of trusting a truncated set.
         outcome.haveOpIds = packOpIds(&merged, DEFAULT_RECONCILE_PAGE_BYTES);
+        outcome.haveCount = Some(merged.len() as u64);
         // Report the export floors behind the requested clock: the caller can
         // then distinguish "already converged" from "history I can no longer
         // backfill" without another round trip.
@@ -339,9 +347,13 @@ pub(crate) async fn reconcile(service: &dyn NodeSpaceContext, peer: &str) -> Res
         }
         let merged = service.networkControlStore().currentSpaceOperations()?;
         havePeerIds = outcome.haveOpIds.clone();
-        // Terminated only by exact sets: the peer listed everything it holds
-        // and claims nothing further, and we hold nothing outside that set.
-        let stillPending = !missingFor(&merged, &outcome.haveOpIds).is_empty();
+        // Terminated by exact sets when they fit, by count otherwise: after a
+        // completed (more=false) reply the responder's set is a subset of our
+        // union, so equal counts prove set equality in both directions.
+        let stillPending = match outcome.haveOpIds.as_ref() {
+            Some(ids) => !missingFor(&merged, &outcome.haveOpIds).is_empty(),
+            None => outcome.haveCount != Some(merged.len() as u64),
+        };
         if outcome.more != Some(true) && !stillPending {
             converged = true;
             break;

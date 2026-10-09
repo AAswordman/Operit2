@@ -181,3 +181,27 @@ async fn oversize_offer_is_refused_and_counted() {
     assert_eq!(after, before + 1);
     let _ = SyncClock::empty();
 }
+
+/// When the id sets exceed the page budget they degrade to None; convergence
+/// must still terminate via the count signal instead of burning the rounds.
+#[tokio::test]
+async fn oversized_id_sets_still_terminate_as_converged() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let ((aRouter, aService), (bRouter, _)) = reconcilablePair("bigset");
+    PeerStateStore::new(aService.storage())
+        .putRecord(CAPS_PATH, &bRouter.localNodeId(), &2u32)
+        .unwrap();
+    // ~200 op ids overflow the 6KB id-set budget on both sides.
+    for index in 0..200 {
+        aRouter
+            .networkControlStore
+            .updatePolicy(format!("bigset-policy-{index}"), format!("v{index}"))
+            .unwrap();
+    }
+    let started = std::time::Instant::now();
+    let result = space_reconcile::reconcile(&aService, &bRouter.localNodeId()).await.unwrap();
+    assert!(result.converged, "count-based termination must report convergence");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "must not burn the round budget");
+    assert_eq!(commandSet(&aRouter), commandSet(&bRouter));
+}
