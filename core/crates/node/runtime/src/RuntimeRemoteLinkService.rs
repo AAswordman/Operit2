@@ -27,7 +27,7 @@ use crate::{
 // The same admission state machine is used by full Core and lightweight Edge.
 pub use crate::NodeSpaceService::{SpaceJoinRequest, SpaceJoinStatus};
 pub(crate) use crate::NodeSpaceService::PeerSpaceSnapshot;
-pub(crate) use crate::NodeSpaceService::{NODE_SPACE_TARGET, NODE_SPACE_APPROVAL_TARGET};
+pub(crate) use crate::NodeSpaceService::{NODE_SPACE_TARGET, NODE_SPACE_APPROVAL_TARGET, space_reconcile};
 use crate::NodeSpaceService::space_join;
 /// 已配对设备的展示投影；不暴露底层会话、端点或传输选择。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -560,6 +560,7 @@ impl RuntimeRemoteLinkService {
                     .map_err(|error| error.to_string())
             },
             "requestJoin" | "joinStatus" | "cancelJoin" => space_join::receive(self, peerNodeId, request),
+            "reconcileSharedSpace" => space_reconcile::receive(self, peerNodeId, request),
             "join" => Err("SPACE_JOIN_APPROVAL_REQUIRED: Submit a join request for local approval first".into()),
             _ => Err("Unknown node Space method".into()),
         }

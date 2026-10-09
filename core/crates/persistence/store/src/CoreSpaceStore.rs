@@ -400,6 +400,51 @@ impl CoreSpaceStore {
         )
     }
 
+    /// Rewrites one remote participant's membership record to match the policy
+    /// a shared-Space reconciliation converged on. `member == true` restores
+    /// the record under the current Space identity from an already imported
+    /// profile; `member == false` retires it as the node's own standalone
+    /// Space. Idempotent for already aligned records. The local device never
+    /// aligns through here: its own membership is retired explicitly.
+    #[allow(non_snake_case)]
+    pub fn alignRemoteMemberRecord(&self, nodeId: String, member: bool) -> Result<CoreSpace, String> {
+        validateNodeId(&nodeId)?;
+        let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
+        if nodeId == identity.nodeId {
+            return Err("current device membership is retired by leave, not record alignment".to_string());
+        }
+        let space = self.initialize()?;
+        let hasRecord = self.memberRecords()?.get(&nodeId)
+            .map(|record| record.spaceId == space.spaceId)
+            .unwrap_or(false);
+        if member == hasRecord {
+            return self.space();
+        }
+        if member {
+            // The caller imports the converged profile first; restoring without
+            // it would publish a member no replica can present.
+            if !self.deviceProfiles()?.contains_key(&nodeId) {
+                return Err(format!("device profile is missing for reconciled member: {nodeId}"));
+            }
+            let now = currentTimeMillis();
+            self.writeMemberRecord(&CoreSpaceMemberRecord {
+                spaceId: space.spaceId.clone(),
+                spaceName: space.spaceName.clone(),
+                spaceRevision: space.spaceRevision,
+                nodeId: nodeId.clone(),
+                joinedAt: now,
+                updatedAt: now,
+            })?;
+            let revision = space.spaceRevision.checked_add(1)
+                .ok_or_else(|| "Device space revision overflow".to_string())?;
+            let mut members: std::collections::BTreeSet<String> = space.members.into_iter().collect();
+            members.insert(nodeId);
+            self.writeSpaceProjection(space.spaceId, space.spaceName, revision, members)
+        } else {
+            self.removeRemoteMember(nodeId)
+        }
+    }
+
     /// Admits an authenticated lightweight peer to the current Space without
     /// requiring that peer to host business storage. The caller must apply the
     /// matching NetworkControl admission separately; this method owns only the
