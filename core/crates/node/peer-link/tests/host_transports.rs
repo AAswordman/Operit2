@@ -29,6 +29,18 @@ impl HostRuntimeTaskSchedulerHost for Scheduler {
         });
         Ok(())
     }
+
+    /// Executes cooperative work on the host-owned asynchronous executor.
+    fn scheduleHostRuntimeCooperativeAsyncTask(&self, _: &str, task: HostRuntimeAsyncTask) -> HostResult<()> {
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(task());
+        });
+        Ok(())
+    }
     fn scheduleDelayedHostRuntimeTask(
         &self,
         _: &str,

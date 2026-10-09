@@ -1426,6 +1426,22 @@ mod tests {
             Ok(())
         }
 
+        /// Executes cooperative work on the host-owned asynchronous executor.
+        fn scheduleHostRuntimeCooperativeAsyncTask(
+            &self,
+            _taskName: &str,
+            task: HostRuntimeAsyncTask,
+        ) -> HostResult<()> {
+            std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("create test route task runtime failed");
+                runtime.block_on(task());
+            });
+            Ok(())
+        }
+
         /// Starts one delayed test task on a native thread.
         fn scheduleDelayedHostRuntimeTask(
             &self,

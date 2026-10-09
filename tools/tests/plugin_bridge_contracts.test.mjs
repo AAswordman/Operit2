@@ -17,7 +17,7 @@ test('plugin console forwards info, warnings and errors to the native log sink',
     'core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs', root,
   ), 'utf8');
   const start = source.indexOf('        var console = {{');
-  const end = source.indexOf('        var setTimeout =', start);
+  const end = source.indexOf('        var intervalStates =', start);
   const calls = [];
   const context = vm.createContext({
     /** Captures the exact severity and text crossing the JavaScript host boundary. */

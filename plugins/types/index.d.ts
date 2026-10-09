@@ -6,7 +6,7 @@
  */
 
 // Import types that will be used in global declarations
-import { ToolReturnType, ToolCatalogEntry, NativeInterface as CoreNativeInterface } from './core';
+import { ToolReturnType, ToolCatalogEntry } from './core';
 import {
     JavaBridgeApi as JavaBridgeApiType,
     JavaBridgeClass as JavaBridgeClassType,
@@ -292,6 +292,4 @@ declare global {
     const Java: JavaBridgeApiType;
     const Kotlin: JavaBridgeApiType;
 
-    // NativeInterface
-    const NativeInterface: typeof CoreNativeInterface;
 }

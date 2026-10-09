@@ -22,8 +22,8 @@ use operit_tools::tools::ToolRegistration::registerAllTools;
 use operit_tools::tools::ToolResultDataClasses::{stringResultData, ToolResultData};
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
-    AsyncToolExecutor, RegisteredToolExecutor, ToolInvocationFuture, AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutionManager, ToolExecutor,
-    ToolParameter, ToolValidationResult,
+    AITool, AsyncToolExecutor, RegisteredToolExecutor, ToolAccessSpec, ToolBoundary, ToolEffect,
+    ToolExecutionManager, ToolExecutor, ToolInvocationFuture, ToolParameter, ToolValidationResult,
 };
 use operit_util::ChainLogger::{self, TOOL_CHAIN};
 use operit_util::LocaleUtils::LocaleUtils;
@@ -131,7 +131,8 @@ impl AIToolHandler {
         plugin_id: &str,
         scope: &str,
     ) -> Result<String, String> {
-        let root = operit_store::ExtensionStore::ExtensionStore::configPathForScope(owner_id, scope)?;
+        let root =
+            operit_store::ExtensionStore::ExtensionStore::configPathForScope(owner_id, scope)?;
         let path = if plugin_id == owner_id {
             root
         } else {
@@ -145,7 +146,8 @@ impl AIToolHandler {
             .ok_or("FileSystemHost is required for plugin configuration")?
             .makeDirectory(&configDir.to_string_lossy(), true)
             .map_err(|error| error.to_string())?;
-        let relative = path.strip_prefix("runtime/")
+        let relative = path
+            .strip_prefix("runtime/")
             .ok_or("Configuration is outside runtime storage")?;
         PathMapper::joinVfsPath("/app/data", relative)
     }
@@ -572,8 +574,6 @@ impl AIToolHandler {
             .toolVisibility
             .insert(name, ToolRegistrationVisibility::PUBLIC);
     }
-
-
 
     /// Returns the configured visibility for one tool.
     #[allow(non_snake_case)]
@@ -1501,12 +1501,16 @@ impl JsExecutionHost for AIToolHandler {
     }
 
     /// Reads one ToolPkg text resource.
-    fn read_toolpkg_text_resource(&self, target: &str, path: &str) -> Result<String, String> {
-        self.getOrCreatePackageManager()
+    fn read_toolpkg_text_resource(
+        &self,
+        target: &str,
+        path: &str,
+    ) -> Result<Option<String>, String> {
+        Ok(self
+            .getOrCreatePackageManager()
             .lock()
             .expect("package manager mutex poisoned")
-            .readToolPkgTextResource(target, path, true)
-            .ok_or_else(|| format!("ToolPkg text resource not found: {target}/{path}"))
+            .readToolPkgTextResource(target, path, true))
     }
 
     /// Materializes one ToolPkg binary resource.
@@ -1531,19 +1535,22 @@ impl JsExecutionHost for AIToolHandler {
     /// Dispatches one Compose DSL controller command.
     fn handle_compose_webview_controller_command(
         &self,
-        payload_json: &str,
-    ) -> Result<String, String> {
+        payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         self.getContext()
             .composeDslWebViewHost
             .as_ref()
             .ok_or_else(|| "ComposeDslWebViewHost is not registered".to_string())?
-            .handleControllerCommand(payload_json)
+            .handleControllerCommand(payload)
             .map_err(|error| error.to_string())
     }
 
-    /// Decodes and forwards one Compose DSL file-picker request to the registered host owner.
-    fn open_compose_file_picker(&self, payload_json: &str) -> Result<String, String> {
-        let request = operit_host_api::ComposeDslFilePickerRequest::parse(payload_json)
+    /// Validates and forwards one structured file-picker request to the registered host owner.
+    fn open_compose_file_picker(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let request = operit_host_api::ComposeDslFilePickerRequest::fromValue(payload.clone())
             .map_err(|error| error.to_string())?;
         self.getContext()
             .composeDslWebViewHost

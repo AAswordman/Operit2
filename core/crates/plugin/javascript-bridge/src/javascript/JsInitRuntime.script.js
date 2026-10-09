@@ -120,6 +120,17 @@
         return true;
     }
 
+    /** Reports only the explicit detached flag instead of exposing the whole call object to Rust. */
+    function isCallDetached(callId) {
+        var state = getCallState(callId);
+        return Boolean(state && state.detached === true);
+    }
+
+    /** Returns the structured registration capture required by the runtime lifecycle contract. */
+    function readRegistrationCapture() {
+        return root.__operitToolPkgRegistrationCapture;
+    }
+
     function detachedCallIds() {
         var registry = ensureCallRegistry();
         var result = [];
@@ -147,18 +158,14 @@
         return activateCall(callId);
     }
 
+    /** Cancels every timer owned by the session through the host Promise bridge. */
     function clearCallTimers(callState) {
         if (!callState || !callState.timerIds || typeof callState.timerIds !== 'object') {
             return;
         }
         var timerIds = Object.keys(callState.timerIds);
         for (var index = 0; index < timerIds.length; index += 1) {
-            var timerId = timerIds[index];
-            try {
-                delete windowRef[timerId];
-            } catch (_deleteTimerError) {
-                windowRef[timerId] = undefined;
-            }
+            root.clearTimeout(timerIds[index]);
         }
         callState.timerIds = {};
     }
@@ -225,13 +232,14 @@
     expose('__operitRetainCallReference', retainCallReference);
     expose('__operitReleaseCallReference', releaseCallReference);
     expose('__operitGetDetachedCallIds', detachedCallIds);
+    expose('__operitIsCallDetached', isCallDetached);
+    expose('__operitReadRegistrationCapture', readRegistrationCapture);
     expose('__operitActivateCall', activateCall);
     expose('__operitPrepareDetachedCall', prepareDetachedCall);
     expose('__operitFinalizeDetachedCall', finalizeDetachedCall);
+    /** Forwards the detached-call notification through its mandatory structured host binding. */
     expose('__operitNotifyDetachedCall', function(callId) {
-        if (typeof root.__operitNativeNotifyDetachedCall === 'function') {
-            root.__operitNativeNotifyDetachedCall(normalizeCallId(callId));
-        }
+        root.__operitNativeNotifyDetachedCall(normalizeCallId(callId));
     });
     expose('__operitCleanupCallSession', cleanupCallSession);
     expose('__operitCancelCallSession', cancelCallSession);

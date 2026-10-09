@@ -2,7 +2,9 @@
 
 Compose DSL screens execute while the Core dispatcher owns the `RuntimePackageManager` mutex. A screen module may load another package file through `require`, which previously called the JavaScript host and tried to acquire that same mutex again. Native builds then had one thread waiting for the JavaScript worker while the worker waited for the mutex; single-threaded Web builds have the same reentry hazard.
 
-Before a Compose render starts, `RuntimePackageManager` builds an immutable map of every UTF-8 entry in the container's extracted package cache. The render stores this map on its page-owned JavaScript engine. Render, rerender, and action execution expose it to `NativeInterface.readToolPkgTextResource`, so CommonJS module resolution reads the map and does not call back into the package manager.
+Before a Compose render starts, `RuntimePackageManager` builds an immutable map of every UTF-8 entry in the container's extracted package cache. The render stores this map on its page-owned JavaScript engine. Render, rerender, and action execution expose it to the structured `__operitNativeReadToolPkgTextResource` host binding, so CommonJS module resolution reads the map and does not call back into the package manager.
+
+Each execution has an explicit resource owner: a page snapshot, its bound package resource host, or its execution host. A missing resource is a structured null value; host failures are raised as errors instead of being converted to empty source text.
 
 The map lives with the page execution engine and is released when that engine is released. It contains only text entries; binary package resources continue to use their dedicated materialization API.
 

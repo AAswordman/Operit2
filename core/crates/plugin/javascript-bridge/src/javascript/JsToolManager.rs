@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use operit_plugin_sdk::execution_result::{JsExecutionError, JsExecutionResult};
 use operit_plugin_sdk::javascript::{
-    JsExecutionCompletion, JsExecutionEngine, JsPackageExecutor, JsPackageRuntime, JsPackageToolCallRequest,
-    JsPackageToolCallResult,
+    JsExecutionCompletion, JsExecutionEngine, JsPackageExecutor, JsPackageRuntime,
+    JsPackageToolCallRequest, JsPackageToolCallResult,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgManager::ToolPkgExecutionEngineFactory;
 
@@ -443,8 +443,8 @@ mod tests {
     use operit_plugin_sdk::javascript::{
         JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsToolCallRequest, JsToolCallResult,
         JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
-        JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult,
-        ToolPkgConfigScope, ToolPkgExecutionContext,
+        JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope,
+        ToolPkgExecutionContext,
     };
     use operit_plugin_sdk::package::{PackageTool, ToolPackage};
     use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
@@ -512,7 +512,11 @@ mod tests {
         }
 
         /// Resolves scoped configuration through the explicit test contract.
-        fn scoped_plugin_config_dir(&self, _owner_id: &str, plugin_id: &str) -> Result<String, String> {
+        fn scoped_plugin_config_dir(
+            &self,
+            _owner_id: &str,
+            plugin_id: &str,
+        ) -> Result<String, String> {
             self.plugin_config_dir(plugin_id)
         }
 
@@ -531,7 +535,7 @@ mod tests {
             &self,
             _package_name_or_subpackage_id: &str,
             _resource_path: &str,
-        ) -> Result<String, String> {
+        ) -> Result<Option<String>, String> {
             Err("ToolPkg text resources are not part of this test".to_string())
         }
 
@@ -554,13 +558,16 @@ mod tests {
         /// Rejects Compose DSL controller commands in manager tests.
         fn handle_compose_webview_controller_command(
             &self,
-            _payload_json: &str,
-        ) -> Result<String, String> {
+            _payload: &serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
             Err("Compose DSL WebView control is not part of this test".to_string())
         }
 
         /// Rejects Compose DSL file-picker requests in manager tests.
-        fn open_compose_file_picker(&self, _payload_json: &str) -> Result<String, String> {
+        fn open_compose_file_picker(
+            &self,
+            _payload: &serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
             Err("Compose DSL file picking is not part of this test".to_string())
         }
 

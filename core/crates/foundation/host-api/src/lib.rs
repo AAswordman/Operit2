@@ -1,13 +1,13 @@
 #![allow(non_snake_case)]
 
 pub mod AtomicCounter;
-pub mod HostManager;
 pub mod FileSystemResource;
-pub mod TerminalWorkingDirectory;
-pub mod PluginSdkIpc;
-pub mod TimeUtils;
+pub mod HostManager;
 pub mod HttpServer;
+pub mod PluginSdkIpc;
 pub mod Tcp;
+pub mod TerminalWorkingDirectory;
+pub mod TimeUtils;
 pub use Tcp::{TcpConnection, TcpHost, TcpListener};
 pub mod SerialPort;
 pub use SerialPort::{SerialPortConnection, SerialPortHost};
@@ -1200,8 +1200,18 @@ pub struct ComposeDslFilePickerRequest {
 }
 
 impl ComposeDslFilePickerRequest {
-    /// Decodes and validates the JSON payload supplied by the Compose DSL JavaScript bridge.
+    /// Decodes the explicit external JSON file-picker protocol.
     pub fn parse(payloadJson: &str) -> HostResult<Self> {
+        let payload = serde_json::from_str(payloadJson).map_err(|error| {
+            HostError::new(format!(
+                "Compose DSL file picker request decode failed: {error}"
+            ))
+        })?;
+        Self::fromValue(payload)
+    }
+
+    /// Validates a structured request from the JavaScript host bridge.
+    pub fn fromValue(payload: Value) -> HostResult<Self> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
         struct RawRequest {
@@ -1212,7 +1222,7 @@ impl ComposeDslFilePickerRequest {
             options: ComposeDslFilePickerOptions,
         }
 
-        let raw: RawRequest = serde_json::from_str(payloadJson).map_err(|error| {
+        let raw: RawRequest = serde_json::from_value(payload).map_err(|error| {
             HostError::new(format!(
                 "Compose DSL file picker request decode failed: {error}"
             ))
@@ -1239,10 +1249,10 @@ impl ComposeDslFilePickerRequest {
 
 pub trait ComposeDslWebViewHost: Send + Sync {
     /// Executes one imperative WebView controller command for a Compose DSL screen.
-    fn handleControllerCommand(&self, payloadJson: &str) -> HostResult<String>;
+    fn handleControllerCommand(&self, payload: &Value) -> HostResult<Value>;
 
     /// Opens one validated Compose DSL file picker through the platform owner.
-    fn openFilePicker(&self, request: ComposeDslFilePickerRequest) -> HostResult<String>;
+    fn openFilePicker(&self, request: ComposeDslFilePickerRequest) -> HostResult<Value>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1451,7 +1461,9 @@ pub trait HttpHost: HttpStreamHost + Send + Sync {
         _request: HttpRequestData,
         _targetPath: String,
     ) -> HostResult<HttpFileDownloadResult> {
-        Err(HostError::new("HTTP download to file is not supported by this host"))
+        Err(HostError::new(
+            "HTTP download to file is not supported by this host",
+        ))
     }
 
     /// Downloads files with bounded worker concurrency and progress reporting.
@@ -1488,7 +1500,9 @@ pub trait HttpStreamHost: Send + Sync {
         _onChunk: HttpStreamChunkCallback,
         _onClosed: HttpStreamClosedCallback,
     ) -> HostResult<()> {
-        Err(HostError::new("HTTP response streaming is not supported by this host"))
+        Err(HostError::new(
+            "HTTP response streaming is not supported by this host",
+        ))
     }
 
     /// Closes one previously opened HTTP byte stream.
@@ -1927,13 +1941,9 @@ pub type HostRuntimeTurnFuture = Pin<Box<dyn Future<Output = HostResult<()>> + S
 pub type HostJavaScriptAsyncJsonCallback =
     Arc<dyn Fn(u64, Vec<Value>) -> HostResult<()> + Send + Sync + 'static>;
 
-/// Handles one host JavaScript function that returns a string value.
-pub type HostJavaScriptStringCallback =
-    Arc<dyn Fn(Vec<String>) -> HostResult<String> + Send + Sync + 'static>;
-
-/// Handles one host JavaScript function that returns `undefined`.
-pub type HostJavaScriptVoidCallback =
-    Arc<dyn Fn(Vec<String>) -> HostResult<()> + Send + Sync + 'static>;
+/// Handles a synchronous host operation using owned JSON-compatible arguments and results.
+pub type HostJavaScriptJsonCallback =
+    Arc<dyn Fn(Vec<Value>) -> HostResult<Value> + Send + Sync + 'static>;
 
 /// Supplies one interrupt predicate to a host-owned JavaScript runtime.
 pub type HostJavaScriptInterruptHandler = Arc<dyn Fn() -> bool + Send + Sync + 'static>;
@@ -1959,59 +1969,33 @@ pub trait HostJavaScriptRuntime {
         handler: Option<HostJavaScriptInterruptHandler>,
     ) -> HostResult<()>;
 
-    /// Calls a global callback (built-in hosts do not construct source). Missing or
-    /// non-callable callbacks are ignored, as on the legacy delivery path.
-    /// The default keeps third-party hosts source-compatible; built-in hosts
-    /// override it with their engine's direct function-call API.
-    fn callHostJavaScriptFunction(&mut self, name: &str, arguments: &[Value]) -> HostResult<()> {
-        let name = serde_json::to_string(name).map_err(|e| HostError::new(e.to_string()))?;
-        let args = serde_json::to_string(arguments).map_err(|e| HostError::new(e.to_string()))?;
-        self.evaluateHostJavaScriptVoid("host-callback", &format!(
-            "(function() {{ var f = globalThis[{name}]; if (typeof f === 'function') f.apply(undefined, {args}); }})();"
-        ))
-    }
+    /// Calls a lifecycle function with structured arguments and returns its structured result.
+    fn callHostJavaScriptFunction(&mut self, name: &str, arguments: &[Value]) -> HostResult<Value>;
 
-    /// Optionally registers an asynchronous structured binding. Its first JS
-    /// argument is a cancellation scope; remaining arguments are converted with
-    /// JSON.stringify-compatible value semantics, without producing JSON text.
-    /// Returns false when this host does not implement the structured capability.
+    /// Registers a required structured asynchronous binding with an owning execution scope.
+    /// Hosts convert arguments to owned JSON-compatible values without producing JSON text.
     fn registerHostJavaScriptAsyncJsonFunction(
         &mut self,
-        _name: &str,
-        _callback: HostJavaScriptAsyncJsonCallback,
-    ) -> HostResult<bool> {
-        Ok(false)
-    }
-
-    /// Settles a Promise on the owning executor. Cancelled/unknown ids are ignored.
-    fn settleHostJavaScriptPromise(
-        &mut self,
-        _id: u64,
-        _value: &Value,
-        _reject: bool,
-    ) -> HostResult<()> {
-        Err(HostError::new(
-            "Structured JavaScript promises are not supported by this host",
-        ))
-    }
-
-    /// Drops only the Promise handles belonging to a cancelled execution scope.
-    fn cancelHostJavaScriptPromises(&mut self, _scope: &str) -> HostResult<()> {
-        Ok(())
-    }
-
-    /// Registers one global JavaScript function that returns a string.
-    fn registerHostJavaScriptStringFunction(
-        &mut self,
         name: &str,
-        callback: HostJavaScriptStringCallback,
+        callback: HostJavaScriptAsyncJsonCallback,
     ) -> HostResult<()>;
 
-    /// Registers one global JavaScript function that returns `undefined`.
-    fn registerHostJavaScriptVoidFunction(
+    /// Settles a Promise on its owning executor exactly once; cancelled ids are ignored.
+    fn settleHostJavaScriptPromise(
+        &mut self,
+        id: u64,
+        value: &Value,
+        reject: bool,
+    ) -> HostResult<()>;
+
+    /// Releases the Promise handles owned by the cancelled execution scope.
+    fn cancelHostJavaScriptPromises(&mut self, scope: &str) -> HostResult<()>;
+
+    /// Registers a required synchronous structured binding without JSON text transport.
+    fn registerHostJavaScriptJsonFunction(
         &mut self,
         name: &str,
-        callback: HostJavaScriptVoidCallback,
+        callback: HostJavaScriptJsonCallback,
     ) -> HostResult<()>;
 }
 
@@ -2166,16 +2150,13 @@ pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()>;
 
-    /// Schedules an opt-in nonblocking task on a reusable affine executor.
-    /// Hosts without this capability retain their existing scheduling behavior.
+    /// Schedules a nonblocking task on the host's reusable affine executor.
     /// Callers must not block the executor or rely on exclusive thread-local state.
     fn scheduleHostRuntimeCooperativeAsyncTask(
         &self,
         taskName: &str,
         task: HostRuntimeAsyncTask,
-    ) -> HostResult<()> {
-        self.scheduleHostRuntimeAsyncTask(taskName, task)
-    }
+    ) -> HostResult<()>;
 
     /// Schedules a named runtime task after a platform-owned delay.
     fn scheduleDelayedHostRuntimeTask(

@@ -66,46 +66,53 @@ test('structured SDK calls avoid JSON text, preserve data and release after cont
   assert.equal(Object.keys(context).some(key => key.startsWith('__operit_tool_')), false);
 });
 
-test('SDK keeps legacy hosts compatible and removes callback globals', async () => {
-  let callback;
-  const { context, references } = runtime({
-    NativeInterface: {
-      callToolAsync(id, type, name, json) {
-        callback = id;
-        assert.deepEqual([type, name, json], ['default', 'echo', '{"x":7}']);
-        queueMicrotask(() => context[id]('{"success":true,"data":{"x":7}}', false));
-      },
-    },
-  });
-  const output = await context.toolCall('echo', { x: 7 });
-  assert.equal(output.x, 7);
+/** Requires the structured host contract and never dispatches the retired callback ABI. */
+test('missing structured binding rejects and releases its owner without another transport', async () => {
+  const { context, references } = runtime();
+  await assert.rejects(context.toolCall('echo', { x: 7 }), /__operitNativeCallToolStructured/);
   await flush();
-  assert.equal(references.get('owner'), 0);
-  assert.equal(Object.hasOwn(context, callback), false);
+  assert.equal(references.size, 0);
+  assert.equal(Object.keys(context).some(key => key.startsWith('__operit_tool_')), false);
 });
 
-test('intermediate-result options keep using the streaming protocol', async () => {
-  let callbacks;
-  const intermediate = [];
+/** Rejects unsupported callbacks before submitting a host request or retaining a scope. */
+test('intermediate callbacks fail explicitly instead of silently executing a non-streaming call', async () => {
+  let submitted = false;
   const { context, references } = runtime({
-    __operitNativeCallToolStructured() { throw Error('Streaming took the structured path'); },
-    NativeInterface: {
-      callToolAsyncStreaming(finalId, intermediateId, type, name, json) {
-        callbacks = [finalId, intermediateId];
-        assert.deepEqual([type, name, json], ['default', 'echo', '{"x":7}']);
-        context[intermediateId]('{"success":true,"data":"partial"}', false);
-        queueMicrotask(() => context[finalId]('{"success":true,"data":"done"}', false));
-      },
-    },
+    /** Records any incorrectly submitted request. */
+    __operitNativeCallToolStructured() { submitted = true; return Promise.resolve({ success: true }); },
   });
-  const output = await context.toolCall('echo', { x: 7 }, {
-    onIntermediateResult(value) { intermediate.push(value); },
+  await assert.rejects(context.toolCall('echo', { x: 7 }, {
+    /** Represents a requested streaming callback. */
+    onIntermediateResult() {},
+  }), /does not support intermediate-result callbacks/);
+  assert.equal(submitted, false);
+  assert.equal(references.size, 0);
+});
+
+/** Rejects text envelopes rather than guessing whether application strings contain JSON. */
+test('malformed host result envelopes reject and release their owner', async () => {
+  for (const value of ['{"success":true,"data":7}', null, {}, { success: 'true' }]) {
+    const { context, references } = runtime({
+      /** Supplies a malformed envelope directly from the test host. */
+      __operitNativeCallToolStructured() { return Promise.resolve(value); },
+    });
+    await assert.rejects(context.toolCall('echo', {}), /invalid result envelope/);
+    await flush();
+    assert.equal(references.get('owner'), 0);
+  }
+});
+
+/** Validates overloads before allocating native completion handles. */
+test('unsupported parameters and invalid argument overloads reject before retain', async () => {
+  const { context, references } = runtime({
+    /** Prevents invalid arguments from reaching the host. */
+    __operitNativeCallToolStructured() { throw new Error('Invalid submission'); },
   });
-  assert.equal(output, 'done');
-  assert.deepEqual(intermediate, ['partial']);
-  await flush();
-  assert.equal(references.get('owner'), 0);
-  for (const id of callbacks) assert.equal(Object.hasOwn(context, id), false);
+  for (const args of [['echo', []], ['echo', null], [], ['default', 'echo', 7]]) {
+    await assert.rejects(context.toolCall(...args), /Tool params|Invalid toolCall/);
+  }
+  assert.equal(references.size, 0);
 });
 
 test('business failures, native rejections and synchronous conversion failures release once', async () => {

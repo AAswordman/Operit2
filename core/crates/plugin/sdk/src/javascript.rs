@@ -175,7 +175,7 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
         &self,
         package_name_or_subpackage_id: &str,
         resource_path: &str,
-    ) -> Result<String, String>;
+    ) -> Result<Option<String>, String>;
 
     /// Materializes one ToolPkg resource and returns its output path.
     fn materialize_toolpkg_resource(
@@ -190,13 +190,10 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
     ) -> Result<JsToolPkgWasmResult, String>;
 
     /// Handles one Compose DSL WebView controller command.
-    fn handle_compose_webview_controller_command(
-        &self,
-        payload_json: &str,
-    ) -> Result<String, String>;
+    fn handle_compose_webview_controller_command(&self, payload: &Value) -> Result<Value, String>;
 
     /// Opens one Compose DSL file picker through the embedding application's host UI.
-    fn open_compose_file_picker(&self, payload_json: &str) -> Result<String, String>;
+    fn open_compose_file_picker(&self, payload: &Value) -> Result<Value, String>;
 
     /// Returns whether one package is currently imported.
     fn is_package_imported(&self, package_name: &str) -> Result<bool, String>;
@@ -367,7 +364,7 @@ pub trait ToolPkgTextResourceHost: Send + Sync {
         &self,
         package_name_or_subpackage_id: &str,
         resource_path: &str,
-    ) -> Result<String, String>;
+    ) -> Result<Option<String>, String>;
 }
 
 /// Immutable package environment owned by one ToolPkg JavaScript execution context.

@@ -87,6 +87,16 @@ impl HostRuntimeTaskSchedulerHost for WebHostRuntimeTaskSchedulerHost {
         Ok(())
     }
 
+    /// Executes cooperative work on the host-owned asynchronous executor.
+    fn scheduleHostRuntimeCooperativeAsyncTask(
+        &self,
+        _taskName: &str,
+        task: HostRuntimeAsyncTask,
+    ) -> HostResult<()> {
+        wasm_bindgen_futures::spawn_local(task());
+        Ok(())
+    }
+
     /// Enqueues the task through the browser timer queue after the requested delay.
     fn scheduleDelayedHostRuntimeTask(
         &self,

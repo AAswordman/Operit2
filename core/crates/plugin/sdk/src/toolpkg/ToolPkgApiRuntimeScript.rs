@@ -299,49 +299,49 @@ pub fn buildToolPkgApiRuntimeScript() -> String {
             return output;
         }
 
-        // Calls a published dependency method; caller identity is attached by the native engine.
+        /** Calls a published dependency method using host-owned structured Promise handles. */
         async function callDependency(packageName, methodName, payload) {
             if (typeof packageName !== 'string' || !packageName.trim() ||
                 typeof methodName !== 'string' || !methodName.trim()) {
-                return Promise.reject(new Error('Dependency package and method names are required.'));
+                throw new Error('Dependency package and method names are required.');
             }
             var callId = currentCallId();
             var state = currentCallState();
             if (state.params.__operit_registration_mode === true) {
-                return Promise.reject(new Error('Dependency calls are not allowed during registration.'));
+                throw new Error('Dependency calls are not allowed during registration.');
             }
-            if (typeof root.__operitNativeCallDependencyAsync !== 'function') {
-                return Promise.reject(new Error('Dependency API transport is unavailable.'));
-            }
-            var serialized = JSON.stringify(payload === undefined ? null : payload);
-            if (serialized === undefined) {
-                return Promise.reject(new Error('Dependency payload must be JSON serializable.'));
-            }
-            var callbackId = '__operit_dependency_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-            // Keeps the owner call alive until the native dependency result has arrived.
             return new Promise(function(resolve, reject) {
                 root.__operitRetainCallReference(callId);
-                // Releases the exact retained reference on both submission and completion errors.
+                /** Releases the owner after the public completion's microtask. */
                 function cleanup() {
-                    delete root[callbackId];
                     Promise.resolve().then(function() { root.__operitReleaseCallReference(callId); });
                 }
-                // Decodes the transport envelope without rewriting application results.
-                root[callbackId] = function(result, isError) {
-                    try {
-                        root.__operitActivateCall(callId);
-                        if (isError) throw new Error(result);
-                        var response = JSON.parse(result);
-                        if (response.success !== true) throw new Error(response.message);
-                        resolve(response.value);
-                    } catch (error) {
-                        reject(error);
-                    } finally {
-                        cleanup();
-                    }
-                };
                 try {
-                    root.__operitNativeCallDependencyAsync(callbackId, packageName.trim(), methodName.trim(), serialized);
+                    root.__operitNativeCallDependency(
+                        callId, packageName.trim(), methodName.trim(), payload === undefined ? null : payload
+                    ).then(function(response) {
+                        try {
+                            root.__operitActivateCall(callId);
+                            if (!response || typeof response !== 'object' || typeof response.success !== 'boolean') {
+                                throw new TypeError('Dependency host returned an invalid result envelope');
+                            }
+                            if (!response.success) throw new Error(response.message);
+                            resolve(response.value);
+                        } catch (error) {
+                            reject(error);
+                        } finally {
+                            cleanup();
+                        }
+                    }, function(error) {
+                        try {
+                            root.__operitActivateCall(callId);
+                            reject(error);
+                        } catch (activationError) {
+                            reject(activationError);
+                        } finally {
+                            cleanup();
+                        }
+                    });
                 } catch (error) {
                     cleanup();
                     reject(error);

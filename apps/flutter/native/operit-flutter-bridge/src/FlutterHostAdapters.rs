@@ -391,22 +391,29 @@ impl FlutterComposeDslWebViewBridge {
 
 impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
     /// Handles one Compose DSL controller command through the Flutter owner.
-    fn handleControllerCommand(&self, payloadJson: &str) -> operit_host_api::HostResult<String> {
+    fn handleControllerCommand(
+        &self,
+        payload: &serde_json::Value,
+    ) -> operit_host_api::HostResult<serde_json::Value> {
         let response = requestOwnerComposeWebViewController(
             RuntimeHostInteractionComposeWebViewControllerPayload {
-                commandJson: payloadJson.to_string(),
+                commandJson: payload.to_string(),
             },
             Duration::from_secs(60),
         )
         .map_err(operit_host_api::HostError::new)?;
-        Ok(response.result)
+        serde_json::from_str(&response.result).map_err(|error| {
+            operit_host_api::HostError::new(format!(
+                "Invalid Compose controller owner response: {error}"
+            ))
+        })
     }
 
     /// Opens one Compose DSL file picker through the Flutter owner surface.
     fn openFilePicker(
         &self,
         request: operit_host_api::ComposeDslFilePickerRequest,
-    ) -> operit_host_api::HostResult<String> {
+    ) -> operit_host_api::HostResult<serde_json::Value> {
         let requestJson = serde_json::to_string(&request).map_err(|error| {
             operit_host_api::HostError::new(format!(
                 "Compose DSL file picker request encode failed: {error}"
@@ -417,7 +424,11 @@ impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
             Duration::from_secs(600),
         )
         .map_err(operit_host_api::HostError::new)?;
-        Ok(response.resultJson)
+        serde_json::from_str(&response.resultJson).map_err(|error| {
+            operit_host_api::HostError::new(format!(
+                "Invalid Compose file-picker owner response: {error}"
+            ))
+        })
     }
 }
 

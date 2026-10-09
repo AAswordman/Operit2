@@ -45,15 +45,13 @@ var PluginConfig = (function() {
         return dir;
     }
 
+    /** Reports the original configuration write failure through the required runtime console. */
+
     function logWriteError(name, path, error) {
         var message = "PluginConfig write error: name=" + name +
             ", path=" + path +
             ", error=" + (error && error.message ? error.message : String(error));
-        if (typeof console !== "undefined" && console && typeof console.error === "function") {
-            console.error(message);
-        } else if (typeof NativeInterface !== "undefined" && NativeInterface && typeof NativeInterface.logError === "function") {
-            NativeInterface.logError(message);
-        }
+        console.error(message);
     }
 
     async function loadValues(path, defaults) {

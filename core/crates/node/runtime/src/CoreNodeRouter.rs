@@ -4008,6 +4008,17 @@ mod tests {
                 .map_err(|error| operit_host_api::HostError::new(error.to_string()))
         }
 
+        /// Executes cooperative work on the host-owned asynchronous executor.
+        fn scheduleHostRuntimeCooperativeAsyncTask(
+            &self,
+            _taskName: &str,
+            task: HostRuntimeAsyncTask,
+        ) -> HostResult<()> {
+            testHostAsyncTaskSender()
+                .send(task)
+                .map_err(|error| operit_host_api::HostError::new(error.to_string()))
+        }
+
         /// Starts one delayed synchronous test task on a native thread.
         fn scheduleDelayedHostRuntimeTask(
             &self,
