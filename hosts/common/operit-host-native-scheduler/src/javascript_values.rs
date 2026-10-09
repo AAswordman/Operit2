@@ -20,6 +20,7 @@ pub(crate) struct JsonIntrinsics {
 }
 
 impl JsonIntrinsics {
+    /// Captures the original conversion intrinsics before any plugin executes.
     pub(crate) fn new(ctx: &Ctx<'_>) -> rquickjs::Result<Self> {
         let wrappers: Array = ctx.eval(
             "[new Number(0), new String(''), new Boolean(false), Object(0n), new Proxy({}, {})]",
@@ -44,6 +45,7 @@ impl JsonIntrinsics {
         })
     }
 
+    /// Converts one standalone JSON-compatible argument using bounded value semantics.
     pub(crate) fn from_js<'js>(
         &self,
         ctx: &Ctx<'js>,
@@ -53,6 +55,25 @@ impl JsonIntrinsics {
         self.convert(ctx, value, "", &mut Vec::new(), &mut nodes, 0)
     }
 
+    /// Converts a complete host argument list under one shared depth and node budget.
+    pub(crate) fn arguments_from_js<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        arguments: Vec<Value<'js>>,
+    ) -> rquickjs::Result<Vec<JsonValue>> {
+        let mut nodes = 0;
+        arguments
+            .into_iter()
+            .map(|value| {
+                self.convert(ctx, value, "", &mut Vec::new(), &mut nodes, 0)?
+                    .ok_or_else(|| {
+                        Exception::throw_type(ctx, "Host arguments must be JSON-compatible values")
+                    })
+            })
+            .collect()
+    }
+
+    /// Recursively normalizes an owned argument without using JSON text or evaluating callback source.
     fn convert<'js>(
         &self,
         ctx: &Ctx<'js>,

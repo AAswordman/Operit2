@@ -10,20 +10,19 @@ use std::time::Duration;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::javascript::JsHostOperations;
 use crate::javascript::JsJavaBridgeDelegates::{
-    nativeJavaCallInstanceStrings, nativeJavaCallStaticString, nativeJavaClassExistsString,
-    nativeJavaGetApplicationContextString, nativeJavaNewInstanceString,
+    javaCallInstance, javaCallStatic, javaClassExists, javaGetApplicationContext, javaNewInstance,
 };
 use crate::javascript::JsLibraries::buildRuntimeBootstrapScript;
-use crate::javascript::JsNativeInterfaceDelegates;
 use operit_host_api::HostManager::{
     defaultHostJavaScriptRuntimeHost, defaultHostRuntimeTaskSchedulerHost,
 };
 use operit_host_api::TimeUtils::currentTimeMillisU128;
 use operit_host_api::{
-    HostError, HostErrorKind, HostJavaScriptExecutionInterrupt, HostJavaScriptInterruptHandler,
-    HostJavaScriptRuntime, HostJavaScriptRuntimeHost, HostJavaScriptRuntimeStateHandle,
-    HostJavaScriptRuntimeStateOutput, HostJavaScriptStringCallback, HostJavaScriptVoidCallback,
+    HostError, HostErrorKind, HostJavaScriptAsyncJsonCallback, HostJavaScriptExecutionInterrupt,
+    HostJavaScriptInterruptHandler, HostJavaScriptJsonCallback, HostJavaScriptRuntime,
+    HostJavaScriptRuntimeHost, HostJavaScriptRuntimeStateHandle, HostJavaScriptRuntimeStateOutput,
     HostResult,
 };
 use operit_plugin_sdk::execution_result::{
@@ -32,9 +31,10 @@ use operit_plugin_sdk::execution_result::{
     JsExecutionResult,
 };
 use operit_plugin_sdk::javascript::{
-    JsExecutionCompletion, JsExecutionEngine, JsExecutionFuture, JsExecutionHost, JsToolNameResolutionRequest,
-    JsToolPkgIpcRequest, JsToolPkgResourceRequest, JsToolPkgWasmArg, JsToolPkgWasmRequest,
-    ToolPkgConfigScope, ToolPkgExecutionContext, ToolPkgMainRegistrationCapture, ToolPkgTextResourceHost,
+    JsExecutionCompletion, JsExecutionEngine, JsExecutionFuture, JsExecutionHost,
+    JsToolNameResolutionRequest, JsToolPkgIpcRequest, JsToolPkgResourceRequest, JsToolPkgWasmArg,
+    JsToolPkgWasmRequest, ToolPkgConfigScope, ToolPkgExecutionContext,
+    ToolPkgMainRegistrationCapture, ToolPkgTextResourceHost,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
@@ -60,12 +60,9 @@ thread_local! {
     static CURRENT_REGISTRATION_CONFIG_PARAMS: RefCell<Option<BTreeMap<String, Value>>> = RefCell::new(None);
     static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(String) + Send + Sync>>> = RefCell::new(None);
     static CURRENT_EXECUTION_LISTENER: RefCell<Option<JsExecutionListenerRef>> = RefCell::new(None);
-    static CURRENT_DETACHED_INTERMEDIATE_CALLBACKS: RefCell<BTreeMap<String, Arc<dyn Fn(String) + Send + Sync>>> =
-        RefCell::new(BTreeMap::new());
     static CURRENT_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
-    static CURRENT_TOOLPKG_TEXT_RESOURCES: RefCell<Option<Arc<ToolPkgTextResources>>> = RefCell::new(None);
-    static CURRENT_TOOLPKG_TEXT_RESOURCE_HOST: RefCell<Option<Arc<dyn ToolPkgTextResourceHost>>> = RefCell::new(None);
+    static CURRENT_TEXT_RESOURCE_SOURCE: RefCell<Option<JsTextResourceSource>> = RefCell::new(None);
 }
 
 #[derive(Clone)]
@@ -92,19 +89,26 @@ struct JsEngineWorker {
 }
 
 enum JsAsyncCallback {
-    Legacy {
-        callbackId: String,
-        result: String,
-        isError: bool,
-    },
-    Structured {
+    Promise {
         requestId: u64,
         result: Value,
+        reject: bool,
+    },
+    CancelScope {
+        scope: String,
     },
 }
 
 type JsAsyncCallbackSink = Arc<dyn Fn(JsAsyncCallback) + Send + Sync>;
 type JsBackgroundWake = Arc<dyn Fn() + Send + Sync>;
+
+/// Identifies the authoritative module-resource owner for a single execution mode.
+#[derive(Clone)]
+enum JsTextResourceSource {
+    Snapshot(Arc<ToolPkgTextResources>),
+    Package(Arc<dyn ToolPkgTextResourceHost>),
+    ExecutionHost,
+}
 
 #[derive(Clone)]
 struct JsCallContext {
@@ -112,8 +116,7 @@ struct JsCallContext {
     intermediateCallback: Option<Arc<dyn Fn(String) + Send + Sync>>,
     executionListener: Option<JsExecutionListenerRef>,
     envOverrides: Arc<Mutex<BTreeMap<String, String>>>,
-    textResources: Option<Arc<ToolPkgTextResources>>,
-    textResourceHost: Option<Arc<dyn ToolPkgTextResourceHost>>,
+    textResourceSource: JsTextResourceSource,
 }
 
 struct JsPendingScriptExecution {
@@ -1141,7 +1144,7 @@ impl JsEngineState {
             pendingScriptExecutions: BTreeMap::new(),
             jsEnvironmentInitialized: false,
         };
-        state.registerNativeInterface()?;
+        state.registerHostBindings()?;
         Ok(state)
     }
 
@@ -1229,17 +1232,19 @@ impl JsEngineState {
         } else {
             None
         };
-        let textResourceHost = self
-            .toolPkgContext
-            .as_ref()
-            .map(|context| context.text_resource_host.clone());
+        let textResourceSource = if useComposeDslTextResources {
+            JsTextResourceSource::Snapshot(
+                textResources.expect("Compose page snapshot was validated"),
+            )
+        } else {
+            packageTextResourceSource(self.toolPkgContext.as_ref())
+        };
         let context = JsCallContext {
             executionHost: self.executionHost.clone(),
             intermediateCallback: onIntermediateResult,
             executionListener,
             envOverrides: Arc::new(Mutex::new(envOverrides)),
-            textResources,
-            textResourceHost,
+            textResourceSource,
         };
         installThreadLocalCallContext(&context);
         CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| {
@@ -1274,19 +1279,14 @@ impl JsEngineState {
                 effectiveParams
                     .insert("__operit_package_lang".to_string(), Value::String(language));
             }
-            let paramsJson = serde_json::to_string(&effectiveParams)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-            let scriptJson = serde_json::to_string(&script)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-            let functionNameJson = serde_json::to_string(&functionName)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-            let callIdJson = serde_json::to_string(&callId)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
             clearNativeExecutionSession(&callId);
-            let executionScript = format!(
-                "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, {timeoutSec}, 10000);"
-            );
-            if let Err(error) = self.evalJavaScriptVoid(&executionScript) {
+            if let Err(error) = self.invokeExecutionFunction(
+                &callId,
+                effectiveParams,
+                &script,
+                &functionName,
+                timeoutSec,
+            ) {
                 self.cancelJavaScriptExecution(&callId);
                 return Err(JsExecutionError::runtime(error));
             }
@@ -1305,8 +1305,10 @@ impl JsEngineState {
     /// Executes a direct-state fixture without exposing a production blocking entry point.
     #[cfg(test)]
     #[allow(non_snake_case)]
+    /// Executes a test script against its explicitly supplied module-resource owner.
     fn execute_script_function_on_current_thread(
         &mut self,
+        textResourceSource: JsTextResourceSource,
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
@@ -1331,11 +1333,8 @@ impl JsEngineState {
         CURRENT_ENV_OVERRIDES.with(|overrides| {
             *overrides.borrow_mut() = envOverrides.clone();
         });
-        CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| {
-            *host.borrow_mut() = self
-                .toolPkgContext
-                .as_ref()
-                .map(|context| context.text_resource_host.clone());
+        CURRENT_TEXT_RESOURCE_SOURCE.with(|source| {
+            *source.borrow_mut() = Some(textResourceSource.clone());
         });
 
         let mut effectiveParams = params.clone();
@@ -1366,34 +1365,32 @@ impl JsEngineState {
             effectiveParams.insert("__operit_package_lang".to_string(), Value::String(language));
         }
 
-        let paramsJson = match serde_json::to_string(&effectiveParams) {
-            Ok(value) => value,
-            Err(error) => {
-                clearThreadLocalCallState();
-                return Err(JsExecutionError::serialization(error.to_string()));
-            }
-        };
-        let scriptJson = serde_json::to_string(script).map_err(|error| {
-            clearThreadLocalCallState();
-            JsExecutionError::serialization(error.to_string())
-        })?;
-        let functionNameJson = serde_json::to_string(functionName).map_err(|error| {
-            clearThreadLocalCallState();
-            JsExecutionError::serialization(error.to_string())
-        })?;
         let callId = format!(
             "operit_call_{}",
             Uuid::new_v4().to_string().replace('-', "")
         );
-        let callIdJson = serde_json::to_string(&callId).map_err(|error| {
-            clearThreadLocalCallState();
-            JsExecutionError::serialization(error.to_string())
-        })?;
+        CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| {
+            contexts.borrow_mut().insert(
+                callId.clone(),
+                JsCallContext {
+                    executionHost: self.executionHost.clone(),
+                    intermediateCallback: CURRENT_INTERMEDIATE_CALLBACK
+                        .with(|value| value.borrow().clone()),
+                    executionListener: CURRENT_EXECUTION_LISTENER
+                        .with(|value| value.borrow().clone()),
+                    envOverrides: Arc::new(Mutex::new(envOverrides.clone())),
+                    textResourceSource,
+                },
+            );
+        });
         clearNativeExecutionSession(&callId);
-        let executionScript = format!(
-            "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, {timeoutSec}, 10000);"
-        );
-        let output = match self.evalJavaScriptVoid(&executionScript) {
+        let output = match self.invokeExecutionFunction(
+            &callId,
+            effectiveParams,
+            script,
+            functionName,
+            timeoutSec,
+        ) {
             Ok(_) => match self.waitForExecutionResult(&callId, timeoutSec) {
                 Ok(output) => output,
                 Err(error) => {
@@ -1442,8 +1439,12 @@ impl JsEngineState {
         let bridge = buildToolPkgRegistrationBridgeScript(true);
         self.evalJavaScriptVoid(&bridge)
             .map_err(JsExecutionError::runtime)?;
-        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
-            *resources.borrow_mut() = textResources;
+        let source = match textResources {
+            Some(resources) => JsTextResourceSource::Snapshot(resources),
+            None => packageTextResourceSource(self.toolPkgContext.as_ref()),
+        };
+        CURRENT_TEXT_RESOURCE_SOURCE.with(|current| {
+            *current.borrow_mut() = Some(source);
         });
         CURRENT_EXECUTION_HOST.with(|host| {
             *host.borrow_mut() = self.executionHost.clone();
@@ -1468,23 +1469,31 @@ impl JsEngineState {
                 registrationParams
                     .insert("__operit_package_lang".to_string(), Value::String(language));
             }
-            let paramsJson = serde_json::to_string(&registrationParams)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-            let scriptJson = serde_json::to_string(script)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
-            let functionNameJson = serde_json::to_string(functionName)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
             let callId = format!(
                 "operit_registration_{}",
                 Uuid::new_v4().to_string().replace('-', "")
             );
-            let callIdJson = serde_json::to_string(&callId)
-                .map_err(|error| JsExecutionError::serialization(error.to_string()))?;
+            let textResourceSource = CURRENT_TEXT_RESOURCE_SOURCE
+                .with(|source| source.borrow().clone())
+                .ok_or_else(|| {
+                    JsExecutionError::invalid_request("Registration resource owner is unavailable")
+                })?;
+            CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| {
+                contexts.borrow_mut().insert(
+                    callId.clone(),
+                    JsCallContext {
+                        executionHost: self.executionHost.clone(),
+                        intermediateCallback: None,
+                        executionListener: None,
+                        envOverrides: Arc::new(Mutex::new(BTreeMap::new())),
+                        textResourceSource,
+                    },
+                );
+            });
             clearNativeExecutionSession(&callId);
-            let executionScript = format!(
-                "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, 60, 10000);"
-            );
-            if let Err(error) = self.evalJavaScriptVoid(&executionScript) {
+            if let Err(error) =
+                self.invokeExecutionFunction(&callId, registrationParams, script, functionName, 60)
+            {
                 self.cancelJavaScriptExecution(&callId);
                 return Err(JsExecutionError::runtime(error));
             }
@@ -1504,23 +1513,14 @@ impl JsEngineState {
             clearNativeExecutionSession(&callId);
             ensureRegistrationExecutionSucceeded(&output).map_err(JsExecutionError::runtime)?;
 
-            let captureScript = r#"
-            (function() {
-                return JSON.stringify(globalThis.__operitToolPkgRegistrationCapture);
-            })()
-            "#;
-            let captureJson = self
-                .evalJavaScriptString(captureScript)
-                .map_err(JsExecutionError::runtime)?;
-            serde_json::from_str::<ToolPkgMainRegistrationCapture>(&captureJson)
+            let capture = self
+                .runtime
+                .callHostJavaScriptFunction("__operitReadRegistrationCapture", &[])
+                .map_err(|error| JsExecutionError::runtime(error.to_string()))?;
+            serde_json::from_value::<ToolPkgMainRegistrationCapture>(capture)
                 .map_err(|error| JsExecutionError::protocol(error.to_string()))
         })();
-        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
-            *resources.borrow_mut() = None;
-        });
-        CURRENT_EXECUTION_HOST.with(|host| {
-            *host.borrow_mut() = None;
-        });
+        clearThreadLocalCallState();
         CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| {
             *current.borrow_mut() = None;
         });
@@ -1540,6 +1540,7 @@ impl JsEngineState {
     }
 
     #[allow(non_snake_case)]
+    #[cfg(test)]
     fn evalJavaScriptString(&mut self, script: &str) -> Result<String, String> {
         self.runtime
             .evaluateHostJavaScriptString("operit.js", script)
@@ -1657,20 +1658,10 @@ impl JsEngineState {
     fn advanceDetachedJavaScriptExecution(&mut self) -> Result<(), String> {
         self.installActiveCallContexts();
         let ids = self
-            .evalJavaScriptString("JSON.stringify(typeof __operitGetDetachedCallIds === 'function' ? __operitGetDetachedCallIds() : [])")?;
-        let ids: Vec<String> = serde_json::from_str(&ids).map_err(|error| error.to_string())?;
-        let callbacks = ids
-            .iter()
-            .filter_map(|callId| {
-                self.detachedCallContexts
-                    .get(callId)
-                    .and_then(|context| context.intermediateCallback.clone())
-                    .map(|callback| (callId.clone(), callback))
-            })
-            .collect::<BTreeMap<_, _>>();
-        CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|current| {
-            *current.borrow_mut() = callbacks;
-        });
+            .runtime
+            .callHostJavaScriptFunction("__operitGetDetachedCallIds", &[])
+            .map_err(|error| error.to_string())?;
+        let ids: Vec<String> = serde_json::from_value(ids).map_err(|error| error.to_string())?;
         self.runJavaScriptJobs()?;
         loop {
             match self.asyncCallbackReceiver.try_recv() {
@@ -1685,11 +1676,14 @@ impl JsEngineState {
             }
         }
         for callId in ids {
-            let callIdJson = serde_json::to_string(&callId).map_err(|error| error.to_string())?;
-            let prepared = self.evalJavaScriptString(&format!(
-                "JSON.stringify(typeof __operitPrepareDetachedCall === 'function' && __operitPrepareDetachedCall({callIdJson}))"
-            ))?;
-            if prepared == "true" {
+            let prepared = self
+                .runtime
+                .callHostJavaScriptFunction("__operitPrepareDetachedCall", &[Value::String(callId)])
+                .map_err(|error| error.to_string())?;
+            let prepared = prepared
+                .as_bool()
+                .ok_or("Detached-call preparation must return a boolean")?;
+            if prepared {
                 self.runJavaScriptJobs()?;
             }
         }
@@ -1706,9 +1700,11 @@ impl JsEngineState {
             }
         }
         let activeIds = self
-            .evalJavaScriptString("JSON.stringify(typeof __operitGetDetachedCallIds === 'function' ? __operitGetDetachedCallIds() : [])")?;
+            .runtime
+            .callHostJavaScriptFunction("__operitGetDetachedCallIds", &[])
+            .map_err(|error| error.to_string())?;
         let activeIds: Vec<String> =
-            serde_json::from_str(&activeIds).map_err(|error| error.to_string())?;
+            serde_json::from_value(activeIds).map_err(|error| error.to_string())?;
         let completedCallIds = self
             .detachedCallContexts
             .keys()
@@ -1716,16 +1712,15 @@ impl JsEngineState {
             .cloned()
             .collect::<Vec<_>>();
         for callId in completedCallIds {
-            let callIdJson = serde_json::to_string(&callId).map_err(|error| error.to_string())?;
-            self.evalJavaScriptVoid(&format!(
-                "if (typeof __operitFinalizeDetachedCall === 'function') {{ __operitFinalizeDetachedCall({callIdJson}); }}"
-            ))?;
+            self.runtime
+                .callHostJavaScriptFunction(
+                    "__operitFinalizeDetachedCall",
+                    &[Value::String(callId)],
+                )
+                .map_err(|error| error.to_string())?;
         }
         self.detachedCallContexts
             .retain(|callId, _| activeIds.iter().any(|activeId| activeId == callId));
-        CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|current| {
-            current.borrow_mut().clear();
-        });
         Ok(())
     }
 
@@ -1734,12 +1729,17 @@ impl JsEngineState {
         &mut self,
         pending: &JsPendingScriptExecution,
     ) -> Result<(), String> {
-        let callIdJson =
-            serde_json::to_string(&pending.callId).map_err(|error| error.to_string())?;
-        let detached = self.evalJavaScriptString(&format!(
-            "JSON.stringify((typeof __operitGetCallState === 'function' && __operitGetCallState({callIdJson}))?.detached === true)"
-        ))?;
-        if detached == "true" {
+        let detached = self
+            .runtime
+            .callHostJavaScriptFunction(
+                "__operitIsCallDetached",
+                &[Value::String(pending.callId.clone())],
+            )
+            .map_err(|error| error.to_string())?;
+        let detached = detached
+            .as_bool()
+            .ok_or("Detached-call predicate must return a boolean")?;
+        if detached {
             self.detachedCallContexts
                 .insert(pending.callId.clone(), pending.context.clone());
         }
@@ -1808,28 +1808,22 @@ impl JsEngineState {
         }
     }
 
-    /// Delivers one asynchronous host result to its JavaScript callback.
+    /// Settles one asynchronous result through the owning host Promise registry.
     #[allow(non_snake_case)]
     fn deliverAsyncCallback(&mut self, callback: JsAsyncCallback) -> Result<(), String> {
         match callback {
-            JsAsyncCallback::Legacy {
-                callbackId,
+            JsAsyncCallback::Promise {
+                requestId,
                 result,
-                isError,
+                reject,
             } => self
                 .runtime
-                .callHostJavaScriptFunction(
-                    &callbackId,
-                    &[Value::String(result), Value::Bool(isError)],
-                )
-                .map_err(|error| error.to_string()),
-            // Business failures remain fulfilled result envelopes. The public
-            // __operitParseToolResult still decides whether to throw, unchanged.
-            JsAsyncCallback::Structured { requestId, result } => self
-                .runtime
-                .settleHostJavaScriptPromise(requestId, &result, false)
-                .map_err(|error| error.to_string()),
+                .settleHostJavaScriptPromise(requestId, &result, reject),
+            JsAsyncCallback::CancelScope { scope } => {
+                self.runtime.cancelHostJavaScriptPromises(&scope)
+            }
         }
+        .map_err(|error| error.to_string())
     }
 
     #[allow(non_snake_case)]
@@ -1845,302 +1839,70 @@ impl JsEngineState {
         Ok(trimmed.to_string())
     }
 
+    /// Invokes the script lifecycle entry with structured arguments instead of generated call source.
     #[allow(non_snake_case)]
-    fn registerNativeInterface(&mut self) -> Result<(), String> {
-        let stringFunctions: Vec<(&str, HostJavaScriptStringCallback)> = vec![
-            (
-                "__operitNativeReadToolPkgTextResource",
-                Arc::new(|arguments| {
-                    let [packageNameOrSubpackageId, resourcePath] = exactHostJavaScriptArguments(
-                        "__operitNativeReadToolPkgTextResource",
-                        arguments,
-                    )?;
-                    Ok(nativeReadToolPkgTextResourceStrings(
-                        packageNameOrSubpackageId,
-                        resourcePath,
-                    ))
-                }),
-            ),
-            (
-                "__operitNativeReadToolPkgResource",
-                Arc::new(|arguments| {
-                    let [packageNameOrSubpackageId, resourceKey, outputFileName, internal] =
-                        exactHostJavaScriptArguments(
-                            "__operitNativeReadToolPkgResource",
-                            arguments,
-                        )?;
-                    Ok(nativeReadToolPkgResourceStrings(
-                        packageNameOrSubpackageId,
-                        resourceKey,
-                        outputFileName,
-                        internal,
-                    ))
-                }),
-            ),
-            (
-                "__operitNativeCallToolPkgWasm",
-                Arc::new(|arguments| {
-                    let [packageTarget, moduleId, exportName, argsJson] =
-                        exactHostJavaScriptArguments("__operitNativeCallToolPkgWasm", arguments)?;
-                    Ok(nativeCallToolPkgWasmStrings(
-                        packageTarget,
-                        moduleId,
-                        exportName,
-                        argsJson,
-                    ))
-                }),
-            ),
-            (
-                "__operitNativeComposeWebViewControllerCommand",
-                Arc::new(|arguments| {
-                    let [payloadJson] = exactHostJavaScriptArguments(
-                        "__operitNativeComposeWebViewControllerCommand",
-                        arguments,
-                    )?;
-                    Ok(nativeComposeWebViewControllerCommandString(payloadJson))
-                }),
-            ),
-            (
-                "__operitNativeComposeFilePickerCommand",
-                Arc::new(|arguments| {
-                    let [payloadJson] = exactHostJavaScriptArguments(
-                        "__operitNativeComposeFilePickerCommand",
-                        arguments,
-                    )?;
-                    Ok(nativeComposeFilePickerCommandString(payloadJson))
-                }),
-            ),
-            (
-                "__operitNativeGetEnvForCall",
-                Arc::new(|arguments| {
-                    let [callId, key] =
-                        exactHostJavaScriptArguments("__operitNativeGetEnvForCall", arguments)?;
-                    let context = CURRENT_ACTIVE_CALL_CONTEXTS
-                        .with(|contexts| contexts.borrow().get(&callId).cloned());
-                    if let Some(context) = context {
-                        if let Some(value) = context
-                            .envOverrides
-                            .lock()
-                            .expect("JavaScript call environment mutex poisoned")
-                            .get(key.trim())
-                            .filter(|value| !value.is_empty())
-                        {
-                            return Ok(value.clone());
-                        }
-                        return Ok(context
-                            .executionHost
-                            .ok_or_else(|| "JavaScript execution host is unavailable".to_string())
-                            .and_then(|host| host.read_environment_variable(&key))
-                            .map(|value| value.unwrap_or_default())
-                            .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error)));
-                    }
-                    Ok(nativeGetEnvForCallStrings(key))
-                }),
-            ),
-            (
-                "__operitNativeLog",
-                Arc::new(|arguments| {
-                    let [level, call_id, message] =
-                        exactHostJavaScriptArguments("__operitNativeLog", arguments)?;
-                    let message = if call_id.is_empty() {
-                        message
-                    } else {
-                        format!("[{call_id}] {message}")
-                    };
-                    match level.as_str() {
-                        "info" => AppLogger::i("ToolPkg", &message),
-                        "warn" => AppLogger::w("ToolPkg", &message),
-                        "error" => AppLogger::e("ToolPkg", &message),
-                        _ => {
-                            return Err(HostError::new(format!(
-                                "Unknown plugin log level: {level}"
-                            )))
-                        }
-                    };
-                    Ok(String::new())
-                }),
-            ),
-            (
-                "__operitNativeSetEnv",
-                Arc::new(|arguments| {
-                    let [callId, key, value] =
-                        exactHostJavaScriptArguments("__operitNativeSetEnv", arguments)?;
-                    Ok(nativeSetEnvStrings(callId, key, value))
-                }),
-            ),
-            (
-                "__operitNativeSetEnvs",
-                Arc::new(|arguments| {
-                    let [callId, valuesJson] =
-                        exactHostJavaScriptArguments("__operitNativeSetEnvs", arguments)?;
-                    Ok(nativeSetEnvsStrings(callId, valuesJson))
-                }),
-            ),
-            (
-                "__operitNativeGetPluginConfigDir",
-                Arc::new(|arguments| {
-                    let [pluginId] = exactHostJavaScriptArguments(
-                        "__operitNativeGetPluginConfigDir",
-                        arguments,
-                    )?;
-                    Ok(nativeGetPluginConfigDirString(pluginId))
-                }),
-            ),
-            (
-                "__operitNativeGetScopedPluginConfigDir",
-                Arc::new(|arguments| {
-                    let [ownerId, pluginId] = exactHostJavaScriptArguments(
-                        "__operitNativeGetScopedPluginConfigDir",
-                        arguments,
-                    )?;
-                    Ok(nativeGetScopedPluginConfigDirString(ownerId, pluginId))
-                }),
-            ),
-            (
-                "__operitNativeIsPackageImported",
-                Arc::new(|arguments| {
-                    let [packageName] =
-                        exactHostJavaScriptArguments("__operitNativeIsPackageImported", arguments)?;
-                    Ok(nativeIsPackageImportedString(packageName))
-                }),
-            ),
-            (
-                "__operitNativeImportPackage",
-                Arc::new(|arguments| {
-                    let [packageName] =
-                        exactHostJavaScriptArguments("__operitNativeImportPackage", arguments)?;
-                    Ok(nativeImportPackageString(packageName))
-                }),
-            ),
-            (
-                "__operitNativeRemovePackage",
-                Arc::new(|arguments| {
-                    let [packageName] =
-                        exactHostJavaScriptArguments("__operitNativeRemovePackage", arguments)?;
-                    Ok(nativeRemovePackageString(packageName))
-                }),
-            ),
-            (
-                "__operitNativeUsePackage",
-                Arc::new(|arguments| {
-                    let [packageName] =
-                        exactHostJavaScriptArguments("__operitNativeUsePackage", arguments)?;
-                    Ok(nativeUsePackageString(packageName))
-                }),
-            ),
-            (
-                "__operitNativeListImportedPackagesJson",
-                Arc::new(|arguments| {
-                    let [] = exactHostJavaScriptArguments(
-                        "__operitNativeListImportedPackagesJson",
-                        arguments,
-                    )?;
-                    Ok(nativeListImportedPackagesJsonString())
-                }),
-            ),
-            (
-                "__operitNativeGetToolCatalogJson",
-                Arc::new(|arguments| {
-                    let [] = exactHostJavaScriptArguments(
-                        "__operitNativeGetToolCatalogJson",
-                        arguments,
-                    )?;
-                    Ok(nativeGetToolCatalogJsonString())
-                }),
-            ),
-            (
-                "__operitNativeResolveToolName",
-                Arc::new(|arguments| {
-                    let [packageName, subpackageId, toolName, preferImported] =
-                        exactHostJavaScriptArguments("__operitNativeResolveToolName", arguments)?;
-                    Ok(nativeResolveToolNameString(
-                        packageName,
-                        subpackageId,
-                        toolName,
-                        preferImported,
-                    ))
-                }),
-            ),
-            (
-                "__operitNativeDecompress",
-                Arc::new(|arguments| {
-                    let [data, algorithm] =
-                        exactHostJavaScriptArguments("__operitNativeDecompress", arguments)?;
-                    Ok(nativeDecompressStrings(data, algorithm))
-                }),
-            ),
-            (
-                "__operitNativeCrypto",
-                Arc::new(|arguments| {
-                    let [algorithm, operation, argsJson] =
-                        exactHostJavaScriptArguments("__operitNativeCrypto", arguments)?;
-                    Ok(nativeCryptoStrings(algorithm, operation, argsJson))
-                }),
-            ),
-            (
-                "__operitNativeImageProcessing",
-                Arc::new(|arguments| {
-                    let [callbackId, operation, argsJson] =
-                        exactHostJavaScriptArguments("__operitNativeImageProcessing", arguments)?;
-                    Ok(nativeImageProcessingStrings(
-                        callbackId, operation, argsJson,
-                    ))
-                }),
-            ),
-            (
-                "__operitNativeJavaClassExists",
-                Arc::new(|arguments| {
-                    let [className] =
-                        exactHostJavaScriptArguments("__operitNativeJavaClassExists", arguments)?;
-                    Ok(nativeJavaClassExistsString(className))
-                }),
-            ),
-            (
-                "__operitNativeJavaGetApplicationContext",
-                Arc::new(|arguments| {
-                    let [] = exactHostJavaScriptArguments(
-                        "__operitNativeJavaGetApplicationContext",
-                        arguments,
-                    )?;
-                    Ok(nativeJavaGetApplicationContextString())
-                }),
-            ),
-            (
-                "__operitNativeJavaCallInstance",
-                Arc::new(|arguments| {
-                    let [instanceHandle, methodName, argsJson] =
-                        exactHostJavaScriptArguments("__operitNativeJavaCallInstance", arguments)?;
-                    Ok(nativeJavaCallInstanceStrings(
-                        instanceHandle,
-                        methodName,
-                        argsJson,
-                    ))
-                }),
-            ),
-            (
-                "__operitNativeJavaNewInstance",
-                Arc::new(|arguments| {
-                    let [className, _argsJson] =
-                        exactHostJavaScriptArguments("__operitNativeJavaNewInstance", arguments)?;
-                    Ok(nativeJavaNewInstanceString(className))
-                }),
-            ),
-            (
-                "__operitNativeJavaCallStatic",
-                Arc::new(|arguments| {
-                    let [className, methodName, _argsJson] =
-                        exactHostJavaScriptArguments("__operitNativeJavaCallStatic", arguments)?;
-                    Ok(nativeJavaCallStaticString(className, methodName))
-                }),
-            ),
+    fn invokeExecutionFunction(
+        &mut self,
+        callId: &str,
+        params: BTreeMap<String, Value>,
+        script: &str,
+        functionName: &str,
+        timeoutSec: u64,
+    ) -> Result<(), String> {
+        self.runtime
+            .callHostJavaScriptFunction(
+                "__operitExecuteScriptFunction",
+                &[
+                    Value::String(callId.to_string()),
+                    Value::Object(params.into_iter().collect()),
+                    Value::String(script.to_string()),
+                    Value::String(functionName.to_string()),
+                    Value::from(timeoutSec),
+                    Value::from(10_000u64),
+                ],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    /// Installs the single structured host transport for synchronous and Promise-backed operations.
+    #[allow(non_snake_case)]
+    fn registerHostBindings(&mut self) -> Result<(), String> {
+        let syncNames = [
+            "__operitNativeReadToolPkgTextResource",
+            "__operitNativeGetEnvForCall",
+            "__operitNativeSetEnv",
+            "__operitNativeSetEnvs",
+            "__operitNativeGetScopedPluginConfigDir",
+            "__operitNativeGetToolCatalog",
+            "__operitNativeComposeWebViewControllerCommand",
+            "__operitNativeLog",
+            "__operitNativeDecompress",
+            "__operitNativeCrypto",
+            "__operitNativeJavaClassExists",
+            "__operitNativeJavaGetApplicationContext",
+            "__operitNativeJavaGetCurrentActivity",
+            "__operitNativeJavaCallInstance",
+            "__operitNativeJavaNewInstance",
+            "__operitNativeJavaCallStatic",
+            "__operitNativeJavaCallStaticSuspend",
+            "__operitNativeJavaGetStaticField",
+            "__operitNativeJavaSetStaticField",
+            "__operitSendIntermediateResult",
+            "__operitNativeSetCallResult",
+            "__operitNativeSetCallError",
+            "__operitNativeNotifyDetachedCall",
+            "__operitNativeLogJsExecutionTrace",
         ];
-        for (name, callback) in stringFunctions {
+        for name in syncNames {
             self.runtime
-                .registerHostJavaScriptStringFunction(name, callback)
+                .registerHostJavaScriptJsonFunction(
+                    name,
+                    Arc::new(move |arguments| executeHostOperation(name, arguments)),
+                )
                 .map_err(|error| error.to_string())?;
         }
 
-        let executionHost = self.executionHost.clone();
         let asyncCallbackSender = self.asyncCallbackSender.clone();
         let backgroundWake = self.backgroundWake.clone();
         let asyncCallbackSink: JsAsyncCallbackSink = Arc::new(move |callback| {
@@ -2153,102 +1915,51 @@ impl JsEngineState {
                 wake();
             }
         });
-        let structuredHost = self.executionHost.clone();
-        let structuredSink = asyncCallbackSink.clone();
-        self.runtime
-            .registerHostJavaScriptAsyncJsonFunction(
-                "__operitNativeCallToolStructured",
-                Arc::new(move |requestId, arguments| {
-                    dispatchStructuredToolCall(
-                        structuredHost.clone(),
-                        structuredSink.clone(),
-                        requestId,
-                        arguments,
-                    );
-                    Ok(())
-                }),
-            )
-            .map_err(|error| error.to_string())?;
-        let toolExecutionHost = self.executionHost.clone();
-        let toolAsyncCallbackSink = asyncCallbackSink.clone();
-        let timerCallbackSink = asyncCallbackSink.clone();
+        let toolHost = self.executionHost.clone();
+        let toolSink = asyncCallbackSink.clone();
+        let timerSink = asyncCallbackSink.clone();
+        let ipcHost = self.executionHost.clone();
+        let ipcSink = asyncCallbackSink.clone();
+        let ipcContext = self.toolPkgContext.clone();
         let dependencyHost = self.executionHost.clone();
         let dependencySink = asyncCallbackSink.clone();
         let dependencyContext = self.toolPkgContext.clone();
-        let ipcContext = self.toolPkgContext.clone();
-        let voidFunctions: Vec<(&str, HostJavaScriptVoidCallback)> = vec![
+        let asyncFunctions: Vec<(&str, HostJavaScriptAsyncJsonCallback)> = vec![
             (
-                "__operitSendIntermediateResult",
-                Arc::new(|arguments| {
-                    let [callId, result] =
-                        exactHostJavaScriptArguments("__operitSendIntermediateResult", arguments)?;
-                    nativeSendIntermediateResultString(callId, result);
-                    Ok(())
-                }),
-            ),
-            (
-                "__operitNativeSetCallResult",
-                Arc::new(move |arguments| {
-                    let [callId, result] =
-                        exactHostJavaScriptArguments("__operitNativeSetCallResult", arguments)?;
-                    nativeSetCallResultStrings(callId, result);
-                    Ok(())
-                }),
-            ),
-            (
-                "__operitNativeSetCallError",
-                Arc::new(move |arguments| {
-                    let [callId, error] =
-                        exactHostJavaScriptArguments("__operitNativeSetCallError", arguments)?;
-                    nativeSetCallErrorStrings(callId, error);
-                    Ok(())
-                }),
-            ),
-            (
-                "__operitNativeNotifyDetachedCall",
-                Arc::new(|arguments| {
-                    let [_callId] = exactHostJavaScriptArguments(
-                        "__operitNativeNotifyDetachedCall",
+                "__operitNativeCallToolStructured",
+                Arc::new(move |requestId, arguments| {
+                    dispatchStructuredToolCall(
+                        toolHost.clone(),
+                        toolSink.clone(),
+                        requestId,
                         arguments,
-                    )?;
-                    Ok(())
-                }),
-            ),
-            (
-                "__operitNativeCallToolAsync",
-                Arc::new(move |arguments| {
-                    let [callbackId, toolType, toolName, paramsJson] =
-                        exactHostJavaScriptArguments("__operitNativeCallToolAsync", arguments)?;
-                    dispatchToolCallAsync(
-                        toolExecutionHost.clone(),
-                        toolAsyncCallbackSink.clone(),
-                        callbackId,
-                        toolType,
-                        toolName,
-                        paramsJson,
                     );
                     Ok(())
                 }),
             ),
             (
                 "__operitNativeScheduleJavaScriptTimer",
-                Arc::new(move |arguments| {
-                    let [callbackId, delayMs] = exactHostJavaScriptArguments(
+                Arc::new(move |requestId, arguments| {
+                    let [delay] = exactHostJavaScriptJsonArguments(
                         "__operitNativeScheduleJavaScriptTimer",
                         arguments,
                     )?;
-                    dispatchJavaScriptTimer(timerCallbackSink.clone(), callbackId, delayMs)
+                    let delayMs = delay.as_u64().ok_or_else(|| {
+                        HostError::new("JavaScript timer delay must be a non-negative integer")
+                    })?;
+                    dispatchJavaScriptTimer(timerSink.clone(), requestId, delayMs)
                         .map_err(HostError::new)
                 }),
             ),
             (
-                "__operitNativeInvokeToolPkgIpcAsync",
-                Arc::new(move |arguments| {
-                    let [callbackId, packageTarget, callerContextKey, targetContextKey, targetRuntime, channel, payloadJson] =
-                        exactHostJavaScriptArguments(
-                            "__operitNativeInvokeToolPkgIpcAsync",
+                "__operitNativeInvokeToolPkgIpc",
+                Arc::new(move |requestId, arguments| {
+                    let [packageTarget, callerContextKey, targetContextKey, targetRuntime, channel, payload] =
+                        exactHostJavaScriptJsonArguments(
+                            "__operitNativeInvokeToolPkgIpc",
                             arguments,
                         )?;
+                    let packageTarget = hostJavaScriptStringArgument(packageTarget)?;
                     let context = ipcContext.as_ref().ok_or_else(|| {
                         HostError::new("ToolPkg IPC requires a bound package context")
                     })?;
@@ -2257,64 +1968,103 @@ impl JsEngineState {
                             "Package-private IPC cannot target another package",
                         ));
                     }
-                    dispatchToolPkgIpcAsync(
-                        None,
-                        executionHost.clone(),
-                        asyncCallbackSink.clone(),
-                        callbackId,
+                    let request = buildToolPkgIpcRequest(
                         packageTarget,
-                        callerContextKey,
-                        targetContextKey,
-                        targetRuntime,
-                        channel,
-                        payloadJson,
-                    );
+                        hostJavaScriptStringArgument(callerContextKey)?,
+                        hostJavaScriptStringArgument(targetContextKey)?,
+                        hostJavaScriptStringArgument(targetRuntime)?,
+                        hostJavaScriptStringArgument(channel)?,
+                        payload,
+                    )
+                    .map_err(HostError::new)?;
+                    dispatchToolPkgIpcAsync(ipcHost.clone(), ipcSink.clone(), requestId, request);
                     Ok(())
                 }),
             ),
             (
-                "__operitNativeCallDependencyAsync",
-                Arc::new(move |arguments| {
-                    let [callbackId, packageTarget, methodName, payloadJson] =
-                        exactHostJavaScriptArguments(
-                            "__operitNativeCallDependencyAsync",
-                            arguments,
-                        )?;
+                "__operitNativeCallDependency",
+                Arc::new(move |requestId, arguments| {
+                    let [packageTarget, methodName, payload] = exactHostJavaScriptJsonArguments(
+                        "__operitNativeCallDependency",
+                        arguments,
+                    )?;
                     let context = dependencyContext.as_ref().ok_or_else(|| {
                         HostError::new("Dependency calls require a bound ToolPkg context")
                     })?;
-                    dispatchToolPkgIpcAsync(
-                        Some(context.container_package_name.clone()),
-                        dependencyHost.clone(),
-                        dependencySink.clone(),
-                        callbackId,
-                        packageTarget,
+                    let mut request = buildToolPkgIpcRequest(
+                        hostJavaScriptStringArgument(packageTarget)?,
                         context.context_key.clone(),
                         String::new(),
                         "main".to_string(),
-                        methodName,
-                        payloadJson,
+                        hostJavaScriptStringArgument(methodName)?,
+                        payload,
+                    )
+                    .map_err(HostError::new)?;
+                    request.dependency_caller = Some(context.container_package_name.clone());
+                    dispatchToolPkgIpcAsync(
+                        dependencyHost.clone(),
+                        dependencySink.clone(),
+                        requestId,
+                        request,
                     );
-                    Ok(())
-                }),
-            ),
-            (
-                "__operitNativeLogJsExecutionTrace",
-                Arc::new(|arguments| {
-                    let [callId, message] = exactHostJavaScriptArguments(
-                        "__operitNativeLogJsExecutionTrace",
-                        arguments,
-                    )?;
-                    nativeLogJsExecutionTraceStrings(callId, message);
                     Ok(())
                 }),
             ),
         ];
-        for (name, callback) in voidFunctions {
+        for (name, callback) in asyncFunctions {
             self.runtime
-                .registerHostJavaScriptVoidFunction(name, callback)
+                .registerHostJavaScriptAsyncJsonFunction(name, callback)
                 .map_err(|error| error.to_string())?;
         }
+        let asyncNames = [
+            "__operitNativeReadToolPkgResource",
+            "__operitNativeCallToolPkgWasm",
+            "__operitNativeImageProcessing",
+            "__operitNativeComposeWebViewControllerCommandSuspend",
+            "__operitNativeComposeFilePickerCommand",
+            "__operitNativeIsPackageImported",
+            "__operitNativeImportPackage",
+            "__operitNativeRemovePackage",
+            "__operitNativeUsePackage",
+            "__operitNativeListImportedPackages",
+            "__operitNativeResolveToolName",
+        ];
+        for name in asyncNames {
+            let sink = asyncCallbackSink.clone();
+            self.runtime
+                .registerHostJavaScriptAsyncJsonFunction(
+                    name,
+                    Arc::new(move |requestId, arguments| {
+                        let (result, reject) = match executeHostOperation(name, arguments) {
+                            Ok(result) => (result, false),
+                            Err(error) => (Value::String(error.to_string()), true),
+                        };
+                        sink(JsAsyncCallback::Promise {
+                            requestId,
+                            result,
+                            reject,
+                        });
+                        Ok(())
+                    }),
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        let cancellationSink = asyncCallbackSink.clone();
+        self.runtime
+            .registerHostJavaScriptJsonFunction(
+                "__operitNativeCancelJavaScriptPromises",
+                Arc::new(move |arguments| {
+                    let [scope] = exactHostJavaScriptJsonArguments(
+                        "__operitNativeCancelJavaScriptPromises",
+                        arguments,
+                    )?;
+                    cancellationSink(JsAsyncCallback::CancelScope {
+                        scope: hostJavaScriptStringArgument(scope)?,
+                    });
+                    Ok(Value::Null)
+                }),
+            )
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
     #[allow(non_snake_case)]
@@ -2329,68 +2079,28 @@ impl JsEngineState {
     }
 }
 
-/// Submits one tool call through the Host task scheduler and reports completion to QuickJS.
+/// Validates the exact argument count of a structured host binding.
 #[allow(non_snake_case)]
-fn dispatchToolCallAsync(
-    executionHost: Option<Arc<dyn JsExecutionHost>>,
-    callbackSink: JsAsyncCallbackSink,
-    callbackId: String,
-    toolType: String,
-    toolName: String,
-    paramsJson: String,
-) {
-    let normalizedCallbackId = callbackId.trim().to_string();
-    if normalizedCallbackId.is_empty() {
-        return;
-    }
-    let Some(executionHost) = executionHost else {
-        callbackSink(JsAsyncCallback::Legacy {
-            callbackId: normalizedCallbackId,
-            result: serde_json::json!({
-                "success": false,
-                "message": "JavaScript execution host is unavailable"
-            })
-            .to_string(),
-            isError: true,
-        });
-        return;
-    };
-    let callbackSinkForTask = callbackSink.clone();
-    let callbackIdForTask = normalizedCallbackId.clone();
-    let scheduleResult = defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
-        "operit-js-tool-call",
-        Box::new(move || {
-            Box::pin(async move {
-                let (result, isError) = JsNativeInterfaceDelegates::callToolSerialized(
-                    executionHost.as_ref(),
-                    &toolType,
-                    &toolName,
-                    &paramsJson,
-                )
-                .await;
-                callbackSinkForTask(JsAsyncCallback::Legacy {
-                    callbackId: callbackIdForTask,
-                    result,
-                    isError,
-                });
-            })
-        }),
-    );
-    if let Err(error) = scheduleResult {
-        callbackSink(JsAsyncCallback::Legacy {
-            callbackId: normalizedCallbackId,
-            result: serde_json::json!({
-                "success": false,
-                "message": format!("Schedule JavaScript tool call failed: {error}")
-            })
-            .to_string(),
-            isError: true,
-        });
+fn exactHostJavaScriptJsonArguments<const N: usize>(
+    name: &str,
+    arguments: Vec<Value>,
+) -> HostResult<[Value; N]> {
+    let count = arguments.len();
+    arguments
+        .try_into()
+        .map_err(|_| HostError::new(format!("{name} requires {N} arguments, received {count}")))
+}
+
+/// Moves one structured string argument into the host request contract.
+#[allow(non_snake_case)]
+fn hostJavaScriptStringArgument(value: Value) -> HostResult<String> {
+    match value {
+        Value::String(value) => Ok(value),
+        _ => Err(HostError::new("Host identity arguments must be strings")),
     }
 }
 
-/// Executes a structured request with the same SDK validation and result envelope
-/// as the legacy path; only owned Rust values cross task/thread boundaries.
+/// Executes a validated structured request; only owned Rust values cross task boundaries.
 /// Tools retain the ordinary executor: they may block or use exclusive TLS.
 /// Only the JS continuation wake uses the cooperative reusable executor.
 #[allow(non_snake_case)]
@@ -2401,9 +2111,10 @@ fn dispatchStructuredToolCall(
     arguments: Vec<Value>,
 ) {
     let fail = |message: String| {
-        callbackSink(JsAsyncCallback::Structured {
+        callbackSink(JsAsyncCallback::Promise {
             requestId,
             result: serde_json::json!({"success": false, "message": message}),
+            reject: false,
         })
     };
     let [toolType, toolName, params]: [Value; 3] = match arguments.try_into() {
@@ -2417,7 +2128,7 @@ fn dispatchStructuredToolCall(
         fail("Tool type and name must be strings".to_string());
         return;
     };
-    let request = match JsNativeInterfaceDelegates::parseToolCallValue(toolType, toolName, params) {
+    let request = match JsHostOperations::parseToolCallValue(toolType, toolName, params) {
         Ok(request) => request,
         Err(error) => {
             fail(error);
@@ -2434,9 +2145,10 @@ fn dispatchStructuredToolCall(
         Box::new(move || {
             Box::pin(async move {
                 let result = executionHost.execute_tool_call(request).await;
-                sink(JsAsyncCallback::Structured {
+                sink(JsAsyncCallback::Promise {
                     requestId,
-                    result: JsNativeInterfaceDelegates::toolExecutionResultValue(result),
+                    result: JsHostOperations::toolExecutionResultValue(result),
+                    reject: false,
                 });
             })
         }),
@@ -2446,141 +2158,75 @@ fn dispatchStructuredToolCall(
     }
 }
 
-/// Schedules one JavaScript timer through the platform Host task scheduler.
+/// Schedules one scoped JavaScript timer and resolves its host-owned Promise.
 #[allow(non_snake_case)]
 fn dispatchJavaScriptTimer(
     callbackSink: JsAsyncCallbackSink,
-    callbackId: String,
-    delayMs: String,
+    requestId: u64,
+    delayMs: u64,
 ) -> Result<(), String> {
-    let normalizedCallbackId = callbackId.trim().to_string();
-    if normalizedCallbackId.is_empty() {
-        return Err("JavaScript timer callback id is empty".to_string());
-    }
-    let delayMillis = delayMs
-        .trim()
-        .parse::<u64>()
-        .map_err(|error| format!("JavaScript timer delay is invalid: {error}"))?;
-    let callbackIdForTask = normalizedCallbackId.clone();
     defaultHostRuntimeTaskSchedulerHost()
         .scheduleDelayedHostRuntimeTask(
             "operit-js-timer",
-            delayMillis,
+            delayMs,
             Box::new(move || {
-                callbackSink(JsAsyncCallback::Legacy {
-                    callbackId: callbackIdForTask,
-                    result: String::new(),
-                    isError: false,
+                callbackSink(JsAsyncCallback::Promise {
+                    requestId,
+                    result: Value::Null,
+                    reject: false,
                 });
             }),
         )
         .map_err(|error| format!("Schedule JavaScript timer failed: {error}"))
 }
 
+/// Builds one structured failure envelope without encoding JSON text.
 #[allow(non_snake_case)]
-fn buildToolPkgIpcFailure(message: &str) -> String {
-    serde_json::json!({
-        "success": false,
-        "message": message.trim()
-    })
-    .to_string()
+fn buildToolPkgIpcFailure(message: &str) -> Value {
+    serde_json::json!({"success": false, "message": message.trim()})
 }
 
-/// Submits ToolPkg IPC through the execution host and reports completion to the source engine.
+/// Submits owned IPC data and settles the source engine's scoped Promise.
 #[allow(non_snake_case)]
 fn dispatchToolPkgIpcAsync(
-    dependencyCaller: Option<String>,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
     callbackSink: JsAsyncCallbackSink,
-    callbackId: String,
-    packageTarget: String,
-    callerContextKey: String,
-    targetContextKey: String,
-    targetRuntime: String,
-    channel: String,
-    payloadJson: String,
+    requestId: u64,
+    request: JsToolPkgIpcRequest,
 ) {
-    let normalizedCallbackId = callbackId.trim().to_string();
-    if normalizedCallbackId.is_empty() {
-        return;
-    }
-    let mut request = match buildToolPkgIpcRequest(
-        packageTarget,
-        callerContextKey,
-        targetContextKey,
-        targetRuntime,
-        channel,
-        payloadJson,
-    ) {
-        Ok(request) => request,
-        Err(error) => {
-            callbackSink(JsAsyncCallback::Legacy {
-                callbackId: normalizedCallbackId,
-                result: error,
-                isError: false,
-            });
-            return;
-        }
-    };
-    request.dependency_caller = dependencyCaller;
     let Some(executionHost) = executionHost else {
-        callbackSink(JsAsyncCallback::Legacy {
-            callbackId: normalizedCallbackId,
+        callbackSink(JsAsyncCallback::Promise {
+            requestId,
             result: buildToolPkgIpcFailure("JavaScript execution host is unavailable"),
-            isError: false,
+            reject: false,
         });
         return;
     };
-    AppLogger::d(
-        TAG,
-        &format!(
-            "toolpkg-ipc-submit package={} channel={} targetContext={} targetRuntime={}",
-            request.package_target,
-            request.channel,
-            request.target_context_key.as_deref().unwrap_or_default(),
-            request.target_runtime.as_deref().unwrap_or_default(),
-        ),
-    );
-    let callbackSinkForCompletion = callbackSink.clone();
-    let callbackIdForCompletion = normalizedCallbackId.clone();
-    let submitResult = executionHost.invoke_toolpkg_ipc_async(
+    let completionSink = callbackSink.clone();
+    let submitted = executionHost.invoke_toolpkg_ipc_async(
         request,
         Box::new(move |result| {
-            let (result, isError) = match result {
-                Ok(value) => (
-                    serde_json::json!({
-                        "success": true,
-                        "value": value
-                    })
-                    .to_string(),
-                    false,
-                ),
-                Err(error) => (buildToolPkgIpcFailure(&error), false),
+            let result = match result {
+                Ok(value) => serde_json::json!({"success": true, "value": value}),
+                Err(error) => buildToolPkgIpcFailure(&error),
             };
-            AppLogger::d(
-                TAG,
-                &format!(
-                    "toolpkg-ipc-finish callback={} isError={}",
-                    callbackIdForCompletion, isError
-                ),
-            );
-            callbackSinkForCompletion(JsAsyncCallback::Legacy {
-                callbackId: callbackIdForCompletion,
+            completionSink(JsAsyncCallback::Promise {
+                requestId,
                 result,
-                isError,
+                reject: false,
             });
         }),
     );
-    if let Err(error) = submitResult {
-        callbackSink(JsAsyncCallback::Legacy {
-            callbackId: normalizedCallbackId,
+    if let Err(error) = submitted {
+        callbackSink(JsAsyncCallback::Promise {
+            requestId,
             result: buildToolPkgIpcFailure(&format!("ToolPkg.ipc async dispatch failed: {error}")),
-            isError: false,
+            reject: false,
         });
     }
 }
 
-/// Parses one serialized ToolPkg IPC request into the host contract.
+/// Validates owned structured IPC data against the host routing contract.
 #[allow(non_snake_case)]
 fn buildToolPkgIpcRequest(
     packageTarget: String,
@@ -2588,17 +2234,15 @@ fn buildToolPkgIpcRequest(
     targetContextKey: String,
     targetRuntime: String,
     channel: String,
-    payloadJson: String,
+    payload: Value,
 ) -> Result<JsToolPkgIpcRequest, String> {
     let normalizedTarget = packageTarget.trim().to_string();
     if normalizedTarget.is_empty() {
-        return Err(buildToolPkgIpcFailure(
-            "ToolPkg.ipc package target is empty",
-        ));
+        return Err("ToolPkg.ipc package target is empty".to_string());
     }
     let normalizedChannel = channel.trim().to_string();
     if normalizedChannel.is_empty() {
-        return Err(buildToolPkgIpcFailure("ToolPkg.ipc channel is required"));
+        return Err("ToolPkg.ipc channel is required".to_string());
     }
     let requestedRuntime = targetRuntime.trim().to_ascii_lowercase();
     if !requestedRuntime.is_empty()
@@ -2607,17 +2251,10 @@ fn buildToolPkgIpcRequest(
         && requestedRuntime != "sandbox"
         && requestedRuntime != "provider"
     {
-        return Err(buildToolPkgIpcFailure(&format!(
+        return Err(format!(
             "ToolPkg.ipc targetRuntime is invalid: {requestedRuntime}"
-        )));
+        ));
     }
-    let payload = if payloadJson.trim().is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_str::<Value>(payloadJson.trim()).map_err(|error| {
-            buildToolPkgIpcFailure(&format!("ToolPkg.ipc payload JSON is invalid: {error}"))
-        })?
-    };
     Ok(JsToolPkgIpcRequest {
         dependency_caller: None,
         package_target: normalizedTarget,
@@ -2641,17 +2278,11 @@ fn clearThreadLocalCallState() {
     CURRENT_EXECUTION_LISTENER.with(|listener| {
         *listener.borrow_mut() = None;
     });
-    CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|callbacks| {
-        callbacks.borrow_mut().clear();
-    });
     CURRENT_ENV_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().clear();
     });
-    CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
-        *resources.borrow_mut() = None;
-    });
-    CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| {
-        *host.borrow_mut() = None;
+    CURRENT_TEXT_RESOURCE_SOURCE.with(|source| {
+        *source.borrow_mut() = None;
     });
 }
 
@@ -2674,27 +2305,18 @@ fn installThreadLocalCallContext(context: &JsCallContext) {
             .expect("JavaScript call environment mutex poisoned")
             .clone();
     });
-    CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
-        *resources.borrow_mut() = context.textResources.clone();
-    });
-    CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| {
-        *host.borrow_mut() = context.textResourceHost.clone();
+    CURRENT_TEXT_RESOURCE_SOURCE.with(|source| {
+        *source.borrow_mut() = Some(context.textResourceSource.clone());
     });
 }
 
-/// Executes one operation while exposing its immutable ToolPkg text resources to native module reads.
+/// Selects the module owner from the engine's explicit bound package identity.
 #[allow(non_snake_case)]
-fn executeWithToolPkgTextResources<T>(
-    textResources: Arc<ToolPkgTextResources>,
-    operation: impl FnOnce() -> JsExecutionResult<T>,
-) -> JsExecutionResult<T> {
-    let previousResources =
-        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| resources.replace(Some(textResources)));
-    let output = operation();
-    CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| {
-        *resources.borrow_mut() = previousResources;
-    });
-    output
+fn packageTextResourceSource(context: Option<&ToolPkgExecutionContext>) -> JsTextResourceSource {
+    match context {
+        Some(context) => JsTextResourceSource::Package(context.text_resource_host.clone()),
+        None => JsTextResourceSource::ExecutionHost,
+    }
 }
 
 #[allow(non_snake_case)]
@@ -2968,151 +2590,362 @@ mod JsEngineTests;
 #[path = "tests/PluginConfigTests.rs"]
 mod PluginConfigTests;
 
+/// Delivers an external intermediate value only to the explicitly owning execution session.
 #[allow(non_snake_case)]
-fn nativeSendIntermediateResultString(callId: String, result: String) {
-    if let Some(context) =
-        CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().get(&callId).cloned())
-    {
-        if let Some(listener) = context.executionListener {
-            listener.on_intermediate_result(&callId, &result);
-        }
-        if let Some(callback) = context.intermediateCallback {
-            callback(result);
-        }
-        return;
+fn deliverIntermediateResult(callId: String, result: String) -> HostResult<()> {
+    let context = CURRENT_ACTIVE_CALL_CONTEXTS
+        .with(|contexts| contexts.borrow().get(&callId).cloned())
+        .ok_or_else(|| HostError::new("Intermediate result requires an active owning call"))?;
+    if let Some(listener) = context.executionListener {
+        listener.on_intermediate_result(&callId, &result);
     }
-
-    let detachedCallback = CURRENT_DETACHED_INTERMEDIATE_CALLBACKS
-        .with(|callbacks| callbacks.borrow().get(&callId).cloned());
-    CURRENT_EXECUTION_LISTENER.with(|listener| {
-        if let Some(listener) = listener.borrow().as_ref() {
-            listener.on_intermediate_result(&callId, &result);
-        }
-    });
-    CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
-        if let Some(callback) = callback.borrow().as_ref() {
-            callback(result);
-            return;
-        }
-        if let Some(callback) = detachedCallback {
-            callback(result);
-        }
-    });
+    if let Some(callback) = context.intermediateCallback {
+        callback(result);
+    }
+    Ok(())
 }
 
+/// Executes one named host capability using typed structured arguments and results.
 #[allow(non_snake_case)]
-fn nativeReadToolPkgTextResourceStrings(
-    packageNameOrSubpackageId: String,
-    resourcePath: String,
-) -> String {
-    let resourceKey = normalizeToolPkgTextResourcePath(&resourcePath);
-    if let Some(textResources) =
-        CURRENT_TOOLPKG_TEXT_RESOURCES.with(|resources| resources.borrow().clone())
-    {
-        return textResources.get(&resourceKey).cloned().unwrap_or_default();
-    }
-    if let Some(host) = CURRENT_TOOLPKG_TEXT_RESOURCE_HOST.with(|host| host.borrow().clone()) {
-        return host
-            .read_toolpkg_text_resource(&packageNameOrSubpackageId, &resourcePath)
-            .unwrap_or_default();
-    }
-    currentExecutionHost()
-        .and_then(|host| host.read_toolpkg_text_resource(&packageNameOrSubpackageId, &resourcePath))
-        .unwrap_or_default()
-}
-
-#[allow(non_snake_case)]
-fn nativeReadToolPkgResourceStrings(
-    packageNameOrSubpackageId: String,
-    resourceKey: String,
-    outputFileName: String,
-    internal: String,
-) -> String {
-    let request = JsToolPkgResourceRequest {
-        package_name_or_subpackage_id: packageNameOrSubpackageId,
-        resource_key: resourceKey,
-        output_file_name: normalizeOptionalString(&outputFileName),
-        internal: parseBooleanFlag(&internal),
-    };
-    currentExecutionHost()
-        .and_then(|host| host.materialize_toolpkg_resource(request))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
-}
-
-#[allow(non_snake_case)]
-/// Builds the stable failure envelope for ToolPkg WASM calls.
-fn buildToolPkgWasmFailure(message: &str) -> String {
-    serde_json::json!({
-        "success": false,
-        "message": message.trim()
-    })
-    .to_string()
-}
-
-#[allow(non_snake_case)]
-/// Calls one ToolPkg WASM export through the current execution host.
-fn nativeCallToolPkgWasmStrings(
-    packageTarget: String,
-    moduleId: String,
-    exportName: String,
-    argsJson: String,
-) -> String {
-    let normalizedTarget = packageTarget.trim().to_string();
-    if normalizedTarget.is_empty() {
-        return buildToolPkgWasmFailure("ToolPkg.wasm package target is empty");
-    }
-    let normalizedModuleId = moduleId.trim().to_string();
-    if normalizedModuleId.is_empty() {
-        return buildToolPkgWasmFailure("ToolPkg.wasm module id is required");
-    }
-    let normalizedExportName = exportName.trim().to_string();
-    if normalizedExportName.is_empty() {
-        return buildToolPkgWasmFailure("ToolPkg.wasm export name is required");
-    }
-    let args = if argsJson.trim().is_empty() {
-        Vec::new()
-    } else {
-        match serde_json::from_str::<Vec<JsToolPkgWasmArg>>(argsJson.trim()) {
-            Ok(value) => value,
-            Err(error) => {
-                return buildToolPkgWasmFailure(&format!(
-                    "ToolPkg.wasm args JSON is invalid: {error}"
-                ))
+fn executeHostOperation(name: &str, arguments: Vec<Value>) -> HostResult<Value> {
+    match name {
+        "__operitNativeReadToolPkgTextResource" => {
+            let [package, path] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let package = hostJavaScriptStringArgument(package)?;
+            let path = hostJavaScriptStringArgument(path)?;
+            let source = CURRENT_TEXT_RESOURCE_SOURCE
+                .with(|current| current.borrow().clone())
+                .ok_or_else(|| HostError::new("Module read requires an active resource owner"))?;
+            let text = match source {
+                JsTextResourceSource::Snapshot(resources) => Ok(resources
+                    .get(&normalizeToolPkgTextResourcePath(&path))
+                    .cloned()),
+                JsTextResourceSource::Package(provider) => {
+                    provider.read_toolpkg_text_resource(&package, &path)
+                }
+                JsTextResourceSource::ExecutionHost => currentExecutionHost()
+                    .and_then(|host| host.read_toolpkg_text_resource(&package, &path)),
             }
+            .map_err(HostError::new)?;
+            Ok(text.map(Value::String).unwrap_or(Value::Null))
         }
-    };
-    let request = JsToolPkgWasmRequest {
-        package_target: normalizedTarget,
-        module_id: normalizedModuleId,
-        export_name: normalizedExportName,
-        args,
-    };
-    match currentExecutionHost().and_then(|host| host.call_toolpkg_wasm(request)) {
-        Ok(result) => serde_json::json!({
-            "success": true,
-            "valueType": result.value_type,
-            "value": result.value
-        })
-        .to_string(),
-        Err(error) => buildToolPkgWasmFailure(&error),
+        "__operitNativeReadToolPkgResource" => {
+            let [package, key, output, internal] =
+                exactHostJavaScriptJsonArguments(name, arguments)?;
+            let request = JsToolPkgResourceRequest {
+                package_name_or_subpackage_id: hostJavaScriptStringArgument(package)?,
+                resource_key: hostJavaScriptStringArgument(key)?,
+                output_file_name: normalizeOptionalString(&hostJavaScriptStringArgument(output)?),
+                internal: hostJavaScriptBoolArgument(internal)?,
+            };
+            currentExecutionHost()
+                .and_then(|host| host.materialize_toolpkg_resource(request))
+                .map(Value::String)
+                .map_err(HostError::new)
+        }
+        "__operitNativeCallToolPkgWasm" => {
+            let [package, module, export, args] =
+                exactHostJavaScriptJsonArguments(name, arguments)?;
+            let request = JsToolPkgWasmRequest {
+                package_target: hostJavaScriptStringArgument(package)?,
+                module_id: hostJavaScriptStringArgument(module)?,
+                export_name: hostJavaScriptStringArgument(export)?,
+                args: serde_json::from_value::<Vec<JsToolPkgWasmArg>>(args)
+                    .map_err(|error| HostError::new(error.to_string()))?,
+            };
+            if request.package_target.trim().is_empty()
+                || request.module_id.trim().is_empty()
+                || request.export_name.trim().is_empty()
+            {
+                return Err(HostError::new(
+                    "ToolPkg WASM package, module and export are required",
+                ));
+            }
+            currentExecutionHost()
+                .and_then(|host| host.call_toolpkg_wasm(request))
+                .map(|result| result.value)
+                .map_err(HostError::new)
+        }
+        "__operitNativeComposeWebViewControllerCommand"
+        | "__operitNativeComposeWebViewControllerCommandSuspend" => {
+            let [payload] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            requireHostObject(&payload)?;
+            currentExecutionHost()
+                .and_then(|host| host.handle_compose_webview_controller_command(&payload))
+                .map_err(HostError::new)
+        }
+        "__operitNativeComposeFilePickerCommand" => {
+            let [payload] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            requireHostObject(&payload)?;
+            currentExecutionHost()
+                .and_then(|host| host.open_compose_file_picker(&payload))
+                .map_err(HostError::new)
+        }
+        "__operitNativeGetEnvForCall" => {
+            let [callId, key] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let callId = hostJavaScriptStringArgument(callId)?;
+            let key = hostJavaScriptStringArgument(key)?;
+            let context = CURRENT_ACTIVE_CALL_CONTEXTS
+                .with(|contexts| contexts.borrow().get(&callId).cloned())
+                .ok_or_else(|| {
+                    HostError::new("Environment request requires an active owning call")
+                })?;
+            let overrides = context
+                .envOverrides
+                .lock()
+                .expect("JavaScript call environment mutex poisoned");
+            if let Some(value) = overrides.get(key.trim()) {
+                return Ok(Value::String(value.clone()));
+            }
+            drop(overrides);
+            context
+                .executionHost
+                .ok_or_else(|| HostError::new("JavaScript execution host is unavailable"))?
+                .read_environment_variable(&key)
+                .map(|value| value.map(Value::String).unwrap_or(Value::Null))
+                .map_err(HostError::new)
+        }
+        "__operitNativeSetEnv" => {
+            let [callId, key, value] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            setHostEnvironmentValue(
+                &hostJavaScriptStringArgument(callId)?,
+                &hostJavaScriptStringArgument(key)?,
+                &hostJavaScriptStringArgument(value)?,
+            )?;
+            Ok(Value::Null)
+        }
+        "__operitNativeSetEnvs" => {
+            let [callId, values] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let callId = hostJavaScriptStringArgument(callId)?;
+            let values = values
+                .as_object()
+                .ok_or_else(|| HostError::new("setEnvs requires an object"))?;
+            for (key, value) in values {
+                let value = match value {
+                    Value::String(value) => value.clone(),
+                    Value::Null => String::new(),
+                    value => value.to_string(),
+                };
+                setHostEnvironmentValue(&callId, key, &value)?;
+            }
+            Ok(Value::Null)
+        }
+        "__operitNativeGetScopedPluginConfigDir" => {
+            let [owner, plugin] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            scopedPluginConfigDirectory(
+                hostJavaScriptStringArgument(owner)?,
+                hostJavaScriptStringArgument(plugin)?,
+            )
+            .map(Value::String)
+            .map_err(HostError::new)
+        }
+        "__operitNativeIsPackageImported"
+        | "__operitNativeImportPackage"
+        | "__operitNativeRemovePackage"
+        | "__operitNativeUsePackage" => {
+            let [package] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let package = hostJavaScriptStringArgument(package)?;
+            let host = currentExecutionHost().map_err(HostError::new)?;
+            match name {
+                "__operitNativeIsPackageImported" => {
+                    host.is_package_imported(package.trim()).map(Value::Bool)
+                }
+                "__operitNativeImportPackage" => {
+                    host.import_package(package.trim()).map(Value::String)
+                }
+                "__operitNativeRemovePackage" => {
+                    host.remove_package(package.trim()).map(Value::String)
+                }
+                "__operitNativeUsePackage" => host.use_package(package.trim()).map(Value::String),
+                _ => unreachable!(),
+            }
+            .map_err(HostError::new)
+        }
+        "__operitNativeListImportedPackages" => {
+            let [] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            currentExecutionHost()
+                .and_then(|host| host.list_imported_packages())
+                .map(|values| Value::Array(values.into_iter().map(Value::String).collect()))
+                .map_err(HostError::new)
+        }
+        "__operitNativeGetToolCatalog" => {
+            let [] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            currentExecutionHost()
+                .and_then(|host| host.get_tool_catalog())
+                .map_err(HostError::new)
+        }
+        "__operitNativeResolveToolName" => {
+            let [package, subpackage, tool, preferImported] =
+                exactHostJavaScriptJsonArguments(name, arguments)?;
+            let request = JsToolNameResolutionRequest {
+                package_name: normalizeOptionalString(&hostJavaScriptStringArgument(package)?),
+                subpackage_id: normalizeOptionalString(&hostJavaScriptStringArgument(subpackage)?),
+                tool_name: hostJavaScriptStringArgument(tool)?,
+                prefer_imported: hostJavaScriptBoolArgument(preferImported)?,
+            };
+            currentExecutionHost()
+                .and_then(|host| host.resolve_tool_name(request))
+                .map(Value::String)
+                .map_err(HostError::new)
+        }
+        "__operitNativeDecompress" => {
+            let [data, algorithm] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            JsHostOperations::decompress(
+                &hostJavaScriptStringArgument(data)?,
+                &hostJavaScriptStringArgument(algorithm)?,
+            )
+            .map(Value::String)
+            .map_err(HostError::new)
+        }
+        "__operitNativeCrypto" => {
+            let [algorithm, operation, args] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let args: Vec<String> =
+                serde_json::from_value(args).map_err(|error| HostError::new(error.to_string()))?;
+            JsHostOperations::crypto(
+                &hostJavaScriptStringArgument(algorithm)?,
+                &hostJavaScriptStringArgument(operation)?,
+                &args,
+            )
+            .map(Value::String)
+            .map_err(HostError::new)
+        }
+        "__operitNativeImageProcessing" => {
+            let [operation, args] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let args = hostJavaScriptArrayArgument(args)?;
+            JsHostOperations::imageProcessing(&hostJavaScriptStringArgument(operation)?, &args)
+                .map_err(HostError::new)
+        }
+        "__operitNativeJavaClassExists" => {
+            let [class] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            Ok(Value::Bool(javaClassExists(&hostJavaScriptStringArgument(
+                class,
+            )?)))
+        }
+        "__operitNativeJavaGetApplicationContext" => {
+            let [] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            Ok(javaGetApplicationContext())
+        }
+        "__operitNativeJavaGetCurrentActivity" => {
+            let [] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            Err(HostError::new("current activity is null"))
+        }
+        "__operitNativeJavaNewInstance" => {
+            let [class, args] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            javaNewInstance(
+                &hostJavaScriptStringArgument(class)?,
+                &hostJavaScriptArrayArgument(args)?,
+            )
+            .map_err(HostError::new)
+        }
+        "__operitNativeJavaCallStatic" => {
+            let [class, method, args] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            javaCallStatic(
+                &hostJavaScriptStringArgument(class)?,
+                &hostJavaScriptStringArgument(method)?,
+                &hostJavaScriptArrayArgument(args)?,
+            )
+            .map_err(HostError::new)
+        }
+        "__operitNativeJavaCallInstance" => {
+            let [handle, method, args] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            javaCallInstance(
+                &hostJavaScriptStringArgument(handle)?,
+                &hostJavaScriptStringArgument(method)?,
+                &hostJavaScriptArrayArgument(args)?,
+            )
+            .map_err(HostError::new)
+        }
+        "__operitNativeJavaCallStaticSuspend"
+        | "__operitNativeJavaGetStaticField"
+        | "__operitNativeJavaSetStaticField" => Err(HostError::new(format!(
+            "Java host operation is not implemented: {name}"
+        ))),
+        "__operitNativeLog" => {
+            let [level, callId, message] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let level = hostJavaScriptStringArgument(level)?;
+            let callId = hostJavaScriptStringArgument(callId)?;
+            let message = hostJavaScriptStringArgument(message)?;
+            let message = if callId.is_empty() {
+                message
+            } else {
+                format!("[{callId}] {message}")
+            };
+            match level.as_str() {
+                "info" => AppLogger::i("ToolPkg", &message),
+                "warn" => AppLogger::w("ToolPkg", &message),
+                "error" => AppLogger::e("ToolPkg", &message),
+                _ => return Err(HostError::new(format!("Unknown plugin log level: {level}"))),
+            };
+            Ok(Value::Null)
+        }
+        "__operitSendIntermediateResult"
+        | "__operitNativeSetCallResult"
+        | "__operitNativeSetCallError" => {
+            let [callId, value] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let callId = hostJavaScriptStringArgument(callId)?;
+            // Execution listeners and the external script result contract own JSON serialization.
+            let serialized = value.to_string();
+            match name {
+                "__operitSendIntermediateResult" => deliverIntermediateResult(
+                    callId,
+                    match value {
+                        Value::String(value) => value,
+                        _ => serialized,
+                    },
+                )?,
+                "__operitNativeSetCallResult" => storeExecutionResult(callId, serialized)?,
+                "__operitNativeSetCallError" => storeExecutionError(callId, serialized)?,
+                _ => unreachable!(),
+            }
+            Ok(Value::Null)
+        }
+        "__operitNativeNotifyDetachedCall" => {
+            let [callId] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            hostJavaScriptStringArgument(callId)?;
+            Ok(Value::Null)
+        }
+        "__operitNativeLogJsExecutionTrace" => {
+            let [callId, message] = exactHostJavaScriptJsonArguments(name, arguments)?;
+            let callId = hostJavaScriptStringArgument(callId)?;
+            let message = hostJavaScriptStringArgument(message)?;
+            AppLogger::d(TAG, &format!("[{callId}] {message}"));
+            Ok(Value::Null)
+        }
+        _ => Err(HostError::new(format!(
+            "Unknown structured host operation: {name}"
+        ))),
     }
 }
 
+/// Requires a structured object without accepting serialized JSON text.
 #[allow(non_snake_case)]
-fn nativeComposeWebViewControllerCommandString(payloadJson: String) -> String {
-    currentExecutionHost()
-        .and_then(|host| host.handle_compose_webview_controller_command(&payloadJson))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+fn requireHostObject(value: &Value) -> HostResult<()> {
+    if value.is_object() {
+        Ok(())
+    } else {
+        Err(HostError::new("Host payload must be an object"))
+    }
 }
 
-/// Runs one Compose DSL file-picker request through the current execution host.
+/// Extracts an exact boolean value from a structured request.
 #[allow(non_snake_case)]
-fn nativeComposeFilePickerCommandString(payloadJson: String) -> String {
-    currentExecutionHost()
-        .and_then(|host| host.open_compose_file_picker(&payloadJson))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+fn hostJavaScriptBoolArgument(value: Value) -> HostResult<bool> {
+    match value {
+        Value::Bool(value) => Ok(value),
+        _ => Err(HostError::new("Host argument must be a boolean")),
+    }
 }
 
+/// Moves an owned array from the structured request into the host operation.
+#[allow(non_snake_case)]
+fn hostJavaScriptArrayArgument(value: Value) -> HostResult<Vec<Value>> {
+    match value {
+        Value::Array(values) => Ok(values),
+        _ => Err(HostError::new("Host argument must be an array")),
+    }
+}
+
+/// Normalizes a package resource key according to the package resource contract.
 #[allow(non_snake_case)]
 fn normalizeToolPkgTextResourcePath(path: &str) -> String {
     path.replace('\\', "/")
@@ -3121,104 +2954,65 @@ fn normalizeToolPkgTextResourcePath(path: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Stores an externally serialized execution result for the owning call.
 #[allow(non_snake_case)]
-fn nativeSetCallResultStrings(callId: String, result: String) {
+fn storeExecutionResult(callId: String, result: String) -> HostResult<()> {
+    if !CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().contains_key(&callId)) {
+        return Err(HostError::new("Completion requires an active owning call"));
+    }
     CURRENT_CALL_RESULTS.with(|results| {
         results.borrow_mut().insert(callId, result);
     });
+    Ok(())
 }
 
+/// Reports and stores an execution error through the external listener contract.
 #[allow(non_snake_case)]
-fn nativeSetCallErrorStrings(callId: String, error: String) {
-    let owner =
-        CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().get(&callId).cloned());
-    if let Some(context) = owner {
-        if let Some(listener) = context.executionListener {
-            listener.on_failed(&callId, &error);
-        }
-    } else {
-        CURRENT_EXECUTION_LISTENER.with(|listener| {
-            if let Some(listener) = listener.borrow().as_ref() {
-                listener.on_failed(&callId, &error);
-            }
-        });
+fn storeExecutionError(callId: String, error: String) -> HostResult<()> {
+    let context = CURRENT_ACTIVE_CALL_CONTEXTS
+        .with(|contexts| contexts.borrow().get(&callId).cloned())
+        .ok_or_else(|| HostError::new("Execution error requires an active owning call"))?;
+    if let Some(listener) = context.executionListener {
+        listener.on_failed(&callId, &error);
     }
     CURRENT_CALL_RESULTS.with(|results| {
         results.borrow_mut().insert(callId, error);
     });
+    Ok(())
 }
 
+/// Writes one environment value and records it only after the host accepts the write.
 #[allow(non_snake_case)]
-fn nativeGetEnvForCallStrings(key: String) -> String {
-    if let Some(value) = CURRENT_ENV_OVERRIDES.with(|overrides| {
-        overrides
-            .borrow()
-            .get(key.trim())
-            .filter(|value| !value.is_empty())
-            .cloned()
-    }) {
-        return value;
+fn setHostEnvironmentValue(callId: &str, key: &str, value: &str) -> HostResult<()> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(HostError::new("Environment variable name is required"));
     }
-    currentExecutionHost()
-        .and_then(|host| host.read_environment_variable(&key))
-        .map(|value| value.unwrap_or_default())
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
-}
-
-/// Writes one environment value for later Compose screens and tool calls.
-fn nativeSetEnvStrings(callId: String, key: String, value: String) -> String {
-    let name = key.trim().to_string();
-    if name.is_empty() {
-        return String::new();
-    }
-    if let Some(context) =
-        CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().get(&callId).cloned())
-    {
-        context
-            .envOverrides
-            .lock()
-            .expect("JavaScript call environment mutex poisoned")
-            .insert(name.clone(), value.clone());
-    }
+    let context = CURRENT_ACTIVE_CALL_CONTEXTS
+        .with(|contexts| contexts.borrow().get(callId).cloned())
+        .ok_or_else(|| HostError::new("Environment write requires an active owning call"))?;
+    context
+        .executionHost
+        .ok_or_else(|| HostError::new("JavaScript execution host is unavailable"))?
+        .write_environment_variable(key, value)
+        .map_err(HostError::new)?;
+    context
+        .envOverrides
+        .lock()
+        .expect("JavaScript call environment mutex poisoned")
+        .insert(key.to_string(), value.to_string());
     CURRENT_ENV_OVERRIDES.with(|overrides| {
-        overrides.borrow_mut().insert(name.clone(), value.clone());
+        overrides
+            .borrow_mut()
+            .insert(key.to_string(), value.to_string());
     });
-    match currentExecutionHost().and_then(|host| host.write_environment_variable(&name, &value)) {
-        Ok(()) => String::new(),
-        Err(error) => buildJsExecutionErrorPayload(&error),
-    }
+    Ok(())
 }
 
-/// Writes a JSON object of environment values for later Compose screens.
-fn nativeSetEnvsStrings(callId: String, valuesJson: String) -> String {
-    let parsed = match serde_json::from_str::<Value>(&valuesJson) {
-        Ok(value) => value,
-        Err(error) => return buildJsExecutionErrorPayload(&error.to_string()),
-    };
-    let object = match parsed.as_object() {
-        Some(object) => object,
-        None => {
-            return buildJsExecutionErrorPayload("setEnvs requires a JSON object");
-        }
-    };
-    for (key, value) in object {
-        let serialized = match value {
-            Value::String(text) => text.clone(),
-            Value::Null => String::new(),
-            other => other.to_string(),
-        };
-        let result = nativeSetEnvStrings(callId.clone(), key.clone(), serialized);
-        if !result.trim().is_empty() {
-            return result;
-        }
-    }
-    String::new()
-}
-
-/// Resolves package-owned configuration without altering the public one-argument API.
+/// Resolves and validates a package-owned configuration directory through its explicit scope.
 #[allow(non_snake_case)]
-fn nativeGetScopedPluginConfigDirString(ownerId: String, pluginId: String) -> String {
-    let result = currentExecutionHost().and_then(|host| {
+fn scopedPluginConfigDirectory(ownerId: String, pluginId: String) -> Result<String, String> {
+    let path = currentExecutionHost().and_then(|host| {
         CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| match current.borrow().as_ref() {
             Some(params) => {
                 let owner = params
@@ -3242,83 +3036,11 @@ fn nativeGetScopedPluginConfigDirString(ownerId: String, pluginId: String) -> St
             }
             None => host.scoped_plugin_config_dir(&ownerId, &pluginId),
         })
-    });
-    match result {
-        Ok(path) => serde_json::json!({"success": true, "path": path}).to_string(),
-        Err(error) => buildJsExecutionErrorPayload(&error),
+    })?;
+    if !path.starts_with('/') {
+        return Err("Plugin configuration directory must be an absolute VFS path".to_string());
     }
-}
-
-/// Resolves explicit device configuration for the original native entry point.
-#[allow(non_snake_case)]
-fn nativeGetPluginConfigDirString(pluginId: String) -> String {
-    currentExecutionHost()
-        .and_then(|host| host.plugin_config_dir(&pluginId))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
-}
-
-#[allow(non_snake_case)]
-fn nativeIsPackageImportedString(packageName: String) -> String {
-    currentExecutionHost()
-        .and_then(|host| host.is_package_imported(packageName.trim()))
-        .map(|value| value.to_string())
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
-}
-
-#[allow(non_snake_case)]
-fn nativeImportPackageString(packageName: String) -> String {
-    currentExecutionHost()
-        .and_then(|host| host.import_package(packageName.trim()))
-        .unwrap_or_else(|error| error)
-}
-
-#[allow(non_snake_case)]
-fn nativeRemovePackageString(packageName: String) -> String {
-    currentExecutionHost()
-        .and_then(|host| host.remove_package(packageName.trim()))
-        .unwrap_or_else(|error| error)
-}
-
-#[allow(non_snake_case)]
-fn nativeUsePackageString(packageName: String) -> String {
-    currentExecutionHost()
-        .and_then(|host| host.use_package(packageName.trim()))
-        .unwrap_or_else(|error| error)
-}
-
-#[allow(non_snake_case)]
-fn nativeListImportedPackagesJsonString() -> String {
-    currentExecutionHost()
-        .and_then(|host| host.list_imported_packages())
-        .and_then(|packages| serde_json::to_string(&packages).map_err(|error| error.to_string()))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
-}
-
-/// Returns the executable tool catalog exposed by the active host.
-#[allow(non_snake_case)]
-fn nativeGetToolCatalogJsonString() -> String {
-    currentExecutionHost()
-        .and_then(|host| host.get_tool_catalog())
-        .and_then(|catalog| serde_json::to_string(&catalog).map_err(|error| error.to_string()))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
-}
-
-#[allow(non_snake_case)]
-fn nativeResolveToolNameString(
-    packageName: String,
-    subpackageId: String,
-    toolName: String,
-    preferImported: String,
-) -> String {
-    let request = JsToolNameResolutionRequest {
-        package_name: normalizeOptionalString(&packageName),
-        subpackage_id: normalizeOptionalString(&subpackageId),
-        tool_name: toolName,
-        prefer_imported: !preferImported.eq_ignore_ascii_case("false"),
-    };
-    currentExecutionHost()
-        .and_then(|host| host.resolve_tool_name(request))
-        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+    Ok(path)
 }
 
 /// Returns the execution host bound to the active JavaScript call.
@@ -3345,41 +3067,6 @@ fn normalizeNonBlankString(value: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
-    }
-}
-
-#[allow(non_snake_case)]
-fn nativeLogJsExecutionTraceStrings(callId: String, message: String) {
-    let _ = (callId, message);
-}
-
-#[allow(non_snake_case)]
-fn nativeDecompressStrings(data: String, algorithm: String) -> String {
-    JsNativeInterfaceDelegates::decompress(&data, &algorithm)
-}
-
-#[allow(non_snake_case)]
-fn nativeCryptoStrings(algorithm: String, operation: String, argsJson: String) -> String {
-    JsNativeInterfaceDelegates::crypto(&algorithm, &operation, &argsJson)
-}
-
-#[allow(non_snake_case)]
-fn nativeImageProcessingStrings(
-    _callbackId: String,
-    operation: String,
-    argsJson: String,
-) -> String {
-    match JsNativeInterfaceDelegates::imageProcessing(&operation, &argsJson) {
-        Ok(result) => serde_json::json!({
-            "success": true,
-            "result": result
-        })
-        .to_string(),
-        Err(error) => serde_json::json!({
-            "success": false,
-            "error": error
-        })
-        .to_string(),
     }
 }
 

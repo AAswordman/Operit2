@@ -20,10 +20,9 @@ function createRuntime(environment = {}) {
       /** Reads host environment storage across independent route contexts. */
       getEnv(key) { return environment[key]; },
     },
-    NativeInterface: {
-      /** Records the selected site just like the plugin's native environment call. */
-      setEnv(key, value) { environment[key] = value; },
-    },
+    __operitCurrentCallId: 'owner',
+    /** Records the selected site through the structured host value contract. */
+    __operitNativeSetEnv(owner, key, value) { assert.equal(owner, 'owner'); environment[key] = value; },
     /** Captures every intermediate response to verify commands are emitted once. */
     sendIntermediateResult(value) { events.push(value); },
   });

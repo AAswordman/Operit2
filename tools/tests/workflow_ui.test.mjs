@@ -228,14 +228,11 @@ test('WebView interface decodes browser argument arrays through the production a
   const { context, load, channels } = runtime();
   let registered;
   const commands = [];
-  context.NativeInterface = {
-    /** Captures the action descriptor installed into the native WebView registry. */
-    composeWebViewControllerCommand(json) {
-      const command = JSON.parse(json);
+  /** Captures the structured action descriptor installed into the host WebView registry. */
+  context.__operitNativeComposeWebViewControllerCommand = function(command) {
       commands.push(command);
       if (command.command === 'addJavascriptInterface') registered = command.payload.object;
-      return JSON.stringify({ success: true, data: null });
-    },
+      return { success: true, data: null };
   };
   context.ToolPkg.readResource = async () => '/plugin/workflow.html';
   context.module.exports = load(new URL('ui/web.js', base));

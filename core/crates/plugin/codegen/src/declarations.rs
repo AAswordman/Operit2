@@ -1430,7 +1430,6 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
             "UIHost" => Some(vec!["UI".to_string()]),
             "ChatHost" => Some(vec!["Chat".to_string()]),
             "MemoryHost" => Some(vec!["Memory".to_string()]),
-            "NativeInterfaceHost" => Some(vec!["NativeInterface".to_string()]),
             "GlobalHost" => Some(vec!["global".to_string()]),
             _ => None,
         };

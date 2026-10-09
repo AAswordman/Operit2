@@ -370,6 +370,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return '';
         }
 
+        /** Materializes a resource through the required structured host Promise. */
+
         function readToolPkgResource(key, outputFileName, internal) {
             if (registrationOnly) {
                 throw new Error('ToolPkg.readResource is unavailable during ToolPkg registration');
@@ -382,24 +384,14 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             if (!target) {
                 return Promise.reject(new Error('package/toolpkg runtime target is empty'));
             }
-            if (
-                typeof NativeInterface === 'undefined' ||
-                !NativeInterface ||
-                typeof NativeInterface.readToolPkgResource !== 'function'
-            ) {
-                return Promise.reject(new Error('NativeInterface.readToolPkgResource is unavailable'));
-            }
-            var path = NativeInterface.readToolPkgResource(
-                target,
-                resourceKey,
+            return __operitInvokeHostAsync(__operitNativeReadToolPkgResource, [
+                target, resourceKey,
                 outputFileName == null ? '' : String(outputFileName).trim(),
-                internal === true ? 'true' : ''
-            );
-            if (typeof path === 'string' && path.trim()) {
-                return Promise.resolve(path);
-            }
-            return Promise.reject(new Error('resource not found: ' + resourceKey));
+                internal === true
+            ]);
         }
+
+        /** Materializes a targeted package resource without parsing result text. */
 
         function readToolPkgResourceFromPackage(packageNameOrSubpackageId, key, outputFileName, internal) {
             if (registrationOnly) {
@@ -413,32 +405,15 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             if (!resourceKey) {
                 return Promise.reject(new Error('resource key is required'));
             }
-            if (
-                typeof NativeInterface === 'undefined' ||
-                !NativeInterface ||
-                typeof NativeInterface.readToolPkgResource !== 'function'
-            ) {
-                return Promise.reject(new Error('NativeInterface.readToolPkgResource is unavailable'));
-            }
-            var raw = NativeInterface.readToolPkgResource(
-                target,
-                resourceKey,
+            return __operitInvokeHostAsync(__operitNativeReadToolPkgResource, [
+                target, resourceKey,
                 outputFileName == null ? '' : String(outputFileName).trim(),
-                internal === true ? 'true' : ''
-            );
-            if (typeof raw !== 'string' || !raw.trim()) {
-                return Promise.reject(new Error('resource not found: ' + target + '/' + resourceKey));
-            }
-            try {
-                var parsed = JSON.parse(raw);
-                if (parsed && parsed.success === false) {
-                    return Promise.reject(new Error(String(parsed.message || 'resource read failed')));
-                }
-            } catch (_error) {}
-            return Promise.resolve(raw);
+                internal === true
+            ]);
         }
 
-        // Resolves configuration through the host in both registration and runtime execution.
+        /** Reads and validates the direct absolute VFS configuration path. */
+
         function getToolPkgConfigDir(pluginId) {
             var explicitId = String(pluginId || '').trim();
             var owner = resolveCurrentToolPkgTarget();
@@ -446,18 +421,11 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             if (!target) {
                 throw new Error('package/toolpkg runtime target is empty');
             }
-            if (
-                typeof NativeInterface === 'undefined' ||
-                !NativeInterface ||
-                typeof NativeInterface.getScopedPluginConfigDir !== 'function'
-            ) {
-                throw new Error('NativeInterface.getScopedPluginConfigDir is unavailable');
-            }
-            var path = NativeInterface.getScopedPluginConfigDir(owner, target);
-            if (typeof path === 'string' && path.trim()) {
+            var path = __operitNativeGetScopedPluginConfigDir(owner, target);
+            if (typeof path === 'string' && path.startsWith('/')) {
                 return path;
             }
-            throw new Error('plugin config dir is unavailable for ' + target);
+            throw new Error('Plugin configuration directory must be an absolute VFS path');
         }
 
         function normalizeToolPkgWasmValueType(valueType) {
@@ -509,6 +477,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return normalizedArgs;
         }
 
+        /** Calls a WASM export using structured scalar arguments and an owned host Promise. */
+
         function callToolPkgWasm(moduleId, exportName, args) {
             if (registrationOnly) {
                 throw new Error('ToolPkg.wasm.call is unavailable during ToolPkg registration');
@@ -531,44 +501,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             if (!target) {
                 return Promise.reject(new Error('package/toolpkg runtime target is empty'));
             }
-            if (
-                typeof NativeInterface === 'undefined' ||
-                !NativeInterface ||
-                typeof NativeInterface.callToolPkgWasm !== 'function'
-            ) {
-                return Promise.reject(new Error('NativeInterface.callToolPkgWasm is unavailable'));
-            }
-            var resultJson;
-            try {
-                resultJson = NativeInterface.callToolPkgWasm(
-                    target,
-                    normalizedModuleId,
-                    normalizedExportName,
-                    JSON.stringify(normalizedArgs)
-                );
-            } catch (error) {
-                return Promise.reject(error);
-            }
-            var parsed;
-            try {
-                parsed = JSON.parse(String(resultJson || 'null'));
-            } catch (error) {
-                return Promise.reject(
-                    new Error('ToolPkg.wasm returned invalid JSON: ' + String(error && error.message ? error.message : error))
-                );
-            }
-            if (parsed && parsed.success === true) {
-                return Promise.resolve(
-                    Object.prototype.hasOwnProperty.call(parsed, 'value') ? parsed.value : null
-                );
-            }
-            return Promise.reject(
-                new Error(
-                    parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0
-                        ? parsed.message.trim()
-                        : 'ToolPkg.wasm call failed'
-                )
-            );
+            return __operitInvokeHostAsync(__operitNativeCallToolPkgWasm,
+                [target, normalizedModuleId, normalizedExportName, normalizedArgs]);
         }
 
         function requireToolPkgApiRuntime() {

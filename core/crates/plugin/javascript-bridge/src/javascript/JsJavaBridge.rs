@@ -1,57 +1,21 @@
+/// Builds public Java compatibility wrappers over the required structured host bindings.
 #[allow(non_snake_case)]
 pub fn buildJavaClassBridgeDefinition() -> String {
     r#"
         (function() {
-            function hasNative(methodName) {
-                return (
-                    typeof NativeInterface !== 'undefined' &&
-                    NativeInterface &&
-                    typeof NativeInterface[methodName] === 'function'
-                );
-            }
-
-            function normalizeBridgeBoolean(value) {
-                if (value === true || value === false) {
-                    return value;
-                }
-                if (typeof value === 'string') {
-                    var normalized = value.trim().toLowerCase();
-                    if (normalized === 'true') {
-                        return true;
-                    }
-                    if (normalized === 'false' || normalized === '') {
-                        return false;
-                    }
-                }
-                if (typeof value === 'number') {
-                    return value !== 0;
-                }
-                return !!value;
-            }
-
+            /** Queries exact class metadata through the structured host binding. */
             function classExistsRaw(className) {
-                if (!hasNative('javaClassExists')) {
-                    return false;
-                }
-                try {
-                    return normalizeBridgeBoolean(
-                        NativeInterface.javaClassExists(String(className || ''))
-                    );
-                } catch (_e) {
-                    return false;
-                }
+                return __operitNativeJavaClassExists(String(className));
             }
 
+            /** Recognizes an explicit Java package or class property key. */
             function isPropertyKeyName(value) {
                 return typeof value === 'string' && value.length > 0;
             }
 
-            function bridgeUnavailable(methodName) {
-                throw new Error('Java bridge native method is unavailable: ' + methodName);
-            }
-
             var __operitJavaInstanceProxies = {};
 
+            /** Wraps an explicit host-owned Java descriptor without changing its structured arguments. */
             function createInstanceProxy(className, handle) {
                 if (__operitJavaInstanceProxies[handle]) {
                     return __operitJavaInstanceProxies[handle];
@@ -66,7 +30,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                         return invokeBridge('javaCallInstance', [
                             handle,
                             String(methodName || ''),
-                            JSON.stringify(normalizeArgs(args))
+                            normalizeArgs(args)
                         ]);
                     },
                     toJSON: function() {
@@ -76,7 +40,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                         };
                     },
                     toString: function() {
-                        return invokeBridge('javaCallInstance', [handle, 'toString', '[]']);
+                        return invokeBridge('javaCallInstance', [handle, 'toString', []]);
                     }
                 };
                 var proxy = new Proxy(target, {
@@ -98,7 +62,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                             return invokeBridge('javaCallInstance', [
                                 handle,
                                 prop,
-                                JSON.stringify(normalizeArgs(args))
+                                normalizeArgs(args)
                             ]);
                         };
                     }
@@ -107,6 +71,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                 return proxy;
             }
 
+            /** Wraps only descriptors with the exact Java handle fields, preserving other application values. */
             function normalizeBridgeValue(value) {
                 if (
                     value &&
@@ -119,52 +84,43 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                 return value;
             }
 
-            function parseBridgeResult(raw) {
-                var result = raw;
-                if (typeof raw === 'string') {
-                    try {
-                        result = JSON.parse(raw);
-                    } catch (_parseError) {
-                        return raw;
-                    }
-                }
-                if (
-                    result &&
-                    typeof result === 'object' &&
-                    Object.prototype.hasOwnProperty.call(result, 'success')
-                ) {
-                    if (result.success === false) {
-                        throw new Error(String(result.message || 'Java bridge call failed'));
-                    }
-                    return normalizeBridgeValue(result.data);
-                }
-                return normalizeBridgeValue(result);
-            }
-
+            /** Dispatches a named Java operation with structured values and direct host errors. */
             function invokeBridge(methodName, args) {
-                if (!hasNative(methodName)) {
-                    bridgeUnavailable(methodName);
+                var bindings = {
+                    javaClassExists: __operitNativeJavaClassExists,
+                    javaGetApplicationContext: __operitNativeJavaGetApplicationContext,
+                    javaGetCurrentActivity: __operitNativeJavaGetCurrentActivity,
+                    javaNewInstance: __operitNativeJavaNewInstance,
+                    javaCallStatic: __operitNativeJavaCallStatic,
+                    javaCallInstance: __operitNativeJavaCallInstance,
+                    javaCallStaticSuspend: __operitNativeJavaCallStaticSuspend,
+                    javaGetStaticField: __operitNativeJavaGetStaticField,
+                    javaSetStaticField: __operitNativeJavaSetStaticField
+                };
+                if (!Object.prototype.hasOwnProperty.call(bindings, methodName)) {
+                    throw new Error('Unknown Java host operation: ' + methodName);
                 }
-                return parseBridgeResult(NativeInterface[methodName].apply(NativeInterface, args || []));
+                return normalizeBridgeValue(bindings[methodName].apply(undefined, args));
             }
 
+            /** Copies the public Java argument list into a structured array. */
             function normalizeArgs(args) {
                 return Array.prototype.slice.call(args || []);
             }
 
+            /** Exposes explicit class operations without guessing another member kind after an error. */
             function createClassProxy(className) {
                 var target = function() {
                     return target.newInstance.apply(target, arguments);
                 };
                 target.className = className;
                 target.exists = function() {
-                    return hasNative('javaClassExists') &&
-                        normalizeBridgeBoolean(NativeInterface.javaClassExists(className));
+                    return classExistsRaw(className);
                 };
                 target.newInstance = function() {
                     return invokeBridge('javaNewInstance', [
                         className,
-                        JSON.stringify(normalizeArgs(arguments))
+                        normalizeArgs(arguments)
                     ]);
                 };
                 target.callStatic = function(methodName) {
@@ -172,7 +128,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                     return invokeBridge('javaCallStatic', [
                         className,
                         String(methodName || ''),
-                        JSON.stringify(normalizeArgs(args))
+                        normalizeArgs(args)
                     ]);
                 };
                 target.callSuspend = function(methodName) {
@@ -180,7 +136,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                     return invokeBridge('javaCallStaticSuspend', [
                         className,
                         String(methodName || ''),
-                        JSON.stringify(normalizeArgs(args))
+                        normalizeArgs(args)
                     ]);
                 };
                 target.getStatic = function(fieldName) {
@@ -193,7 +149,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                     return invokeBridge('javaSetStaticField', [
                         className,
                         String(fieldName || ''),
-                        JSON.stringify(value)
+                        value
                     ]);
                 };
                 target.toString = function() {
@@ -214,21 +170,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                         if (typeof prop !== 'string') {
                             return undefined;
                         }
-                        try {
-                            return invokeBridge('javaGetStaticField', [className, prop]);
-                        } catch (_fieldError) {
-                        }
-                        var nestedClassName = className + '$' + prop;
-                        if (classExistsRaw(nestedClassName)) {
-                            return createClassProxy(nestedClassName);
-                        }
-                        var nestedUpperClassName = className + '$' + prop.toUpperCase();
-                        if (
-                            nestedUpperClassName !== nestedClassName &&
-                            classExistsRaw(nestedUpperClassName)
-                        ) {
-                            return createClassProxy(nestedUpperClassName);
-                        }
+                        // Static fields use getStatic; nested classes use their explicit class name.
                         return function() {
                             var args = Array.prototype.slice.call(arguments);
                             return target.callStatic.apply(target, [prop].concat(args));
@@ -251,13 +193,14 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                         invokeBridge('javaSetStaticField', [
                             className,
                             prop,
-                            JSON.stringify(value)
+                            value
                         ]);
                         return true;
                     }
                 });
             }
 
+            /** Resolves package paths using explicit host class metadata. */
             function createPackageProxy(parts) {
                 var pathParts = Array.isArray(parts) ? parts.slice() : [];
                 var target = function() {
@@ -367,7 +310,7 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                     return invokeBridge('javaCallStatic', [
                         String(className || '').trim(),
                         String(methodName || '').trim(),
-                        JSON.stringify(normalizeArgs(args))
+                        normalizeArgs(args)
                     ]);
                 },
                 callSuspend: function(className, methodName) {
@@ -375,14 +318,14 @@ pub fn buildJavaClassBridgeDefinition() -> String {
                     return invokeBridge('javaCallStaticSuspend', [
                         String(className || '').trim(),
                         String(methodName || '').trim(),
-                        JSON.stringify(normalizeArgs(args))
+                        normalizeArgs(args)
                     ]);
                 },
                 newInstance: function(className) {
                     var args = Array.prototype.slice.call(arguments, 1);
                     return invokeBridge('javaNewInstance', [
                         String(className || '').trim(),
-                        JSON.stringify(normalizeArgs(args))
+                        normalizeArgs(args)
                     ]);
                 },
                 getApplicationContext: function() {

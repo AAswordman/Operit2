@@ -656,7 +656,7 @@ impl ToolPkgTextResourceHost for ToolPkgManager {
         &self,
         package_name_or_subpackage_id: &str,
         resource_path: &str,
-    ) -> Result<String, String> {
+    ) -> Result<Option<String>, String> {
         let normalizedPackageName = package_name_or_subpackage_id.trim();
         let runtime = self
             .getToolPkgContainerRuntime(normalizedPackageName)
@@ -666,10 +666,7 @@ impl ToolPkgTextResourceHost for ToolPkgManager {
                 self.getToolPkgContainerRuntime(&subpackage.containerPackageName)
             })
             .ok_or_else(|| format!("ToolPkg container not found: {normalizedPackageName}"))?;
-        self.readToolPkgResourceText(&runtime, resource_path)
-            .ok_or_else(|| {
-                format!("ToolPkg text resource not found: {normalizedPackageName}/{resource_path}")
-            })
+        Ok(self.readToolPkgResourceText(&runtime, resource_path))
     }
 }
 
@@ -713,8 +710,7 @@ impl ToolPkgManager {
         enabledPackageNames: &[String],
         invocation: ToolPkgHookInvocation,
     ) -> Result<Option<String>, String> {
-        let (engine, script, params) =
-            self.prepareToolPkgHook(enabledPackageNames, &invocation)?;
+        let (engine, script, params) = self.prepareToolPkgHook(enabledPackageNames, &invocation)?;
         engine
             .execute_script_function_async(
                 script,
@@ -1077,7 +1073,10 @@ mod tests {
             _dispatch_intermediate_on_main: bool,
             _timeout_millis: u64,
         ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<String>>> {
-            *self.asyncHookParams.lock().expect("async hook params mutex poisoned") = Some(params);
+            *self
+                .asyncHookParams
+                .lock()
+                .expect("async hook params mutex poisoned") = Some(params);
             let mut yielded = false;
             Box::pin(std::future::poll_fn(move |context| {
                 if yielded {
@@ -1400,9 +1399,17 @@ mod tests {
             std::future::Future::poll(execution.as_mut(), &mut context),
             std::task::Poll::Ready(Ok(Some("hook completed".to_string())))
         );
-        let engines = factory.engines.lock().expect("recording engine mutex poisoned");
-        let params = engines[0].asyncHookParams.lock().expect("async hook params mutex poisoned");
-        let params = params.as_ref().expect("hook must use asynchronous host execution");
+        let engines = factory
+            .engines
+            .lock()
+            .expect("recording engine mutex poisoned");
+        let params = engines[0]
+            .asyncHookParams
+            .lock()
+            .expect("async hook params mutex poisoned");
+        let params = params
+            .as_ref()
+            .expect("hook must use asynchronous host execution");
         assert_eq!(params["eventPayload"], payload);
         assert_eq!(params["event"], "navigation_entry_action");
         assert_eq!(params["functionName"], "openBingFromSidebar");
@@ -1461,11 +1468,13 @@ mod tests {
             .text_resource_host
             .read_toolpkg_text_resource("snapshot_package", "dist/main.js")
             .expect("bound host must read the main module")
+            .expect("main module must exist")
             .contains("onInputMenuToggle"));
         assert!(context
             .text_resource_host
             .read_toolpkg_text_resource("snapshot_package", "dist/shared.js")
             .expect("bound host must read the shared module")
+            .expect("shared module must exist")
             .contains("createDefinition"));
     }
 }

@@ -9,28 +9,16 @@
  * - CryptoJS.MD5("message").toString()
  * - CryptoJS.AES.decrypt(data, key, { mode, padding }).toString(CryptoJS.enc.Utf8)
  * 
- * ...while benefiting from the speed and reliability of native Java/Kotlin crypto libraries.
+ * ...while using the shared Rust runtime crypto operations through the host value bridge.
  */
 var CryptoJS = (function () {
 
-    // --- Private Helper ---
-    // The core bridge function to call native crypto operations
+    /** Executes crypto through the synchronous structured host binding. */
     function _nativeCrypto(algorithm, operation, args) {
-        const resultJson = NativeInterface.crypto(algorithm, operation, JSON.stringify(args));
-        // Only parse if it's our specific error object format.
-        if (resultJson && typeof resultJson === 'string' && resultJson.startsWith('{"nativeError"')) {
-            try {
-                return JSON.parse(resultJson);
-            } catch (e) {
-                // Should not happen if the check is correct, but for safety:
-                return { nativeError: "Failed to parse native error JSON." };
-            }
-        }
-        // Otherwise, it's the successfully decrypted string.
-        return resultJson;
+        return __operitNativeCrypto(algorithm, operation, args);
     }
 
-    // Creates a mock WordArray object that the jmcomic script can use.
+    /** Wraps the direct host string using the public CryptoJS WordArray shape. */
     function createWordArrayResult(data) {
         return {
             data: data, // Store the raw result
@@ -43,30 +31,22 @@ var CryptoJS = (function () {
         };
     }
 
-    // MD5 Algorithm
+    /** Computes a digest through the structured host crypto binding. */
     const MD5 = function (message) {
-        const hash = _nativeCrypto('md5', 'hash', [message]);
+        const hash = _nativeCrypto('md5', 'hash', [String(message)]);
         return createWordArrayResult(hash);
     };
 
     // AES Algorithm
     const AES = {
+        /** Decrypts through the required host binding and propagates the actual crypto error. */
         decrypt: function (ciphertext, key, cfg) {
             // Reverted to standard signature. The key is now a WordArray-like object.
             // We extract the raw hex string from it to pass to the native side.
             const keyString = (key && typeof key === 'object' && key.data) ? key.data : String(key);
 
             // We now only need ciphertext and the key string.
-            const decrypted = _nativeCrypto('aes', 'decrypt', [ciphertext, keyString]);
-
-            // Check if native side returned an error object
-            if (decrypted && decrypted.nativeError) {
-                // To maintain compatibility with CryptoJS error handling, we can't throw here.
-                // We return a result that will hopefully fail in a meaningful way later.
-                // Returning an empty string is a common pattern.
-                console.error("Native decryption failed:", decrypted.nativeError);
-                return createWordArrayResult("");
-            }
+            const decrypted = _nativeCrypto('aes', 'decrypt', [String(ciphertext), String(keyString)]);
 
             return createWordArrayResult(decrypted);
         }

@@ -14,7 +14,7 @@ async function embeddedScript(relativePath) {
 
 /** Builds the real SDK registration bridge with an observable host callback. */
 async function runtime(registration, native) {
-  const context = createContext({ NativeInterface: native });
+  const context = createContext({ __operitNativeGetScopedPluginConfigDir: native.getScopedPluginConfigDir });
   runInContext(`
     globalThis.__operitExpose = function(name, value) { globalThis[name] = value; };
     globalThis.__operitCurrentCallId = 'test';
@@ -28,17 +28,6 @@ async function runtime(registration, native) {
   runInContext((await embeddedScript("../../core/crates/plugin/sdk/src/toolpkg/ToolPkgRegistrationBridge.rs"))
     .replace("__OPERIT_TOOLPKG_REGISTRATION_ONLY__", String(registration)), context);
   return context;
-}
-
-/** Loads the production native result decoder with a controlled response. */
-async function configDecoder(result) {
-  const source = await readFile(new URL("../../core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs", import.meta.url), "utf8");
-  const start = source.indexOf("getScopedPluginConfigDir: function(ownerId, pluginId) {{");
-  const end = source.indexOf("            isPackageImported:", start);
-  assert.ok(start >= 0 && end > start);
-  const decoder = source.slice(start, end).replaceAll("{{", "{").replaceAll("}}", "}");
-  const context = createContext({ __operitNativeGetScopedPluginConfigDir: () => result });
-  return runInContext(`({${decoder}})`, context).getScopedPluginConfigDir;
 }
 
 /** Verifies configuration remains usable at module scope and inside both supported API versions. */
@@ -100,16 +89,18 @@ test("runtime config access returns the host path", async () => {
   assert.deepEqual(calls, [["com.operit.debug_msg_dump", "alias"]]);
 });
 
-/** Verifies structured native errors cannot become VFS path strings. */
-test("config decoder throws the original error and validates successful paths", async () => {
-  const failed = await configDecoder(JSON.stringify({ success: false, message: "Extension is not registered: package:missing" }));
-  assert.throws(() => failed("missing", "missing"), /Extension is not registered: package:missing/);
-  const success = await configDecoder(JSON.stringify({ success: true, path: "/app/data/config" }));
-  assert.equal(success("owner", "owner"), "/app/data/config");
-  const invalid = await configDecoder(JSON.stringify({ success: true, path: "relative" }));
-  assert.throws(() => invalid("owner", "owner"), /absolute VFS path/);
-  const malformed = await configDecoder("not json");
-  assert.throws(() => malformed("owner", "owner"));
+/** Verifies configuration paths are direct values and host failures are never returned as text. */
+test("config access propagates errors and validates absolute VFS paths", async () => {
+  const failed = await runtime(false, { getScopedPluginConfigDir() {
+    throw new Error("Extension is not registered: package:missing");
+  } });
+  assert.throws(() => failed.ToolPkg.getConfigDir(), /Extension is not registered: package:missing/);
+  const success = await runtime(false, { getScopedPluginConfigDir() { return "/app/data/config"; } });
+  assert.equal(success.ToolPkg.getConfigDir(), "/app/data/config");
+  for (const value of ["relative", {success: true, path: "/app/data/config"}, null]) {
+    const invalid = await runtime(false, { getScopedPluginConfigDir() { return value; } });
+    assert.throws(() => invalid.ToolPkg.getConfigDir(), /absolute VFS path/);
+  }
 });
 
 /** Verifies a hook awaits directory creation before writing and propagates failures. */

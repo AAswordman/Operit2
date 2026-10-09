@@ -1,10 +1,10 @@
 use operit_host_api::{
-    HostError, HostJavaScriptExecutionInterrupt, HostJavaScriptInterruptHandler,
-    HostJavaScriptRuntime, HostJavaScriptRuntimeHost, HostJavaScriptRuntimeState,
-    HostJavaScriptRuntimeStateAsyncTask, HostJavaScriptRuntimeStateFactory,
-    HostJavaScriptRuntimeStateHandle, HostJavaScriptRuntimeStateOutput,
-    HostJavaScriptRuntimeStateOutputFuture, HostJavaScriptRuntimeStateTask,
-    HostJavaScriptStringCallback, HostJavaScriptVoidCallback, HostResult,
+    HostError, HostJavaScriptAsyncJsonCallback, HostJavaScriptExecutionInterrupt,
+    HostJavaScriptInterruptHandler, HostJavaScriptJsonCallback, HostJavaScriptRuntime,
+    HostJavaScriptRuntimeHost, HostJavaScriptRuntimeState, HostJavaScriptRuntimeStateAsyncTask,
+    HostJavaScriptRuntimeStateFactory, HostJavaScriptRuntimeStateHandle,
+    HostJavaScriptRuntimeStateOutput, HostJavaScriptRuntimeStateOutputFuture,
+    HostJavaScriptRuntimeStateTask, HostResult,
 };
 use quickjs_wasm_rs::{
     JSContextRef as QuickJsContext, JSValue as QuickJsValue, JSValueRef as QuickJsValueRef,
@@ -41,49 +41,14 @@ impl WebHostJavaScriptRuntime {
         Ok(())
     }
 
-    /// Creates callback arguments as data, including safe own properties such as
-    /// __proto__. No JSON source or dynamically generated script is evaluated.
+    /// Converts an owned result using the shared bounded Web host value converter.
     fn callbackValue<'a>(
         &'a self,
         value: &serde_json::Value,
         depth: usize,
         nodes: &mut usize,
     ) -> anyhow::Result<QuickJsValueRef<'a>> {
-        *nodes += 1;
-        if depth > 128 || *nodes > 1_000_000 {
-            anyhow::bail!("JavaScript callback exceeds structured bridge depth/node limit");
-        }
-        match value {
-            serde_json::Value::Null => self.context.null_value(),
-            serde_json::Value::Bool(value) => self.context.value_from_bool(*value),
-            serde_json::Value::Number(value) => self
-                .context
-                .value_from_f64(value.as_f64().unwrap_or(f64::NAN)),
-            serde_json::Value::String(value) => self.context.value_from_str(value),
-            serde_json::Value::Array(values) => {
-                let array = self.context.array_value()?;
-                for (index, value) in values.iter().enumerate() {
-                    array.set_property(
-                        index.to_string(),
-                        self.callbackValue(value, depth + 1, nodes)?,
-                    )?;
-                }
-                Ok(array)
-            }
-            serde_json::Value::Object(values) => {
-                let object = self.context.object_value()?;
-                for (key, value) in values {
-                    object
-                        .set_property(key.as_str(), self.callbackValue(value, depth + 1, nodes)?)?;
-                }
-                Ok(object)
-            }
-        }
-    }
-
-    /// Converts one QuickJS callback argument to its string representation.
-    fn callbackArgument(args: &[QuickJsValueRef], index: usize) -> String {
-        args[index].to_string()
+        structuredResult(&self.context, value, depth, nodes)
     }
 }
 
@@ -131,12 +96,12 @@ impl HostJavaScriptRuntime for WebHostJavaScriptRuntime {
         Ok(())
     }
 
-    /// Delivers legacy string callbacks using JS_Call, never source evaluation.
+    /// Calls an engine lifecycle function directly through the browser QuickJS API.
     fn callHostJavaScriptFunction(
         &mut self,
         name: &str,
         arguments: &[serde_json::Value],
-    ) -> HostResult<()> {
+    ) -> HostResult<serde_json::Value> {
         self.ensureExecutionActive()?;
         let global = self
             .context
@@ -145,70 +110,325 @@ impl HostJavaScriptRuntime for WebHostJavaScriptRuntime {
         let function = global
             .get_property(name)
             .map_err(|e| HostError::new(e.to_string()))?;
-        if function.is_function() {
-            let mut nodes = 0;
-            let args = arguments
-                .iter()
-                .map(|value| self.callbackValue(value, 0, &mut nodes))
-                .collect::<anyhow::Result<Vec<_>>>()
-                .map_err(|e| HostError::new(e.to_string()))?;
-            let receiver = self
-                .context
-                .undefined_value()
-                .map_err(|e| HostError::new(e.to_string()))?;
-            function
-                .call(&receiver, &args)
-                .map_err(|e| HostError::new(e.to_string()))?;
+        if !function.is_function() {
+            return Err(HostError::new(format!(
+                "JavaScript lifecycle function is unavailable: {name}"
+            )));
         }
-        self.ensureExecutionActive()
-    }
-
-    /// Registers one browser QuickJS global function returning a string.
-    fn registerHostJavaScriptStringFunction(
-        &mut self,
-        name: &str,
-        callback: HostJavaScriptStringCallback,
-    ) -> HostResult<()> {
-        let function = self
+        let mut nodes = 0;
+        let args = arguments
+            .iter()
+            .map(|value| self.callbackValue(value, 0, &mut nodes))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(|e| HostError::new(e.to_string()))?;
+        let receiver = self
             .context
-            .wrap_callback(move |_, _, args| {
-                let values = (0..args.len())
-                    .map(|index| Self::callbackArgument(args, index))
-                    .collect::<Vec<_>>();
-                let output =
-                    callback(values).map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                Ok(QuickJsValue::String(output))
-            })
+            .undefined_value()
+            .map_err(|e| HostError::new(e.to_string()))?;
+        let result = function
+            .call(&receiver, &args)
+            .map_err(|e| HostError::new(e.to_string()))?;
+        self.ensureExecutionActive()?;
+        let registry = global
+            .get_property("__operitHostPromiseRegistry")
             .map_err(|error| HostError::new(error.to_string()))?;
-        self.context
-            .global_object()
-            .map_err(|error| HostError::new(error.to_string()))?
-            .set_property(name, function)
-            .map_err(|error| HostError::new(error.to_string()))
+        let normalize = registry
+            .get_property("snapshotResult")
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let result = normalize
+            .call(&registry, &[result])
+            .map_err(|error| HostError::new(error.to_string()))?;
+        structuredArgument(result, 0, &mut 0).map_err(|error| HostError::new(error.to_string()))
     }
 
-    /// Registers one browser QuickJS global function returning `undefined`.
-    fn registerHostJavaScriptVoidFunction(
+    /// Installs a Web host Promise binding with Rust-owned structured request arguments.
+    fn registerHostJavaScriptAsyncJsonFunction(
         &mut self,
         name: &str,
-        callback: HostJavaScriptVoidCallback,
+        callback: HostJavaScriptAsyncJsonCallback,
     ) -> HostResult<()> {
-        let function = self
+        self.ensureExecutionActive()?;
+        let submit = self
             .context
             .wrap_callback(move |_, _, args| {
-                let values = (0..args.len())
-                    .map(|index| Self::callbackArgument(args, index))
-                    .collect::<Vec<_>>();
-                callback(values).map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let id = args
+                    .first()
+                    .ok_or_else(|| anyhow::anyhow!("Host request id is missing"))?;
+                let id = id.as_f64()?;
+                if !id.is_finite() || id.fract() != 0.0 || id <= 0.0 || id > 9_007_199_254_740_991.0
+                {
+                    anyhow::bail!("Host request id must be a positive safe integer");
+                }
+                let mut nodes = 0;
+                let values = args[1..]
+                    .iter()
+                    .map(|arg| structuredArgument(*arg, 0, &mut nodes))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                callback(id as u64, values).map_err(|error| anyhow::anyhow!(error.to_string()))?;
                 Ok(QuickJsValue::Undefined)
             })
             .map_err(|error| HostError::new(error.to_string()))?;
-        self.context
+        let global = self
+            .context
             .global_object()
-            .map_err(|error| HostError::new(error.to_string()))?
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let registry = global
+            .get_property("__operitHostPromiseRegistry")
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let factory = registry
+            .get_property("binding")
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let function = factory
+            .call(&registry, &[submit])
+            .map_err(|error| HostError::new(error.to_string()))?;
+        global
             .set_property(name, function)
             .map_err(|error| HostError::new(error.to_string()))
     }
+
+    /// Settles a scoped Promise without encoding values or evaluating callback source.
+    fn settleHostJavaScriptPromise(
+        &mut self,
+        id: u64,
+        value: &serde_json::Value,
+        reject: bool,
+    ) -> HostResult<()> {
+        self.ensureExecutionActive()?;
+        let mut nodes = 0;
+        let (value, reject) = match self.callbackValue(value, 0, &mut nodes) {
+            Ok(value) => (value, reject),
+            Err(error) => (
+                self.context
+                    .value_from_str(&error.to_string())
+                    .map_err(|error| HostError::new(error.to_string()))?,
+                true,
+            ),
+        };
+        let registry = self
+            .context
+            .global_object()
+            .and_then(|global| global.get_property("__operitHostPromiseRegistry"))
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let function = registry
+            .get_property("settle")
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let id = self
+            .context
+            .value_from_f64(id as f64)
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let reject = self
+            .context
+            .value_from_bool(reject)
+            .map_err(|error| HostError::new(error.to_string()))?;
+        function
+            .call(&registry, &[id, value, reject])
+            .map_err(|error| HostError::new(error.to_string()))?;
+        self.ensureExecutionActive()
+    }
+
+    /// Releases the Web host's Promise handles for one cancelled execution scope.
+    fn cancelHostJavaScriptPromises(&mut self, scope: &str) -> HostResult<()> {
+        let registry = self
+            .context
+            .global_object()
+            .and_then(|global| global.get_property("__operitHostPromiseRegistry"))
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let function = registry
+            .get_property("cancel")
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let scope = self
+            .context
+            .value_from_str(scope)
+            .map_err(|error| HostError::new(error.to_string()))?;
+        function
+            .call(&registry, &[scope])
+            .map_err(|error| HostError::new(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Installs a synchronous Web host binding with the same structured value contract.
+    fn registerHostJavaScriptJsonFunction(
+        &mut self,
+        name: &str,
+        callback: HostJavaScriptJsonCallback,
+    ) -> HostResult<()> {
+        self.ensureExecutionActive()?;
+        let submit = self
+            .context
+            .wrap_callback(move |_, _, args| {
+                let mut nodes = 0;
+                let values = args
+                    .iter()
+                    .map(|arg| structuredArgument(*arg, 0, &mut nodes))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let result =
+                    callback(values).map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let mut nodes = 0;
+                ownedStructuredResult(&result, 0, &mut nodes)
+            })
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let global = self
+            .context
+            .global_object()
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let registry = global
+            .get_property("__operitHostPromiseRegistry")
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let factory = registry
+            .get_property("syncBinding")
+            .map_err(|error| HostError::new(error.to_string()))?;
+        let function = factory
+            .call(&registry, &[submit])
+            .map_err(|error| HostError::new(error.to_string()))?;
+        global
+            .set_property(name, function)
+            .map_err(|error| HostError::new(error.to_string()))
+    }
+}
+
+/// Converts synchronous callback results to the Web engine's owned value ABI without JSON text.
+fn ownedStructuredResult(
+    value: &serde_json::Value,
+    depth: usize,
+    nodes: &mut usize,
+) -> anyhow::Result<QuickJsValue> {
+    *nodes += 1;
+    if depth > 128 || *nodes > 1_000_000 {
+        anyhow::bail!("Host result exceeds structured bridge depth/node limit");
+    }
+    Ok(match value {
+        serde_json::Value::Null => QuickJsValue::Null,
+        serde_json::Value::Bool(value) => QuickJsValue::Bool(*value),
+        serde_json::Value::Number(value) => {
+            QuickJsValue::Float(value.as_f64().ok_or_else(|| {
+                anyhow::anyhow!("Host number cannot be represented in JavaScript")
+            })?)
+        }
+        serde_json::Value::String(value) => QuickJsValue::String(value.clone()),
+        serde_json::Value::Array(values) => QuickJsValue::Array(
+            values
+                .iter()
+                .map(|value| ownedStructuredResult(value, depth + 1, nodes))
+                .collect::<anyhow::Result<_>>()?,
+        ),
+        serde_json::Value::Object(values) => QuickJsValue::Object(
+            values
+                .iter()
+                .map(|(key, value)| {
+                    std::ffi::CString::new(key.as_str())?;
+                    Ok((key.clone(), ownedStructuredResult(value, depth + 1, nodes)?))
+                })
+                .collect::<anyhow::Result<_>>()?,
+        ),
+    })
+}
+
+/// Creates safe, bounded structured results directly in the owning Web host context.
+fn structuredResult<'a>(
+    context: &'a QuickJsContext,
+    value: &serde_json::Value,
+    depth: usize,
+    nodes: &mut usize,
+) -> anyhow::Result<QuickJsValueRef<'a>> {
+    *nodes += 1;
+    if depth > 128 || *nodes > 1_000_000 {
+        anyhow::bail!("JavaScript callback exceeds structured bridge depth/node limit");
+    }
+    match value {
+        serde_json::Value::Null => context.null_value(),
+        serde_json::Value::Bool(value) => context.value_from_bool(*value),
+        serde_json::Value::Number(value) => {
+            context.value_from_f64(value.as_f64().ok_or_else(|| {
+                anyhow::anyhow!("Host number cannot be represented in JavaScript")
+            })?)
+        }
+        serde_json::Value::String(value) => context.value_from_str(value),
+        serde_json::Value::Array(values) => {
+            let array = context.array_value()?;
+            for (index, value) in values.iter().enumerate() {
+                array.set_property(
+                    index.to_string(),
+                    structuredResult(context, value, depth + 1, nodes)?,
+                )?;
+            }
+            Ok(array)
+        }
+        serde_json::Value::Object(values) => {
+            let object = context.object_value()?;
+            for (key, value) in values {
+                object.set_property(
+                    key.as_str(),
+                    structuredResult(context, value, depth + 1, nodes)?,
+                )?;
+            }
+            Ok(object)
+        }
+    }
+}
+
+/// Converts an already-normalized host snapshot into owned Rust values with bounded recursion.
+fn structuredArgument(
+    value: QuickJsValueRef<'_>,
+    depth: usize,
+    nodes: &mut usize,
+) -> anyhow::Result<serde_json::Value> {
+    use serde_json::{Number, Value};
+    *nodes += 1;
+    if depth > 128 || *nodes > 1_000_000 {
+        anyhow::bail!("Host arguments exceed structured bridge depth/node limit");
+    }
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+    if value.is_bool() {
+        return Ok(Value::Bool(value.as_bool()?));
+    }
+    if value.is_str() {
+        return Ok(Value::String(value.as_str_lossy().into_owned()));
+    }
+    if value.is_number() {
+        let number = value.as_f64()?;
+        if !number.is_finite() {
+            anyhow::bail!("Host snapshot contains a non-finite number");
+        }
+        let number = if number.fract() == 0.0 {
+            if number.abs() <= 9_007_199_254_740_991.0 {
+                if number < 0.0 {
+                    Number::from(number as i64)
+                } else {
+                    Number::from(number as u64)
+                }
+            } else {
+                value.to_string().parse::<Number>()?
+            }
+        } else {
+            Number::from_f64(number).ok_or_else(|| anyhow::anyhow!("Host number is invalid"))?
+        };
+        return Ok(Value::Number(number));
+    }
+    if value.is_array() {
+        let length = value.get_property("length")?.as_f64()?;
+        if length < 0.0 || length.fract() != 0.0 || length > (1_000_000 - *nodes) as f64 {
+            anyhow::bail!("Host array exceeds structured bridge node limit");
+        }
+        let values = (0..length as u32)
+            .map(|index| structuredArgument(value.get_indexed_property(index)?, depth + 1, nodes))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        return Ok(Value::Array(values));
+    }
+    if value.is_object() {
+        let mut object = serde_json::Map::new();
+        let mut properties = value.properties()?;
+        while let Some(key) = properties.next_key()? {
+            let key = key.to_string();
+            object.insert(
+                key.clone(),
+                structuredArgument(value.get_property(key)?, depth + 1, nodes)?,
+            );
+        }
+        return Ok(Value::Object(object));
+    }
+    anyhow::bail!("Host snapshot contains a non-JSON value")
 }
 
 /// Owns browser QuickJS runtimes and their event-loop-affine state.
@@ -225,8 +445,12 @@ impl WebHostJavaScriptRuntimeHost {
 impl HostJavaScriptRuntimeHost for WebHostJavaScriptRuntimeHost {
     /// Creates one browser QuickJS runtime on the current event-loop executor.
     fn createHostJavaScriptRuntime(&self) -> HostResult<Box<dyn HostJavaScriptRuntime>> {
+        let context = QuickJsContext::default();
+        context
+            .eval_global("host-promises.js", include_str!("javascript_promises.js"))
+            .map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(WebHostJavaScriptRuntime {
-            context: QuickJsContext::default(),
+            context,
             interruptHandler: None,
         }))
     }

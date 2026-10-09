@@ -13,8 +13,8 @@ use operit_plugin_sdk::execution_result::JsExecutionErrorKind;
 use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
     JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
-    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope, ToolPkgExecutionContext,
-    ToolPkgTextResourceHost,
+    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope,
+    ToolPkgExecutionContext, ToolPkgTextResourceHost,
 };
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
@@ -123,12 +123,9 @@ impl ToolPkgTextResourceHost for StaticToolPkgTextResourceHost {
         &self,
         _package_name_or_subpackage_id: &str,
         resource_path: &str,
-    ) -> Result<String, String> {
+    ) -> Result<Option<String>, String> {
         let normalizedPath = resource_path.trim().to_ascii_lowercase();
-        self.resources
-            .get(&normalizedPath)
-            .cloned()
-            .ok_or_else(|| format!("ToolPkg text resource not found: {normalizedPath}"))
+        Ok(self.resources.get(&normalizedPath).cloned())
     }
 }
 
@@ -257,7 +254,10 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
 
     /// Resolves scoped configuration through the explicit test contract.
     fn scoped_plugin_config_dir(&self, _owner_id: &str, plugin_id: &str) -> Result<String, String> {
-        let _manager = self.packageManagerLock.lock().expect("test package manager lock");
+        let _manager = self
+            .packageManagerLock
+            .lock()
+            .expect("test package manager lock");
         self.plugin_config_dir(plugin_id)
     }
 
@@ -269,14 +269,21 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         scope: ToolPkgConfigScope,
     ) -> Result<String, String> {
         self.registrationConfigReads.fetch_add(1, Ordering::Relaxed);
-        let root = operit_store::ExtensionStore::ExtensionStore::configPathForScope(owner_id, scope.as_str())?;
+        let root = operit_store::ExtensionStore::ExtensionStore::configPathForScope(
+            owner_id,
+            scope.as_str(),
+        )?;
         let path = if plugin_id == owner_id {
             root
         } else {
             let name = operit_util::OperitPaths::pluginConfigDirName(plugin_id)?;
             format!("{root}/namespaces/{name}")
         };
-        Ok(format!("/app/data/{}", path.strip_prefix("runtime/").ok_or("invalid test config path")?))
+        Ok(format!(
+            "/app/data/{}",
+            path.strip_prefix("runtime/")
+                .ok_or("invalid test config path")?
+        ))
     }
 
     /// Records direct ToolPkg text resource reads rejected by this test host.
@@ -284,7 +291,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         &self,
         _package_name_or_subpackage_id: &str,
         _resource_path: &str,
-    ) -> Result<String, String> {
+    ) -> Result<Option<String>, String> {
         self.toolPkgTextResourceReads
             .fetch_add(1, Ordering::Relaxed);
         Err("ToolPkg text resources are not part of this test host".to_string())
@@ -309,13 +316,16 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
     /// Rejects unexpected Compose DSL controller commands.
     fn handle_compose_webview_controller_command(
         &self,
-        _payload_json: &str,
-    ) -> Result<String, String> {
+        _payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         panic!("Compose DSL WebView control is not part of the plugin config test")
     }
 
     /// Rejects unexpected Compose DSL file-picker requests.
-    fn open_compose_file_picker(&self, _payload_json: &str) -> Result<String, String> {
+    fn open_compose_file_picker(
+        &self,
+        _payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         panic!("Compose DSL file picking is not part of the plugin config test")
     }
 
@@ -650,7 +660,7 @@ async fn javascript_timer_can_win_race_against_async_tool_call() {
     engine.destroy();
 }
 
-/// Verifies a detached-call preparation predicate is serialized before Rust reads it as text.
+/// Verifies detached-call lifecycle queries return structured booleans without JSON text.
 #[test]
 fn detached_call_preparation_accepts_boolean_result() {
     testJavaScriptRuntimeHost();
@@ -661,7 +671,7 @@ fn detached_call_preparation_accepts_boolean_result() {
         .expect("JavaScript test environment must initialize");
     state
         .evalJavaScriptVoid(
-            "var call = __operitRegisterCallSession('detached-call', {}); call.detached = true; call.pendingReferences = 1;",
+            "var call = __operitRegisterCallSession('detached-call', {}); call.detached = true; call.pendingReferences = 1; JSON.parse = JSON.stringify = function() { throw Error('JSON transport used'); };",
         )
         .expect("detached JavaScript call must initialize");
 
@@ -949,6 +959,7 @@ fn execute_promise_script_repeatedly_on_same_engine() {
             Value::String(format!("same-engine-{index}")),
         );
         let output = state.execute_script_function_on_current_thread(
+            super::JsTextResourceSource::ExecutionHost,
             script,
             "async_echo",
             &params,
@@ -977,6 +988,7 @@ fn execute_complete_finishes_call_before_return_value() {
     let params = testParams();
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "complete_first",
         &params,
@@ -1009,6 +1021,7 @@ fn execute_function_with_active_module_context() {
     let params = testParams();
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "inspect_context",
         &params,
@@ -1053,6 +1066,7 @@ fn bootstrap_exposes_ui_android_okhttp_api() {
     let params = testParams();
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "inspect_bootstrap_api",
         &params,
@@ -1087,6 +1101,7 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
     let params = testParams();
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "local_ipc",
         &params,
@@ -1120,6 +1135,7 @@ fn runtime_context_with_context_runs_local_main_runner() {
     let params = testParams();
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "context_runner",
         &params,
@@ -1339,15 +1355,19 @@ async fn pending_call_releases_state_and_preserves_call_context() {
     let first = tokio::spawn(waiting.execute_script_function(
         r#"exports.first = async function() {
             globalThis.firstFinished = false;
-            NativeInterface.sendCallIntermediateResult(globalThis.__operitCurrentCallId, 'waiting');
+            __operitSendIntermediateResult(globalThis.__operitCurrentCallId, 'waiting');
             await Tools.System.sleep(200);
-            NativeInterface.sendCallIntermediateResult(globalThis.__operitCurrentCallId, getEnv('CALL_OWNER'));
+            __operitSendIntermediateResult(globalThis.__operitCurrentCallId, getEnv('CALL_OWNER'));
             globalThis.firstFinished = true;
             return getEnv('CALL_OWNER');
         };"#,
-        "first", &testParams(),
+        "first",
+        &testParams(),
         &BTreeMap::from([("CALL_OWNER".to_string(), "first".to_string())]),
-        Some(callback), true, 2, None,
+        Some(callback),
+        true,
+        2,
+        None,
     ));
     assert_eq!(received.recv().await.unwrap(), "waiting");
     let output = engine.execute_script_function(
@@ -1376,8 +1396,8 @@ async fn call_environment_updates_survive_state_turns() {
     let output = engine
         .execute_script_function(
             r#"exports.update = async function() {
-            NativeInterface.setEnv('CALL_OWNER', 'updated');
-            NativeInterface.setEnvs(JSON.stringify({ SECOND: 'second' }));
+            __operitNativeSetEnv(String(globalThis.__operitCurrentCallId), 'CALL_OWNER', 'updated');
+            __operitNativeSetEnvs(String(globalThis.__operitCurrentCallId), { SECOND: 'second' });
             await Tools.System.sleep(5);
             return { owner: getEnv('CALL_OWNER'), second: getEnv('SECOND') };
         };"#,
@@ -1415,19 +1435,31 @@ fn abandoned_async_request_cancels_affine_session() {
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async move {
         let task = tokio::task::spawn_local(async move {
-            caller.execute_script_function_async(
-                r#"exports.wait = async function() {
-                    NativeInterface.sendCallIntermediateResult(globalThis.__operitCurrentCallId, 'started');
+            caller
+                .execute_script_function_async(
+                    r#"exports.wait = async function() {
+                    __operitSendIntermediateResult(globalThis.__operitCurrentCallId, 'started');
                     return await new Promise(function() {});
-                };"#.to_string(),
-                "wait".to_string(), testParams(), BTreeMap::new(), Some(callback), true, 2_000, None,
-            ).await
+                };"#
+                    .to_string(),
+                    "wait".to_string(),
+                    testParams(),
+                    BTreeMap::new(),
+                    Some(callback),
+                    true,
+                    2_000,
+                    None,
+                )
+                .await
         });
         let deadline = Instant::now() + Duration::from_secs(1);
         while !started.load(Ordering::Acquire) && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        assert!(started.load(Ordering::Acquire), "aborted request must have started");
+        assert!(
+            started.load(Ordering::Acquire),
+            "aborted request must have started"
+        );
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
     });
@@ -1529,6 +1561,7 @@ fn execute_inline_hook_function_source() {
     );
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "__operit_inline_test",
         &params,
@@ -1900,6 +1933,7 @@ fn execute_function_from_module_exports() {
     params.insert("text".to_string(), Value::String("exports".to_string()));
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "module_only",
         &params,
@@ -1945,6 +1979,7 @@ fn execute_minified_package_script_with_metadata() {
     params.insert("text".to_string(), Value::String("metadata".to_string()));
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         &package.tools[0].script,
         &package.tools[0].name,
         &params,
@@ -2062,18 +2097,17 @@ fn execute_message_insert_shared_module_loads() {
         Value::String("dist/main.js".to_string()),
     );
     let mut state = newTestJsEngineState(None);
-    let output = super::executeWithToolPkgTextResources(Arc::new(textResources), || {
-        state.execute_script_function_on_current_thread(
-            &script,
-            "load_shared",
-            &params,
-            &BTreeMap::new(),
-            None,
-            true,
-            60,
-            None,
-        )
-    });
+    let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::Snapshot(Arc::new(textResources)),
+        &script,
+        "load_shared",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
     let output = output.expect("message_insert shared module should execute");
     assert!(output.is_some());
 }
@@ -2108,18 +2142,17 @@ fn execute_message_insert_input_menu_hook_from_main_entry() {
         serde_json::json!({ "action": "create" }),
     );
     let mut state = newTestJsEngineState(Some(Arc::new(TestPluginConfigExecutionHost::default())));
-    let output = super::executeWithToolPkgTextResources(Arc::new(textResources), || {
-        state.execute_script_function_on_current_thread(
-            &script,
-            "onInputMenuToggle",
-            &params,
-            &BTreeMap::new(),
-            None,
-            true,
-            60,
-            None,
-        )
-    });
+    let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::Snapshot(Arc::new(textResources)),
+        &script,
+        "onInputMenuToggle",
+        &params,
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
+    );
     let raw = expect_js_output(output, "message_insert input menu hook");
     let definitions =
         serde_json::from_str::<Value>(&raw).expect("message_insert input menu definitions JSON");
@@ -2606,6 +2639,7 @@ fn execute_script_can_require_axios_and_uuid() {
     let params = testParams();
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "inspect_require",
         &params,
@@ -2806,7 +2840,7 @@ fn scoped_config_directory_throws_host_failure() {
     let script = r#"
         exports.read_config = function() {
             try {
-                NativeInterface.getScopedPluginConfigDir('missing', 'missing');
+                __operitNativeGetScopedPluginConfigDir('missing', 'missing');
                 return 'unexpected success';
             } catch (error) {
                 return error.message;
@@ -2814,7 +2848,15 @@ fn scoped_config_directory_throws_host_failure() {
         };
     "#;
     let output = state.execute_script_function_on_current_thread(
-        script, "read_config", &testParams(), &BTreeMap::new(), None, true, 60, None,
+        super::JsTextResourceSource::ExecutionHost,
+        script,
+        "read_config",
+        &testParams(),
+        &BTreeMap::new(),
+        None,
+        true,
+        60,
+        None,
     );
     let output = expect_js_output(output, "scoped configuration failure");
     assert_eq!(
@@ -2838,6 +2880,7 @@ fn native_interface_reads_env_override_for_call() {
     let envOverrides = BTreeMap::from([(key.to_string(), "enabled".to_string())]);
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "read_env",
         &params,
@@ -2865,9 +2908,13 @@ fn native_interface_resolves_plugin_config_dir() {
         };
     "#;
     let mut params = testParams();
-    params.insert("toolPkgId".to_string(), Value::String("test.package".to_string()));
+    params.insert(
+        "toolPkgId".to_string(),
+        Value::String("test.package".to_string()),
+    );
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "config_dir",
         &params,
@@ -2880,7 +2927,10 @@ fn native_interface_resolves_plugin_config_dir() {
     let output = expect_js_output(output, "config dir execution");
     let path = serde_json::from_str::<String>(&output).expect("serialized config dir");
 
-    assert_eq!(path, "/app/data/extensions/device/plugins/configs/plugin_name");
+    assert_eq!(
+        path,
+        "/app/data/extensions/device/plugins/configs/plugin_name"
+    );
 }
 
 #[test]
@@ -2905,6 +2955,7 @@ fn probe_async_function_declaration_inside_iife() {
     let params = testParams();
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "get_device_info",
         &params,
@@ -2919,8 +2970,6 @@ fn probe_async_function_declaration_inside_iife() {
         .expect("async function declaration probe execution")
         .is_some());
 }
-
-
 
 /// Reads session ownership on the affine executor without driving JavaScript work.
 async fn executionSessionCounts(engine: &super::JsEngine) -> (usize, usize) {
@@ -2980,7 +3029,7 @@ async fn completion_retains_detached_promise_context_until_host_event() {
             globalThis.detachedRuns = 0;
             toolCall('gate', {}).then(function() {
                 globalThis.detachedRuns++;
-                NativeInterface.setEnv('DETACHED_HOST_OWNER', 'original');
+                __operitNativeSetEnv(String(globalThis.__operitCurrentCallId), 'DETACHED_HOST_OWNER', 'original');
                 sendIntermediateResult({
                     owner: getEnv('CALL_OWNER'),
                     runs: globalThis.detachedRuns,
@@ -3017,13 +3066,21 @@ async fn completion_retains_detached_promise_context_until_host_event() {
             .await
             .expect("Host must resume the detached continuation")
             .expect("detached progress"),
-    ).unwrap();
-    assert_eq!(resumed, serde_json::json!({
-        "owner": "original", "runs": 1,
-        "config": "/app/data/extensions/device/plugins/configs/workflow",
-    }));
+    )
+    .unwrap();
     assert_eq!(
-        host.environment.lock().unwrap().get("DETACHED_HOST_OWNER").map(String::as_str),
+        resumed,
+        serde_json::json!({
+            "owner": "original", "runs": 1,
+            "config": "/app/data/extensions/device/plugins/configs/workflow",
+        })
+    );
+    assert_eq!(
+        host.environment
+            .lock()
+            .unwrap()
+            .get("DETACHED_HOST_OWNER")
+            .map(String::as_str),
         Some("original"),
     );
     assert_eq!(executionSessionCounts(&engine).await, (0, 0));
@@ -3106,7 +3163,7 @@ async fn promise_jobs_restore_execution_host_for_native_calls() {
             r#"exports.main = async function() {
             await Promise.resolve();
             var config = ToolPkg.getConfigDir();
-            NativeInterface.setEnv('CONTINUATION_OWNER', 'workflow');
+            __operitNativeSetEnv(String(globalThis.__operitCurrentCallId), 'CONTINUATION_OWNER', 'workflow');
             return { config: config, owner: getEnv('CONTINUATION_OWNER') };
         };"#,
             "main",
@@ -3164,15 +3221,12 @@ async fn edge_io_sdk_aliases_forward_node_interface_args_and_reject_failures() {
     drop(calls);engine.destroy();
 }
 
-/// Both protocols retain the public tool result and JSON-compatible parameter
-/// behavior; the native path must not invoke JSON.parse/stringify for the call.
+/// Preserves JSON-compatible data without executing a JSON text transport.
 #[tokio::test(flavor = "current_thread")]
-async fn structured_tool_calls_preserve_legacy_values_and_avoid_json_text() {
-    for legacy in [false, true] {
-        let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
-        let result = engine.execute_script_function(
+async fn structured_tool_calls_preserve_values_and_avoid_json_text() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let result = engine.execute_script_function(
             r#"exports.main = async function(params) {
-                if (params.legacy) globalThis.__operitNativeCallToolStructured = undefined;
                 var savedStringify = JSON.stringify, savedParse = JSON.parse;
                 var parameters = {
                     text: '\"\n\u2028中'.repeat(16384),
@@ -3181,16 +3235,14 @@ async fn structured_tool_calls_preserve_legacy_values_and_avoid_json_text() {
                     boxed: new Boolean(false), ['__proto__']: {polluted:true},
                     custom: {toJSON:function(key){return {key:key};}}
                 };
-                if (!params.legacy) {
-                    JSON.stringify = function(value) {
-                        if(value && value.text===parameters.text) throw new Error('Tool request serialized as text');
-                        return savedStringify.apply(this,arguments);
-                    };
-                    JSON.parse = function(text) {
-                        if(typeof text==='string' && text.indexOf('"text":')>=0) throw new Error('Tool result parsed from text');
-                        return savedParse.apply(this,arguments);
-                    };
-                }
+                JSON.stringify = function(value) {
+                    if(value && value.text===parameters.text) throw new Error('Tool request serialized as text');
+                    return savedStringify.apply(this,arguments);
+                };
+                JSON.parse = function(text) {
+                    if(typeof text==='string' && text.indexOf('"text":')>=0) throw new Error('Tool result parsed from text');
+                    return savedParse.apply(this,arguments);
+                };
                 var output;
                 try { output = await toolCall('echo', parameters); }
                 finally { JSON.stringify=savedStringify; JSON.parse=savedParse; }
@@ -3203,22 +3255,20 @@ async fn structured_tool_calls_preserve_legacy_values_and_avoid_json_text() {
                     noPollution:output.polluted===undefined
                 };
             };"#,
-            "main", &BTreeMap::from([("legacy".to_string(), Value::Bool(legacy))]),
+            "main", &BTreeMap::new(),
             &BTreeMap::new(), None, true, 5, None,
         ).await;
-        let output: Value =
-            serde_json::from_str(&expect_js_output(result, "structured echo")).unwrap();
-        assert_eq!(
-            output,
-            serde_json::json!({
-                "textMatches":true, "integer":7, "large":10000000000000000u64,
-                "date":"2020-01-01T00:00:00.000Z", "nested":{"x":true},
-                "array":[null,null,null,2], "boxed":false, "custom":{"key":"custom"},
-                "ownProto":true,"noPollution":true
-            })
-        );
-        engine.destroy();
-    }
+    let output: Value = serde_json::from_str(&expect_js_output(result, "structured echo")).unwrap();
+    assert_eq!(
+        output,
+        serde_json::json!({
+            "textMatches":true, "integer":7, "large":10000000000000000u64,
+            "date":"2020-01-01T00:00:00.000Z", "nested":{"x":true},
+            "array":[null,null,null,2], "boxed":false, "custom":{"key":"custom"},
+            "ownProto":true,"noPollution":true
+        })
+    );
+    engine.destroy();
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3247,13 +3297,12 @@ async fn structured_tool_calls_recover_from_invalid_parameters_and_preserve_bina
         serde_json::from_str(&expect_js_output(result, "invalid parameters recovery")).unwrap();
     assert_eq!(
         output,
-        serde_json::json!({"failures":[true,true,false,true],"good":42,"binary":"AQID"})
+        serde_json::json!({"failures":[true,true,true,true],"good":42,"binary":"AQID"})
     );
     engine.destroy();
 }
 
-/// Serial round trips through the real engine worker, Promise jobs and echo
-/// host. Timings are observational; never turn them into flaky test assertions.
+/// Measures structured round trips through the real engine without installing retired adapters.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "manual release bridge benchmark"]
 async fn bridge_roundtrip_benchmark() {
@@ -3261,43 +3310,48 @@ async fn bridge_roundtrip_benchmark() {
         .map(|sizes| {
             sizes
                 .split(',')
-                .map(|size| size.trim().parse::<usize>().expect("benchmark payload size"))
+                .map(|size| {
+                    size.trim()
+                        .parse::<usize>()
+                        .expect("benchmark payload size")
+                })
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_else(|_| vec![64, 4096, 65536]);
+        .expect("OPERIT_JS_BRIDGE_BENCH_SIZES must explicitly specify payload sizes");
     let iterations = std::env::var("OPERIT_JS_BRIDGE_BENCH_ITERATIONS")
-        .map(|value| value.parse::<usize>().expect("benchmark iteration count"))
-        .unwrap_or(500);
+        .map(|value| value.parse::<usize>().expect("benchmark iterations"))
+        .expect("OPERIT_JS_BRIDGE_BENCH_ITERATIONS must explicitly specify iteration count");
     assert!(iterations > 0, "benchmark iterations must be positive");
     for size in sizes {
-        for mode in [
-            "baseline-json-eval",
-            "legacy-json-direct-callback",
-            "structured",
-        ] {
-            let legacy = mode != "structured";
-            testJavaScriptRuntimeHost();
-            register_test_runtime_storage("js-engine-tests");
-            if mode == "baseline-json-eval" {
-                setDefaultHostRuntimeTaskSchedulerHost(Arc::new(BenchmarkDedicatedScheduler));
-            }
-            let engine = super::JsEngine::new(Arc::new(TestPluginConfigExecutionHost::default()));
-            if mode == "baseline-json-eval" {
-                installBenchmarkEvalRuntime(&engine).await;
-            }
-            let params = BTreeMap::from([
-                ("legacy".to_string(), Value::Bool(legacy)),
-                ("size".to_string(), serde_json::json!(size)),
-                ("iterations".to_string(), serde_json::json!(iterations)),
-            ]);
-            let script = r#"exports.main=async function(params){
-                if(params.legacy)globalThis.__operitNativeCallToolStructured=undefined;
-                var data={text:'x'.repeat(params.size)}, result;
-                for(var i=0;i<params.iterations;i++)result=await toolCall('echo',data);
-                return result.text.length;
-            };"#;
-            // Warm up startup/bootstrap; only hot execution is measured.
-            expect_js_output(
+        let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+        let params = BTreeMap::from([
+            ("size".to_string(), serde_json::json!(size)),
+            ("iterations".to_string(), serde_json::json!(iterations)),
+        ]);
+        let script = r#"exports.main=async function(params){
+            var data={text:'x'.repeat(params.size)}, result;
+            for(var i=0;i<params.iterations;i++)result=await toolCall('echo',data);
+            return result.text.length;
+        };"#;
+        expect_js_output(
+            engine
+                .execute_script_function(
+                    script,
+                    "main",
+                    &params,
+                    &BTreeMap::new(),
+                    None,
+                    true,
+                    30,
+                    None,
+                )
+                .await,
+            "warmup",
+        );
+        let mut times = Vec::new();
+        for _ in 0..5 {
+            let start = Instant::now();
+            let output = expect_js_output(
                 engine
                     .execute_script_function(
                         script,
@@ -3310,135 +3364,16 @@ async fn bridge_roundtrip_benchmark() {
                         None,
                     )
                     .await,
-                "warmup",
+                "benchmark",
             );
-            let mut times = Vec::new();
-            for _ in 0..5 {
-                let start = Instant::now();
-                let output = expect_js_output(
-                    engine
-                        .execute_script_function(
-                            script,
-                            "main",
-                            &params,
-                            &BTreeMap::new(),
-                            None,
-                            true,
-                            30,
-                            None,
-                        )
-                        .await,
-                    "benchmark",
-                );
-                assert_eq!(output, size.to_string());
-                times.push(start.elapsed().as_secs_f64() * 1e6 / iterations as f64);
-            }
-            times.sort_by(|a, b| a.total_cmp(b));
-            eprintln!(
-                "BRIDGE_BENCH payload={size}B mode={} median_us_per_roundtrip={:.3}",
-                mode, times[2]
-            );
-            engine.destroy();
+            assert_eq!(output, size.to_string());
+            times.push(start.elapsed().as_secs_f64() * 1e6 / iterations as f64);
         }
-    }
-}
-
-/// Test-only recreation of main's callback delivery and per-wake scheduling.
-/// It uses the same result semantics and real engine/task/thread round trip.
-struct BenchmarkEvalRuntime(Box<dyn operit_host_api::HostJavaScriptRuntime>);
-impl operit_host_api::HostJavaScriptRuntime for BenchmarkEvalRuntime {
-    fn evaluateHostJavaScriptVoid(&mut self, n: &str, s: &str) -> HostResult<()> {
-        self.0.evaluateHostJavaScriptVoid(n, s)
-    }
-    fn evaluateHostJavaScriptString(&mut self, n: &str, s: &str) -> HostResult<String> {
-        self.0.evaluateHostJavaScriptString(n, s)
-    }
-    fn executePendingHostJavaScriptJobs(&mut self) -> HostResult<()> {
-        self.0.executePendingHostJavaScriptJobs()
-    }
-    fn setHostJavaScriptInterruptHandler(
-        &mut self,
-        h: Option<operit_host_api::HostJavaScriptInterruptHandler>,
-    ) -> HostResult<()> {
-        self.0.setHostJavaScriptInterruptHandler(h)
-    }
-    fn registerHostJavaScriptStringFunction(
-        &mut self,
-        n: &str,
-        c: operit_host_api::HostJavaScriptStringCallback,
-    ) -> HostResult<()> {
-        self.0.registerHostJavaScriptStringFunction(n, c)
-    }
-    fn registerHostJavaScriptVoidFunction(
-        &mut self,
-        n: &str,
-        c: operit_host_api::HostJavaScriptVoidCallback,
-    ) -> HostResult<()> {
-        self.0.registerHostJavaScriptVoidFunction(n, c)
-    }
-    fn callHostJavaScriptFunction(&mut self, name: &str, args: &[Value]) -> HostResult<()> {
-        let name = serde_json::to_string(name).unwrap();
-        let result = serde_json::to_string(&args[0]).unwrap();
-        self.0.evaluateHostJavaScriptVoid("benchmark-main-callback", &format!(
-            "(function() {{ var callback = globalThis[{name}]; if (typeof callback === 'function') {{ callback({result}, {}); }} }})();",args[1]
-        ))
-    }
-}
-
-#[allow(non_snake_case)]
-async fn installBenchmarkEvalRuntime(engine: &super::JsEngine) {
-    engine
-        .worker
-        .runtimeHost
-        .executeHostJavaScriptRuntimeStateAsyncTask(
-            engine.worker.stateHandle,
-            1000,
-            Box::new(|state, _| {
-                Box::pin(async move {
-                    let state = state.downcast_mut::<JsEngineState>().unwrap();
-                    let temporary =
-                        NativeHostJavaScriptRuntimeHost::new().createHostJavaScriptRuntime()?;
-                    let inner = std::mem::replace(&mut state.runtime, temporary);
-                    state.runtime = Box::new(BenchmarkEvalRuntime(inner));
-                    Ok(Box::new(()) as operit_host_api::HostJavaScriptRuntimeStateOutput)
-                })
-            }),
-        )
-        .await
-        .unwrap();
-}
-
-struct BenchmarkDedicatedScheduler;
-impl operit_host_api::HostRuntimeTaskSchedulerHost for BenchmarkDedicatedScheduler {
-    fn monotonicTimeMillis(&self) -> HostResult<u64> {
-        NativeHostRuntimeTaskSchedulerHost.monotonicTimeMillis()
-    }
-    fn scheduleHostRuntimeTask(
-        &self,
-        n: &str,
-        t: operit_host_api::HostRuntimeTask,
-    ) -> HostResult<()> {
-        NativeHostRuntimeTaskSchedulerHost.scheduleHostRuntimeTask(n, t)
-    }
-    fn scheduleHostRuntimeAsyncTask(
-        &self,
-        n: &str,
-        t: operit_host_api::HostRuntimeAsyncTask,
-    ) -> HostResult<()> {
-        NativeHostRuntimeTaskSchedulerHost.scheduleHostRuntimeAsyncTask(n, t)
-    }
-    fn scheduleDelayedHostRuntimeTask(
-        &self,
-        n: &str,
-        d: u64,
-        t: operit_host_api::HostRuntimeTask,
-    ) -> HostResult<()> {
-        NativeHostRuntimeTaskSchedulerHost.scheduleDelayedHostRuntimeTask(n, d, t)
-    }
-    fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-        NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeTaskTurn()
-    }
-    fn waitForHostRuntimeDelay(&self, d: u64) -> operit_host_api::HostRuntimeTurnFuture {
-        NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeDelay(d)
+        times.sort_by(|a, b| a.total_cmp(b));
+        eprintln!(
+            "BRIDGE_BENCH payload={size}B mode=structured median_us_per_roundtrip={:.3}",
+            times[2]
+        );
+        engine.destroy();
     }
 }

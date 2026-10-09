@@ -471,7 +471,7 @@ Host bridge 上下文传递
   用于把 AiPermissionMode 带到默认工具、MCP、终端、文件等具体执行边界。
 
 插件内部 toolCall
-  JsNativeInterfaceDelegates.callToolSync
+  JsEngine.dispatchStructuredToolCall
   会把 toolCall(...) 解析成 AITool 后直接调用 AIToolHandler.executeTool。
   AIToolHandler.executeTool 不调用 ToolExecutionManager.checkToolPermission。
   所以插件内部 Tools.* 调用不应该被描述成用户逐次批准。
@@ -657,7 +657,7 @@ AI calls packageName:toolName
   -> JsToolManager.executeScript(PackageTool.script)
   -> JS Tools.Files.write
   -> toolCall("write_file")
-  -> JsNativeInterfaceDelegates.callToolSync
+  -> JsEngine.dispatchStructuredToolCall
   -> AIToolHandler.executeTool(write_file)
   -> AIToolHandler carries AiPermissionMode
   -> StandardFileSystemTools.writeFile
@@ -930,7 +930,7 @@ core/crates/runtime/application/src/core/tools/javascript/JsTools.rs
   新模型不在这里塞逐调用审批。
   这里应继续表现为包运行环境里的文件 API。
 
-core/crates/runtime/application/src/core/tools/javascript/JsNativeInterfaceDelegates.rs
+core/crates/plugin/javascript-bridge/src/javascript/JsHostOperations.rs
   当前 callToolSync 把 JS toolCall 转成 AITool 后直接 executeTool。
   这条直接执行链路可以保留。
   它代表 PackageTool 脚本内部 toolCall 触达具体工具执行链路，不代表沙盒，也不作为 ToolPkg 容器拦截点。

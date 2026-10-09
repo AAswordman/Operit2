@@ -16,20 +16,7 @@ var pako = (function () {
                 throw new Error('Input data must be a string (Base64 or binary handle).');
             }
 
-            // Call the synchronous native interface
-            const result = NativeInterface.decompress(data, 'deflate');
-
-            // Check for a structured error message from native
-            if (result && typeof result === 'string' && result.startsWith('{"nativeError"')) {
-                try {
-                    const errorInfo = JSON.parse(result);
-                    throw new Error('Native decompression failed: ' + errorInfo.nativeError);
-                } catch (e) {
-                    throw new Error('Native decompression failed and could not parse error message: ' + result);
-                }
-            }
-
-            return result; // The decompressed string
+            return __operitNativeDecompress(data, 'deflate');
         }
     };
 })(); 

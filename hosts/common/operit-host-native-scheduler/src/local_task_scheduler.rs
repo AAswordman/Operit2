@@ -82,6 +82,17 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
             .send(task)
             .map_err(|_| HostError::new(format!("Host task worker closed: {name}")))
     }
+
+    /// Executes cooperative work on the host-owned asynchronous executor.
+    fn scheduleHostRuntimeCooperativeAsyncTask(
+        &self,
+        name: &str,
+        task: HostRuntimeAsyncTask,
+    ) -> HostResult<()> {
+        self.tasks
+            .send(task)
+            .map_err(|_| HostError::new(format!("Host task worker closed: {name}")))
+    }
     fn scheduleDelayedHostRuntimeTask(
         &self,
         name: &str,

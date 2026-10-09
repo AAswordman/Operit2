@@ -380,12 +380,12 @@ Java/Kotlin Bridge 是需要对应 host 实现支持的专用能力，类型声�
 -   调用宿主应用暴露的类与单例对象。
 -   在脚本中实现 Java 接口回调（如 `Runnable`、`Callable`、Listener）。
 
-#### 3.4.1. 两层 API
+#### 3.4.1. 插件入口与 host 边界
 
-1.  **高层 API（推荐）**：`Java` / `Kotlin`（Rhino 风格）
-2.  **底层 API（调试/底层控制）**：`NativeInterface.java*`
-
-`Kotlin` 是 `Java` 的同义别名，API 完全一致。
+插件使用 `Java` / `Kotlin` API；`Kotlin` 是 `Java` 的同义别名。
+参数与返回值通过结构化 host 绑定传递，插件不应调用内部 `__operitNativeJava*` 函数，
+也不需要编码参数 JSON、解析结果文本或管理对象句柄。
+只有 host 明确实现的能力可执行；未实现的操作直接报错。
 
 #### 3.4.2. 高层 API 常用能力
 
@@ -444,22 +444,21 @@ console.log("brand=", String(Build.BRAND || ""));
 console.log("sdk=", Number(Version.SDK_INT));
 ```
 
-#### 3.4.6. 底层 `NativeInterface.java*`（仅在必要时使用）
+#### 3.4.6. 结构化参数与结果
 
-高层 API 会自动处理参数转换、异常抛出与句柄包装。只有在调试底层行为时才建议直接使用 `NativeInterface.java*`：
+高层 API 负责传递结构化参数、传播 host 异常并包装对象句柄。例如，
+当前运行时的应用上下文兼容对象可以直接调用已实现的方法：
 
 ```typescript
-const raw = NativeInterface.javaCallStatic(
-    "java.lang.Integer",
-    "parseInt",
-    JSON.stringify(["42"])
-);
-const parsed = JSON.parse(raw);
-if (!parsed.success) throw new Error(parsed.error);
-console.log(parsed.data); // 42
+const context = Java.getApplicationContext();
+console.log(context.toString());
 ```
 
-如果你在 TypeScript 中开发，建议先引用 `types/index.d.ts`，即可获得 Java Bridge 的类型提示（含 `Java`、`Kotlin`、`NativeInterface`）。
+返回字符串保持应用数据本身的含义，不会依据内容解析成错误对象。
+静态字段应显式使用 `getStatic` / `setStatic`，嵌套类应使用完整类名；
+不会通过捕获字段错误去猜测另一种成员调用方式。
+
+TypeScript 开发引用 `types/index.d.ts` 获取 `Java`、`Kotlin` 的类型提示。
 
 #### 3.4.7. 示例：suspend 调用（callback / Promise）
 

@@ -1,179 +1,109 @@
-# JavaScript ↔ Rust 桥接优化
+# JavaScript / Rust 结构化桥接
 
-验证日期：2026-10-09。实现基于 `upstream/main` 的 `aaf216b4`。
+## 唯一 host 传输契约
 
-## 改动范围
+运行时不再安装 `NativeInterface` 全局对象。插件使用 `toolCall`、`Tools.*`、
+`ToolPkg.*`、Compose context、`CryptoJS`、`Jimp`、`pako`、`Java` / `Kotlin`、
+`console` 和标准定时器 API。内部 `__operitNative*` 绑定由 SDK 管理，插件不应直接调用。
 
-### 不再拼接回调源码
+`HostJavaScriptRuntime` 必须实现：
 
-`HostJavaScriptRuntime::callHostJavaScriptFunction` 提供直接调用全局函数的能力。
-原生 QuickJS 与 Web QuickJS 均覆盖该接口，通过引擎调用 API 传递参数。
-普通异步回调、定时器和取消会话不再需要动态构造源码、转义完整结果并 `eval`。
-找不到函数或属性不可调用时仍忽略；回调异常仍作为 Host 错误返回。
+- `registerHostJavaScriptJsonFunction`：同步传递拥有所有权的结构化参数和结果。
+- `registerHostJavaScriptAsyncJsonFunction`：创建由 host 持有完成句柄的 scoped Promise。
+- `settleHostJavaScriptPromise`：在所属执行器完成 Promise，释放 resolve / reject 句柄。
+- `cancelHostJavaScriptPromises`：释放指定 scope 的待完成句柄。
+- `callHostJavaScriptFunction`：直接调用 runtime 生命周期函数，不生成调用源码。
 
-第三方 Host 可以继续编译：接口提供与旧协议兼容的源码回退实现。
-因此“消除 eval”是内置 Host 的保证，不是第三方 Host 的默认保证。
+这些接口没有默认实现、能力选择开关或字符串 transport。原有 string / void callback
+注册接口已删除；同步无返回值操作以结构化 null 表示完成，调用者不读取这个返回值。
+同步能力保留同步语义，异步 API 使用同一套 host Promise 契约，不把所有能力强行改成异步。
 
-### 原生结构化工具通道
+## Promise 调用过程
 
-原生运行时可注册 `__operitNativeCallToolStructured(scope, type, name, params)`：
+1. SDK 验证公共调用形式，保留所属执行会话的引用。
+2. Host 将参数转换成拥有所有权的 `serde_json::Value`，分配 request id，
+   在 runtime 所属执行器保留 Promise 完成句柄。
+3. 运行时处理工具、跨上下文 IPC、依赖、图片、资源、WASM、Compose 或包管理请求。
+4. 结果队列携带 request id 和结构化值，在所属执行器完成 Promise。
+5. SDK 激活原会话、解释明确的数据契约，在公共 Promise continuation 之后释放引用。
 
-1. 在 JS 所属线程将参数转换为拥有所有权的 `serde_json::Value`。
-2. 创建原生 Promise，把 resolve/reject 句柄留在引擎内部的请求表中。
-3. 用请求 ID 和 Rust 数据提交工具任务；JS 句柄不跨线程。
-4. 工具任务完成后以 Rust 值送回引擎所属线程。
-5. 直接创建 JS 数据并完成 Promise，不再 stringify/parse 整棵请求或结果树。
+`__operitInvokeHostAsync` 是公共包装器共用的内部生命周期入口。
+`toolCall` 使用 `__operitNativeCallToolStructured` 并解包明确的工具结果信封。
+图片、资源、WASM 和包管理直接接收 host 结果；请求失败使用 Promise rejection，
+不会把失败文本当成路径、解密结果或成功返回值。
 
-SDK 的公共 `toolCall` 包装保留原有参数规范化、执行上下文激活、引用计数与
-延迟释放顺序。插件继续使用 `await toolCall(...)` / `await Tools.xxx(...)`。
-SDK 仍浅复制参数；这是既有行为，并非将任意 JS 对象按引用交给后台 Rust。
+异步 API 的 Promise 表示完成契约，不承诺底层工作一定并行。工具执行使用原有 host
+executor，cooperative continuation 使用 host 明确实现的非阻塞 executor。
 
-工具结果保留既有 `success` / `message` / `data` / `dataType` 信封。
-业务失败仍先作为正常结果信封完成原生 Promise，再由既有公共 JS 结果解析器抛错。
-提交失败、非法参数转换和结果转换失败才是桥接错误。
+禁止在全局对象安装 callback ID 完成函数；请求与结果不使用 JSON 文本协议，
+不生成 callback 调用源码。应用数据中的字符串始终保持字符串，不按内容猜测并解析。
 
-Web 暂不声明结构化 Promise 能力；普通工具请求和流式请求仍使用旧字符串协议，
-但结果回调已经直接调用。SDK 的 `onIntermediateResult` 继续走旧流式入口。
-二进制仍使用现有 base64 / 大数据句柄协议，没有新增零拷贝 buffer 通道。
+## Host 边界与生命周期
 
-### 参数语义与边界
+- Native host 使用 rquickjs 的值转换、Promise 和 Persistent 完成句柄。
+- Web host 的值快照和 Promise 注册表位于 `hosts/web/src/javascript_promises.js`，
+  Rust host 通过函数调用和对象属性 API 传递数据。转换捕获原始内建函数，
+  不依赖插件可修改的 JSON、Map 或 Array 方法。
+- 业务 Rust 和 Flutter 使用统一 host 契约，不增加业务平台分支。
+- Flutter owner 的外部消息协议仍由 Flutter host adapter 编解码，不向插件暴露 JSON transport。
+- 脚本执行入口通过 `callHostJavaScriptFunction` 传递结构化参数，不把参数嵌入调用源码。
+- 最终脚本结果和外部 listener 的文本协议在 Rust 边界序列化一次，不在 JS / Rust 之间反复编码。
 
-支持 null、bool、有限 JS number、string、array 和 enumerable own object keys；
-遵循 JSON.stringify 的核心值语义：
+转换保留对象属性、数组空位、`toJSON`、日期、包装值与有限数值的 JSON 值语义。
+不可表示的顶层值、BigInt、循环、getter 错误和超出限制的数据明确报错。
+Host 对象写入使用 own data properties，`__proto__` 不触发原型 setter。
+待完成 Promise 上限为 4096；转换最大深度为 128，单次参数列表节点预算为 1,000,000。
+转换结束后再次检查 Promise 数量，防止 getter 重入绕过上限。
 
-- 对象中的 undefined、function、symbol 字段省略，数组对应元素变成 null。
-- NaN / Infinity 变成 null；顶层不可序列化值按既有工具协议转成空对象。
-- `toJSON`、Date、装箱基础类型、getter、代理数组按 JSON 的相应规则处理。
-- BigInt 和循环引用报错；允许共享但不循环的子对象。
-- 超出 JS 精确整数范围时，少量标量走最短十进制数值转换，以保持原 JSON 协议
-  的 `serde_json::Number` 语义；不会因此序列化整棵参数树。
-- 结果对象/数组创建 own data properties；`__proto__` 或继承索引 setter
-  不会导致原型修改或丢失结果元素。
+重复完成或已取消 request id 不重新调用完成函数；取消只释放指定 scope 的句柄。
+定时器使用独立 scope，支持 `clearTimeout`、`clearInterval` 和所属会话清理。
+清理 interval 的待完成 timeout 同时移除 interval 状态，不创建全局定时器 callback。
 
-限制：转换深度最多 128，单次值转换最多 1,000,000 个节点；每个原生运行时最多
-4,096 个待完成的结构化 Promise，含 getter/toJSON 重入创建的请求。
-字符串没有新增单独字节上限，仍受进程可用内存约束；这不是无限内存安全保证。
-这些转换限制会拒绝旧协议可能接受的极端深/宽数据，调用者需要分块处理。
+## 模块资源与明确失败
 
-取消按 execution scope 释放内部 Promise 句柄；迟到/重复结果忽略，不会恢复已取消会话。
-取消不等于中断后台工具的业务执行，也不会主动 reject 已取消会话留下的 JS Promise。
-运行时销毁前释放所有 persistent 句柄和捕获的转换内建函数。
-结果超过转换限制会 reject，而不是删除句柄后永远留下一个未完成的 await。
+执行会话持有明确的资源 owner：Compose 页面快照、绑定包的资源 host、或执行 host。
+CommonJS 读取仅使用该 owner。资源不存在使用结构化 null 表示；真实读取错误直接报错，
+不转成空字符串。Compose render、rerender 与 action 继续使用不可变页面快照，避免重入包管理锁。
 
-### 复用唤醒执行器，不改变阻塞工具的隔离
+配置目录直接返回绝对 VFS 路径，创建或权限失败直接抛错。
+CryptoJS 和 pako 不解析错误字符串；AES 失败不会产生空明文。
+Java 包装器直接传递参数数组并包装明确的对象句柄，不捕获字段错误后猜测其他成员类型。
 
-新增 opt-in `scheduleHostRuntimeCooperativeAsyncTask`，原生实现使用两个常驻 owner
-线程和 LocalSet。`!Send` Future 在 owner 线程创建并始终由该线程轮询；任务工厂
-panic 不会终止整个 worker。共享 I/O runtime 仍为 process lifetime，子任务不会
-因父请求完成而关闭。
+工具 host 的 `execute_tool_call` 只提供最终结果。请求 `onIntermediateResult` 在提交前明确报错，
+不伪装流式工具执行；脚本自身的 `sendIntermediateResult` / `emit` 能力保持独立。
 
-目前只有 `operit-js-detached` 后续任务唤醒使用此通道，保留原有唤醒合并逻辑。
-工具执行仍走原来的独立任务线程，因为工具可能阻塞、依赖 TLS 或线程隔离。
-没有全局把工具替换成 tokio::spawn，也没有宣称所有异步工具都已线程池化。
-第三方调度器默认委托既有异步调度实现；受限平台的既有本地执行器同样保持兼容。
+已归档的 `plugins/types-v1` 保留原始来源快照，不参与当前运行时绑定。
+当前 SDK 和 `plugins/types` 已删除整个旧命名空间及其算法类型。
+二进制结果的显式 base64 / binary handle 属于数据契约；公共 API 版本路由与 v1 语义适配器
+也不属于旧传输协议。
 
-## 正确性验证
+## 检查
 
 ```sh
-cargo test --manifest-path core/Cargo.toml -p operit-js-bridge --locked
-cargo test --manifest-path hosts/common/operit-host-native-scheduler/Cargo.toml --locked
-cargo test --manifest-path hosts/common/operit-host-native-scheduler/Cargo.toml --no-default-features --locked
-cargo test --manifest-path hosts/common/operit-host-native-scheduler/Cargo.toml --features esp32-compat --locked
-cargo check --manifest-path apps/cli/Cargo.toml --locked
 node --test tools/tests/javascript_bridge_structured.test.mjs \
+  tools/tests/javascript_bridge_hosts.test.mjs \
+  tools/tests/javascript_bridge_operations.test.mjs \
   tools/tests/plugin_bridge_contracts.test.mjs \
   tools/tests/toolpkg_public_api.test.mjs \
-  tools/tests/toolpkg_api_compatibility.test.mjs
+  tools/tests/toolpkg_api_compatibility.test.mjs \
+  tools/tests/compose_dsl_navigation.test.mjs \
+  tools/tests/workflow_ui.test.mjs \
+  plugins/tools/plugin_loading.test.mjs
 ```
 
-Node 公共 API 测试需先在 `plugins/packages/buildin/workflow` 安装锁定依赖。
-新增测试覆盖：大文本、不经过工具 JSON 文本、JSON 值语义、业务失败、非法参数后恢复、
-二进制结果、重复完成、按 scope 取消、待完成数量上限、销毁清理、结果超限拒绝、
-own data properties、worker 复用、`!Send` 线程亲和性和工厂 panic 后继续调度。
-Node 测试直接执行 SDK 源码，检查旧 Host 和流式回退、引用释放时序、失败释放及
-乱序完成的调用上下文。
+测试执行实际 SDK、完整生产 bootstrap、内嵌库和 Web host 值注册表，覆盖无 JSON 文本、
+应用字符串保真、明确失败、对象安全、scope 取消、重复完成、重入上限和会话引用释放。
+Rust `cargo check --tests` 检查 host trait 实现、运行时与工具 host 调用方。
+Node 执行 Web host JavaScript 不等同于真实浏览器 / wasm 集成测试。
 
-原生测试与 CLI 构建通过。Web runtime 文件在独立 crate、`quickjs-wasm-rs 3.1.0`、
-`wasm32-unknown-unknown` 目标下类型检查通过；并未执行真实浏览器集成测试。
-完整 Web workspace 仍受既有平台边界 guard（MountRegistry 的 std::fs、MCPBridge
-的 std::time）与 mio 的 wasm 目标依赖问题阻塞。干净旧 main 的 guard 也报同样违规。
-不能将独立类型检查描述为完整 Web 构建通过。独立类型检查可按如下方式复现：
+手动 benchmark 只测量结构化链路，必须显式提供规模：
 
 ```sh
-ROOT="$(pwd)"
-CHECK="$(mktemp -d)"
-mkdir -p "$CHECK/src"
-cat > "$CHECK/Cargo.toml" <<EOF
-[package]
-name = "operit-web-js-runtime-check"
-version = "0.1.0"
-edition = "2021"
-[dependencies]
-anyhow = "1"
-quickjs-wasm-rs = "=3.1.0"
-serde_json = "1"
-tokio = { version = "1", default-features = false, features = ["sync"] }
-operit-host-api = { path = "$ROOT/core/crates/foundation/host-api" }
-EOF
-printf '#[path = "%s/hosts/web/src/javascript_runtime.rs"]\npub mod javascript_runtime;\n' \
-  "$ROOT" > "$CHECK/src/lib.rs"
-cargo check --manifest-path "$CHECK/Cargo.toml" --target wasm32-unknown-unknown
-```
-
-SDK 包完整测试在当前分支与干净旧基线均为 37 成功、3 失败：
-`destroysEveryContextOwnedByContainer`、`rejectsContextOwnershipMismatch`、
-`retainsExecutionEngineUntilEveryLeaseIsReleased` 缺少注册 container 的前置条件。
-串行运行也有相同失败；本次没有顺手修改无关生命周期测试。
-
-## Release 往返基准
-
-```sh
+OPERIT_JS_BRIDGE_BENCH_SIZES=64,4096,65536 \
+OPERIT_JS_BRIDGE_BENCH_ITERATIONS=500 \
 cargo test --release --manifest-path core/Cargo.toml -p operit-js-bridge \
   bridge_roundtrip_benchmark -- --ignored --nocapture --test-threads=1
 ```
 
-环境：本机 Apple M5 / arm64、Rust 1.95.0、Release；使用仓库锁定的 rquickjs
-及其 core/sys 0.12.0（core workspace 锁文件）。ASCII 单字符串参数与 echo 结果，每组先预热，
-取五批 × 500 次串行调用的批均值中位数。包括真实引擎 owner 线程、工具任务调度、
-唤醒、Promise jobs 与公共 SDK 包装，不包括业务工具 I/O。
-
-同一个测试进程中对比三条路径；baseline 使用测试适配器重建旧式 JSON + 回调 eval
-和逐次唤醒线程调度，不是三个独立 checkout 的整应用启动耗时。
-
-| payload | 旧式 JSON + eval | JSON + 直接回调 | 结构化 Promise |
-| --- | ---: | ---: | ---: |
-| 64 B | 42.31 μs | 35.49 μs | 29.90 μs |
-| 4 KiB | 78.24 μs | 50.65 μs | 31.15 μs |
-| 64 KiB | 600.98 μs | 261.94 μs | 38.72 μs |
-
-观察到的大文本收益主要来自避免转义/拼源码/eval 与整树 JSON 文本往返。
-不同运行轮次受其他构建、系统负载和线程调度影响，绝对耗时有波动；测试不设
-耗时断言。不能推论真实网络/文件工具或整个插件能获得同等加速。
-
-### 3 MB / 3 MiB 大文本实测
-
-手动基准支持用环境变量覆盖 payload 与批次迭代次数，默认小数据基准不变：
-
-```sh
-OPERIT_JS_BRIDGE_BENCH_SIZES=3000000,3145728 \
-OPERIT_JS_BRIDGE_BENCH_ITERATIONS=50 \
-cargo test --release --manifest-path core/Cargo.toml -p operit-js-bridge \
-  bridge_roundtrip_benchmark -- --ignored --nocapture --test-threads=1
-```
-
-同一设备、相同 echo 往返流程，每种模式预热 50 次，取五批 × 50 次的批均值中位数。
-参数是单个 ASCII 文本字段，完整结果由 Rust 返回 JS；不是单向网络传输或二进制吞吐量。
-
-| payload | 旧式 JSON + eval | JSON + 直接回调 | 结构化 Promise |
-| --- | ---: | ---: | ---: |
-| 3 MB（3,000,000 字节） | 25.668 ms | 9.590 ms | 0.396 ms |
-| 3 MiB（3,145,728 字节） | 26.380 ms | 9.480 ms | 0.415 ms |
-| 3 MiB，独立重跑 | 26.088 ms | 9.450 ms | 0.416 ms |
-
-3 MiB 重跑的旧式/结构化耗时比约 62.7 倍，每次 echo 往返减少约 25.67 ms（98.4%）。
-这个结果只适用于此处的大文本桥接基准。包含大量属性的对象、需要转义的文本、
-真实工具 I/O、其他设备和内存压力下的数字可能不同；结构化路径也仍有字符串拷贝，
-不是零拷贝。二进制仍走原有 base64/句柄通道，不能套用此表。
-
-后续应另行设计工具非阻塞能力声明、批量请求和二进制 buffer/句柄所有权，
-而不是直接把所有工具塞进常驻本地执行器。
+基准涵盖 engine owner、工具调度、Promise jobs 与 SDK 包装，不包含真实业务 I/O。
+历史协议比较不再是可执行测试路径，也不能当作本次修改的性能结论。

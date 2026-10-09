@@ -219,11 +219,11 @@ pub fn getJsThirdPartyLibraries() -> String {
 }
 
 #[allow(non_snake_case)]
-/// Builds the monolithic bootstrap script used by legacy JavaScript initialization.
+/// Builds the host-backed JavaScript bootstrap and scoped runtime services.
 pub fn buildRuntimeBootstrapScript() -> String {
     let executionPreludeJson =
         serde_json::to_string(&JsExecutionScriptBuilder::buildExecutionPreludeSource())
-            .unwrap_or_else(|_| "\"\"".to_string());
+            .expect("Execution prelude source must serialize");
     let cleanOnExitDirJson = serde_json::to_string(&cleanOnExitVfsPath())
         .expect("clean-on-exit VFS path must serialize");
     format!(
@@ -235,107 +235,82 @@ pub fn buildRuntimeBootstrapScript() -> String {
         var __operitRuntimePrelude = {};
         {}
         var console = {{
-            log: function() {{ NativeInterface.logInfoForCall('', Array.prototype.slice.call(arguments).join(' ')); }},
-            info: function() {{ NativeInterface.logInfoForCall('', Array.prototype.slice.call(arguments).join(' ')); }},
-            warn: function() {{ NativeInterface.logWarningForCall('', Array.prototype.slice.call(arguments).join(' ')); }},
-            error: function() {{ NativeInterface.logErrorForCall('', Array.prototype.slice.call(arguments).join(' ')); }}
+            log: function() {{ __operitNativeLog('info', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
+            info: function() {{ __operitNativeLog('info', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
+            warn: function() {{ __operitNativeLog('warn', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
+            error: function() {{ __operitNativeLog('error', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }}
         }};
         var intervalStates = {{}};
-        var NativeInterface = {{
-            callTool: function(toolType, toolName, paramsJson) {{
-                return new Promise(function(resolve) {{
-                    var callbackId = '__operit_tool_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-                    window[callbackId] = function(result) {{
-                        delete window[callbackId];
-                        resolve(result);
-                    }};
-                    NativeInterface.callToolAsync(callbackId, toolType, toolName, paramsJson);
-                }});
-            }},
-            callToolAsync: function(callbackId, toolType, toolName, paramsJson) {{
-                __operitNativeCallToolAsync(
-                    String(callbackId || ''),
-                    String(toolType || 'default'),
-                    String(toolName || ''),
-                    String(paramsJson || '{{}}')
-                );
-            }},
-            callToolAsyncStreaming: function(callbackId, intermediateCallbackId, toolType, toolName, paramsJson) {{
-                this.callToolAsync(callbackId, toolType, toolName, paramsJson);
-            }},
-            setTimeout: function(handler, delayMs) {{
+        var timerStates = new Map();
+        var nextTimerId = 0;
+        /** Schedules a host Promise while retaining the owning execution timer. */
+        function setTimeout(handler, delayMs) {{
                 if (typeof handler !== 'function') {{
                     throw new TypeError('setTimeout handler must be a function');
                 }}
-                var timerId = '__operit_timer_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
-                var timerArguments = Array.prototype.slice.call(arguments, 2);
-                var timerCallId = String(globalThis.__operitCurrentCallId || '');
-                window[timerId] = function() {{
-                    try {{
-                        delete window[timerId];
-                    }} catch (_deleteTimerError) {{
-                        window[timerId] = undefined;
-                    }}
-                    if (typeof __operitActivateCall === 'function') {{
-                        __operitActivateCall(timerCallId);
-                    }}
-                    try {{
-                        handler.apply(window, timerArguments);
-                    }} catch (error) {{
-                        var activeRuntime = globalThis.__operit_call_runtime_ref;
-                        if (
-                            activeRuntime &&
-                            activeRuntime.callId === timerCallId &&
-                            typeof activeRuntime.fail === 'function'
-                        ) {{
-                            activeRuntime.fail(error);
-                        }}
-                    }} finally {{
-                        Promise.resolve().then(function() {{
-                            if (typeof __operitUnregisterCallTimer === 'function') {{
-                                __operitUnregisterCallTimer(timerCallId, timerId);
-                            }}
-                        }});
-                    }}
-                }};
-                window[timerId].__operitTimerCallId = timerCallId;
                 var normalizedDelay = Number(delayMs);
-                if (!isFinite(normalizedDelay) || normalizedDelay < 0) {{
-                    throw new RangeError('setTimeout delay must be a finite non-negative number');
+                if (!Number.isFinite(normalizedDelay) || normalizedDelay < 0 || normalizedDelay > Number.MAX_SAFE_INTEGER) {{
+                    throw new RangeError('setTimeout delay must be finite, non-negative and within the safe integer range');
                 }}
-                if (typeof __operitRegisterCallTimer === 'function') {{
-                    __operitRegisterCallTimer(timerCallId, timerId);
+                var timerId = '__operit_timer_' + (++nextTimerId);
+                var timerArguments = Array.prototype.slice.call(arguments, 2);
+                var timerCallId = String(globalThis.__operitCurrentCallId);
+                var state = {{ callId: timerCallId }};
+                timerStates.set(timerId, state);
+                __operitRegisterCallTimer(timerCallId, timerId);
+                /** Reports timer failures through the active execution session. */
+                function failTimer(error) {{
+                    __operitActivateCall(timerCallId);
+                    var callState = __operitGetCallState(timerCallId);
+                    if (callState && (!callState.completed || callState.detached)) {{
+                        callState.callRuntime.fail(error);
+                    }}
+                }}
+                /** Releases the timer after the handler's public Promise continuations. */
+                function releaseTimer() {{
+                    Promise.resolve().then(function() {{
+                        __operitUnregisterCallTimer(timerCallId, timerId);
+                    }});
                 }}
                 try {{
-                    __operitNativeScheduleJavaScriptTimer(timerId, String(Math.floor(normalizedDelay)));
+                    __operitNativeScheduleJavaScriptTimer(timerId, Math.floor(normalizedDelay)).then(function() {{
+                        if (!timerStates.delete(timerId)) return;
+                        try {{
+                            __operitActivateCall(timerCallId);
+                            handler.apply(window, timerArguments);
+                        }} catch (error) {{
+                            failTimer(error);
+                        }} finally {{
+                            releaseTimer();
+                        }}
+                    }}, function(error) {{
+                        if (!timerStates.delete(timerId)) return;
+                        try {{ failTimer(error); }} finally {{ releaseTimer(); }}
+                    }});
                 }} catch (error) {{
-                    delete window[timerId];
-                    if (typeof __operitUnregisterCallTimer === 'function') {{
-                        __operitUnregisterCallTimer(timerCallId, timerId);
-                    }}
+                    timerStates.delete(timerId);
+                    __operitUnregisterCallTimer(timerCallId, timerId);
                     throw error;
                 }}
                 return timerId;
-            }},
-            clearTimeout: function(timerId) {{
-                var normalizedTimerId = String(timerId || '');
-                if (normalizedTimerId) {{
-                    var timerCallback = window[normalizedTimerId];
-                    var timerCallId;
-                    if (timerCallback && typeof timerCallback.__operitTimerCallId === 'string') {{
-                        timerCallId = timerCallback.__operitTimerCallId;
-                    }}
-                    try {{
-                        delete window[normalizedTimerId];
-                    }} catch (_deleteTimerError) {{
-                        window[normalizedTimerId] = undefined;
-                    }}
-                    if (timerCallId && typeof __operitUnregisterCallTimer === 'function') {{
-                        __operitUnregisterCallTimer(timerCallId, normalizedTimerId);
-                    }}
+        }}
+
+        /** Cancels the exact host timer scope and releases its owning session. */
+        function clearTimeout(timerId) {{
+                var normalizedTimerId = String(timerId);
+                var state = timerStates.get(normalizedTimerId);
+                if (!state) return;
+                timerStates.delete(normalizedTimerId);
+                if (state.intervalId) {{
+                    intervalStates[state.intervalId].active = false;
+                    delete intervalStates[state.intervalId];
                 }}
-            }},
-            setInterval: function(handler, delayMs) {{
+                __operitNativeCancelJavaScriptPromises(normalizedTimerId);
+                __operitUnregisterCallTimer(state.callId, normalizedTimerId);
+        }}
+
+        /** Schedules a repeating timer through the structured host timer binding. */
+        function setInterval(handler, delayMs) {{
                 if (typeof handler !== 'function') {{
                     throw new TypeError('setInterval handler must be a function');
                 }}
@@ -343,9 +318,10 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 var timerArguments = Array.prototype.slice.call(arguments, 2);
                 var state = {{ active: true, timerId: null }};
                 intervalStates[intervalId] = state;
+                /** Schedules the next active interval tick through the same timer scope. */
                 var scheduleNext = function() {{
                     if (!state.active) return;
-                    state.timerId = NativeInterface.setTimeout(function() {{
+                    state.timerId = setTimeout(function() {{
                         if (!state.active) return;
                         try {{
                             handler.apply(window, timerArguments);
@@ -353,311 +329,27 @@ pub fn buildRuntimeBootstrapScript() -> String {
                             scheduleNext();
                         }}
                     }}, delayMs);
+                    timerStates.get(state.timerId).intervalId = intervalId;
                 }};
                 scheduleNext();
                 return intervalId;
-            }},
-            clearInterval: function(intervalId) {{
+        }}
+
+        /** Cancels a repeating timer and its pending host timeout. */
+        function clearInterval(intervalId) {{
                 var normalizedIntervalId = String(intervalId || '');
                 var state = intervalStates[normalizedIntervalId];
                 if (!state) return;
                 state.active = false;
-                if (state.timerId) NativeInterface.clearTimeout(state.timerId);
+                if (state.timerId) clearTimeout(state.timerId);
                 delete intervalStates[normalizedIntervalId];
-            }},
-            /// Forwards plugin informational output to the shared application logger.
-            logInfoForCall: function(callId, message) {{
-                __operitNativeLog('info', String(callId || ''), String(message));
-            }},
-            /// Preserves warning severity for plugin console output.
-            logWarningForCall: function(callId, message) {{
-                __operitNativeLog('warn', String(callId || ''), String(message));
-            }},
-            /// Forwards plugin failures without suppressing their messages.
-            logErrorForCall: function(callId, message) {{
-                __operitNativeLog('error', String(callId || ''), String(message));
-            }},
-            reportErrorForCall: function() {{}},
-            sendCallIntermediateResult: function(callId, result) {{
-                __operitSendIntermediateResult(
-                    String(callId || ''),
-                    String(result == null ? '' : result)
-                );
-            }},
-            readToolPkgTextResource: function(packageNameOrSubpackageId, resourcePath) {{
-                return __operitNativeReadToolPkgTextResource(
-                    String(packageNameOrSubpackageId || ''),
-                    String(resourcePath || '')
-                );
-            }},
-            readToolPkgResource: function(packageNameOrSubpackageId, resourceKey, outputFileName, internal) {{
-                return __operitNativeReadToolPkgResource(
-                    String(packageNameOrSubpackageId || ''),
-                    String(resourceKey || ''),
-                    outputFileName == null ? '' : String(outputFileName),
-                    String(internal || '')
-                );
-            }},
-            callToolPkgWasm: function(packageTarget, moduleId, exportName, argsJson) {{
-                return __operitNativeCallToolPkgWasm(
-                    String(packageTarget || ''),
-                    String(moduleId || ''),
-                    String(exportName || ''),
-                    String(argsJson || '[]')
-                );
-            }},
-            composeWebViewControllerCommand: function(payloadJson) {{
-                return __operitNativeComposeWebViewControllerCommand(String(payloadJson || '{{}}'));
-            }},
-            composeFilePickerCommand: function(payloadJson) {{
-                return __operitNativeComposeFilePickerCommand(String(payloadJson || '{{}}'));
-            }},
-            composeWebViewControllerCommandSuspend: function(payloadJson, callbackId) {{
-                var normalizedCallbackId = String(callbackId || '').trim();
-                if (!normalizedCallbackId) {{
-                    return;
-                }}
-                try {{
-                    var result = __operitNativeComposeWebViewControllerCommand(
-                        String(payloadJson || '{{}}')
-                    );
-                    var parsed;
-                    try {{
-                        parsed = JSON.parse(result);
-                    }} catch (_parseError) {{
-                        parsed = result;
-                    }}
-                    if (typeof window[normalizedCallbackId] === 'function') {{
-                        window[normalizedCallbackId](parsed, false);
-                    }}
-                }} catch (error) {{
-                    if (typeof window[normalizedCallbackId] === 'function') {{
-                        window[normalizedCallbackId]({{
-                            success: false,
-                            message: String(error && error.message ? error.message : error)
-                        }}, true);
-                    }}
-                }}
-            }},
-            getEnvForCall: function(callId, key) {{
-                return __operitNativeGetEnvForCall(String(callId || ''), String(key || ''));
-            }},
-            setEnv: function(key, value) {{
-                return __operitNativeSetEnv(String(globalThis.__operitCurrentCallId || ''), String(key || ''), value == null ? '' : String(value));
-            }},
-            setEnvs: function(valuesJson) {{
-                return __operitNativeSetEnvs(String(globalThis.__operitCurrentCallId || ''), String(valuesJson || '{{}}'));
-            }},
-            getPluginConfigDir: function(pluginId) {{
-                return __operitNativeGetPluginConfigDir(String(pluginId || ''));
-            }},
-            // Decodes the host result and never exposes an error payload as a directory.
-            getScopedPluginConfigDir: function(ownerId, pluginId) {{
-                var result = JSON.parse(__operitNativeGetScopedPluginConfigDir(String(ownerId), String(pluginId)));
-                if (result.success !== true) {{
-                    throw new Error(result.message);
-                }}
-                if (typeof result.path !== 'string' || !result.path.startsWith('/')) {{
-                    throw new Error('Plugin configuration directory must be an absolute VFS path');
-                }}
-                return result.path;
-            }},
-            isPackageImported: function(packageName) {{
-                return __operitNativeIsPackageImported(String(packageName || '')) === 'true';
-            }},
-            importPackage: function(packageName) {{
-                return __operitNativeImportPackage(String(packageName || ''));
-            }},
-            removePackage: function(packageName) {{
-                return __operitNativeRemovePackage(String(packageName || ''));
-            }},
-            usePackage: function(packageName) {{
-                return __operitNativeUsePackage(String(packageName || ''));
-            }},
-            listImportedPackagesJson: function() {{
-                return __operitNativeListImportedPackagesJson();
-            }},
-            /** Returns host-owned executable tool schemas as JSON. */
-            getToolCatalogJson: function() {{
-                return __operitNativeGetToolCatalogJson();
-            }},
-            resolveToolName: function(packageName, subpackageId, toolName, preferImported) {{
-                return __operitNativeResolveToolName(
-                    String(packageName || ''),
-                    String(subpackageId || ''),
-                    String(toolName || ''),
-                    String(preferImported || '')
-                );
-            }},
-            invokeToolPkgIpcAsync: function(callbackId, packageTarget, callerContextKey, targetContextKey, targetRuntime, channel, payloadJson) {{
-                var normalizedCallbackId = String(callbackId || '').trim();
-                if (!normalizedCallbackId) {{
-                    return;
-                }}
-                __operitNativeInvokeToolPkgIpcAsync(
-                    normalizedCallbackId,
-                    String(packageTarget || ''),
-                    String(callerContextKey || ''),
-                    String(targetContextKey || ''),
-                    String(targetRuntime || ''),
-                    String(channel || ''),
-                    String(payloadJson || '')
-                );
-            }},
-            logJsExecutionTrace: function(callId, message) {{
-                __operitNativeLogJsExecutionTrace(String(callId || ''), String(message || ''));
-            }},
-            decompress: function(data, algorithm) {{
-                return __operitNativeDecompress(String(data), String(algorithm));
-            }},
-            crypto: function(algorithm, operation, argsJson) {{
-                return __operitNativeCrypto(
-                    String(algorithm),
-                    String(operation),
-                    String(argsJson)
-                );
-            }},
-            image_processing: function(callbackId, operation, argsJson) {{
-                var raw = __operitNativeImageProcessing(
-                    String(callbackId),
-                    String(operation),
-                    String(argsJson)
-                );
-                var parsed = JSON.parse(raw);
-                var callback = window[String(callbackId)];
-                if (typeof callback === 'function') {{
-                    if (parsed.success) {{
-                        callback(parsed.result, false);
-                    }} else {{
-                        callback(parsed.error, true);
-                    }}
-                }} else {{
-                    console.error("Callback not found: " + String(callbackId));
-                }}
-            }},
-            javaClassExists: function(className) {{
-                return __operitNativeJavaClassExists(String(className || ''));
-            }},
-            javaGetApplicationContext: function() {{
-                return __operitNativeJavaGetApplicationContext();
-            }},
-            javaGetCurrentActivity: function() {{
-                throw new Error('current activity is null');
-            }},
-            javaNewInstance: function(className, argsJson) {{
-                return __operitNativeJavaNewInstance(
-                    String(className || ''),
-                    String(argsJson || '[]')
-                );
-            }},
-            javaCallStatic: function(className, methodName, argsJson) {{
-                return __operitNativeJavaCallStatic(
-                    String(className || ''),
-                    String(methodName || ''),
-                    String(argsJson || '[]')
-                );
-            }},
-            javaCallInstance: function(instanceHandle, methodName, argsJson) {{
-                return __operitNativeJavaCallInstance(
-                    String(instanceHandle || ''),
-                    String(methodName || ''),
-                    String(argsJson || '[]')
-                );
-            }},
-            setCallResult: function(callId, result) {{
-                __operitNativeSetCallResult(String(callId || ''), String(result == null ? '' : result));
-            }},
-            setCallError: function(callId, error) {{
-                __operitNativeSetCallError(String(callId || ''), String(error == null ? '' : error));
-            }}
-        }};
-
-        var setTimeout = NativeInterface.setTimeout;
-        var clearTimeout = NativeInterface.clearTimeout;
-        var setInterval = NativeInterface.setInterval;
-        var clearInterval = NativeInterface.clearInterval;
+        }}
 
         {}
 
-        function __operitParseToolResult(result, isError) {{
-            if (isError) {{
-                if (typeof result === 'string' && result.length > 1) {{
-                    var errorFirst = result.charAt(0);
-                    if (errorFirst === '{{' || errorFirst === '[') {{
-                        try {{
-                            result = JSON.parse(result);
-                        }} catch (_error) {{}}
-                    }}
-                }}
-                if (result && typeof result === 'object' && result.success === false) {{
-                    var err = new Error(String(result.message || 'Tool call failed'));
-                    err.data = result.data;
-                    throw err;
-                }}
-                throw new Error(typeof result === 'string' ? result : JSON.stringify(result));
-            }}
-            if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, 'success')) {{
-                if (result.success) {{
-                    return result.data;
-                }}
-                var error = new Error(String(result.message || 'Tool call failed'));
-                error.data = result.data;
-                throw error;
-            }}
-            if (typeof result === 'string' && result.length > 1) {{
-                var first = result.charAt(0);
-                if (first === '{{' || first === '[') {{
-                    var parsedResult;
-                    try {{
-                        parsedResult = JSON.parse(result);
-                    }} catch (_error) {{
-                        return result;
-                    }}
-                    return __operitParseToolResult(parsedResult, false);
-                }}
-            }}
-            return result;
-        }}
-
-        /** Executes a tool through the asynchronous Host callback boundary. */
-        async function toolCall() {{
-            var type = 'default';
-            var name = '';
-            var params = {{}};
-            if (arguments.length === 1 && typeof arguments[0] === 'object') {{
-                type = String(arguments[0].type || 'default');
-                name = String(arguments[0].name || '');
-                params = arguments[0].params || {{}};
-            }} else if (arguments.length === 1) {{
-                name = String(arguments[0] || '');
-            }} else if (arguments.length === 2) {{
-                name = String(arguments[0] || '');
-                params = arguments[1] || {{}};
-            }} else {{
-                type = String(arguments[0] || 'default');
-                name = String(arguments[1] || '');
-                params = arguments[2] || {{}};
-            }}
-            if (typeof __operitNativeCallToolStructured === 'function') {{
-                var structured = await __operitNativeCallToolStructured(
-                    String(globalThis.__operitCurrentCallId || ''), type, name, params
-                );
-                return __operitParseToolResult(structured, false);
-            }}
-            var raw = await NativeInterface.callTool(type, name, JSON.stringify(params));
-            var parsed;
-            try {{
-                parsed = JSON.parse(raw);
-            }} catch (_parseError) {{
-                parsed = raw;
-            }}
-            return __operitParseToolResult(parsed, false);
-        }}
-
         /** Returns the host-owned executable tool catalog for workflow editors. */
         function getToolCatalog() {{
-            var raw = NativeInterface.getToolCatalogJson();
-            var catalog = JSON.parse(raw);
+            var catalog = __operitNativeGetToolCatalog();
             if (!catalog) {{
                 throw new Error('Tool catalog request returned no response');
             }}
@@ -672,106 +364,21 @@ pub fn buildRuntimeBootstrapScript() -> String {
 
         globalThis.__operitCompleteCalled = false;
         globalThis.__operitCompleteValue = undefined;
+        /** Completes a structured result or reports the original conversion failure. */
         function complete(value) {{
             globalThis.__operitCompleteCalled = true;
             globalThis.__operitCompleteValue = value;
         }}
 
         function sendIntermediateResult(value) {{
-            __operitSendIntermediateResult(__operitFinishExecutionResult(value));
+            __operitSendIntermediateResult(String(globalThis.__operitCurrentCallId), value === undefined ? null : value);
         }}
         var emit = sendIntermediateResult;
         var delta = sendIntermediateResult;
         var log = sendIntermediateResult;
         var update = sendIntermediateResult;
 
-        function __operitFinishExecutionResult(result) {{
-            if (result && result.__operit_error) {{
-                return JSON.stringify({{
-                    success: false,
-                    message: String(result.message || ''),
-                    data: result.data
-                }});
-            }}
-            if (result !== null && typeof result === 'object') {{
-                return JSON.stringify(result);
-            }}
-            return result === undefined ? "undefined" : String(result);
-        }}
-
-        function __operitHasUsableJavaInstanceMarker(value) {{
-            if (!value || typeof value !== 'object') {{
-                return false;
-            }}
-            try {{
-                return (
-                    Object.prototype.hasOwnProperty.call(value, '__javaHandle') &&
-                    Object.prototype.hasOwnProperty.call(value, '__javaClass') &&
-                    typeof value.__javaHandle === 'string' &&
-                    typeof value.__javaClass === 'string' &&
-                    __operitText(value.__javaHandle).trim().length > 0 &&
-                    __operitText(value.__javaClass).trim().length > 0
-                );
-            }} catch (_javaMarkerError) {{
-                return false;
-            }}
-        }}
-
-        function __operitNormalizeSerializableValue(value, seen) {{
-            if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {{
-                return value;
-            }}
-            if (typeof value === 'bigint' || typeof value === 'function') {{
-                return String(value);
-            }}
-            if (typeof value !== 'object') {{
-                return String(value);
-            }}
-            seen = seen || [];
-            if (seen.indexOf(value) >= 0) {{
-                return '[Circular]';
-            }}
-            seen.push(value);
-            try {{
-                if (typeof value.toJSON === 'function') {{
-                    return __operitNormalizeSerializableValue(value.toJSON(), seen);
-                }}
-                if (Array.isArray(value)) {{
-                    return value.map(function(item) {{
-                        return __operitNormalizeSerializableValue(item, seen);
-                    }});
-                }}
-                if (__operitHasUsableJavaInstanceMarker(value)) {{
-                    return {{
-                        __javaHandle: __operitText(value.__javaHandle),
-                        __javaClass: __operitText(value.__javaClass)
-                    }};
-                }}
-                var out = {{}};
-                Object.keys(value).forEach(function(key) {{
-                    out[key] = __operitNormalizeSerializableValue(value[key], seen);
-                }});
-                return out;
-            }} finally {{
-                seen.pop();
-            }}
-        }}
-
-        function __operitSerializeOrThrow(value) {{
-            return JSON.stringify(__operitNormalizeSerializableValue(value, []));
-        }}
-
-        function __operitSafeSerialize(value) {{
-            try {{
-                return __operitSerializeOrThrow(value);
-            }} catch (error) {{
-                return JSON.stringify({{
-                    error: 'Failed to serialize value',
-                    message: __operitText(error && error.message ? error.message : error),
-                    value: __operitText(value).slice(0, 1000)
-                }});
-            }}
-        }}
+        /** Normalizes an explicitly tagged Compose screen reference before host result conversion. */
 
         function __operitNormalizeComposeResult(value) {{
             if (!value || typeof value !== 'object' || !value.composeDsl || typeof value.composeDsl !== 'object') {{
@@ -973,15 +580,17 @@ pub fn buildRuntimeBootstrapScript() -> String {
             return names;
         }}
 
+        /** Runs one script inside its owning session using direct structured host operations. */
+
         function __operitExecuteScriptFunction(callId, params, scriptText, targetFunctionName, timeoutSec, preTimeoutMs) {{
             var previousCallRuntime = globalThis.__operit_call_runtime_ref;
             var previousCallId = globalThis.__operitCurrentCallId;
             var registerCallSession = globalThis.__operitRegisterCallSession;
             if (typeof registerCallSession !== 'function') {{
-                NativeInterface.setCallError(callId, JSON.stringify({{
+                __operitNativeSetCallError(callId, {{
                     success: false,
                     message: 'JS execution runtime bridge is unavailable'
-                }}));
+                }});
                 return;
             }}
             var callState = registerCallSession(callId, params);
@@ -1028,7 +637,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
             }}
             function markStage(stage) {{
                 callState.lastExecStage = __operitText(stage);
-                NativeInterface.logJsExecutionTrace(
+                __operitNativeLogJsExecutionTrace(
                     callId,
                     'stage=' + callState.lastExecStage +
                         ' function=' + __operitText(callState.lastExecFunction) +
@@ -1040,7 +649,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
             }}
             function markFunction(name) {{
                 callState.lastExecFunction = __operitText(name);
-                NativeInterface.logJsExecutionTrace(
+                __operitNativeLogJsExecutionTrace(
                     callId,
                     'function=' + callState.lastExecFunction +
                         ' package=' + __operitText(params && (params.__operit_ui_package_name || params.toolPkgId || params.__operit_package_name)) +
@@ -1052,7 +661,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 callState.lastRequireRequest = __operitText(request);
                 callState.lastRequireFrom = __operitText(fromPath);
                 callState.lastRequireResolved = __operitText(resolvedPath);
-                NativeInterface.logJsExecutionTrace(
+                __operitNativeLogJsExecutionTrace(
                     callId,
                     'require=' + callState.lastRequireRequest +
                         ' from=' + callState.lastRequireFrom +
@@ -1061,22 +670,24 @@ pub fn buildRuntimeBootstrapScript() -> String {
             }}
             function markModule(modulePath) {{
                 callState.lastModulePath = __operitText(modulePath);
-                NativeInterface.logJsExecutionTrace(callId, 'module=' + callState.lastModulePath);
+                __operitNativeLogJsExecutionTrace(callId, 'module=' + callState.lastModulePath);
             }}
-            function completeCall(resultText) {{
+            /** Stores a structured result before marking the owning execution completed. */
+            function completeCall(resultValue) {{
                 var state = getCallState();
                 if (!state || state.resultCompleted) {{
                     return;
                 }}
+                __operitNativeSetCallResult(callId, resultValue);
                 state.resultCompleted = true;
                 state.completed = Number(state.pendingReferences || 0) <= 0;
                 try {{
-                    NativeInterface.logJsExecutionTrace(callId, 'complete ' + __operitText(resultText).slice(0, 240));
-                    NativeInterface.setCallResult(callId, resultText);
+                    __operitNativeLogJsExecutionTrace(callId, 'complete ' + __operitText(resultValue).slice(0, 240));
                 }} finally {{
                     finalizeCall();
                 }}
             }}
+            /** Reports an explicit structured failure and finalizes the owning execution. */
             function emitError(message) {{
                 var state = getCallState();
                 if (!state || state.resultCompleted) {{
@@ -1085,11 +696,11 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 state.resultCompleted = true;
                 state.completed = Number(state.pendingReferences || 0) <= 0;
                 try {{
-                    NativeInterface.logJsExecutionTrace(callId, 'error ' + __operitText(message).slice(0, 240));
-                    NativeInterface.setCallError(callId, JSON.stringify({{
+                    __operitNativeLogJsExecutionTrace(callId, 'error ' + __operitText(message).slice(0, 240));
+                    __operitNativeSetCallError(callId, {{
                         success: false,
                         message: __operitText(message)
-                    }}));
+                    }});
                 }} finally {{
                     finalizeCall();
                 }}
@@ -1107,14 +718,16 @@ pub fn buildRuntimeBootstrapScript() -> String {
                     }}
                 }};
             }}
+            /** Forwards intermediate application values directly to the structured host listener binding. */
             function emitIntermediate(value) {{
                 if (isActive()) {{
-                    NativeInterface.sendCallIntermediateResult(callId, __operitSafeSerialize(value));
+                    __operitSendIntermediateResult(callId, value === undefined ? null : value);
                 }}
             }}
+            /** Completes a structured result or reports the original conversion failure. */
             function complete(value) {{
                 try {{
-                    completeCall(__operitSerializeOrThrow(__operitNormalizeComposeResult(value)));
+                    completeCall(value === undefined ? null : __operitNormalizeComposeResult(value));
                 }} catch (error) {{
                     var report = callRuntimeReport(error, 'Result Serialization Failure');
                     var serializationMessage =
@@ -1142,7 +755,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 getChatId: function() {{ return readCallValue('__operit_package_chat_id', undefined); }},
                 getCallerCardId: function() {{ return readCallValue('__operit_package_caller_card_id', undefined); }},
                 getEnv: function(key) {{
-                    var value = NativeInterface.getEnvForCall(callId, __operitText(key).trim());
+                    var value = __operitNativeGetEnvForCall(callId, __operitText(key).trim());
                     return value == null || value === '' ? undefined : __operitText(value);
                 }},
                 getPluginConfigDir: function(pluginId) {{
@@ -1153,16 +766,10 @@ pub fn buildRuntimeBootstrapScript() -> String {
                         readCallValue('containerPackageName', '') ||
                         readCallValue('__operit_package_name', '');
                     var resolvedId = explicitId || ownerId;
-                    if (
-                        !ownerId ||
-                        typeof NativeInterface === 'undefined' ||
-                        !NativeInterface ||
-                        typeof NativeInterface.getScopedPluginConfigDir !== 'function'
-                    ) {{
-                        return '';
+                    if (!ownerId) {{
+                        throw new Error('Plugin configuration owner is required');
                     }}
-                    var path = NativeInterface.getScopedPluginConfigDir(ownerId, resolvedId);
-                    return typeof path === 'string' ? path : '';
+                    return __operitNativeGetScopedPluginConfigDir(ownerId, resolvedId);
                 }},
                 reportDetailedError: callRuntimeReport,
                 fail: function(error) {{
@@ -1465,134 +1072,49 @@ pub fn buildRuntimeBootstrapScript() -> String {
                                 return Promise.reject(error);
                             }}
                         }}
-                        if (
-                            !packageTarget ||
-                            typeof NativeInterface === 'undefined' ||
-                            !NativeInterface ||
-                            typeof NativeInterface.invokeToolPkgIpcAsync !== 'function'
-                        ) {{
-                            return Promise.reject(new Error('ToolPkg.ipc runtime bridge is unavailable'));
+                        if (!packageTarget) {{
+                            return Promise.reject(new Error('ToolPkg.ipc requires a bound package target'));
                         }}
-                        var payloadJson;
-                        try {{
-                            payloadJson = __operitSerializeOrThrow(payload);
-                        }} catch (error) {{
-                            try {{
-                                if (
-                                    typeof NativeInterface !== 'undefined' &&
-                                    NativeInterface &&
-                                    typeof NativeInterface.logErrorForCall === 'function'
-                                ) {{
-                                    NativeInterface.logErrorForCall(
-                                        callId,
-                                        'ToolPkg.ipc payload serialization failed: ' +
-                                            __operitText(error && error.message ? error.message : error)
-                                    );
-                                }}
-                            }} catch (_logIpcPayloadError) {{}}
-                            return Promise.reject(error);
-                        }}
+                        var ownerCallId = String(globalThis.__operitCurrentCallId);
                         return new Promise(function(resolve, reject) {{
-                            var callbackId =
-                                '__operit_toolpkg_ipc_' +
-                                Date.now() +
-                                '_' +
-                                Math.random().toString(36).slice(2, 10);
-                            var ownerCallId = String(globalThis.__operitCurrentCallId || '');
-                            if (typeof globalThis.__operitRetainCallReference === 'function') {{
-                                globalThis.__operitRetainCallReference(ownerCallId);
+                            __operitRetainCallReference(ownerCallId);
+                            /** Releases this request only after the public continuation runs. */
+                            function releaseReference() {{
+                                Promise.resolve().then(function() {{
+                                    __operitReleaseCallReference(ownerCallId);
+                                }});
                             }}
-                            globalThis[callbackId] = function(resultJson, isError) {{
-                                if (typeof globalThis.__operitActivateCall === 'function') {{
-                                    globalThis.__operitActivateCall(ownerCallId);
-                                }}
-                                try {{
-                                    delete globalThis[callbackId];
-                                }} catch (_deleteCallbackError) {{
-                                    globalThis[callbackId] = undefined;
-                                }}
-                                if (isError) {{
-                                    reject(new Error(__operitText(resultJson).trim() || 'ToolPkg.ipc call failed'));
-                                    Promise.resolve().then(function() {{
-                                        if (typeof globalThis.__operitReleaseCallReference === 'function') {{
-                                            globalThis.__operitReleaseCallReference(ownerCallId);
-                                        }}
-                                    }});
-                                    return;
-                                }}
-                                var parsed;
-                                try {{
-                                    parsed = JSON.parse(__operitText(resultJson) || 'null');
-                                }} catch (error) {{
-                                    try {{
-                                        if (
-                                            typeof NativeInterface !== 'undefined' &&
-                                            NativeInterface &&
-                                            typeof NativeInterface.logErrorForCall === 'function'
-                                        ) {{
-                                            var resultType = resultJson === null ? 'null' : typeof resultJson;
-                                            var preview = __operitText(resultJson).slice(0, 500);
-                                            NativeInterface.logErrorForCall(
-                                                callId,
-                                                'ToolPkg.ipc returned invalid JSON: ' +
-                                                    __operitText(error && error.message ? error.message : error) +
-                                                    ', resultType=' + resultType +
-                                                    ', preview=' + preview
-                                            );
-                                        }}
-                                    }} catch (_logIpcParseError) {{}}
-                                    reject(
-                                        new Error(
-                                            'ToolPkg.ipc returned invalid JSON: ' +
-                                            __operitText(error && error.message ? error.message : error)
-                                        )
-                                    );
-                                    Promise.resolve().then(function() {{
-                                        if (typeof globalThis.__operitReleaseCallReference === 'function') {{
-                                            globalThis.__operitReleaseCallReference(ownerCallId);
-                                        }}
-                                    }});
-                                    return;
-                                }}
-                                if (parsed && parsed.success === true) {{
-                                    resolve(parsed.value);
-                                }} else {{
-                                    reject(
-                                        new Error(
-                                            parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0
-                                                ? parsed.message.trim()
-                                                : 'ToolPkg.ipc call failed'
-                                        )
-                                    );
-                                }}
-                                Promise.resolve().then(function() {{
-                                    if (typeof globalThis.__operitReleaseCallReference === 'function') {{
-                                        globalThis.__operitReleaseCallReference(ownerCallId);
-                                    }}
-                                }});
-                            }};
                             try {{
-                                NativeInterface.invokeToolPkgIpcAsync(
-                                    callbackId,
-                                    packageTarget,
-                                    currentContextKey,
-                                    targetContextKey,
-                                    targetRuntime,
-                                    normalizedChannel,
-                                    payloadJson
-                                );
-                            }} catch (error) {{
-                                try {{
-                                    delete globalThis[callbackId];
-                                }} catch (_deleteCallbackInvokeError) {{
-                                    globalThis[callbackId] = undefined;
-                                }}
-                                reject(error);
-                                Promise.resolve().then(function() {{
-                                    if (typeof globalThis.__operitReleaseCallReference === 'function') {{
-                                        globalThis.__operitReleaseCallReference(ownerCallId);
+                                __operitNativeInvokeToolPkgIpc(
+                                    ownerCallId, packageTarget, currentContextKey,
+                                    targetContextKey, targetRuntime, normalizedChannel,
+                                    payload === undefined ? null : payload
+                                ).then(function(response) {{
+                                    try {{
+                                        __operitActivateCall(ownerCallId);
+                                        if (!response || typeof response !== 'object' || typeof response.success !== 'boolean') {{
+                                            throw new TypeError('IPC host returned an invalid result envelope');
+                                        }}
+                                        if (!response.success) throw new Error(response.message);
+                                        resolve(response.value);
+                                    }} catch (error) {{
+                                        reject(error);
+                                    }} finally {{
+                                        releaseReference();
+                                    }}
+                                }}, function(error) {{
+                                    try {{
+                                        __operitActivateCall(ownerCallId);
+                                        reject(error);
+                                    }} catch (activationError) {{
+                                        reject(activationError);
+                                    }} finally {{
+                                        releaseReference();
                                     }}
                                 }});
+                            }} catch (error) {{
+                                reject(error);
+                                releaseReference();
                             }}
                         }});
                     }};
@@ -1626,48 +1148,11 @@ pub fn buildRuntimeBootstrapScript() -> String {
                         }} catch (error) {{
                             return Promise.reject(error);
                         }}
-                        if (
-                            !packageTarget ||
-                            typeof NativeInterface === 'undefined' ||
-                            !NativeInterface ||
-                            typeof NativeInterface.callToolPkgWasm !== 'function'
-                        ) {{
-                            return Promise.reject(new Error('ToolPkg.wasm runtime bridge is unavailable'));
+                        if (!packageTarget) {{
+                            return Promise.reject(new Error('ToolPkg.wasm package target is required'));
                         }}
-                        var resultJson;
-                        try {{
-                            resultJson = NativeInterface.callToolPkgWasm(
-                                packageTarget,
-                                normalizedModuleId,
-                                normalizedExportName,
-                                JSON.stringify(normalizedArgs)
-                            );
-                        }} catch (error) {{
-                            return Promise.reject(error);
-                        }}
-                        var parsed;
-                        try {{
-                            parsed = JSON.parse(__operitText(resultJson) || 'null');
-                        }} catch (error) {{
-                            return Promise.reject(
-                                new Error(
-                                    'ToolPkg.wasm returned invalid JSON: ' +
-                                        __operitText(error && error.message ? error.message : error)
-                                )
-                            );
-                        }}
-                        if (parsed && parsed.success === true) {{
-                            return Promise.resolve(
-                                Object.prototype.hasOwnProperty.call(parsed, 'value') ? parsed.value : null
-                            );
-                        }}
-                        return Promise.reject(
-                            new Error(
-                                parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0
-                                    ? parsed.message.trim()
-                                    : 'ToolPkg.wasm call failed'
-                            )
-                        );
+                        return __operitInvokeHostAsync(__operitNativeCallToolPkgWasm,
+                            [packageTarget, normalizedModuleId, normalizedExportName, normalizedArgs]);
                     }};
                     toolPkgApi.wasm = wasmApi;
                 }}
@@ -1686,15 +1171,16 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 var mainModuleKey = ['instance', 'main', packageTarget + ':' + screenPath, String(scriptText || '').length, __operitHashText(scriptText)].join(':');
                 var module = moduleCache[mainModuleKey];
                 var exports = module && module.exports ? module.exports : null;
+                /** Reads CommonJS candidates from the execution resource owner and preserves empty modules. */
                 function readToolPkgModule(modulePath) {{
-                    if (!packageTarget || !NativeInterface || typeof NativeInterface.readToolPkgTextResource !== 'function') {{
+                    if (!packageTarget) {{
                         return null;
                     }}
                     var candidates = __operitBuildCandidatePaths(modulePath);
                     for (var i = 0; i < candidates.length; i += 1) {{
                         var candidate = candidates[i];
-                        var textResult = NativeInterface.readToolPkgTextResource(packageTarget, candidate);
-                        if (typeof textResult === 'string' && textResult.length > 0) {{
+                        var textResult = __operitNativeReadToolPkgTextResource(packageTarget, candidate);
+                        if (typeof textResult === 'string') {{
                             return {{ path: candidate, text: textResult }};
                         }}
                     }}

@@ -1,11 +1,11 @@
 use crate::javascript_values::{self, JsonIntrinsics};
 use operit_host_api::{
     HostError, HostJavaScriptAsyncJsonCallback, HostJavaScriptExecutionInterrupt,
-    HostJavaScriptInterruptHandler, HostJavaScriptRuntime, HostJavaScriptRuntimeHost,
-    HostJavaScriptRuntimeStateAsyncTask, HostJavaScriptRuntimeStateFactory,
-    HostJavaScriptRuntimeStateHandle, HostJavaScriptRuntimeStateOutput,
-    HostJavaScriptRuntimeStateOutputFuture, HostJavaScriptRuntimeStateTask,
-    HostJavaScriptStringCallback, HostJavaScriptVoidCallback, HostResult,
+    HostJavaScriptInterruptHandler, HostJavaScriptJsonCallback, HostJavaScriptRuntime,
+    HostJavaScriptRuntimeHost, HostJavaScriptRuntimeStateAsyncTask,
+    HostJavaScriptRuntimeStateFactory, HostJavaScriptRuntimeStateHandle,
+    HostJavaScriptRuntimeStateOutput, HostJavaScriptRuntimeStateOutputFuture,
+    HostJavaScriptRuntimeStateTask, HostResult,
 };
 use rquickjs::function::Rest;
 use rquickjs::{
@@ -53,6 +53,7 @@ struct NativeHostJavaScriptRuntime {
 }
 
 impl Drop for NativeHostJavaScriptRuntime {
+    /// Releases engine-owned persistent handles before the runtime is destroyed.
     fn drop(&mut self) {
         // Persistent handles must be released before the context/runtime. This
         // also breaks the registry -> resolver -> runtime -> binding -> registry cycle.
@@ -102,22 +103,38 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
         Ok(())
     }
 
+    /// Calls a required lifecycle function using captured structured argument and result conversion.
     fn callHostJavaScriptFunction(
         &mut self,
         name: &str,
         arguments: &[JsonValue],
-    ) -> HostResult<()> {
+    ) -> HostResult<JsonValue> {
+        let intrinsics = self.jsonIntrinsics.clone();
         self.context.with(|ctx| {
             let result = (|| {
-                let value: Value = ctx.globals().get(name)?;
-                if let Some(function) = value.into_function() {
-                    let values = arguments
-                        .iter()
-                        .map(|arg| javascript_values::to_js(&ctx, arg))
-                        .collect::<rquickjs::Result<Vec<_>>>()?;
-                    function.call::<_, ()>((Rest(values),))?;
+                if intrinsics.borrow().is_none() {
+                    *intrinsics.borrow_mut() = Some(JsonIntrinsics::new(&ctx)?);
                 }
-                Ok::<_, QuickJsError>(())
+                let function: Function = ctx.globals().get(name)?;
+                let values = arguments
+                    .iter()
+                    .map(|arg| javascript_values::to_js(&ctx, arg))
+                    .collect::<rquickjs::Result<Vec<_>>>()?;
+                let result: Value = function.call((Rest(values),))?;
+                if result.is_undefined() {
+                    return Ok(JsonValue::Null);
+                }
+                intrinsics
+                    .borrow()
+                    .as_ref()
+                    .ok_or(QuickJsError::Unknown)?
+                    .from_js(&ctx, result)?
+                    .ok_or_else(|| {
+                        Exception::throw_type(
+                            &ctx,
+                            "Host lifecycle result must be a JSON-compatible value",
+                        )
+                    })
             })();
             result
                 .catch(&ctx)
@@ -125,11 +142,12 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
         })
     }
 
+    /// Registers one native structured Promise binding on the owning executor.
     fn registerHostJavaScriptAsyncJsonFunction(
         &mut self,
         name: &str,
         callback: HostJavaScriptAsyncJsonCallback,
-    ) -> HostResult<bool> {
+    ) -> HostResult<()> {
         let promises = self.promises.clone();
         let nextId = self.nextPromiseId.clone();
         let intrinsics = self.jsonIntrinsics.clone();
@@ -146,11 +164,12 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
                     callback,
                 )?;
                 ctx.globals().set(name, function)?;
-                Ok::<_, QuickJsError>(true)
+                Ok::<_, QuickJsError>(())
             })
             .map_err(|error| HostError::new(error.to_string()))
     }
 
+    /// Settles one native Promise and releases both persistent completion handles.
     fn settleHostJavaScriptPromise(
         &mut self,
         id: u64,
@@ -185,6 +204,7 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
             .map_err(|error| HostError::new(error.to_string()))
     }
 
+    /// Removes only the native Promise handles belonging to the cancelled scope.
     fn cancelHostJavaScriptPromises(&mut self, scope: &str) -> HostResult<()> {
         self.promises
             .borrow_mut()
@@ -192,50 +212,24 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
         Ok(())
     }
 
-    /// Registers one native QuickJS global function returning a string.
-    fn registerHostJavaScriptStringFunction(
+    /// Converts synchronous native host requests and results through captured value intrinsics.
+    fn registerHostJavaScriptJsonFunction(
         &mut self,
         name: &str,
-        callback: HostJavaScriptStringCallback,
+        callback: HostJavaScriptJsonCallback,
     ) -> HostResult<()> {
-        self.context.with(|ctx| {
-            let function = Function::new(ctx.clone(), move |args: Rest<String>| {
-                callback(args.0).map_err(|error| {
-                    QuickJsError::new_from_js_message(
-                        "Host callback",
-                        "JavaScript",
-                        error.to_string(),
-                    )
-                })
+        let intrinsics = self.jsonIntrinsics.clone();
+        self.context
+            .with(|ctx| {
+                if intrinsics.borrow().is_none() {
+                    *intrinsics.borrow_mut() = Some(JsonIntrinsics::new(&ctx)?);
+                }
+                let intrinsics = Rc::downgrade(&intrinsics);
+                let function = synchronousFunction(ctx.clone(), intrinsics, callback)?;
+                ctx.globals().set(name, function)?;
+                Ok::<_, QuickJsError>(())
             })
-            .map_err(|error| HostError::new(error.to_string()))?;
-            ctx.globals()
-                .set(name, function)
-                .map_err(|error| HostError::new(error.to_string()))
-        })
-    }
-
-    /// Registers one native QuickJS global function returning `undefined`.
-    fn registerHostJavaScriptVoidFunction(
-        &mut self,
-        name: &str,
-        callback: HostJavaScriptVoidCallback,
-    ) -> HostResult<()> {
-        self.context.with(|ctx| {
-            let function = Function::new(ctx.clone(), move |args: Rest<String>| {
-                callback(args.0).map_err(|error| {
-                    QuickJsError::new_from_js_message(
-                        "Host callback",
-                        "JavaScript",
-                        error.to_string(),
-                    )
-                })
-            })
-            .map_err(|error| HostError::new(error.to_string()))?;
-            ctx.globals()
-                .set(name, function)
-                .map_err(|error| HostError::new(error.to_string()))
-        })
+            .map_err(|error| HostError::new(error.to_string()))
     }
 }
 
@@ -428,6 +422,28 @@ impl HostJavaScriptRuntimeHost for NativeHostJavaScriptRuntimeHost {
     }
 }
 
+/// Creates a synchronous value binding whose engine handles stay on the owning executor.
+fn synchronousFunction<'js>(
+    ctx: rquickjs::Ctx<'js>,
+    intrinsics: Weak<RefCell<Option<JsonIntrinsics>>>,
+    callback: HostJavaScriptJsonCallback,
+) -> rquickjs::Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: rquickjs::Ctx<'js>, args: Rest<Value<'js>>| {
+            let intrinsics = intrinsics.upgrade().ok_or(QuickJsError::Unknown)?;
+            let guard = intrinsics.borrow();
+            let converter = guard.as_ref().ok_or(QuickJsError::Unknown)?;
+            let values = converter.arguments_from_js(&ctx, args.0)?;
+            drop(guard);
+            let result = callback(values)
+                .map_err(|error| Exception::throw_message(&ctx, &error.to_string()))?;
+            javascript_values::to_js(&ctx, &result)
+        },
+    )
+}
+
+/// Creates a scoped native Promise from owned JSON-compatible request arguments.
 fn structuredFunction<'js>(
     ctx: rquickjs::Ctx<'js>,
     promises: NativePromises,
@@ -447,17 +463,7 @@ fn structuredFunction<'js>(
             let intrinsics = intrinsics.upgrade().ok_or(QuickJsError::Unknown)?;
             let intrinsicsGuard = intrinsics.borrow();
             let intrinsics = intrinsicsGuard.as_ref().ok_or(QuickJsError::Unknown)?;
-            let values = args
-                .0
-                .into_iter()
-                .map(|arg| {
-                    // Legacy top-level undefined/function/symbol parameters became
-                    // '{}'; objects omit them and arrays turn them into null.
-                    intrinsics
-                        .from_js(&ctx, arg)
-                        .map(|v| v.unwrap_or_else(|| serde_json::json!({})))
-                })
-                .collect::<rquickjs::Result<Vec<_>>>()?;
+            let values = intrinsics.arguments_from_js(&ctx, args.0)?;
             drop(intrinsicsGuard);
             // Getters/toJSON may re-enter this binding and create more requests.
             // Recheck after conversion before retaining another pair of handles.
@@ -502,6 +508,7 @@ mod bridge_tests {
     use super::*;
     use std::sync::Mutex;
 
+    /// Creates an isolated native runtime for the required host contract tests.
     fn runtime() -> NativeHostJavaScriptRuntime {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
@@ -514,55 +521,102 @@ mod bridge_tests {
         }
     }
 
+    /// Rejects absent lifecycle bindings instead of silently ignoring a required engine contract.
     #[test]
-    fn direct_callback_preserves_arguments_and_does_not_evaluate_source() {
+    fn lifecycle_callbacks_require_a_callable_binding() {
+        let mut runtime = runtime();
+        assert!(runtime.callHostJavaScriptFunction("missing", &[]).is_err());
+        runtime
+            .evaluateHostJavaScriptVoid("test", "globalThis.callback=42;")
+            .unwrap();
+        assert!(runtime.callHostJavaScriptFunction("callback", &[]).is_err());
+        runtime
+            .evaluateHostJavaScriptVoid(
+                "test",
+                "globalThis.callback=function(value){globalThis.delivered=value;};",
+            )
+            .unwrap();
+        runtime
+            .callHostJavaScriptFunction("callback", &[JsonValue::String("data".to_string())])
+            .unwrap();
+        assert_eq!(
+            runtime
+                .evaluateHostJavaScriptString("test", "delivered")
+                .unwrap(),
+            "data"
+        );
+    }
+
+    /// Uses the same structured contract for synchronous arguments, direct results and host exceptions.
+    #[test]
+    fn synchronous_bindings_preserve_values_and_throw_errors_without_json_text() {
         let mut runtime = runtime();
         runtime
+            .registerHostJavaScriptJsonFunction("echo", Arc::new(|mut args| Ok(args.remove(0))))
+            .unwrap();
+        runtime
+            .registerHostJavaScriptJsonFunction(
+                "literal",
+                Arc::new(|_| {
+                    Ok(JsonValue::String(
+                        r#"{"success":false,"message":"literal"}"#.to_string(),
+                    ))
+                }),
+            )
+            .unwrap();
+        runtime
+            .registerHostJavaScriptJsonFunction(
+                "fail",
+                Arc::new(|_| Err(HostError::new("operation denied"))),
+            )
+            .unwrap();
+        runtime.evaluateHostJavaScriptVoid("test", r#"
+            JSON.parse = JSON.stringify = function() { throw Error('JSON text used'); };
+            globalThis.copied = echo({ nested: {value:7}, array:[undefined, , NaN], ['__proto__']:{safe:true} });
+            globalThis.literalValue = literal();
+            try { fail(); } catch (error) { globalThis.failureMessage = error.message; }
+        "#).unwrap();
+        assert_eq!(runtime.evaluateHostJavaScriptString("test", "String(copied.nested.value===7 && copied.array.every(value=>value===null) && Object.hasOwn(copied,'__proto__') && copied.safe===undefined)").unwrap(), "true");
+        assert_eq!(
+            runtime
+                .evaluateHostJavaScriptString("test", "literalValue")
+                .unwrap(),
+            r#"{"success":false,"message":"literal"}"#
+        );
+        assert_eq!(
+            runtime
+                .evaluateHostJavaScriptString("test", "failureMessage")
+                .unwrap(),
+            "operation denied"
+        );
+        assert!(runtime.promises.borrow().is_empty());
+    }
+
+    /// Rejects unsupported top-level values before retaining a native Promise handle.
+    #[test]
+    fn structured_bindings_reject_non_json_arguments() {
+        let mut runtime = runtime();
+        runtime
+            .registerHostJavaScriptAsyncJsonFunction("request", Arc::new(|_, _| Ok(())))
+            .unwrap();
+        runtime
             .evaluateHostJavaScriptVoid(
                 "test",
-                "globalThis.called=[]; globalThis.cb=function(v,e){called.push([v,e]);};",
-            )
-            .unwrap();
-        let text = "\"; globalThis.injected=true; //\n中\u{2028}".repeat(4096);
-        runtime
-            .callHostJavaScriptFunction(
-                "cb",
-                &[JsonValue::String(text.clone()), JsonValue::Bool(true)],
+                r#"
+            globalThis.failures=0;
+            for (const value of [undefined, function(){}, Symbol('value')]) {
+                try { request('scope', value); } catch (error) { failures++; }
+            }
+        "#,
             )
             .unwrap();
         assert_eq!(
             runtime
-                .evaluateHostJavaScriptString("test", "called[0][0]")
+                .evaluateHostJavaScriptString("test", "String(failures)")
                 .unwrap(),
-            text
+            "3"
         );
-        assert_eq!(
-            runtime
-                .evaluateHostJavaScriptString("test", "String(called[0][1])+':'+typeof injected")
-                .unwrap(),
-            "true:undefined"
-        );
-        runtime.callHostJavaScriptFunction("missing", &[]).unwrap();
-        runtime
-            .evaluateHostJavaScriptVoid("test", "globalThis.noncallable=42")
-            .unwrap();
-        runtime
-            .callHostJavaScriptFunction("noncallable", &[])
-            .unwrap();
-        runtime
-            .evaluateHostJavaScriptVoid(
-                "test",
-                "globalThis.fail=function(){throw new Error('failure');}",
-            )
-            .unwrap();
-        let error = runtime.callHostJavaScriptFunction("fail", &[]).unwrap_err();
-        assert!(error.to_string().contains("failure"));
-        assert_eq!(
-            runtime
-                .evaluateHostJavaScriptString("test", "String(1+1)")
-                .unwrap(),
-            "2"
-        );
+        assert!(runtime.promises.borrow().is_empty());
     }
 
     #[test]
@@ -570,15 +624,15 @@ mod bridge_tests {
         let mut runtime = runtime();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let received = requests.clone();
-        assert!(runtime
+        runtime
             .registerHostJavaScriptAsyncJsonFunction(
                 "request",
                 Arc::new(move |id, args| {
                     received.lock().unwrap().push((id, args));
                     Ok(())
-                })
+                }),
             )
-            .unwrap());
+            .unwrap();
         runtime.evaluateHostJavaScriptVoid("test", "globalThis.results=[]; request('first',{i:7}).then(v=>results.push(v)); request('second',{i:8}).then(v=>results.push(v));").unwrap();
         let requests = requests.lock().unwrap();
         assert_eq!(requests[0].1, vec![serde_json::json!({"i":7})]);

@@ -1,31 +1,17 @@
+/** Installs the structured tool transport and its owning-call lifecycle. */
 (function() {
-    var root = typeof globalThis !== 'undefined'
-        ? globalThis
-        : (typeof window !== 'undefined' ? window : this);
-    var windowRef = typeof window !== 'undefined' ? window : root;
-    var expose = typeof __operitExpose === 'function'
-        ? __operitExpose
-        : globalThis.__operitExpose;
+    var root = globalThis;
 
+    /** Converts tool identity and error fields to text. */
     function asString(value) {
         return value == null ? '' : String(value);
     }
 
-    function callNative(methodName) {
-        if (
-            typeof NativeInterface === 'undefined' ||
-            !NativeInterface ||
-            typeof NativeInterface[methodName] !== 'function'
-        ) {
-            throw new Error('NativeInterface.' + methodName + ' is unavailable');
-        }
-        var args = Array.prototype.slice.call(arguments, 1);
-        return NativeInterface[methodName].apply(NativeInterface, args);
-    }
-
+    /** Copies tool parameters into safe own data properties. */
     function clonePlainObject(value) {
+        if (value === undefined) return {};
         if (!value || typeof value !== 'object' || Array.isArray(value)) {
-            return {};
+            throw new TypeError('Tool params must be a JSON object');
         }
         var copy = {};
         var keys = Object.keys(value);
@@ -38,196 +24,112 @@
         return copy;
     }
 
-    function normalizeToolCallOptions(value) {
-        if (!value || typeof value !== 'object') {
-            return {};
+    /** Rejects callback streaming that the tool execution host does not implement. */
+    function validateOptions(options) {
+        if (options === undefined) return;
+        if (!options || typeof options !== 'object' || Array.isArray(options)) {
+            throw new TypeError('Tool options must be an object');
         }
-        return {
-            onIntermediateResult:
-                typeof value.onIntermediateResult === 'function'
-                    ? value.onIntermediateResult
-                    : null
-        };
+        if (typeof options.onIntermediateResult === 'function') {
+            throw new Error('Tool host does not support intermediate-result callbacks');
+        }
     }
 
+    /** Resolves the public tool-call overloads into one structured request. */
     function parseToolCallArguments(rawArgs) {
-        if (rawArgs.length === 1 && typeof rawArgs[0] === 'object') {
+        if (rawArgs.length === 1 && typeof rawArgs[0] === 'object' && rawArgs[0] !== null) {
+            validateOptions(rawArgs[0]);
             return {
-                type: asString(rawArgs[0].type || 'default'),
-                name: asString(rawArgs[0].name || ''),
-                params: clonePlainObject(rawArgs[0].params),
-                options: normalizeToolCallOptions(rawArgs[0])
+                type: rawArgs[0].type === undefined ? 'default' : asString(rawArgs[0].type),
+                name: asString(rawArgs[0].name),
+                params: clonePlainObject(rawArgs[0].params)
             };
         }
         if (rawArgs.length === 1 && typeof rawArgs[0] === 'string') {
-            return { type: 'default', name: asString(rawArgs[0]), params: {}, options: {} };
+            return { type: 'default', name: rawArgs[0], params: {} };
         }
-        if (rawArgs.length === 2 && typeof rawArgs[1] === 'object') {
-            return {
-                type: 'default',
-                name: asString(rawArgs[0]),
-                params: clonePlainObject(rawArgs[1]),
-                options: {}
-            };
+        if ((rawArgs.length === 2 || rawArgs.length === 3) && typeof rawArgs[0] === 'string' &&
+            (typeof rawArgs[1] === 'object' || rawArgs[1] === undefined)) {
+            validateOptions(rawArgs[2]);
+            return { type: 'default', name: rawArgs[0], params: clonePlainObject(rawArgs[1]) };
         }
-        if (rawArgs.length === 3 && typeof rawArgs[1] === 'object' && typeof rawArgs[2] === 'object') {
-            return {
-                type: 'default',
-                name: asString(rawArgs[0]),
-                params: clonePlainObject(rawArgs[1]),
-                options: normalizeToolCallOptions(rawArgs[2])
-            };
+        if ((rawArgs.length === 3 || rawArgs.length === 4) &&
+            typeof rawArgs[0] === 'string' && typeof rawArgs[1] === 'string') {
+            validateOptions(rawArgs[3]);
+            return { type: rawArgs[0], name: rawArgs[1], params: clonePlainObject(rawArgs[2]) };
         }
-        return {
-            type: asString(rawArgs[0] || 'default'),
-            name: asString(rawArgs[1] || ''),
-            params: clonePlainObject(rawArgs[2]),
-            options: normalizeToolCallOptions(rawArgs[3])
-        };
+        throw new TypeError('Invalid toolCall arguments');
     }
 
-    function parseToolResult(result, isError) {
-        if (isError) {
-            if (typeof result === 'string') {
-                try {
-                    var parsedError = JSON.parse(result);
-                    if (parsedError && typeof parsedError === 'object') {
-                        result = parsedError;
-                    }
-                } catch (_error) {}
-            }
-            if (result && typeof result === 'object' && result.success === false) {
-                throw new Error(asString(result.message).trim());
-            }
-            throw new Error(typeof result === 'string' ? result : JSON.stringify(result));
+    /** Reads a structured result envelope without parsing application strings. */
+    function parseToolResult(result) {
+        if (!result || typeof result !== 'object' || typeof result.success !== 'boolean') {
+            throw new TypeError('Tool host returned an invalid result envelope');
         }
-        if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, 'success')) {
-            if (result.success) {
-                return result.data;
-            }
+        if (!result.success) {
             throw new Error(asString(result.message).trim());
         }
-        if (typeof result === 'string' && result.length > 1) {
-            var first = result.charAt(0);
-            if (first === '{' || first === '[') {
-                var parsed;
-                try {
-                    parsed = JSON.parse(result);
-                } catch (_error) {
-                    return result;
-                }
-                return parseToolResult(parsed, false);
-            }
-        }
-        return result;
+        return result.data;
     }
 
-    function nextToolCallbackId() {
-        return '__operit_tool_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
-    }
-
-    function toolCall() {
-        var rawArgs = arguments;
+    /** Executes a structured host Promise and retains its owner through public continuations. */
+    function invokeHostAsync(binding, args, convert) {
         return new Promise(function(resolve, reject) {
-            try {
-                var parsed = parseToolCallArguments(rawArgs);
-                var ownerCallId = String(root.__operitCurrentCallId || '');
-                if (typeof root.__operitRetainCallReference === 'function') {
-                    root.__operitRetainCallReference(ownerCallId);
-                }
-                // Keep the public Promise wrapper to preserve retain/release and
-                // microtask ordering. The native Promise stores its completion
-                // functions internally; no global callback name or JSON text.
-                if (typeof root.__operitNativeCallToolStructured === 'function' &&
-                    !(parsed.options && parsed.options.onIntermediateResult)) {
-                    var releaseStructuredReference = function() {
-                        Promise.resolve().then(function() {
-                            if (typeof root.__operitReleaseCallReference === 'function') {
-                                root.__operitReleaseCallReference(ownerCallId);
-                            }
-                        });
-                    };
-                    try {
-                        root.__operitNativeCallToolStructured(
-                            ownerCallId, parsed.type || 'default', parsed.name, parsed.params || {}
-                        ).then(function(result) {
-                            if (typeof root.__operitActivateCall === 'function') {
-                                root.__operitActivateCall(ownerCallId);
-                            }
-                            try { resolve(parseToolResult(result, false)); }
-                            catch (error) { reject(error); }
-                            releaseStructuredReference();
-                        }, function(error) {
-                            if (typeof root.__operitActivateCall === 'function') {
-                                root.__operitActivateCall(ownerCallId);
-                            }
-                            reject(error);
-                            releaseStructuredReference();
-                        });
-                    } catch (error) {
-                        reject(error);
-                        releaseStructuredReference();
-                    }
-                    return;
-                }
-                var callbackId = nextToolCallbackId();
-                var intermediateCallbackId =
-                    parsed.options && parsed.options.onIntermediateResult
-                        ? nextToolCallbackId()
-                        : '';
-                windowRef[callbackId] = function(result, isError) {
-                    if (typeof root.__operitActivateCall === 'function') {
-                        root.__operitActivateCall(ownerCallId);
-                    }
-                    delete windowRef[callbackId];
-                    if (intermediateCallbackId) {
-                        delete windowRef[intermediateCallbackId];
-                    }
-                    try {
-                        resolve(parseToolResult(result, !!isError));
-                    } catch (error) {
-                        reject(error);
-                    }
+            var ownerCallId;
+            var retained = false;
+            /** Releases the exact reference acquired for this invocation. */
+            function releaseReference() {
+                if (retained) {
+                    retained = false;
                     Promise.resolve().then(function() {
-                        if (typeof root.__operitReleaseCallReference === 'function') {
-                            root.__operitReleaseCallReference(ownerCallId);
-                        }
+                        root.__operitReleaseCallReference(ownerCallId);
                     });
-                };
-                if (intermediateCallbackId) {
-                    windowRef[intermediateCallbackId] = function(result, isError) {
-                        try {
-                            if (isError) {
-                                reject(parseToolResult(result, true));
-                                return;
-                            }
-                            parsed.options.onIntermediateResult(parseToolResult(result, false));
-                        } catch (error) {
-                            reject(error);
-                        }
-                    };
-                    callNative(
-                        'callToolAsyncStreaming',
-                        callbackId,
-                        intermediateCallbackId,
-                        parsed.type || 'default',
-                        parsed.name,
-                        JSON.stringify(parsed.params || {})
-                    );
-                } else {
-                    callNative(
-                        'callToolAsync',
-                        callbackId,
-                        parsed.type || 'default',
-                        parsed.name,
-                        JSON.stringify(parsed.params || {})
-                    );
                 }
+            }
+            try {
+                ownerCallId = String(root.__operitCurrentCallId);
+                root.__operitRetainCallReference(ownerCallId);
+                retained = true;
+                binding.apply(undefined, [ownerCallId].concat(args)).then(function(result) {
+                    try {
+                        root.__operitActivateCall(ownerCallId);
+                        resolve(convert ? convert(result) : result);
+                    } catch (error) {
+                        reject(error);
+                    } finally {
+                        releaseReference();
+                    }
+                }, function(error) {
+                    try {
+                        root.__operitActivateCall(ownerCallId);
+                        reject(error instanceof Error ? error : new Error(asString(error)));
+                    } catch (activationError) {
+                        reject(activationError);
+                    } finally {
+                        releaseReference();
+                    }
+                });
             } catch (error) {
                 reject(error);
+                releaseReference();
             }
         });
     }
 
-    expose('toolCall', toolCall);
+    /** Resolves the public tool-call overloads into the required structured host binding. */
+    function toolCall() {
+        try {
+            var parsed = parseToolCallArguments(arguments);
+            if (typeof root.__operitNativeCallToolStructured !== 'function') {
+                throw new Error('Required host binding __operitNativeCallToolStructured is unavailable');
+            }
+            return invokeHostAsync(root.__operitNativeCallToolStructured,
+                [parsed.type, parsed.name, parsed.params], parseToolResult);
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    }
+
+    root.__operitExpose('__operitInvokeHostAsync', invokeHostAsync);
+    root.__operitExpose('toolCall', toolCall);
 })();

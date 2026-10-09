@@ -56,6 +56,7 @@ fn plugin_config_proxy_persists_and_reads_values() {
     );
 
     let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost,
         script,
         "plugin_config_roundtrip",
         &params,

@@ -1706,7 +1706,7 @@ JsEngine
 JsToolManager
 JsTools
 JsToolPkgRegistration
-JsNativeInterfaceDelegates
+JsHostOperations
 JsInitRuntimeScriptBuilder
 JsExecutionScriptBuilder
 JsExecutionResultProtocol

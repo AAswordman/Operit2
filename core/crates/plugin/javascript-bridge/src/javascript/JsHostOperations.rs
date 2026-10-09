@@ -9,9 +9,7 @@ use flate2::read::DeflateDecoder;
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba};
 use md5::{Digest, Md5};
-use operit_plugin_sdk::javascript::{
-    JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
-};
+use operit_plugin_sdk::javascript::{JsToolCallRequest, JsToolCallResult, JsToolCallResultData};
 
 const BINARY_HANDLE_PREFIX: &str = "@binary_handle:";
 const BINARY_DATA_THRESHOLD: usize = 32 * 1024;
@@ -20,33 +18,6 @@ const BINARY_DATA_THRESHOLD: usize = 32 * 1024;
 struct SerializedToolResultData {
     data: serde_json::Value,
     dataType: Option<&'static str>,
-}
-
-/// Builds the stable JavaScript error envelope for a rejected tool call.
-#[allow(non_snake_case)]
-fn buildToolErrorJson(message: &str) -> String {
-    serde_json::json!({
-        "success": false,
-        "message": message
-    })
-    .to_string()
-}
-
-/// Parses fixed JavaScript tool-call arguments into the public SDK request.
-#[allow(non_snake_case)]
-fn parseToolCall(
-    toolType: &str,
-    toolName: &str,
-    paramsJson: &str,
-) -> Result<JsToolCallRequest, String> {
-    let normalizedToolName = toolName.trim();
-    if normalizedToolName.is_empty() {
-        return Err("Tool name cannot be empty".to_string());
-    }
-
-    let value =
-        serde_json::from_str::<serde_json::Value>(paramsJson).map_err(|error| error.to_string())?;
-    parseToolCallValue(toolType, toolName, value)
 }
 
 /// Consumes structured parameters instead of cloning the parsed object tree.
@@ -73,22 +44,17 @@ pub fn parseToolCallValue(
 static BINARY_DATA_REGISTRY: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 static BITMAP_REGISTRY: OnceLock<Mutex<HashMap<String, DynamicImage>>> = OnceLock::new();
 
+/// Returns the shared registry of explicitly owned binary result handles.
 fn binaryDataRegistry() -> &'static Mutex<HashMap<String, Vec<u8>>> {
     BINARY_DATA_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Returns the shared registry of runtime-owned image handles.
 fn bitmapRegistry() -> &'static Mutex<HashMap<String, DynamicImage>> {
     BITMAP_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-#[allow(non_snake_case)]
-fn nativeErrorJson(message: String) -> String {
-    serde_json::json!({
-        "nativeError": message.replace('"', "'")
-    })
-    .to_string()
-}
-
+/// Reads bytes according to the explicit binary-handle or base64 data contract.
 #[allow(non_snake_case)]
 fn readBinaryOrBase64(data: &str) -> Result<Vec<u8>, String> {
     if let Some(handle) = data.strip_prefix(BINARY_HANDLE_PREFIX) {
@@ -104,62 +70,55 @@ fn readBinaryOrBase64(data: &str) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Decompresses explicit deflate data and propagates decoding failures.
 #[allow(non_snake_case)]
-pub fn decompress(data: &str, algorithm: &str) -> String {
-    let result = (|| -> Result<String, String> {
-        if algorithm.to_ascii_lowercase() != "deflate" {
-            return Err(format!(
-                "Unsupported algorithm: {algorithm}. Only 'deflate' is supported."
-            ));
-        }
-        let compressedData = readBinaryOrBase64(data)?;
-        if compressedData.is_empty() {
-            return Ok(String::new());
-        }
-        let mut decoder = DeflateDecoder::new(compressedData.as_slice());
-        let mut output = Vec::new();
-        decoder
-            .read_to_end(&mut output)
-            .map_err(|error| error.to_string())?;
-        String::from_utf8(output).map_err(|error| error.to_string())
-    })();
-    match result {
-        Ok(value) => value,
-        Err(error) => nativeErrorJson(error),
+pub fn decompress(data: &str, algorithm: &str) -> Result<String, String> {
+    if algorithm.to_ascii_lowercase() != "deflate" {
+        return Err(format!(
+            "Unsupported algorithm: {algorithm}. Only 'deflate' is supported."
+        ));
     }
+    let compressedData = readBinaryOrBase64(data)?;
+    if compressedData.is_empty() {
+        return Ok(String::new());
+    }
+    let mut decoder = DeflateDecoder::new(compressedData.as_slice());
+    let mut output = Vec::new();
+    decoder
+        .read_to_end(&mut output)
+        .map_err(|error| error.to_string())?;
+    String::from_utf8(output).map_err(|error| error.to_string())
 }
 
+/// Executes one crypto operation using an already-structured argument array.
 #[allow(non_snake_case)]
-pub fn crypto(algorithm: &str, operation: &str, argsJson: &str) -> String {
-    let result = (|| -> Result<String, String> {
-        let args =
-            serde_json::from_str::<Vec<String>>(argsJson).map_err(|error| error.to_string())?;
-        match algorithm.to_ascii_lowercase().as_str() {
-            "md5" => {
-                let input = args.get(0).cloned().unwrap_or_default();
-                let mut hasher = Md5::new();
-                hasher.update(input.as_bytes());
-                Ok(format!("{:x}", hasher.finalize()))
+pub fn crypto(algorithm: &str, operation: &str, args: &[String]) -> Result<String, String> {
+    match algorithm.to_ascii_lowercase().as_str() {
+        "md5" => {
+            let [input] = args else {
+                return Err("MD5 hash requires exactly one input string".to_string());
+            };
+            if !operation.eq_ignore_ascii_case("hash") {
+                return Err(format!("Unknown MD5 operation: {operation}"));
             }
-            "aes" => match operation.to_ascii_lowercase().as_str() {
-                "decrypt" => {
-                    let data = args.get(0).cloned().unwrap_or_default();
-                    let key = args
-                        .get(1)
-                        .ok_or_else(|| "Missing key for AES decryption".to_string())?;
-                    decryptAesEcbNoPaddingPkcs7(&data, key)
-                }
-                _ => Err(format!("Unknown AES operation: {operation}")),
-            },
-            _ => Err(format!("Unknown algorithm: {algorithm}")),
+            let mut hasher = Md5::new();
+            hasher.update(input.as_bytes());
+            Ok(format!("{:x}", hasher.finalize()))
         }
-    })();
-    match result {
-        Ok(value) => value,
-        Err(error) => nativeErrorJson(error),
+        "aes" => match operation.to_ascii_lowercase().as_str() {
+            "decrypt" => {
+                let [data, key] = args else {
+                    return Err("AES decryption requires data and key strings".to_string());
+                };
+                decryptAesEcbNoPaddingPkcs7(data, key)
+            }
+            _ => Err(format!("Unknown AES operation: {operation}")),
+        },
+        _ => Err(format!("Unknown algorithm: {algorithm}")),
     }
 }
 
+/// Decrypts AES ECB bytes and validates the declared key and padding.
 #[allow(non_snake_case)]
 fn decryptAesEcbNoPaddingPkcs7(data: &str, key: &str) -> Result<String, String> {
     let mut decodedData = base64::engine::general_purpose::STANDARD
@@ -191,6 +150,7 @@ fn decryptAesEcbNoPaddingPkcs7(data: &str, key: &str) -> Result<String, String> 
     String::from_utf8(decodedData).map_err(|error| error.to_string())
 }
 
+/// Decrypts each complete AES block using the selected cipher type.
 #[allow(non_snake_case)]
 fn decryptAesBlocks<C>(data: &mut [u8], key: &[u8]) -> Result<(), String>
 where
@@ -203,10 +163,12 @@ where
     Ok(())
 }
 
+/// Executes one image operation using owned structured argument values.
 #[allow(non_snake_case)]
-pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Value, String> {
-    let args = serde_json::from_str::<Vec<serde_json::Value>>(argsJson)
-        .map_err(|error| error.to_string())?;
+pub fn imageProcessing(
+    operation: &str,
+    args: &[serde_json::Value],
+) -> Result<serde_json::Value, String> {
     match operation.to_ascii_lowercase().as_str() {
         "read" => {
             let data = args
@@ -224,8 +186,8 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
             Ok(serde_json::Value::String(id))
         }
         "create" => {
-            let width = jsonIntArg(&args, 0)?;
-            let height = jsonIntArg(&args, 1)?;
+            let width = jsonIntArg(args, 0)?;
+            let height = jsonIntArg(args, 1)?;
             let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
                 width,
                 height,
@@ -239,11 +201,11 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
             Ok(serde_json::Value::String(id))
         }
         "crop" => {
-            let id = jsonStringArg(&args, 0)?;
-            let x = jsonIntArg(&args, 1)?;
-            let y = jsonIntArg(&args, 2)?;
-            let width = jsonIntArg(&args, 3)?;
-            let height = jsonIntArg(&args, 4)?;
+            let id = jsonStringArg(args, 0)?;
+            let x = jsonIntArg(args, 1)?;
+            let y = jsonIntArg(args, 2)?;
+            let width = jsonIntArg(args, 3)?;
+            let height = jsonIntArg(args, 4)?;
             let cropped = {
                 let guard = bitmapRegistry()
                     .lock()
@@ -261,10 +223,10 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
             Ok(serde_json::Value::String(newId))
         }
         "composite" => {
-            let baseId = jsonStringArg(&args, 0)?;
-            let srcId = jsonStringArg(&args, 1)?;
-            let x = jsonIntArg(&args, 2)? as i64;
-            let y = jsonIntArg(&args, 3)? as i64;
+            let baseId = jsonStringArg(args, 0)?;
+            let srcId = jsonStringArg(args, 1)?;
+            let x = jsonIntArg(args, 2)? as i64;
+            let y = jsonIntArg(args, 3)? as i64;
             let mut guard = bitmapRegistry()
                 .lock()
                 .expect("bitmap registry mutex poisoned");
@@ -279,7 +241,7 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
             Ok(serde_json::Value::Null)
         }
         "getwidth" => {
-            let id = jsonStringArg(&args, 0)?;
+            let id = jsonStringArg(args, 0)?;
             let guard = bitmapRegistry()
                 .lock()
                 .expect("bitmap registry mutex poisoned");
@@ -290,7 +252,7 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
             Ok(serde_json::Value::Number(serde_json::Number::from(width)))
         }
         "getheight" => {
-            let id = jsonStringArg(&args, 0)?;
+            let id = jsonStringArg(args, 0)?;
             let guard = bitmapRegistry()
                 .lock()
                 .expect("bitmap registry mutex poisoned");
@@ -301,11 +263,11 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
             Ok(serde_json::Value::Number(serde_json::Number::from(height)))
         }
         "getbase64" => {
-            let id = jsonStringArg(&args, 0)?;
-            let mime = args
-                .get(1)
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("image/jpeg");
+            let id = jsonStringArg(args, 0)?;
+            let mime = jsonStringArg(args, 1)?;
+            if mime != "image/png" && mime != "image/jpeg" {
+                return Err(format!("Unsupported image output MIME type: {mime}"));
+            }
             let guard = bitmapRegistry()
                 .lock()
                 .expect("bitmap registry mutex poisoned");
@@ -329,7 +291,7 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
             ))
         }
         "release" => {
-            let id = jsonStringArg(&args, 0)?;
+            let id = jsonStringArg(args, 0)?;
             bitmapRegistry()
                 .lock()
                 .expect("bitmap registry mutex poisoned")
@@ -340,6 +302,7 @@ pub fn imageProcessing(operation: &str, argsJson: &str) -> Result<serde_json::Va
     }
 }
 
+/// Requires a string at the exact image-operation argument position.
 #[allow(non_snake_case)]
 fn jsonStringArg(args: &[serde_json::Value], index: usize) -> Result<String, String> {
     args.get(index)
@@ -348,6 +311,7 @@ fn jsonStringArg(args: &[serde_json::Value], index: usize) -> Result<String, Str
         .ok_or_else(|| format!("Argument {index} must be a string"))
 }
 
+/// Requires a non-negative integer at the exact image-operation argument position.
 #[allow(non_snake_case)]
 fn jsonIntArg(args: &[serde_json::Value], index: usize) -> Result<u32, String> {
     let value = args
@@ -355,13 +319,6 @@ fn jsonIntArg(args: &[serde_json::Value], index: usize) -> Result<u32, String> {
         .and_then(serde_json::Value::as_i64)
         .ok_or_else(|| format!("Argument {index} must be an integer"))?;
     u32::try_from(value).map_err(|_| format!("Argument {index} must be an integer"))
-}
-
-/// Serializes one SDK tool result into the fixed JavaScript result envelope.
-#[allow(non_snake_case)]
-#[cfg(test)]
-fn serializeToolExecutionResult(result: &JsToolCallResult) -> String {
-    toolExecutionResultValue(result.clone()).to_string()
 }
 
 /// Builds the existing tool envelope without producing JSON text or cloning data.
@@ -416,30 +373,9 @@ fn serializeToolResultData(result: JsToolCallResultData) -> SerializedToolResult
     }
 }
 
-/// Executes one JavaScript tool call through the Rust runtime supplied by the caller.
-#[allow(non_snake_case)]
-pub async fn callToolSerialized(
-    toolRuntime: &dyn JsExecutionHost,
-    toolType: &str,
-    toolName: &str,
-    paramsJson: &str,
-) -> (String, bool) {
-    if toolName.trim().is_empty() {
-        return (buildToolErrorJson("Tool name cannot be empty"), true);
-    }
-
-    let parsed = match parseToolCall(toolType, toolName, paramsJson) {
-        Ok(value) => value,
-        Err(error) => return (buildToolErrorJson(&error), true),
-    };
-    let result = toolRuntime.execute_tool_call(parsed).await;
-    let isError = !result.success;
-    (toolExecutionResultValue(result).to_string(), isError)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{serializeToolExecutionResult, BINARY_DATA_THRESHOLD, BINARY_HANDLE_PREFIX};
+    use super::{toolExecutionResultValue, BINARY_DATA_THRESHOLD, BINARY_HANDLE_PREFIX};
     use operit_plugin_sdk::javascript::{JsToolCallResult, JsToolCallResultData};
     use serde_json::Value;
 
@@ -452,6 +388,7 @@ mod tests {
         }
     }
 
+    /// Preserves application strings without interpreting their JSON-looking contents.
     #[test]
     fn string_result_data_stays_literal_string_for_js_tool_result() {
         let payload = r#"{"__type":"PackageOwnedType","value":"plain package json"}"#;
@@ -459,14 +396,14 @@ mod tests {
             payload.to_string(),
         )));
 
-        let serialized: Value =
-            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+        let serialized = toolExecutionResultValue(result);
 
         assert_eq!(serialized["success"], Value::Bool(true));
         assert_eq!(serialized["data"], Value::String(payload.to_string()));
         assert!(serialized.get("dataType").is_none());
     }
 
+    /// Keeps structured object fields in the direct tool result envelope.
     #[test]
     fn structured_result_data_serializes_json_object_for_js_tool_result() {
         let result = successResult(JsToolCallResultData::Value(serde_json::json!({
@@ -479,8 +416,7 @@ mod tests {
             "timedOut": false
         })));
 
-        let serialized: Value =
-            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+        let serialized = toolExecutionResultValue(result);
 
         assert_eq!(serialized["success"], Value::Bool(true));
         assert_eq!(serialized["data"]["__type"], "TerminalCommandResultData");
@@ -488,17 +424,18 @@ mod tests {
         assert!(serialized.get("dataType").is_none());
     }
 
+    /// Preserves the explicit base64 metadata of small binary results.
     #[test]
     fn binary_result_data_serializes_base64_metadata_for_js_tool_result() {
         let result = successResult(JsToolCallResultData::Binary(b"hello".to_vec()));
 
-        let serialized: Value =
-            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+        let serialized = toolExecutionResultValue(result);
 
         assert_eq!(serialized["data"], "aGVsbG8=");
         assert_eq!(serialized["dataType"], "base64");
     }
 
+    /// Transfers large binary results through the explicit owned handle contract.
     #[test]
     fn large_binary_result_data_serializes_handle_for_js_tool_result() {
         let result = successResult(JsToolCallResultData::Binary(vec![
@@ -506,8 +443,7 @@ mod tests {
             BINARY_DATA_THRESHOLD + 1
         ]));
 
-        let serialized: Value =
-            serde_json::from_str(&serializeToolExecutionResult(&result)).expect("tool result JSON");
+        let serialized = toolExecutionResultValue(result);
         let data = serialized["data"].as_str().expect("binary handle");
 
         assert!(data.starts_with(BINARY_HANDLE_PREFIX));
