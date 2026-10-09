@@ -45,6 +45,10 @@ impl RuntimeStorageHost for OhosRuntimeStorageHost {
         self.inner.writeBytes(path, content)
     }
 
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.inner.writeBytesAtomically(path, content)
+    }
+
     /// Appends bytes to OpenHarmony runtime storage.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         self.inner.appendBytes(path, content)

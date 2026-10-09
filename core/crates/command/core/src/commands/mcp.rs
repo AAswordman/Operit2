@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Runs MCP server management commands.
-pub fn run_mcp_command(
+pub async fn run_mcp_command(
     application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -35,7 +35,7 @@ pub fn run_mcp_command(
         Some("remove") => remove_mcp_server(context, args, output),
         Some("enable") => set_mcp_enabled(context, args, true, output),
         Some("disable") => set_mcp_enabled(context, args, false, output),
-        Some("start") => start_mcp_server(application, args, output),
+        Some("start") => start_mcp_server(application, args, output).await,
         Some("kill") => kill_mcp_server(application, args, output),
         Some("tools") => print_mcp_tools(context, args, output),
         Some("config") => print_mcp_config(context, args, output),
@@ -45,7 +45,7 @@ pub fn run_mcp_command(
         Some("install-zip") => install_mcp_from_zip(application, args, output),
         Some("meta") => print_mcp_metadata(context, args, output),
         Some("meta-set") => save_mcp_metadata(context, args, output),
-        Some("describe") => generate_mcp_description(application, args, output),
+        Some("describe") => generate_mcp_description(application, args, output).await,
         Some(_) | None => {
             print_mcp_usage(output);
             Ok(())
@@ -214,7 +214,7 @@ fn set_mcp_enabled(
 }
 
 /// Starts one MCP server and prints startup progress.
-fn start_mcp_server(
+async fn start_mcp_server(
     application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -228,9 +228,11 @@ fn start_mcp_server(
     let timeoutMs = timeoutSeconds.max(1) as u64 * 1000;
     let starter = MCPStarter::new(context.clone());
     let mut statuses = Vec::new();
-    let started = starter.startPluginWithTimeout(id, timeoutMs, |status| {
-        statuses.push(status);
-    });
+    let started = starter
+        .startPluginWithTimeout(id, timeoutMs, |status| {
+            statuses.push(status);
+        })
+        .await;
     let mut statusItems = Vec::new();
     for status in &statuses {
         print_start_status(status, output);
@@ -509,7 +511,7 @@ fn save_mcp_metadata(
 }
 
 /// Generates and saves an MCP description.
-fn generate_mcp_description(
+async fn generate_mcp_description(
     application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -519,21 +521,11 @@ fn generate_mcp_description(
     let metadata = mcp_local_server(&context)
         .getPluginMetadata(id)
         .ok_or_else(|| format!("MCP metadata not found: {id}"))?;
-    // The command dispatch runs on a tokio worker thread; creating a nested
-    // runtime and calling block_on here panics ("Cannot start a runtime from
-    // within a runtime"). block_in_place switches this worker into blocking
-    // mode, which allows driving the async description generation to
-    // completion via Handle::block_on.
     let toolSupport = application.toolHandler.runtimeSupport();
-    let contextForDescription = context.clone();
-    let idForDescription = id.to_string();
-    let description = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(
-            MCPRepository::getInstance(&contextForDescription, toolSupport)
-                .generatePluginDescription(&idForDescription, &metadata.name),
-        )
-    })
-    .map_err(|error| error.to_string())?;
+    let description = MCPRepository::getInstance(&context, toolSupport)
+        .generatePluginDescription(id, &metadata.name)
+        .await
+        .map_err(|error| error.to_string())?;
     mcp_local_server(&context).addOrUpdatePluginMetadata(
         id,
         PluginMetadata {

@@ -1,69 +1,77 @@
-//! Incremental POST responses for native Streamable HTTP MCP transports.
+//! Incremental POST responses for Host-provided Streamable HTTP MCP transports.
 use super::*;
 use operit_host_api::HttpResponseHead;
 
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
-enum ResponseEvent {
+pub(super) enum ResponseEvent {
     Head(HttpResponseHead),
     Bytes(Vec<u8>),
     Closed(Result<(), String>),
 }
 
-/// Cancels pending headers and body reads on success, protocol error, or timeout.
-struct ResponseStream {
+/// An asynchronous response owned by its Host, cancelled on every exit path.
+pub(super) struct ResponseStream {
     host: Arc<dyn HttpHost>,
     id: String,
+    events: tokio::sync::mpsc::UnboundedReceiver<ResponseEvent>,
 }
 
-impl Drop for ResponseStream {
-    fn drop(&mut self) {
-        let _ = self.host.closeHttpByteStream(&self.id);
+impl ResponseStream {
+    pub(super) fn open(host: Arc<dyn HttpHost>, request: HttpRequestData) -> Result<Self, String> {
+        let id = format!("mcp-http-{}", uuid::Uuid::new_v4());
+        let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+        let headSender = sender.clone();
+        let chunkSender = sender.clone();
+        host.openHttpResponseStream(
+            id.clone(), request,
+            Arc::new(move |head| { let _ = headSender.send(ResponseEvent::Head(head)); }),
+            Arc::new(move |bytes| { let _ = chunkSender.send(ResponseEvent::Bytes(bytes)); }),
+            Arc::new(move |result| { let _ = sender.send(ResponseEvent::Closed(result)); }),
+        ).map_err(|error| error.to_string())?;
+        Ok(Self { host, id, events })
+    }
+
+    pub(super) async fn next(&mut self, deadline: &StartupDeadline) -> Result<ResponseEvent, String> {
+        let remaining = deadline.remainingMs()
+            .map_err(|error| format!("Remote MCP HTTP request timed out: {error}"))?;
+        tokio::select! {
+            biased;
+            event = self.events.recv() => {
+                // A ready event must not let an expired deadline bypass the budget.
+                deadline.remainingMs()?;
+                event.ok_or_else(|| "Remote MCP HTTP stream disconnected".to_string())
+            }
+            result = deadline.scheduler.waitForHostRuntimeDelay(remaining) => {
+                result.map_err(|error| error.to_string())?;
+                Err("Remote MCP HTTP request timed out".to_string())
+            }
+        }
     }
 }
 
-#[allow(non_snake_case)]
-pub(super) fn sendJsonRpc(
-    session: &mut RemoteMcpSession,
-    payload: Value,
-    expectedId: Option<u64>,
-    timeoutMs: u64,
+impl Drop for ResponseStream {
+    fn drop(&mut self) { let _ = self.host.closeHttpByteStream(&self.id); }
+}
+
+pub(super) async fn sendJsonRpc(
+    session: &mut RemoteMcpSession, payload: Value, expectedId: Option<u64>, timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
-    let id = format!("mcp-http-{}", uuid::Uuid::new_v4());
-    let (sender, events) = mpsc::channel();
-    let headSender = sender.clone();
-    let chunkSender = sender.clone();
-    let mut request = remoteHttpRequest(
-        "POST",
-        &session.endpoint,
-        buildRemoteHeaders(session, true)?,
-        serde_json::to_vec(&payload).map_err(|error| error.to_string())?,
-        timeoutMs,
-    );
-    // The protocol deadline, not a rounded host timeout, bounds the whole operation.
+    let endpoint = session.endpoint.clone();
+    sendJsonRpcTo(session, payload, expectedId, timeoutMs, &endpoint).await
+}
+
+/// Legacy SSE POSTs only acknowledge delivery; their responses arrive on the GET stream.
+pub(super) async fn sendJsonRpcTo(
+    session: &mut RemoteMcpSession, payload: Value, expectedId: Option<u64>, timeoutMs: u64,
+    endpoint: &str,
+) -> Result<Option<Value>, String> {
+    let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
+    let mut request = remoteHttpRequest("POST", endpoint, buildRemoteHeaders(session, true)?,
+        serde_json::to_vec(&payload).map_err(|error| error.to_string())?, timeoutMs);
     request.readTimeoutSeconds = 0;
-    session
-        .httpHost
-        .openHttpResponseStream(
-            id.clone(),
-            request,
-            Arc::new(move |head| {
-                let _ = headSender.send(ResponseEvent::Head(head));
-            }),
-            Arc::new(move |bytes| {
-                let _ = chunkSender.send(ResponseEvent::Bytes(bytes));
-            }),
-            Arc::new(move |result| {
-                let _ = sender.send(ResponseEvent::Closed(result));
-            }),
-        )
-        .map_err(|error| error.to_string())?;
-    let _stream = ResponseStream {
-        host: session.httpHost.clone(),
-        id,
-    };
-    let head = match nextEvent(&events, deadline)? {
+    let mut stream = ResponseStream::open(session.httpHost.clone(), request)?;
+    let head = match stream.next(&deadline).await? {
         ResponseEvent::Head(head) => head,
         ResponseEvent::Closed(Err(error)) => return Err(error),
         _ => {
@@ -74,11 +82,11 @@ pub(super) fn sendJsonRpc(
     };
     if !isSuccess(head.statusCode) {
         // Bound diagnostics by the same deadline; never wait for an endless error body.
-        let detail = match nextEvent(&events, deadline) {
+        let detail = match stream.next(&deadline).await {
             Ok(ResponseEvent::Bytes(bytes)) => {
                 let mut preview = bytes[..bytes.len().min(4096)].to_vec();
                 while preview.len() < 4096 {
-                    match events.try_recv() {
+                    match stream.events.try_recv() {
                         Ok(ResponseEvent::Bytes(bytes)) => {
                             preview
                                 .extend_from_slice(&bytes[..bytes.len().min(4096 - preview.len())]);
@@ -120,12 +128,12 @@ pub(super) fn sendJsonRpc(
     };
     let mut decoder = ResponseDecoder::new(sse, expectedId);
     loop {
-        match nextEvent(&events, deadline)? {
+        match stream.next(&deadline).await? {
             ResponseEvent::Bytes(bytes) => {
                 if let Some(response) = decoder.push(&bytes)? {
-                    if Instant::now() >= deadline {
-                        return Err("Remote MCP HTTP request timed out".to_string());
-                    }
+                    deadline
+                        .remainingMs()
+                        .map_err(|error| format!("Remote MCP HTTP request timed out: {error}"))?;
                     return Ok(Some(response));
                 }
             }
@@ -138,18 +146,6 @@ pub(super) fn sendJsonRpc(
             }
         }
     }
-}
-
-#[allow(non_snake_case)]
-fn nextEvent(events: &Receiver<ResponseEvent>, deadline: Instant) -> Result<ResponseEvent, String> {
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .filter(|remaining| !remaining.is_zero())
-        .ok_or_else(|| "Remote MCP HTTP request timed out".to_string())?;
-    events.recv_timeout(remaining).map_err(|error| match error {
-        mpsc::RecvTimeoutError::Timeout => "Remote MCP HTTP request timed out".to_string(),
-        mpsc::RecvTimeoutError::Disconnected => "Remote MCP HTTP stream disconnected".to_string(),
-    })
 }
 
 struct ResponseDecoder {

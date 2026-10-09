@@ -397,6 +397,35 @@ impl NativeRuntimeStorageHost {
         )))
     }
 
+    /// Opens a staging writer, optionally retaining identity-private catalog permissions.
+    fn createWriteSessionInternal(
+        &self,
+        path: &str,
+        privateCatalog: bool,
+    ) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
+        let targetPath = self.resolveFile(path)?;
+        let parent = targetPath
+            .parent()
+            .ok_or_else(|| HostError::new("Runtime storage file has no parent directory"))?;
+        fs::create_dir_all(storageFsPath(parent)?)?;
+        let temporaryPath = Self::writeTemporaryPath(&targetPath)?;
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        if privateCatalog {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+        }
+        let file = options.open(storageFsPath(&temporaryPath)?)?;
+        Ok(Box::new(NativeRuntimeStorageWriteSession {
+            targetPath,
+            temporaryPath,
+            file: Some(file),
+        }))
+    }
+
     /// Creates a unique sibling path used while one storage file is streamed.
     fn writeTemporaryPath(targetPath: &Path) -> HostResult<PathBuf> {
         let parent = targetPath
@@ -413,21 +442,7 @@ impl NativeRuntimeStorageHost {
 impl RuntimeStorageWriteHost for NativeRuntimeStorageHost {
     /// Opens one private streaming write session for a validated storage path.
     fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
-        let targetPath = self.resolveFile(path)?;
-        let parent = targetPath
-            .parent()
-            .ok_or_else(|| HostError::new("Runtime storage file has no parent directory"))?;
-        fs::create_dir_all(storageFsPath(parent)?)?;
-        let temporaryPath = Self::writeTemporaryPath(&targetPath)?;
-        let file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(storageFsPath(&temporaryPath)?)?;
-        Ok(Box::new(NativeRuntimeStorageWriteSession {
-            targetPath,
-            temporaryPath,
-            file: Some(file),
-        }))
+        self.createWriteSessionInternal(path, false)
     }
 }
 
@@ -458,6 +473,13 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         let mut session = self.createWriteSession(path)?;
         session.writeChunk(content)?;
         session.commitFast()
+    }
+
+    /// Flushes and atomically replaces an identity-private catalog.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let mut session = self.createWriteSessionInternal(path, true)?;
+        session.writeChunk(content)?;
+        session.commit()
     }
 
     /// Appends bytes to a native runtime storage file.

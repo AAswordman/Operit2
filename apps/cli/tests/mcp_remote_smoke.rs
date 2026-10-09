@@ -10,17 +10,24 @@ use operit_tools::tools::mcp_runtime::plugins::{
 use serde_json::{json, Value};
 
 #[cfg(target_os = "linux")]
-use operit_host_linux_native::LinuxHttpHost as NativeHttpHost;
+use operit_host_linux_native::{
+    LinuxHostRuntimeTaskSchedulerHost as NativeTaskScheduler, LinuxHttpHost as NativeHttpHost,
+};
 #[cfg(target_os = "macos")]
-use operit_host_macos_native::MacosHttpHost as NativeHttpHost;
+use operit_host_macos_native::{
+    MacosHostRuntimeTaskSchedulerHost as NativeTaskScheduler, MacosHttpHost as NativeHttpHost,
+};
 #[cfg(target_os = "windows")]
-use operit_host_windows_native::WindowsHttpHost as NativeHttpHost;
+use operit_host_windows_native::{
+    WindowsHostRuntimeTaskSchedulerHost as NativeTaskScheduler, WindowsHttpHost as NativeHttpHost,
+};
 
-#[test]
+#[tokio::test]
 #[ignore = "requires public MCP services and network access"]
-fn public_remote_mcp_services() {
+async fn public_remote_mcp_services() {
     let context = HostManager {
         httpHost: Some(Arc::new(NativeHttpHost::new())),
+        hostRuntimeTaskSchedulerHost: Some(Arc::new(NativeTaskScheduler::new())),
         ..HostManager::default()
     };
     let bridge = MCPBridge::getInstance(&context);
@@ -55,7 +62,7 @@ fn public_remote_mcp_services() {
             tool,
             arguments,
             30_000,
-        ));
+        ).await);
     }
     {
         reports.push(check(
@@ -67,7 +74,7 @@ fn public_remote_mcp_services() {
             "search_docs",
             json!({"query": "simple price", "language": "typescript"}),
             8_000,
-        ));
+        ).await);
     }
     println!("{}", serde_json::to_string_pretty(&reports).unwrap());
     assert!(
@@ -77,7 +84,7 @@ fn public_remote_mcp_services() {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn check(
+async fn check(
     bridge: &MCPBridge,
     context: &HostManager,
     name: &str,
@@ -99,7 +106,7 @@ fn check(
         BTreeMap::new(),
     );
     let client = MCPBridgeClient::new(context.clone(), id.clone());
-    let connected = client.connectWithSpawnTimeoutMs(timeout_ms);
+    let connected = client.connectWithSpawnTimeoutMs(timeout_ms).await;
     let mut report = json!({"name": name, "endpoint": endpoint, "transport": transport,
         "registered": registered["success"], "connected": connected,
         "connection_error": client.getLastConnectionFailureDetail(), "passed": false});
@@ -111,12 +118,12 @@ fn check(
         report["tools"] = json!(info.toolNames);
         report["client_tool_count"] = json!(discovered.len());
         if info.toolNames.iter().any(|name| name == tool) {
-            let call = client.callTool(tool, arguments.clone());
+            let call = client.callTool(tool, arguments.clone()).await;
             report["call"] = summarize(&call);
             // A second request checks session/header continuity, not automatic replay.
-            let second = client.callTool(tool, arguments);
+            let second = client.callTool(tool, arguments).await;
             report["second_call"] = summarize(&second);
-            let invalid = client.callTool("operit_smoke_nonexistent_tool", json!({}));
+            let invalid = client.callTool("operit_smoke_nonexistent_tool", json!({})).await;
             report["unknown_tool_rejected"] = json!(invalid["success"] == false);
             report["passed"] = json!(
                 info.ready

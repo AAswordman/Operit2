@@ -326,7 +326,7 @@ fn vfsForWorkspace(context: &HostManager) -> Result<VisualFileSystem, String> {
             .fileSystemHost
             .clone()
             .ok_or_else(|| "FileSystemHost is not registered for workspace commands".to_string())?,
-        PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot),
+        PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot, runtimeStorageHost.clone()),
     ))
 }
 

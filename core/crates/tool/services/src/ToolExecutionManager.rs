@@ -355,7 +355,7 @@ impl ToolExecutionManager {
                 continue;
             }
 
-            if !toolHandler.getToolExecutorOrActivate(&invocation.tool.name) {
+            if !toolHandler.getToolExecutorOrActivate(&invocation.tool.name).await {
                 let errorMessage = Self::buildToolNotAvailableErrorMessage(&invocation.tool.name);
                 let content = ConversationMarkupManager::createToolNotAvailableError(
                     &invocation.tool.name,

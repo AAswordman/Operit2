@@ -8,7 +8,7 @@ use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{
-    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolValidationResult,
+    AITool, ToolAccessSpec, ToolBoundary, ToolEffect, AsyncToolExecutor, ToolInvocationFuture, ToolValidationResult,
 };
 use operit_util::AppLogger::AppLogger;
 
@@ -161,7 +161,7 @@ impl MCPToolExecutor {
 
     #[allow(non_snake_case)]
     fn getToolInfo(&self, serverName: &str, toolName: &str) -> Option<Value> {
-        let client = self.mcpManager.getOrCreateClient(serverName)?;
+        let client = self.mcpManager.getClientForMetadata(serverName)?;
         client
             .getTools()
             .into_iter()
@@ -230,7 +230,7 @@ impl MCPToolExecutor {
 
     #[allow(non_snake_case)]
     /// Invokes one MCP tool and converts its structured response into tool result text.
-    pub fn invoke(&self, tool: &AITool) -> ToolResult {
+    pub async fn invoke(&self, tool: &AITool) -> ToolResult {
         let toolNameParts = tool.name.split(':').collect::<Vec<_>>();
         if toolNameParts.len() < 2 {
             return ToolResult {
@@ -244,7 +244,7 @@ impl MCPToolExecutor {
         }
         let serverName = toolNameParts[0];
         let actualToolName = toolNameParts[1..].join(":");
-        let Some(mcpClient) = self.mcpManager.getOrCreateClient(serverName) else {
+        let Some(mcpClient) = self.mcpManager.getOrCreateClient(serverName).await else {
             let error = self
                 .mcpManager
                 .getLastConnectionFailureReason(serverName)
@@ -279,7 +279,7 @@ impl MCPToolExecutor {
             .collect::<BTreeMap<_, _>>();
         let toolInfo = self.getToolInfo(serverName, &actualToolName);
         let convertedParameters = Self::convertParameterTypes(parameters, toolInfo.as_ref());
-        let response = mcpClient.callToolSync(&actualToolName, convertedParameters);
+        let response = mcpClient.callToolWithArguments(&actualToolName, convertedParameters).await;
         if response
             .get("success")
             .and_then(Value::as_bool)
@@ -313,7 +313,7 @@ impl MCPToolExecutor {
     }
 }
 
-impl ToolExecutor for MCPToolExecutor {
+impl AsyncToolExecutor for MCPToolExecutor {
     fn validateParameters(&self, tool: &AITool) -> ToolValidationResult {
         let toolNameParts = tool.name.split(':').collect::<Vec<_>>();
         if toolNameParts.len() < 2 {
@@ -362,8 +362,8 @@ impl ToolExecutor for MCPToolExecutor {
         })
     }
 
-    fn invokeAndStream(&mut self, tool: &AITool) -> Vec<ToolResult> {
-        vec![self.invoke(tool)]
+    fn invokeAndStreamAsync<'a>(&'a mut self, tool: &'a AITool) -> ToolInvocationFuture<'a> {
+        Box::pin(async move { vec![self.invoke(tool).await] })
     }
 }
 

@@ -48,7 +48,7 @@ pub async fn run_core_command(
         "package" => package::run_package_command(application, &args[1..], output).await,
         "plugin" => plugin::run_plugin_command(application, &args[1..], output).await,
         "skill" => skill::run_skill_command(application, &args[1..], output),
-        "mcp" => mcp::run_mcp_command(application, &args[1..], output),
+        "mcp" => mcp::run_mcp_command(application, &args[1..], output).await,
         "market" => market::run_market_command(application, &args[1..], output),
         "host" => host::run_host_command(application.hostManager.clone(), &args[1..], output),
         "log" => log::run_log_command(&args[1..], output),

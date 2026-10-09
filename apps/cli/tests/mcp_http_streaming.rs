@@ -1,21 +1,28 @@
 //! Local integration tests for the production Streamable HTTP client.
 use operit_host_api::HostManager::HostManager;
 #[cfg(target_os = "linux")]
-use operit_host_linux_native::LinuxHttpHost as NativeHttpHost;
+use operit_host_linux_native::{
+    LinuxHostRuntimeTaskSchedulerHost as NativeTaskScheduler, LinuxHttpHost as NativeHttpHost,
+};
 #[cfg(target_os = "macos")]
-use operit_host_macos_native::MacosHttpHost as NativeHttpHost;
+use operit_host_macos_native::{
+    MacosHostRuntimeTaskSchedulerHost as NativeTaskScheduler, MacosHttpHost as NativeHttpHost,
+};
 #[cfg(target_os = "windows")]
-use operit_host_windows_native::WindowsHttpHost as NativeHttpHost;
+use operit_host_windows_native::{
+    WindowsHostRuntimeTaskSchedulerHost as NativeTaskScheduler, WindowsHttpHost as NativeHttpHost,
+};
 use operit_tools::tools::mcp_runtime::plugins::{
     MCPBridge::MCPBridge, MCPBridgeClient::MCPBridgeClient,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
-#[test]
-fn streamed_responses_and_deadlines() {
+#[tokio::test]
+async fn streamed_responses_and_deadlines() {
     let (_fixture, base) = fixture_server();
     let context = HostManager {
         httpHost: Some(Arc::new(NativeHttpHost::new())),
+        hostRuntimeTaskSchedulerHost: Some(Arc::new(NativeTaskScheduler::new())),
         ..HostManager::default()
     };
     let bridge = MCPBridge::getInstance(&context);
@@ -43,12 +50,12 @@ fn streamed_responses_and_deadlines() {
         );
         let client = MCPBridgeClient::new(context.clone(), name.clone());
         let start = Instant::now();
-        let connected = client.connectWithSpawnTimeoutMs(200);
+        let connected = client.connectWithSpawnTimeoutMs(200).await;
         let elapsed = start.elapsed().as_millis();
         let calls = if connected {
             vec![
-                client.callTool("echo", json!({})),
-                client.callTool("echo", json!({})),
+                client.callTool("echo", json!({})).await,
+                client.callTool("echo", json!({})).await,
             ]
         } else {
             Vec::new()

@@ -159,6 +159,7 @@ impl Channel {
 
 /// Multiplexes correlated Call, Watch, and Push responses over one authenticated channel.
 pub(super) struct MultiplexedChannel {
+    scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>,
     channel: Arc<super::LiveChannel>,
     pending: Mutex<BTreeMap<String, oneshot::Sender<Result<CoreLinkResponse, CoreLinkError>>>>,
     watches: Mutex<BTreeMap<String, mpsc::UnboundedSender<CoreEvent>>>,
@@ -200,6 +201,7 @@ impl MultiplexedChannel {
     /// Starts a response demultiplexer for one authenticated raw channel.
     pub(super) fn start(channel: Arc<super::LiveChannel>, scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>) -> Result<Arc<Self>, CoreLinkError> {
         let multiplexed = Arc::new(Self {
+            scheduler: scheduler.clone(),
             channel,
             pending: Mutex::new(BTreeMap::new()),
             watches: Mutex::new(BTreeMap::new()),
@@ -257,11 +259,8 @@ impl MultiplexedChannel {
         let response = self.exchange(CoreLinkRequest::Watch(CoreLinkWatchRequest::Open(request))).await;
         match response {
             Ok(CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Opened), .. }) => {
-                let stream = CoreEventStream::new(receiver).withOnClose({
-                    let channel = self.clone();
-                    let requestId = requestId.clone();
-                    move || { tokio::spawn(async move { channel.closeWatch(requestId).await; }); }
-                });
+                let stream = CoreEventStream::new(receiver)
+                    .withOnClose(self.watchCloseCallback(requestId.clone()));
                 Ok((lease, stream))
             }
             Ok(CoreLinkResponse::Watch { result: Err(error), .. }) => {
@@ -275,6 +274,23 @@ impl MultiplexedChannel {
             Err(error) => {
                 self.watches.lock().await.remove(&requestId);
                 Err(error)
+            }
+        }
+    }
+
+    /// A stream can be dropped outside any Tokio executor, including a browser turn.
+    fn watchCloseCallback(self: &Arc<Self>, requestId: String) -> impl FnOnce() + Send + 'static {
+        let channel = self.clone();
+        let scheduler = self.scheduler.clone();
+        move || {
+            let closing = channel.clone();
+            if let Err(hostError) = scheduler.scheduleHostRuntimeAsyncTask(
+                "peer-multiplexed-watch-close", Box::new(move || Box::pin(async move {
+                    closing.closeWatch(requestId).await;
+                })),
+            ) {
+                // Report failure instead of panicking or silently selecting a global executor.
+                *channel.failure.lock().unwrap() = Some(error(hostError.to_string()));
             }
         }
     }
@@ -374,3 +390,7 @@ mod aead_interop_tests {
         assert!(cipher.seal(&mut Vec::new()).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "crypto_scheduler_tests.rs"]
+mod scheduler_tests;

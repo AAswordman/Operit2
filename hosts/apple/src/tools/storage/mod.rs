@@ -146,6 +146,12 @@ impl RuntimeStorageHost for AppleRuntimeStorageHost {
         Ok(())
     }
 
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        operit_host_native_common::NativeRuntimeStorageHost::new(
+            self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+        ).writeBytesAtomically(path, content)
+    }
+
     /// Appends bytes to an Apple runtime storage file.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {

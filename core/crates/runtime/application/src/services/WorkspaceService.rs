@@ -407,6 +407,7 @@ impl WorkspaceService {
             PathMapper::new(
                 self.runtimeStoreRoot.clone(),
                 self.workspaceCollectionRoot.clone(),
+                self.runtimeStorageHost.clone(),
             ),
         )
     }

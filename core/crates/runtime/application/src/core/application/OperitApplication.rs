@@ -98,7 +98,7 @@ impl OperitApplication {
                 .fileSystemHost
                 .clone()
                 .expect("runtime storage host requires a file-system host for logging");
-            let pathMapper = PathMapper::new(runtimeRoot.clone(), workspaceRoot.clone());
+            let pathMapper = PathMapper::new(runtimeRoot.clone(), workspaceRoot.clone(), runtimeStorageHost.clone());
             let logFile = pathMapper
                 .resolve("/app/data/logs/operit.log")
                 .expect("runtime log path must resolve through the file-system host")
@@ -254,7 +254,7 @@ impl OperitApplication {
         })?;
         Ok(VisualFileSystem::new(
             fileSystemHost,
-            PathMapper::new(runtimeRoot, workspaceRoot),
+            PathMapper::new(runtimeRoot, workspaceRoot, runtimeStorageHost.clone()),
         ))
     }
 
@@ -414,7 +414,7 @@ impl OperitApplication {
             .hostRuntimeTaskSchedulerHost
             .clone()
             .expect("runtime task scheduler host must be configured for plugin startup");
-        let startup = move || {
+        let startup = move || Box::pin(async move {
             let loadingGeneration = showPluginLoading();
             packageManager
                 .lock()
@@ -424,11 +424,11 @@ impl OperitApplication {
             let timeoutSeconds = ApiPreferences::getInstance()
                 .getMcpStartupTimeoutSeconds()
                 .expect("api preferences must provide mcp startup timeout seconds");
-            let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
+            let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds).await;
             completePluginLoadingSession(loadingGeneration);
-        };
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>;
         taskScheduler
-            .scheduleHostRuntimeTask("operit-plugin-startup", Box::new(startup))
+            .scheduleHostRuntimeAsyncTask("operit-plugin-startup", Box::new(startup))
             .expect("plugin startup task must be scheduled");
     }
 

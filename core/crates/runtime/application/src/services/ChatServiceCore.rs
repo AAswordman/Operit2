@@ -1,3 +1,4 @@
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
@@ -1666,7 +1667,7 @@ impl ChatServiceCore {
             return;
         }
         if let Some(packageName) = filePath.strip_prefix(PACKAGE_ATTACHMENT_PREFIX) {
-            self.attachPackageInternal(packageName.trim());
+            self.attachPackageInternal(packageName.trim()).await;
             return;
         }
         if let Some(relativePath) = filePath.strip_prefix(WORKSPACE_MENTION_ATTACHMENT_PREFIX) {
@@ -1941,7 +1942,7 @@ impl ChatServiceCore {
     }
 
     #[allow(non_snake_case)]
-    fn attachPackageInternal(&mut self, packageName: &str) {
+    async fn attachPackageInternal(&mut self, packageName: &str) {
         if packageName.is_empty() {
             self.messageProcessingDelegate
                 .showToast(format!("添加包失败: {packageName}"));
@@ -1950,6 +1951,10 @@ impl ChatServiceCore {
 
         let toolHandler = self.runtimeToolHandler();
         let packageManager = toolHandler.getOrCreatePackageManager();
+        if RuntimePackageManager::prepareMcpPackage(&packageManager, packageName).await.is_err() {
+            self.messageProcessingDelegate.showToast(format!("添加包失败: {packageName}"));
+            return;
+        }
         let isStandardPackage;
         let isSkillPackage;
         let isMcpPackage;
@@ -2077,7 +2082,7 @@ impl ChatServiceCore {
         })?;
         Ok(VisualFileSystem::new(
             self.fileSystemHost.clone(),
-            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot),
+            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot, runtimeStorageHost.clone()),
         ))
     }
 

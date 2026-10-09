@@ -34,6 +34,20 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare Web build hook dependencies
+        run: |
+          python -m venv .venv
+          npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+
+      - name: Install built-in workflow plugin dependencies
+        working-directory: plugins/packages/buildin/workflow
+        run: corepack pnpm install --frozen-lockfile
+
       - name: Install FVM
         run: |
           dart pub global activate fvm "$FVM_VERSION"
