@@ -527,6 +527,7 @@ pub enum ToolPkgHookEventName {
     Variant19(ToolPkgCoreCommandEventName),
     Variant15(ToolPkgHostEventName),
     Variant20(ToolPkgHookEventNameVariant20),
+    Edge(ToolPkgEdgeEventName),
 }
 /// Accepts a JSON result, no result, or asynchronous completion from a generic hook.
 pub enum ToolPkgHookReturn {
@@ -3039,3 +3040,10 @@ pub trait GlobalHost: Send + Sync {
 }
 /// Binds the complete registry API to the JavaScript `ToolPkg` global.
 pub struct ToolPkgGlobalBinding;
+
+/// Device action events, independent of screens or touch input.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgEdgeEventName {
+    #[serde(rename = "edge_event")]
+    EdgeEvent,
+}

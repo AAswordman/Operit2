@@ -1,6 +1,6 @@
 # 像素桌宠 Core ToolPkg 示例
 
-随 Core 分发在「内置更多包」，**不会默认导入或开启**。使用现有 ToolPkg 运行时与 `tools.edge.execute`，不在 Edge 执行 JS。
+随 Core 分发在「内置更多包」，**不会默认导入或开启**。使用现有 ToolPkg 运行时与 `Tools.Edge.execute`，不在 Edge 执行 JS。
 协议见 `plugins/docs/edge-scene.md`。原件保存在本包的 `resources/demo.esp`；
 生成器、源代码和编译后的 CommonJS 同包分发。
 
@@ -32,12 +32,15 @@ core plugin enable com.operit.edge_pixel_pet
 - `edge_pixel_pet:close_pet`：释放区域，保留 Core 数据和设备缓存。
 - `edge_pixel_pet:test`：只查原生能力，不占屏幕。
 
-点击宠物／道具后 Edge 主动调用 Core 的固定场景事件入口，`on_edge_scene_event` 在原 main 运行时持久化后 ACK。
+点击宠物／道具后 Edge 主动调用 Core 的固定通用 `chatEdgeEvent` 入口，`on_edge_event` 在原 main 运行时持久化后 ACK。
 空闲时不发送事件请求、不写配置。`events.poll` 仅保留为固件的手动诊断，示例不再使用。
 如需持续显示，可每 20 秒执行一次 renew_pet（只保活）；触摸与退出无需等待保活。
 系统右上角退出和 TTL 到期均停止场景，不自动重开。
 首版缓存不是重启持久化缓存，Core 原件不丢；重新 start 会按 SHA 判断／重装。
 示例是单 Core 控制器，不提供分布式养成事务。
+
+事件使用通用 `EdgeEventBatch`，本插件仅消费 `source:"display.scene"`，按 action 分发。
+其他插件可监听传感器、GPIO、串口或其他固件来源；通用协议见 `plugins/docs/edge-events.md`。
 
 工具使用既有同包 `ToolPkg.ipc` 进入 main actor，与事件回调共用一个串行队列和配置缓存。关闭后保留 lease/cursor 去重 tombstone；重发 ACK 不重复计数或写盘。
 

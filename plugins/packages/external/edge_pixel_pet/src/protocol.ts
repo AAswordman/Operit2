@@ -4,7 +4,7 @@ export async function sceneCall(node: string, action: string, fields: Record<str
     // All schema fields/chunks are ASCII in this example. JSON bytes <= 1024.
     if (JSON.stringify(args).length > 1024)
         throw new Error('Scene request exceeds 1024 bytes');
-    const { data } = await tools.edge.execute(node, { pluginId: 'display.scene', action }, args);
+    const { data } = await Tools.Edge.execute(node, { pluginId: 'display.scene', action }, args);
     if (data?.v !== 1 || typeof data.ok !== 'boolean')
         throw new Error('Invalid scene protocol reply');
     if (!data.ok) {

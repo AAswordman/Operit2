@@ -323,7 +323,7 @@ fn runFirmware(
     edgeRouter
         .install(edgeNode.clone())
         .map_err(HostError::new)?;
-    let _sceneEvents = crate::edge_chat::startSceneEvents(
+    let _sceneEvents = crate::edge_chat::startEdgeEvents(
         NodeServices::new(peerService.clone()),
         scenePlugin.clone(),
         identity.nodeId.clone(),

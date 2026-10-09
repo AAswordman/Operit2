@@ -1,11 +1,10 @@
-import { command, onScene, type ScenePayload } from './pet';
+import type { EdgeEventHookEvent, EdgeEventAck } from '../../../../types/edge';
+import { command, onEdge } from './pet';
 ToolPkg.ipc.on('edge.pet', command);
 export function registerToolPkg(): boolean { return true; }
-/** Native event ingress invokes only this fixed existing-runtime export. */
-export function on_edge_scene_event(event: {
-    eventPayload: ScenePayload;
-}): Promise<any> {
-    return onScene(event.eventPayload);
+/** One generic listener; this plugin's action handlers consume display.scene events. */
+export function on_edge_event(event: EdgeEventHookEvent): Promise<EdgeEventAck> {
+    return onEdge(event.eventPayload);
 }
 /** Existing Core diagnostic exports: capability read only, no display lease. */
 async function diagnostic(): Promise<{

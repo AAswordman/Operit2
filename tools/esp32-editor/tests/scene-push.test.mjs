@@ -28,9 +28,9 @@ async function actor() {
   const pet=await load('pet.js');const main=await load('main.js');const tools=await load('packages/edge_pixel_pet.js');
   return {tools,main,config,calls,get writes(){return writes;},failNext(){fail=true;}};
 }
-function payload(lease,seq,type='target.tap',lostBefore=0) {
-  return {eventPayload:{chatId:'chat',nodeId:'edge',scene:{v:1,lease,next:seq,lostBefore,
-    closed:type==='target.tap'?null:type,events:[{seq,type,target:type==='target.tap'?'pet':null}]}}};
+function payload(stream,seq,action='target.tap',lostBefore=0) {
+  return {eventPayload:{chatId:'chat',nodeId:'edge',batch:{v:1,source:'display.scene',stream,next:seq,lostBefore,
+    events:[{seq,action,data:action==='target.tap'?{x:144,y:122,target:'pet'}:{}}]}}};
 }
 test('Core actor: idle/status/renew never poll input or write config; replay/exit ACK deduplicates',async()=> {
   const a=await actor(), started=await a.tools.start_pet({node_id:'edge'});
@@ -44,25 +44,35 @@ test('Core actor: idle/status/renew never poll input or write config; replay/exi
   const calls=a.calls.length;
   await a.tools.pet_status({node_id:'edge'});assert.equal(a.writes,writes);assert.equal(a.calls.length,calls);
   await a.tools.renew_pet({node_id:'edge'});assert.equal(a.writes,writes);assert.equal(a.calls.at(-1).action,'lease.renew');
-  const ack=await a.main.on_edge_scene_event(payload(lease,1));assert.equal(ack.accepted,true);assert.equal(ack.next,1);
+  const ack=await a.main.on_edge_event(payload(lease,1));assert.equal(ack.accepted,true);assert.equal(ack.next,1);
   assert.equal(a.config.state.taps,1);
   const persisted=a.writes;
-  await a.main.on_edge_scene_event(payload(lease,1));assert.equal(a.config.state.taps,1);assert.equal(a.writes,persisted);
-  assert.equal((await a.main.on_edge_scene_event(payload('wrong',2))).accepted,false);
-  await a.main.on_edge_scene_event(payload(lease,2,'system.exit'));
+  await a.main.on_edge_event(payload(lease,1));assert.equal(a.config.state.taps,1);assert.equal(a.writes,persisted);
+  assert.equal((await a.main.on_edge_event(payload('wrong',2))).accepted,false);
+  await a.main.on_edge_event(payload(lease,2,'system.exit'));
   const exitedWrites=a.writes,exitedCalls=a.calls.length;
   const exited=await a.tools.renew_pet({node_id:'edge'});assert.equal(exited.closed,'system.exit');
   assert.equal(a.calls.length,exitedCalls);assert.equal(a.writes,exitedWrites);
-  await a.main.on_edge_scene_event(payload(lease,2,'system.exit'));assert.equal(a.writes,exitedWrites);
+  await a.main.on_edge_event(payload(lease,2,'system.exit'));assert.equal(a.writes,exitedWrites);
   assert(!a.calls.some(c=>c.action==='events.poll'),'not even renamed input polling');
 });
 test('Core ACK requires persistence; failure rolls back and retry counts once; loss is explicit',async()=> {
   const a=await actor();await a.tools.start_pet({node_id:'edge'});
   const lease=a.config.state.sessions.edge.lease;
-  a.failNext();await assert.rejects(a.main.on_edge_scene_event(payload(lease,1)),/disk unavailable/);
+  a.failNext();await assert.rejects(a.main.on_edge_event(payload(lease,1)),/disk unavailable/);
   assert.equal(a.config.state.taps,0);assert.equal(a.config.state.sessions.edge.cursor,0);
-  await a.main.on_edge_scene_event(payload(lease,1));assert.equal(a.config.state.taps,1);
-  await a.main.on_edge_scene_event(payload(lease,8,'target.tap',6));
+  await a.main.on_edge_event(payload(lease,1));assert.equal(a.config.state.taps,1);
+  await a.main.on_edge_event(payload(lease,8,'target.tap',6));
   assert.equal(a.config.state.taps,2);assert.equal(a.config.state.sessions.edge.lostEvents,true);
-  const writes=a.writes;await a.main.on_edge_scene_event(payload(lease,8,'target.tap',6));assert.equal(a.writes,writes);
+  const writes=a.writes;await a.main.on_edge_event(payload(lease,8,'target.tap',6));assert.equal(a.writes,writes);
+});
+
+test('generic listener rejects an unrelated producer or action without ACK or mutation', async()=> {
+  const a=await actor(); await a.tools.start_pet({node_id:'edge'});
+  const stream=a.config.state.sessions.edge.lease, writes=a.writes;
+  const sensor=payload(stream,1,'sensor.sample'); sensor.eventPayload.batch.source='sensor.environment';
+  assert.equal((await a.main.on_edge_event(sensor)).accepted,false);
+  assert.equal((await a.main.on_edge_event(payload(stream,1,'constructor'))).accepted,false);
+  assert.equal((await a.main.on_edge_event(payload(stream,1,'unknown.action'))).accepted,false);
+  assert.equal(a.writes,writes); assert.equal(a.config.state.taps,0);
 });

@@ -1,15 +1,15 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerToolPkg = registerToolPkg;
-exports.on_edge_scene_event = on_edge_scene_event;
+exports.on_edge_event = on_edge_event;
 exports.test_connection = test_connection;
 exports.test_tool_call = test_tool_call;
 const pet_1 = require("./pet");
 ToolPkg.ipc.on('edge.pet', pet_1.command);
 function registerToolPkg() { return true; }
-/** Native event ingress invokes only this fixed existing-runtime export. */
-function on_edge_scene_event(event) {
-    return (0, pet_1.onScene)(event.eventPayload);
+/** One generic listener; this plugin's action handlers consume display.scene events. */
+function on_edge_event(event) {
+    return (0, pet_1.onEdge)(event.eventPayload);
 }
 /** Existing Core diagnostic exports: capability read only, no display lease. */
 async function diagnostic() {

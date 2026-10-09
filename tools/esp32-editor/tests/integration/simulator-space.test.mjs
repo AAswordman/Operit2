@@ -329,12 +329,12 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
 ${JSON.stringify(fixtureMetadata)}
 */
       exports.probe = async function(params) {
-        const response = await tools.edge.execute(params.node_id, {pluginId:'device.status',action:'read'}, {});
+        const response = await Tools.Edge.execute(params.node_id, {pluginId:'device.status',action:'read'}, {});
         let unsupported = '';
-        try { await tools.io.execute(params.node_id, {port:'serial',operation:'read'}, {}); }
+        try { await Tools.Io.execute(params.node_id, {port:'serial',operation:'read'}, {}); }
         catch(error) { unsupported = String(error.message || error); }
         let missingHost = '';
-        try { await tools.io.execute(params.node_id, {port:'gpio',operation:'read'}, {pin:2}); }
+        try { await Tools.Io.execute(params.node_id, {port:'gpio',operation:'read'}, {pin:2}); }
         catch(error) { missingHost = String(error.message || error); }
         return {nodeId:response.nodeId, boardId:response.data.boardId, sameAlias:tools === Tools, unsupported, missingHost};
       };
@@ -351,7 +351,7 @@ ${JSON.stringify(fixtureMetadata)}
     } finally {
       await core.command(['core','package','delete','edge_ports_fixture']);
     }
-    t.diagnostic('Real Core JS package -> tools.edge/tools.io -> existing tool runtime -> authenticated Edge action passed');
+    t.diagnostic('Real Core JS package -> Tools.Edge/Tools.Io -> existing tool runtime -> authenticated Edge action passed');
 
     // The same market-compatible ToolPkg ships as an opt-in "More packages"
     // asset, not an auto-installed built-in or an ESP JavaScript runtime.
@@ -415,7 +415,7 @@ ${JSON.stringify(fixtureMetadata)}
       await core.command(['core','plugin','disable','com.operit.edge_pixel_pet']);
       await core.command(['core','package','delete','edge_pixel_pet']);
     }
-    t.diagnostic('Bundled More-package ToolPkg -> real Core tools.edge -> shared native display.scene: chunked SHA-verified assets, local strip rendering, Edge-initiated touch/exit events without Core event polling, Core-owned deduplication, protected exit and cache reuse passed');
+    t.diagnostic('Bundled More-package ToolPkg -> real Core Tools.Edge -> shared native display.scene: chunked SHA-verified assets, local strip rendering, Edge-initiated touch/exit events without Core event polling, Core-owned deduplication, protected exit and cache reuse passed');
 
 
     const provider = await core.command(['core', 'model', 'provider-create', 'Simulator deterministic provider',

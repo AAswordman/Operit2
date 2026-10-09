@@ -1881,6 +1881,7 @@ version = "0.1.0"
 dependencies = [
  "operit-link",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

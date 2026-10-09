@@ -164,7 +164,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
     edgeNode = edgeNode.withNodeServices(services.clone());
     let edgeNode = Arc::new(edgeNode);
     edgeRouter.install(edgeNode.clone())?;
-    let _sceneEvents = edge_chat::startSceneEvents(
+    let _sceneEvents = edge_chat::startEdgeEvents(
         services.clone(), scenePlugin.clone(), nodeId.clone(),
     );
     if startListener {

@@ -570,7 +570,7 @@ mod tests {
             ("chatAvailablePlugins", "chat.read"),
             ("chatPluginDetails", "chat.read"),
             ("chatPluginStatus", "chat.write"),
-            ("chatEdgeSceneEvent", "chat.write"),
+            ("chatEdgeEvent", "chat.write"),
         ] {
             let request = call(method);
             assert_eq!(callRouteKind(&request), RoutedCoreRequestKind::SpaceBinding);

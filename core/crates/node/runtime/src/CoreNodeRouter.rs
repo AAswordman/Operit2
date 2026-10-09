@@ -29,14 +29,14 @@ use crate::RuntimeRemoteLinkService::{
 #[path = "peer/sync_dispatch.rs"]
 mod sync_dispatch;
 
-// A scene sender may not impersonate another Edge or use Target to bypass the
+// An event sender may not impersonate another Edge or use Target to bypass the
 // Binding permission path. Called only after normal incoming-route validation.
-fn validateSceneEventOrigin(
+fn validateEdgeEventOrigin(
     request: &CoreCallRequest,
     origin: &str,
     kind: RoutedCoreRequestKind,
 ) -> Result<(), CoreLinkError> {
-    if request.target != CORE_INTERNAL_TARGET || request.methodName != "chatEdgeSceneEvent" {
+    if request.target != CORE_INTERNAL_TARGET || request.methodName != "chatEdgeEvent" {
         return Ok(());
     }
     let node = match &request.args {
@@ -49,8 +49,8 @@ fn validateSceneEventOrigin(
     ) || !matches!(node, Some(CoreValue::String(id)) if id == origin)
     {
         return Err(CoreLinkError::new(
-            "SCENE_ORIGIN_DENIED",
-            "Scene event requires its authenticated Space origin",
+            "EDGE_EVENT_ORIGIN_DENIED",
+            "Edge event requires its authenticated Space origin",
         ));
     }
     Ok(())
@@ -1035,7 +1035,7 @@ impl CoreNodeRouter {
         originNodeId: String,
     ) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        if let Err(error) = validateSceneEventOrigin(&request, &originNodeId, RoutedCoreRequestKind::SpaceBinding) {
+        if let Err(error) = validateEdgeEventOrigin(&request, &originNodeId, RoutedCoreRequestKind::SpaceBinding) {
             return CoreCallResponse::err(requestId, error);
         }
         let route = match crate::generated_space_call_route(&request) {
@@ -2113,7 +2113,7 @@ impl CoreNodeRouter {
         }
         match self.validateIncomingRoute(&previousNodeId, &request) {
             Ok(true) => {
-                if let Err(error) = validateSceneEventOrigin(&request.payload, &request.originNodeId, request.routeKind) {
+                if let Err(error) = validateEdgeEventOrigin(&request.payload, &request.originNodeId, request.routeKind) {
                     return CoreCallResponse::err(requestId, error);
                 }
                 if request.payload.target == crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET {
@@ -5721,25 +5721,25 @@ mod tests {
 }
 
 #[cfg(test)]
-mod scene_origin_tests {
+mod edge_event_origin_tests {
     use super::*;
     #[test]
-    fn scene_sender_is_authenticated_not_a_self_reported_node_or_target_bypass() {
+    fn edge_event_sender_is_authenticated_not_a_self_reported_node_or_target_bypass() {
         let args =
             operit_link::toCoreValue(serde_json::json!({"chatId":"chat","nodeId":"edge"})).unwrap();
         let request =
-            CoreCallRequest::new("event", CORE_INTERNAL_TARGET, "chatEdgeSceneEvent", args);
+            CoreCallRequest::new("event", CORE_INTERNAL_TARGET, "chatEdgeEvent", args);
         for kind in [
             RoutedCoreRequestKind::SpaceBinding,
             RoutedCoreRequestKind::SpaceRoute,
         ] {
-            assert!(validateSceneEventOrigin(&request, "edge", kind).is_ok());
-            assert!(validateSceneEventOrigin(&request, "impostor", kind).is_err());
+            assert!(validateEdgeEventOrigin(&request, "edge", kind).is_ok());
+            assert!(validateEdgeEventOrigin(&request, "impostor", kind).is_err());
         }
-        assert!(validateSceneEventOrigin(&request, "edge", RoutedCoreRequestKind::Target).is_err());
+        assert!(validateEdgeEventOrigin(&request, "edge", RoutedCoreRequestKind::Target).is_err());
         let unrelated = CoreCallRequest::new("device", "device.status", "read", CoreValue::Null);
         assert!(
-            validateSceneEventOrigin(&unrelated, "edge", RoutedCoreRequestKind::Target).is_ok()
+            validateEdgeEventOrigin(&unrelated, "edge", RoutedCoreRequestKind::Target).is_ok()
         );
     }
 }

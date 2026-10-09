@@ -80,13 +80,8 @@ struct Upload {
     data: Vec<u8>,
 }
 /// Captured at lease.open; a reconnect may replace the entry, never the Space/chat.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SceneEventRoute {
-    pub space_id: String,
-    pub chat_id: String,
-    pub package_name: String,
-}
-pub type SceneRouteProvider = dyn Fn(&str) -> Option<SceneEventRoute> + Send + Sync;
+pub use crate::events::EdgeEventRoute as SceneEventRoute;
+pub type SceneRouteProvider = crate::events::EdgeEventRouteProvider;
 #[derive(Clone)]
 pub struct SceneDelivery {
     pub route: SceneEventRoute,
@@ -292,7 +287,7 @@ impl ScenePlugin {
         s.expire(self.now());
         json!({"active":s.active(),"revision":s.revision})
     }
-    /// Local simulator adapter only. Never exposed through tools.edge or containing lease handles.
+    /// Local simulator adapter only. Never exposed through Tools.Edge or containing lease handles.
     pub fn visual_snapshot(&self) -> Value {
         let mut s = self.state.lock().unwrap();
         s.expire(self.now());
@@ -397,7 +392,7 @@ impl ScenePlugin {
         if action == "capabilities" {
             return Ok(
                 json!({"protocol":VERSION,"screen":{"width":self.width,"height":self.height,"format":"RGB565_LE"},
-            "events":{"push":self.route_provider.lock().unwrap().is_some(),"method":"chatEdgeSceneEvent","maxBatch":MAX_PUSH_EVENTS,"ack":true},
+            "events":{"push":self.route_provider.lock().unwrap().is_some(),"method":"chatEdgeEvent","maxBatch":MAX_PUSH_EVENTS,"ack":true},
             "reserved":{"x":0,"y":0,"w":self.width,"h":24},"touch":self.touch,"animation":{"local":true,"minFrameMs":50,"maxFrameMs":2000,"maxFrames":8},
             "formats":{"pack":"ESP1","asset":"ESI1","alpha":"straight","paletteMax":16,"maxWidth":96,"maxHeight":96},
             "limits":{"requestBytes":MAX_REQUEST,"replyBytes":MAX_REPLY,"packBytes":MAX_PACK,"cacheBytes":MAX_CACHE,"packs":MAX_PACKS,"assetsPerPack":MAX_ASSETS,"layers":MAX_LAYERS,"chunkBytes":MAX_CHUNK,"scaleMax":8,"events":MAX_EVENTS,"pollPage":8,"uploadBytes":MAX_PACK},
@@ -672,6 +667,48 @@ impl ScenePlugin {
         }
     }
 }
+impl crate::events::EdgeEventSource for ScenePlugin {
+    fn set_event_route_provider(&self, provider: Arc<crate::events::EdgeEventRouteProvider>) {
+        self.set_route_provider(provider);
+    }
+    fn pending_event_delivery(&self) -> Option<crate::events::EdgeEventDelivery> {
+        let delivery = self.pending_delivery()?;
+        Some(crate::events::EdgeEventDelivery {
+            route: delivery.route,
+            batch: operit_edge_contract::events::EdgeEventBatch {
+                v: VERSION, source: PLUGIN_ID.into(), stream: delivery.batch.lease,
+                next: delivery.batch.next, lost_before: delivery.batch.lost_before,
+                events: delivery.batch.events.into_iter().map(|e| {
+                    let data = if e.r#type == "target.tap" {
+                        json!({"x":e.x,"y":e.y,"target":e.target})
+                    } else { json!({}) };
+                    operit_edge_contract::events::EdgeActionEvent {seq:e.seq, action:e.r#type, data}
+                }).collect(),
+            },
+        })
+    }
+    fn disable_event_delivery(&self, delivery: &crate::events::EdgeEventDelivery) {
+        let mut s = self.state.lock().unwrap();
+        if let Some(l) = &mut s.lease {
+            if l.handle == delivery.batch.stream && l.route.as_ref() == Some(&delivery.route) {
+                l.route = None;
+            }
+        }
+    }
+    fn acknowledge_event_delivery(&self, delivery: &crate::events::EdgeEventDelivery, next: u64) -> bool {
+        let mut s = self.state.lock().unwrap();
+        let Some(l) = s.lease.as_mut() else {return false;};
+        if delivery.batch.source != PLUGIN_ID || l.handle != delivery.batch.stream
+            || l.route.as_ref() != Some(&delivery.route) || next != delivery.batch.next
+            || next < l.acknowledged {return false;}
+        l.acknowledged = next;
+        true
+    }
+    fn wait_for_event(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output=()> + Send + '_>> {
+        Box::pin(self.wait_event())
+    }
+}
+
 impl EdgePlugin for ScenePlugin {
     fn manifest(&self) -> EdgePluginManifest {
         EdgePluginManifest {
@@ -930,6 +967,27 @@ mod tests {
         );
         p.disable_delivery(&next);
         assert!(p.pending_delivery().is_none());
+    }
+    #[test]
+    fn scene_adapter_uses_generic_actions_and_rejects_late_stream_acks() {
+        use crate::events::EdgeEventSource;
+        let p = push_plugin();
+        let lease = push_open(&p, 0);
+        p.state.lock().unwrap().event("target.tap", Some(1), Some(2), Some("pet"));
+        let d = p.pending_event_delivery().unwrap();
+        assert!(d.batch.valid());
+        assert_eq!(d.batch.source, "display.scene");
+        assert_eq!(d.batch.stream, lease);
+        assert_eq!(d.batch.events[0].action, "target.tap");
+        assert_eq!(d.batch.events[0].data, json!({"x":1,"y":2,"target":"pet"}));
+        assert!(!p.acknowledge_event_delivery(&d, d.batch.next + 1));
+        assert!(p.acknowledge_event_delivery(&d, d.batch.next));
+        p.system_exit();
+        let exited = p.pending_event_delivery().unwrap();
+        assert_eq!(exited.batch.events[0].action, "system.exit");
+        assert_eq!(exited.batch.events[0].data, json!({}));
+        push_open(&p, 1);
+        assert!(!p.acknowledge_event_delivery(&exited, exited.batch.next));
     }
     #[test]
     fn compatibility_poll_does_not_ack_or_enable_push() {

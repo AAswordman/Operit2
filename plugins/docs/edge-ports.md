@@ -1,26 +1,27 @@
 # Core 插件调用 Edge 硬件端口（首版）
 
 插件 JavaScript 仍在 Core 的原 ToolPkg 运行时执行；只有硬件动作在选中的 Edge
-节点执行。`tools` 是既有 `Tools` 对象的小写别名，`Tools.edge` / `Tools.io`
-与 `tools.edge` / `tools.io` 完全相同。这不是给 ESP32 加另一套 JS 插件运行时。
+节点执行。公共入口是静态类 `Tools.Edge` 和 `Tools.Io`，不需要也不允许创建实例。
+`tools` 仍是既有 `Tools` 的兼容别名，但新代码统一使用 `Tools`；不存在小写 `edge/io` 类。
+这不是给 ESP32 加另一套 JS 插件运行时。
 
 ## 两个入口
 
 ```ts
-const response = await tools.edge.execute(
+const response = await Tools.Edge.execute(
   edgeNodeId,
   { pluginId: "device.status", action: "read" },
   {}
 );
 console.log(response.nodeId, response.data);
 
-const current = await tools.io.execute(
+const current = await Tools.Io.execute(
   edgeNodeId,
   { port: "gpio", operation: "read" },
   { pin: 2 }
 );
 // 只有已知允许控制的输出引脚才应写入；具体板子的限制由 Edge Host 校验。
-await tools.io.execute(
+await Tools.Io.execute(
   edgeNodeId,
   { port: "gpio", operation: "write" },
   { pin: 2, level: true }
@@ -69,7 +70,15 @@ Core 树注入的节点 Router。`io/read` 声明 READ，`io/write` 声明 WRITE
 
 ## 原生场景显示
 
-`display.scene` v1 通过同一 `tools.edge.execute` 入口提供租约、素材分块校验缓存、
+`display.scene` v1 通过同一 `Tools.Edge.execute` 入口提供租约、素材分块校验缓存、
 图层叠加、本地动画和触摸事件。完整协议见同目录 `edge-scene.md`。
 该插件的业务协议错误使用 `data.ok:false` 信封；调用方必须检查，不能只看外层传输成功。
 授权、离线、未声明 action 等入口错误仍拒绝 Promise。
+
+## 通用 Edge 事件监听
+
+Edge → Core 统一使用 `chatEdgeEvent` 和 ToolPkg main 导出 `on_edge_event`，
+事件名为 `edge_event`。按 `source` 与每条 `action` 分发 JSON 对象数据，
+可用于触摸、GPIO、传感器、串口消息等，不在 Core 入口写死屏幕数据结构。
+完整协议、监听示例及固件事件源见 [edge-events.md](edge-events.md)。
+此通用事件能力不代表 `Tools.Io` 已开放串口读写；事件生产动作由固件显式注册。

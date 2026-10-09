@@ -1,3 +1,4 @@
+import type { EdgeEventPayload, EdgeEventAck } from '../../../../types/edge';
 import { PACK_BYTES, PACK_SHA256, PACK_CHUNKS } from './assets';
 import { sceneCall } from './protocol';
 interface Session {
@@ -117,36 +118,32 @@ async function close_pet(params: {
         await sceneCall(node, 'lease.close', { lease: session.lease });
     return { node, taps: db.state.taps, closed: true };
 }
-export interface ScenePayload {
-    chatId: string;
-    nodeId: string;
-    scene: {
-        v: number;
-        lease: string;
-        next: number;
-        lostBefore: number;
-        closed: string | null;
-        events: {
-            seq: number;
-            type: string;
-            target: string | null;
-        }[];
-    };
-}
-async function receiveScene(payload: ScenePayload): Promise<any> {
-    const db = await data(), batch = payload.scene, session = db.state.sessions[payload.nodeId];
-    if (!session || session.lease !== batch.lease)
+async function receiveEdge(payload: EdgeEventPayload): Promise<EdgeEventAck> {
+    const db = await data(), batch = payload.batch, session = db.state.sessions[payload.nodeId];
+    if (batch.source !== 'display.scene' || !session || session.lease !== batch.stream)
         return { accepted: false };
-    const events = batch.events.filter(event => event.seq > session.cursor);
     if (batch.next > session.cursor) {
-        const taps = db.state.taps + events.filter(event => event.type === 'target.tap').length;
-        const closed = events.find(event => ['system.exit', 'lease.closed', 'lease.expired'].includes(event.type))?.type || session.closed;
+        let taps = db.state.taps, closed = session.closed;
+        // An action layer belongs to the consuming plugin. Core does not assume touch/screen data.
+        const actions: Record<string, (data: Record<string, any>) => void> = {
+            'target.tap': data => {
+                if (data.target !== 'pet' && data.target !== 'treat') throw new Error('Unknown pet target');
+                taps += 1;
+            },
+            'system.exit': () => { closed = 'system.exit'; },
+            'lease.closed': () => { closed = 'lease.closed'; },
+            'lease.expired': () => { closed = 'lease.expired'; },
+        };
+        for (const event of batch.events.filter(event => event.seq > session.cursor)) {
+            const handler = Object.prototype.hasOwnProperty.call(actions, event.action) ? actions[event.action] : undefined;
+            if (!handler) return { accepted: false };
+            handler(event.data);
+        }
         await save(db, { taps, sessions: { ...db.state.sessions, [payload.nodeId]: {
-                    lease: session.lease, cursor: batch.next, closed,
-                    lostEvents: session.lostEvents || batch.lostBefore > session.cursor,
-                } } });
+            lease: session.lease, cursor: batch.next, closed,
+            lostEvents: session.lostEvents || batch.lostBefore > session.cursor,
+        } } });
     }
-    // Replay (including a closed tombstone) ACKs without writing or double counting.
     return { accepted: true, next: batch.next };
 }
 async function save(db: Data, state: Data['state']): Promise<void> {
@@ -170,7 +167,7 @@ function serial<T>(run: () => Promise<T>): Promise<T> {
     queue = task.catch(() => undefined);
     return task;
 }
-export function onScene(payload: ScenePayload): Promise<any> { return serial(() => receiveScene(payload)); }
+export function onEdge(payload: EdgeEventPayload): Promise<EdgeEventAck> { return serial(() => receiveEdge(payload)); }
 export function command(request: {
     operation: string;
     params?: {

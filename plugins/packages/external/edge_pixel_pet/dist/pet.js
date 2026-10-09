@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PACKAGE_ID = void 0;
-exports.onScene = onScene;
+exports.onEdge = onEdge;
 exports.command = command;
 const assets_1 = require("./assets");
 const protocol_1 = require("./protocol");
@@ -99,20 +99,34 @@ async function close_pet(params = {}) {
         await (0, protocol_1.sceneCall)(node, 'lease.close', { lease: session.lease });
     return { node, taps: db.state.taps, closed: true };
 }
-async function receiveScene(payload) {
-    const db = await data(), batch = payload.scene, session = db.state.sessions[payload.nodeId];
-    if (!session || session.lease !== batch.lease)
+async function receiveEdge(payload) {
+    const db = await data(), batch = payload.batch, session = db.state.sessions[payload.nodeId];
+    if (batch.source !== 'display.scene' || !session || session.lease !== batch.stream)
         return { accepted: false };
-    const events = batch.events.filter(event => event.seq > session.cursor);
     if (batch.next > session.cursor) {
-        const taps = db.state.taps + events.filter(event => event.type === 'target.tap').length;
-        const closed = events.find(event => ['system.exit', 'lease.closed', 'lease.expired'].includes(event.type))?.type || session.closed;
+        let taps = db.state.taps, closed = session.closed;
+        // An action layer belongs to the consuming plugin. Core does not assume touch/screen data.
+        const actions = {
+            'target.tap': data => {
+                if (data.target !== 'pet' && data.target !== 'treat')
+                    throw new Error('Unknown pet target');
+                taps += 1;
+            },
+            'system.exit': () => { closed = 'system.exit'; },
+            'lease.closed': () => { closed = 'lease.closed'; },
+            'lease.expired': () => { closed = 'lease.expired'; },
+        };
+        for (const event of batch.events.filter(event => event.seq > session.cursor)) {
+            const handler = Object.prototype.hasOwnProperty.call(actions, event.action) ? actions[event.action] : undefined;
+            if (!handler)
+                return { accepted: false };
+            handler(event.data);
+        }
         await save(db, { taps, sessions: { ...db.state.sessions, [payload.nodeId]: {
                     lease: session.lease, cursor: batch.next, closed,
                     lostEvents: session.lostEvents || batch.lostBefore > session.cursor,
                 } } });
     }
-    // Replay (including a closed tombstone) ACKs without writing or double counting.
     return { accepted: true, next: batch.next };
 }
 async function save(db, state) {
@@ -136,7 +150,7 @@ function serial(run) {
     queue = task.catch(() => undefined);
     return task;
 }
-function onScene(payload) { return serial(() => receiveScene(payload)); }
+function onEdge(payload) { return serial(() => receiveEdge(payload)); }
 function command(request) {
     return serial(() => {
         switch (request.operation) {

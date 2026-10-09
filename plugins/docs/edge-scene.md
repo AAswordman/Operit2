@@ -4,13 +4,13 @@
 Core 管理养成数据、素材原件和业务逻辑；ESP32 注册原生显示服务，不运行插件 JavaScript。
 固件和模拟器使用同一个 Rust 场景服务、解析器和协议；浏览器只适配模拟器的显示输出。
 模拟器现有开发者 HTTP 中的 `scene-view` 仅是浏览器显示镜像，可携带有界素材快照，
-不是固件入口或新的插件 API；Core ToolPkg 不依赖该路径，仍只调用 `tools.edge.execute`。
+不是固件入口或新的插件 API；Core ToolPkg 不依赖该路径，仍只调用 `Tools.Edge.execute`。
 
 ## 入口与授权
 
 ```ts
 async function scene(nodeId: string, action: string, fields = {}) {
-  const {data} = await tools.edge.execute(nodeId,
+  const {data} = await Tools.Edge.execute(nodeId,
     {pluginId: 'display.scene', action}, {v: 1, ...fields});
   if (data.v !== 1 || !data.ok) throw new Error(`${data.error?.code}: ${data.error?.message}`);
   return data.result;
@@ -228,31 +228,27 @@ message 只供诊断，不作为稳定机器判断条件；依据 code 分支。
 
 自动测试覆盖：截断包、无效索引／SHA／偏移、原子提交与更新、满缓存／使用中保护、
 错误／过期租约、透明叠加／锚点／动画像素金样、事件分页丢失、系统退出、真实 C UI 内存预算，
-以及真实 Core ToolPkg → tools.edge → TCP 模拟器原生服务 → 渲染／触摸／Core 配置链路。
+以及真实 Core ToolPkg → Tools.Edge → TCP 模拟器原生服务 → 渲染／触摸／Core 配置链路。
 
-## 主动事件传输（v1 可选扩展）
+## 通用 Edge 事件传输中的场景适配
 
-`capabilities.events` 返回 `{push:true,method:"chatEdgeSceneEvent",maxBatch:4,ack:true}`。
-固件／模拟器为每台设备启动一个休眠 worker；有触摸、退出或租约结束事件才唤醒。
-Core 不再调用 `events.poll` 定时取输入；该 action 仅保留手动诊断与旧客户端兼容，读取不会推进推送 ACK。
+`capabilities.events` 返回 `{push:true,method:"chatEdgeEvent",maxBatch:4,ack:true}`。
+Core 监听入口和传输协议见 [edge-events.md](edge-events.md)，不再限定屏幕／触摸。
+场景服务只是 `EdgeEventSource` 的一个实现，共享原有租约事件队列、去重与授权边界。
 
-Edge 使用**已有 Space 客户端**调用 `target:"$core.internal"`、`methodName:"chatEdgeSceneEvent"`，参数：
+原生 `events.poll` 的诊断回复仍保留上文格式；主动推送改为通用 envelope：
 
 ```json
-{"chatId":"<租约开始时的有效 Binding>","nodeId":"<本 Edge ID>","packageName":"com.example.pixel_pet","payload":{"v":1,"lease":"<UUID>","events":[{"seq":1,"type":"target.tap","x":144,"y":122,"target":"pet"}],"next":1,"lostBefore":0,"closed":null}}
+{"v":1,"source":"display.scene","stream":"<租约 UUID>","events":[{"seq":1,"action":"target.tap","data":{"x":144,"y":122,"target":"pet"}}],"next":1,"lostBefore":0}
 ```
 
-- 这是窄的业务入口，不是新的通用插件 API。Binding 路由解析原 chat 的执行 Core，不创建业务对象。
-  现有同空间路由校验及 `caller:chat.write` 生效；router 还验证 nodeId 等于可信 origin，拒绝 Target 绕过及伪造来源。
-- 只允许固定导出 `on_edge_scene_event(event)`，`event.eventPayload` 为 `{chatId,nodeId,scene}`。
-  插件必须已注册／启用且依赖可用；继续使用原 ToolPkg main 运行时和嵌套工具权限。
-- 回调持久化后返回 `{accepted:true,next:scene.next}`。Core 仅向 Edge 返回有界
-  `{success:true,next,message:""}` ACK；错误／超时返回失败和最多 80 字符提示，不发送 JS 堆栈。
-- **整个参数 JSON**（包括 chatId/nodeId/packageName）≤1024 UTF-8 字节，最多 4 条；必要时缩小到 1 条。
-  同时最多 1 个事件调用；没有事件时不发送请求。显示租约保活与触摸完全独立。
-- ACK 丢失仅重发待确认事件，不重放硬件操作。失败按 1/2/4/8/16 秒退避，最多 5 次后休眠；
-  新事件或现有 Peer 连接变更可再次唤醒。断线只保留最近 16 条并报告 lostBefore，不无限累积。
-- 同 Space 更换入口可重新取得客户端，但固定原 chat Binding；不同 Space 不继承旧接收方。
-  旧租约的迟到 ACK 不影响新租约；不取消已发出的 Link 事务，收完 ACK 再丢弃旧结果。
-- 示例按 lease+seq 去重，关闭后保留最后一个租约游标 tombstone；重复批次不增加互动数、不写配置。
-  新租约替换旧记录，重启 Edge 的 RAM 事件不持久化；它不是分布式 exactly-once 业务存储。
+- 场景租约映射为 `stream`，`type` 映射为 `action`，触摸字段归入 `data`。
+- `system.exit`、`lease.expired`、`lease.closed` 是独立 action，data 为 `{}`。
+- 固件调用固定通用 route `chatEdgeEvent`；Core 使用 `edge_event` discriminator
+  调用已启用包的固定导出 `on_edge_event`，不允许选择任意函数。
+- 场景业务插件校验 `source === "display.scene"` 和当前 stream，再按 action 处理，
+  持久化互动与游标后返回 `{accepted:true,next:batch.next}`。
+- 只有发生事件才唤醒 worker；没有事件不轮询、不发 RPC。保活与输入完全独立。
+- 旧 Space 的接收方不带入新 Space；旧 stream ACK 不改变新 stream；ACK 丢失只重送事件。
+- 当前 PR 尚未合并的 `chatEdgeSceneEvent` / `on_edge_scene_event` 协议已替换，
+  示例、固件与 Core 必须同时更新；没有保留屏幕专用旁路。

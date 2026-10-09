@@ -1,20 +1,20 @@
-//! Native scene event ingress uses the existing authorized Space carrier.
+//! Generic Edge event ingress uses the existing authorized Space carrier.
 #![allow(non_snake_case)]
-use super::{NodeUiTask, SESSION, spawnNodeUiSubscription, uiTaskCancelled};
-use operit_link::{CORE_INTERNAL_TARGET, CoreCallRequest};
+use super::{spawnNodeUiSubscription, uiTaskCancelled, NodeUiTask, SESSION};
+use operit_link::{CoreCallRequest, CORE_INTERNAL_TARGET};
 use operit_node_runtime::NodeServices::NodeServices;
-use std::sync::{Arc, Mutex, atomic::Ordering};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 
 /// One bounded, event-driven worker shared by firmware and simulator. It never
 /// queries Core for input. Pending events alone can cause finite delivery retries.
-pub fn startSceneEvents(
+pub fn startEdgeEvents(
     services: NodeServices,
-    scene: Arc<operit_node_edge::scene::ScenePlugin>,
+    source: Arc<dyn operit_node_edge::events::EdgeEventSource>,
     nodeId: String,
 ) -> NodeUiTask {
-    use operit_node_edge::scene::SceneEventRoute;
+    use operit_node_edge::events::EdgeEventRoute;
     let captureServices = services.clone();
-    scene.set_route_provider(Arc::new(move |package| {
+    source.set_event_route_provider(Arc::new(move |package| {
         let connection = captureServices.peers().spaceConnection()?;
         let session = SESSION
             .get_or_init(|| Mutex::new(None))
@@ -27,7 +27,7 @@ pub fn startSceneEvents(
         {
             return None;
         }
-        Some(SceneEventRoute {
+        Some(EdgeEventRoute {
             space_id: connection.identity.spaceId,
             chat_id: session.chatId.clone(),
             package_name: package.into(),
@@ -36,32 +36,32 @@ pub fn startSceneEvents(
     spawnNodeUiSubscription(move |mut cancelled| async move {
         let mut peers = services.peers().subscribePeerChanges();
         let mut attempts = 0u32;
-        let mut lastLease = String::new();
+        let mut lastStream = String::new();
         loop {
             if *cancelled.borrow() {
                 return;
             }
-            let pending = scene.pending_delivery();
+            let pending = source.pending_event_delivery();
             if pending.is_none() || attempts >= 5 {
                 tokio::select! {
                     _ = uiTaskCancelled(&mut cancelled) => return,
-                    _ = scene.wait_event() => {},
+                    _ = source.wait_for_event() => {},
                     result = peers.recv() => {if matches!(result, Err(tokio::sync::broadcast::error::RecvError::Closed)) {return;}},
                 }
                 attempts = 0;
                 continue;
             }
             let mut delivery = pending.unwrap();
-            if delivery.batch.lease != lastLease {
-                lastLease = delivery.batch.lease.clone();
+            if delivery.batch.stream != lastStream {
+                lastStream = delivery.batch.stream.clone();
                 attempts = 0;
             }
             let connection = services.peers().spaceConnection();
             let mut accepted = false;
             if let Some(connection) = connection {
                 if connection.identity.spaceId != delivery.route.space_id {
-                    // A different Space must never inherit this lease's receiver.
-                    scene.disable_delivery(&delivery);
+                    // A different Space must never inherit this stream's receiver.
+                    source.disable_event_delivery(&delivery);
                     continue;
                 }
                 // Route identifiers count toward the same 1024-byte entry limit.
@@ -69,7 +69,7 @@ pub fn startSceneEvents(
                     let args = serde_json::json!({"chatId":delivery.route.chat_id,"nodeId":nodeId,
                         "packageName":delivery.route.package_name,"payload":delivery.batch});
                     if serde_json::to_vec(&args).unwrap().len()
-                        <= operit_edge_contract::scene::MAX_REQUEST
+                        <= operit_edge_contract::events::MAX_REQUEST
                     {
                         break Some(args);
                     }
@@ -78,14 +78,13 @@ pub fn startSceneEvents(
                     }
                     delivery.batch.events.pop();
                     delivery.batch.next = delivery.batch.events.last().unwrap().seq;
-                    delivery.batch.closed = None;
                 };
                 if let Some(args) = args {
                     if let Ok(args) = operit_link::toCoreValue(args) {
                         let request = CoreCallRequest::new(
-                            operit_link::nextCoreRouteRequestId("scene-event"),
+                            operit_link::nextCoreRouteRequestId("edge-event"),
                             CORE_INTERNAL_TARGET,
-                            "chatEdgeSceneEvent",
+                            operit_edge_contract::events::METHOD,
                             args,
                         );
                         // Do not cancel an in-flight Link transaction; drain its ACK
@@ -95,8 +94,10 @@ pub fn startSceneEvents(
                             if let Ok(ack) = operit_link::fromCoreValue::<serde_json::Value>(value)
                             {
                                 if ack["success"] == true {
-                                    accepted = scene
-                                        .acknowledge(&delivery, ack["next"].as_u64().unwrap_or(0));
+                                    accepted = source.acknowledge_event_delivery(
+                                        &delivery,
+                                        ack["next"].as_u64().unwrap_or(0),
+                                    );
                                 }
                             }
                         }
@@ -110,7 +111,7 @@ pub fn startSceneEvents(
             attempts += 1;
             tokio::select! {
                 _ = uiTaskCancelled(&mut cancelled) => return,
-                _ = scene.wait_event() => {attempts = 0;},
+                _ = source.wait_for_event() => {attempts = 0;},
                 result = peers.recv() => {if matches!(result, Err(tokio::sync::broadcast::error::RecvError::Closed)) {return;} attempts = 0;},
                 _ = tokio::time::sleep(std::time::Duration::from_millis(1000u64 << (attempts - 1))) => {},
             }

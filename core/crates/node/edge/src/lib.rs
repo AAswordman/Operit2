@@ -22,6 +22,7 @@ use serde::Deserialize;
 pub mod service;
 pub mod plugin;
 pub mod scene;
+pub mod events;
 
 pub use plugin::EdgePlugin;
 pub use operit_edge_contract::{EdgePluginManifest, EdgeScreenSnapshot, EdgeScreenInputRequest, EdgeScreenInputState};

@@ -1,8 +1,8 @@
 //! Volatile UI state; all chat execution and persistence belongs to Space.
 #![allow(non_snake_case)]
-#[path = "scene_events.rs"]
-mod scene_events;
-pub use scene_events::startSceneEvents;
+#[path = "edge_events.rs"]
+mod edge_events;
+pub use edge_events::startEdgeEvents;
 
 use operit_link::CoreLinkSharedClient;
 use operit_link::{
