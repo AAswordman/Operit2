@@ -238,8 +238,15 @@ pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) ->
     let source = peerSpaceSnapshot(service)?;
     let local = source.space.clone();
     let localId = service.localNodeId();
-    if local.spaceId == snapshot.space.spaceId && snapshot.space.members.contains(&localId) {
-        return Err("This device is already a member of the target Space".into());
+    // One shared space identity is never joinable: either both sides already
+    // agree on membership, or their member tables diverged. The divergent case
+    // must be reconciled through synced control operations, never re-admitted
+    // through a fresh AdmitSpace whose source would equal the target Space.
+    if local.spaceId == snapshot.space.spaceId {
+        if snapshot.space.members.contains(&localId) {
+            return Err("This device is already a member of the target Space".into());
+        }
+        return Err("Target advertises the local Space without this device as a member; reconcile the split membership instead of submitting a join request".into());
     }
     let profile = source.deviceProfiles.iter().find(|p| p.nodeId == localId)
         .cloned().ok_or("Local device profile missing")?;
@@ -355,6 +362,12 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
         if input.profile.nodeId != peer || input.sourceRevision <= 0 || (!cancellation && input.targetSpaceId != current.spaceId)
             || input.sourceSpaceId.is_empty() || input.profile.displayName.len() > 512 {
             return Err("Join request identity/Space mismatch".into());
+        }
+        // A merge whose source equals the gateway's own Space can never pass
+        // admission validation; rejecting it here keeps it out of the durable
+        // review state entirely. Cancellation of such a legacy record stays allowed.
+        if !cancellation && input.sourceSpaceId == current.spaceId {
+            return Err("Join request must merge a distinct source Space, not the target itself".into());
         }
         let records = store(service).records::<Record>(INBOUND)?;
         if let Some(old) = records.get(&input.requestId) {

@@ -608,6 +608,10 @@ impl NetworkControlStore {
             issuerNodeId: self.localNodeId.clone(),
             command,
         };
+        // Field validation must precede the durable append. decode-time validation
+        // alone lets a malformed command into the log, where every later replay
+        // fails and permanently breaks this Space's control-plane materialization.
+        validateCommandRecord(&record)?;
         if self.nodeLocalOnly {
             let sequence = self.orderedCommands(spaceId)?.iter()
                 .filter(|op| op.originDeviceId == self.localNodeId)
