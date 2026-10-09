@@ -116,6 +116,8 @@ pub struct OperationLogLineFinding {
 }
 
 /// Raw classification of one origin journal: decodable lines versus corruption.
+/// `operations` carries the decoded lines so diagnostics can inspect them
+/// without a second read; payload envelopes stay untouched (not decrypted).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OperationLogScan {
     pub deviceId: String,
@@ -124,6 +126,7 @@ pub struct OperationLogScan {
     pub decodedLines: u64,
     pub highestSequence: i64,
     pub findings: Vec<OperationLogLineFinding>,
+    pub operations: Vec<SyncOperation>,
 }
 
 /// One journal line moved to the quarantine sidecar by an explicit repair.
@@ -1169,6 +1172,7 @@ impl SyncOperationStore {
                     Ok(operation) => {
                         scan.decodedLines += 1;
                         scan.highestSequence = scan.highestSequence.max(operation.sequence);
+                        scan.operations.push(operation);
                     }
                     Err(error) => scan.findings.push(OperationLogLineFinding {
                         deviceId: deviceId.to_string(),
@@ -1338,9 +1342,10 @@ impl SyncOperationStore {
         format!("{}/export_floors.json", self.rootPath)
     }
 
-    /// Returns the JSONL operation-log path for one origin device.
+    /// Returns the JSONL operation-log path for one origin device. Public for
+    /// diagnostics that copy or back up the raw journal beside the store APIs.
     #[allow(non_snake_case)]
-    fn operationsPath(&self, deviceId: &str) -> String {
+    pub fn operationsPath(&self, deviceId: &str) -> String {
         format!(
             "{}/operations/{}.jsonl",
             self.rootPath,

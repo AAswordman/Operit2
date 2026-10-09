@@ -512,6 +512,42 @@ async fn approvalCall<T: serde::de::DeserializeOwned>(service: &dyn NodeSpaceCon
 pub(crate) fn hasInbound(service: &dyn NodeSpaceContext) -> Result<bool, String> {
     Ok(!store(service).records::<Record>(INBOUND)?.is_empty())
 }
+
+/// Read-only review-state summary for diagnostics, judged through the shared
+/// commit predicate so every replica describes stuck records identically.
+pub(crate) fn doctorSummaries(service: &dyn NodeSpaceContext) -> Result<Vec<space_doctor::JoinHealth>, String> {
+    let now = currentTimeMillis();
+    let mut summaries = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in [INBOUND, INBOX] {
+        for (_, record) in store(service).records::<Record>(path)? {
+            if !seen.insert(record.request.requestId.clone()) { continue; }
+            let committed = record.request.status == SpaceJoinStatus::Approving
+                && record.approvedDecision == Some(true)
+                && admissionCommitted(service, &record)?;
+            let recoverable = committed && service.networkControlStore().currentState()
+                .map(|state| record.source.space.members.iter()
+                    .all(|node| state.memberNodeIds.contains(node)))
+                .unwrap_or(false);
+            let reassignable = record.request.status == SpaceJoinStatus::Approving && !committed
+                && record.unavailableSince
+                    .map(|since| now.saturating_sub(since) > OFFLINE_GRACE_MS)
+                    .unwrap_or(false);
+            summaries.push(space_doctor::JoinHealth {
+                requestId: record.request.requestId.clone(),
+                applicantDeviceId: record.request.applicantDeviceId.clone(),
+                status: record.request.status.clone(),
+                reviewerDeviceId: record.request.reviewerDeviceId.clone(),
+                assignmentVersion: record.request.assignmentVersion,
+                approvedDecision: record.approvedDecision,
+                committed,
+                recoverable,
+                reassignable,
+            });
+        }
+    }
+    Ok(summaries)
+}
 pub(crate) async fn incoming(service: &dyn NodeSpaceContext) -> Result<Vec<SpaceJoinRequest>, String> {
     let local = service.localNodeId();
     if !canReview(service, &local)? { return Ok(Vec::new()); }

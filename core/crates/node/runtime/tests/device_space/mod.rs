@@ -67,3 +67,9 @@ mod approving_exit {
         "/tests/device_space/approving_exit.rs"
     ));
 }
+mod doctor {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/doctor.rs"
+    ));
+}
