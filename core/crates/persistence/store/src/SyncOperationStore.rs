@@ -90,7 +90,7 @@ impl SyncOperationSemantics {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncOperation {
     pub opId: String,
     pub originDeviceId: String,
@@ -103,6 +103,27 @@ pub struct SyncOperation {
     pub payload: Value,
     pub createdAt: i64,
     pub schemaVersion: i32,
+}
+
+/// One corrupt operation-log line found while reading an origin journal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationLogLineFinding {
+    pub deviceId: String,
+    pub lineNumber: u64,
+    pub byteOffset: u64,
+    pub byteLength: u64,
+    pub error: String,
+}
+
+/// Raw classification of one origin journal: decodable lines versus corruption.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OperationLogScan {
+    pub deviceId: String,
+    pub exists: bool,
+    pub totalLines: u64,
+    pub decodedLines: u64,
+    pub highestSequence: i64,
+    pub findings: Vec<OperationLogLineFinding>,
 }
 
 /// Defines the deterministic total order used to resolve concurrent entity operations.
@@ -248,6 +269,7 @@ struct SyncOperationLogIndex {
     sequenceOffsets: BTreeMap<i64, u64>,
     highestSequence: i64,
     encodedByteLength: u64,
+    findings: Vec<OperationLogLineFinding>,
 }
 
 struct SyncOperationStoreRegistryKey {
@@ -584,11 +606,21 @@ impl SyncOperationStore {
                         let content = self.readOperationLog(&deviceId)?;
                         let mut domains = missing.iter().map(|domain| (domain.clone(), Vec::new()))
                             .collect::<BTreeMap<_, _>>();
+                        let mut skipped = 0usize;
                         for line in content.lines().filter(|line| !line.trim().is_empty()) {
-                            let operation: SyncOperation = serde_json::from_str(line)?;
-                            if let Some(operations) = domains.get_mut(&operation.domain) {
-                                operations.push(operation);
+                            match serde_json::from_str::<SyncOperation>(line) {
+                                Ok(operation) => {
+                                    if let Some(operations) = domains.get_mut(&operation.domain) {
+                                        operations.push(operation);
+                                    }
+                                }
+                                Err(_) => skipped += 1,
                             }
+                        }
+                        if skipped > 0 {
+                            operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
+                                "skipped {skipped} corrupt operation-log line(s) for {deviceId}"
+                            ));
                         }
                         index.domainOperations.extend(domains);
                     }
@@ -917,24 +949,43 @@ impl SyncOperationStore {
     }
 
     /// Decodes one immutable operation-log snapshot without holding its file lock.
+    /// Corrupt lines are skipped and reported, not propagated as a whole-file failure.
     #[allow(non_snake_case)]
     fn decodeOperationLog(
         &self,
         content: &str,
     ) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         let mut operations = Vec::new();
+        let mut skipped = 0usize;
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let operation: SyncOperation = serde_json::from_str(trimmed)?;
-            operations.push(self.decodeOperationPayload(operation)?);
+            match serde_json::from_str::<SyncOperation>(trimmed) {
+                Ok(operation) => match self.decodeOperationPayload(operation) {
+                    Ok(operation) => operations.push(operation),
+                    Err(error) => {
+                        skipped += 1;
+                        operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
+                            "skipped undecodable sync operation payload: {error}"
+                        ));
+                    }
+                },
+                Err(_) => skipped += 1,
+            }
+        }
+        if skipped > 0 {
+            operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
+                "skipped {skipped} corrupt operation-log line(s) during decode"
+            ));
         }
         Ok(operations)
     }
 
     /// Loads the persisted operation IDs once for one locked origin log.
+    /// Corrupt lines are recorded as findings and skipped: one damaged line
+    /// must not make every read of the journal fail.
     #[allow(non_snake_case)]
     fn loadOperationLogIndex(
         &self,
@@ -946,31 +997,46 @@ impl SyncOperationStore {
         }
         let content = self.readOperationLog(deviceId)?;
         let mut byteOffset = 0u64;
+        let mut lineNumber = 0u64;
         for line in content.split_inclusive('\n') {
+            lineNumber += 1;
             let trimmed = line.trim();
-            if trimmed.is_empty() {
-                byteOffset += u64::try_from(line.len()).map_err(|_| {
-                    SyncOperationStoreError::Message(
-                        "sync operation line length does not fit u64".to_string(),
-                    )
-                })?;
-                continue;
-            }
-            let operation: SyncOperation = serde_json::from_str(trimmed)?;
-            index.highestSequence = index.highestSequence.max(operation.sequence);
-            index.sequenceOffsets.insert(operation.sequence, byteOffset);
-            index.operationIds.insert(operation.opId);
-            byteOffset += u64::try_from(line.len()).map_err(|_| {
+            let lineLength = u64::try_from(line.len()).map_err(|_| {
                 SyncOperationStoreError::Message(
                     "sync operation line length does not fit u64".to_string(),
                 )
             })?;
+            if trimmed.is_empty() {
+                byteOffset += lineLength;
+                continue;
+            }
+            match serde_json::from_str::<SyncOperation>(trimmed) {
+                Ok(operation) => {
+                    index.highestSequence = index.highestSequence.max(operation.sequence);
+                    index.sequenceOffsets.insert(operation.sequence, byteOffset);
+                    index.operationIds.insert(operation.opId);
+                }
+                Err(error) => index.findings.push(OperationLogLineFinding {
+                    deviceId: deviceId.to_string(),
+                    lineNumber,
+                    byteOffset,
+                    byteLength: lineLength,
+                    error: error.to_string(),
+                }),
+            }
+            byteOffset += lineLength;
         }
         index.encodedByteLength = u64::try_from(content.len()).map_err(|_| {
             SyncOperationStoreError::Message(
                 "sync operation log length does not fit u64".to_string(),
             )
         })?;
+        if !index.findings.is_empty() {
+            operit_util::AppLogger::AppLogger::w("SyncOperationStore", &format!(
+                "origin {deviceId} journal carries {} corrupt line(s); reads skip them",
+                index.findings.len()
+            ));
+        }
         index.loaded = true;
         Ok(())
     }
@@ -1059,11 +1125,53 @@ impl SyncOperationStore {
     }
 
     /// Reads a snapshot of registered origin devices under its metadata lock.
-    fn devices(&self) -> Result<Vec<String>, SyncOperationStoreError> {
+    pub fn devices(&self) -> Result<Vec<String>, SyncOperationStoreError> {
         let mut devicesState = lockSyncState(&self.sharedState.devices, "devices")?;
         Ok(self
             .loadCachedJson(&mut devicesState, &self.devicesPath())?
             .clone())
+    }
+
+    /// Scans one origin journal raw, classifying every line as decodable or
+    /// corruption. Diagnostics use this; it never fails on damaged content,
+    /// only on host storage errors. Payload envelopes are not decrypted here.
+    #[allow(non_snake_case)]
+    pub fn scanOperationLog(&self, deviceId: &str) -> Result<OperationLogScan, SyncOperationStoreError> {
+        let mut scan = OperationLogScan { deviceId: deviceId.to_string(), ..Default::default() };
+        let content = self.readOperationLog(deviceId)?;
+        if content.is_empty() {
+            return Ok(scan);
+        }
+        scan.exists = true;
+        let mut byteOffset = 0u64;
+        let mut lineNumber = 0u64;
+        for line in content.split_inclusive('\n') {
+            lineNumber += 1;
+            let lineLength = u64::try_from(line.len()).map_err(|_| {
+                SyncOperationStoreError::Message(
+                    "sync operation line length does not fit u64".to_string(),
+                )
+            })?;
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                match serde_json::from_str::<SyncOperation>(trimmed) {
+                    Ok(operation) => {
+                        scan.decodedLines += 1;
+                        scan.highestSequence = scan.highestSequence.max(operation.sequence);
+                    }
+                    Err(error) => scan.findings.push(OperationLogLineFinding {
+                        deviceId: deviceId.to_string(),
+                        lineNumber,
+                        byteOffset,
+                        byteLength: lineLength,
+                        error: error.to_string(),
+                    }),
+                }
+            }
+            scan.totalLines += 1;
+            byteOffset += lineLength;
+        }
+        Ok(scan)
     }
 
     /// Registers one origin device under the dedicated device-list lock.

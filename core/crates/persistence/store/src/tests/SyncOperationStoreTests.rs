@@ -864,3 +864,67 @@ fn compact_preferences_preserves_other_origins_and_edits_after_entry_replacement
     );
 }
 
+
+/// Builds a raw journal with one corrupt middle line and verifies reads skip it.
+#[test]
+fn corrupt_lines_are_skipped_by_reads_and_reported_by_scans() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(storage.clone(), "corrupt-journal");
+    for sequence in 1..=3 {
+        store
+            .appendUnobservedOperation(&operation(
+                sequence,
+                "message",
+                &format!("m{sequence}"),
+                "upsert",
+                SyncOperationSemantics::EntityState,
+                json!({"text": "x"}),
+            ))
+            .unwrap();
+    }
+    let path = "corrupt-journal/operations/device-a.jsonl";
+    let original = storage.readBytes(path).unwrap();
+    let lines: Vec<&[u8]> = original.split_inclusive(|byte| *byte == b'\n').collect();
+    assert_eq!(lines.len(), 3);
+    let mut corrupted = Vec::new();
+    corrupted.extend_from_slice(lines[0]);
+    corrupted.extend_from_slice(b"{ this is not json\n");
+    corrupted.extend_from_slice(lines[2]);
+    storage.writeBytes(path, &corrupted).unwrap();
+
+    // A fresh instance rebuilds its index from the damaged journal and must
+    // still export the two intact operations.
+    let reopened = SyncOperationStore::new(storage.clone(), "corrupt-journal");
+    let readable = reopened
+        .operationsSince(&SyncClock::empty(), &[], 100)
+        .unwrap();
+    assert_eq!(sequences(&readable), vec![1, 3]);
+
+    // The raw scan classifies every line instead of failing on the bad one.
+    let scan = reopened.scanOperationLog("device-a").unwrap();
+    assert!(scan.exists);
+    assert_eq!(scan.totalLines, 3);
+    assert_eq!(scan.decodedLines, 2);
+    assert_eq!(scan.highestSequence, 3);
+    assert_eq!(scan.findings.len(), 1);
+    assert_eq!(scan.findings[0].lineNumber, 2);
+    assert_eq!(scan.findings[0].byteOffset, lines[0].len() as u64);
+    assert_eq!(scan.findings[0].byteLength, "{ this is not json\n".len() as u64);
+
+    // Domain-filtered reads over the same journal also skip the damage.
+    let domainRead = reopened
+        .operationsSince(&SyncClock::empty(), &["chat".to_string()], 100)
+        .unwrap();
+    assert_eq!(sequences(&domainRead), vec![1, 3]);
+}
+
+/// A missing journal scans as absent rather than as an error.
+#[test]
+fn missing_journal_scans_as_absent() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(storage, "empty-journal");
+    let scan = store.scanOperationLog("nobody").unwrap();
+    assert!(!scan.exists);
+    assert_eq!(scan.totalLines, 0);
+    assert!(scan.findings.is_empty());
+}
