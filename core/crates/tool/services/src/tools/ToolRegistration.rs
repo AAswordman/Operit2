@@ -256,14 +256,21 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
     let usePackageHandler = handler.clone();
     handler.registerBuiltinTool(
         BuiltinToolName::UsePackage,
-        Box::new(FnToolExecutor {
+        crate::ToolExecutionManager::RegisteredToolExecutor::Asynchronous(Box::new(AsyncFnToolExecutor {
             effect: ToolEffect::WRITE,
             validate: Arc::new(|_| ToolValidationResult {
                 valid: true,
                 errorMessage: String::new(),
             }),
             invoke: Arc::new(move |tool| {
+                let usePackageManager = usePackageManager.clone();
+                let usePackageHandler = usePackageHandler.clone();
+                Box::pin(async move {
+                let tool = &tool;
                 let packageName = requiredParameterValue(tool, "package_name");
+                if let Err(error) = RuntimePackageManager::prepareMcpPackage(&usePackageManager, &packageName).await {
+                    return toolErrorResult(tool, error);
+                }
                 let (result, selectedPackage) = {
                     let mut guard = usePackageManager
                         .lock()
@@ -286,8 +293,9 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                     );
                 }
                 result
+                })
             }),
-        }),
+        })),
         ToolRegistrationVisibility::PUBLIC,
     );
     let searchContext = context.clone();
@@ -1594,7 +1602,7 @@ fn registerPackageTools(
         let toolName = format!("{}:{}", toolPackage.name, packageTool.name);
         let mut clonedHandler = handler.clone();
         if isMcpPackage {
-            clonedHandler.registerTool(
+            clonedHandler.registerAsyncTool(
                 toolName,
                 Box::new(MCPToolExecutor::new(MCPManager::getInstance(
                     context.clone(),

@@ -179,7 +179,7 @@ impl Worker {
                 if definitions
                     .get(&record.id)
                     .is_some_and(|server| !server.disabled)
-                    && !starter.startPlugin(&record.id, |_| {})
+                    && !starter.startPlugin(&record.id, |_| {}).await
                 {
                     return Err(format!("Unable to activate shared MCP: {}", record.id));
                 }

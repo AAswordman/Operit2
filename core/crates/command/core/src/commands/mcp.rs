@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Runs MCP server management commands.
-pub fn run_mcp_command(
+pub async fn run_mcp_command(
     application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -35,7 +35,7 @@ pub fn run_mcp_command(
         Some("remove") => remove_mcp_server(context, args, output),
         Some("enable") => set_mcp_enabled(context, args, true, output),
         Some("disable") => set_mcp_enabled(context, args, false, output),
-        Some("start") => start_mcp_server(application, args, output),
+        Some("start") => start_mcp_server(application, args, output).await,
         Some("kill") => kill_mcp_server(application, args, output),
         Some("tools") => print_mcp_tools(context, args, output),
         Some("config") => print_mcp_config(context, args, output),
@@ -214,7 +214,7 @@ fn set_mcp_enabled(
 }
 
 /// Starts one MCP server and prints startup progress.
-fn start_mcp_server(
+async fn start_mcp_server(
     application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -230,7 +230,7 @@ fn start_mcp_server(
     let mut statuses = Vec::new();
     let started = starter.startPluginWithTimeout(id, timeoutMs, |status| {
         statuses.push(status);
-    });
+    }).await;
     let mut statusItems = Vec::new();
     for status in &statuses {
         print_start_status(status, output);

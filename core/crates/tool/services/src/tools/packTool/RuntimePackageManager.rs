@@ -4352,6 +4352,23 @@ impl RuntimePackageManager {
         )
     }
 
+    /// Performs MCP discovery before synchronous package metadata/activation, without holding its lock.
+    pub async fn prepareMcpPackage(
+        manager: &Arc<Mutex<Self>>, packageName: &str,
+    ) -> Result<(), String> {
+        let mcpManager = {
+            let guard = manager.lock().expect("package manager mutex poisoned");
+            if !guard.isRegisteredMCPServer(packageName) { return Ok(()); }
+            guard.mcpManager.clone()
+        };
+        let client = mcpManager.getOrCreateClient(packageName).await.ok_or_else(|| {
+            mcpManager.getLastConnectionFailureReason(packageName)
+                .unwrap_or_else(|| format!("Cannot connect to MCP server: {packageName}"))
+        })?;
+        if !client.ping() { return Err(format!("MCP server is not ready: {packageName}")); }
+        Ok(())
+    }
+
     #[allow(non_snake_case)]
     /// Activates an MCP server package and returns its system prompt contribution.
     pub fn useMCPServer(&mut self, serverName: &str) -> String {
@@ -4369,7 +4386,10 @@ impl RuntimePackageManager {
         else {
             return format!("Cannot get MCP server configuration: {}", serverName);
         };
-        let mcpLoadResult = MCPPackage::loadFromServer(&self.context, serverConfig);
+        let tools = crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient::new(
+            self.context.clone(), serverConfig.name.clone(),
+        ).getTools();
+        let mcpLoadResult = MCPPackage::fromToolMetadata(serverConfig, tools);
         let Some(mcpPackage) = mcpLoadResult.mcpPackage else {
             return mcpLoadResult
                 .errorMessage

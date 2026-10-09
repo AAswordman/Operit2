@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use operit_host_api::FileEntry;
+use operit_host_api::{FileEntry, RuntimeStorageHost};
 use operit_host_api::FileSystemResource::FileSystemResource;
 use super::MountRegistry::MountRegistry;
 use operit_util::RuntimeStorageLayout::{
@@ -51,21 +52,44 @@ pub struct PathMapper {
 }
 
 impl PathMapper {
-    /// Creates a built-in-only mapper. Runtime consumers must bind their storage Host.
-    pub fn new(runtimeStoreRoot: PathBuf, workspaceCollectionRoot: PathBuf) -> Self {
+    /// Creates a mapper with the owning runtime's required storage capability.
+    /// Omitting the Host is a compile error rather than silently hiding persistent mounts.
+    ///
+    /// ```compile_fail
+    /// use operit_tools::files::PathMapper::PathMapper;
+    /// let mapper = PathMapper::new("runtime".into(), "workspaces".into());
+    /// ```
+    ///
+    /// A default mapper cannot bypass the required Host either.
+    /// ```compile_fail
+    /// use operit_tools::files::PathMapper::PathMapper;
+    /// let mapper: PathMapper = Default::default();
+    /// ```
+    pub fn new(
+        runtimeStoreRoot: PathBuf,
+        workspaceCollectionRoot: PathBuf,
+        storage: Arc<dyn RuntimeStorageHost>,
+    ) -> Self {
+        Self::fromRegistry(
+            runtimeStoreRoot,
+            workspaceCollectionRoot,
+            MountRegistry::withStorage(storage),
+        )
+    }
+
+    /// Explicitly opts out of persistent mounts for built-in path mapping only.
+    /// Runtime consumers that need registered mounts must use `new` with their Host.
+    pub fn builtinOnly(runtimeStoreRoot: PathBuf, workspaceCollectionRoot: PathBuf) -> Self {
         let mountRegistry = MountRegistry::withoutStorage(&runtimeStoreRoot);
+        Self::fromRegistry(runtimeStoreRoot, workspaceCollectionRoot, mountRegistry)
+    }
+
+    fn fromRegistry(
+        runtimeStoreRoot: PathBuf,
+        workspaceCollectionRoot: PathBuf,
+        mountRegistry: MountRegistry,
+    ) -> Self {
         Self { runtimeStoreRoot, workspaceCollectionRoot, mountRegistry }
-    }
-
-    /// Pins mount resolution to an explicitly supplied identity-local catalog.
-    pub fn withMountRegistry(mut self, registry: MountRegistry) -> Self {
-        self.mountRegistry = registry;
-        self
-    }
-
-    /// Uses the same storage capability as the owning runtime, not a mutable default.
-    pub fn withMountStorage(self, storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>) -> Self {
-        self.withMountRegistry(MountRegistry::withStorage(storage))
     }
 
     fn mounts(&self) -> Result<Vec<super::MountRegistry::VfsMount>, String> {
@@ -339,13 +363,6 @@ impl PathMapper {
         }
         let relative = &childPhysical[prefix.len()..];
         Self::joinVfsPath(&base.vfsPath, relative)
-    }
-}
-
-impl Default for PathMapper {
-    /// Creates an empty mapper used by tests and placeholder contexts.
-    fn default() -> Self {
-        Self::new(PathBuf::new(), PathBuf::new())
     }
 }
 
@@ -674,7 +691,7 @@ mod tests {
     use super::*;
 
     fn mapper() -> PathMapper {
-        PathMapper::new(
+        PathMapper::builtinOnly(
             PathBuf::from("D:/operit"),
             PathBuf::from("D:/operit-workspaces"),
         )
@@ -686,7 +703,7 @@ mod tests {
             "/Users/test/Library/Containers/app.operit/Data/Library/Application Support/Operit2/runtime data/identities/identity-a",
             "/Volumes/External Disk/custom runtime/identities/identity-b",
         ] {
-            let mapper = PathMapper::new(
+            let mapper = PathMapper::builtinOnly(
                 PathBuf::from(runtimeRoot),
                 PathBuf::from("/custom workspaces"),
             );
@@ -919,9 +936,12 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn registeredMountsListResolveRestoreAndUnregister() {
         let root = std::env::temp_dir().join(format!("operit-mapper-test-{}", uuid::Uuid::new_v4()));
-        let registry = super::super::MountRegistry::testRegistry(&root);
+        let storage = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+            root.clone(), root.join("workspaces"),
+        ));
+        let registry = MountRegistry::withStorage(storage.clone());
         let mount = registry.register("/mnt/android/documents", "android_documents", "content://com.termux.documents/tree/opaque%2Fid", "Termux").unwrap();
-        let mapper = PathMapper::new(root.clone(), root.join("workspaces")).withMountRegistry(registry.clone());
+        let mapper = PathMapper::new(root.clone(), root.join("workspaces"), storage.clone());
         for (parent, child) in [("/mnt", "android"), ("/mnt/android", "documents"), ("/mnt/android/documents", mount.id.as_str())] {
             assert!(mapper.virtualDirectoryEntries(parent).unwrap().unwrap().iter().any(|e| e.name == child));
         }
@@ -933,7 +953,7 @@ mod tests {
         assert_eq!(resource.path, "src/项目.py");
         assert_eq!(resource.root, mount.root);
         assert!(resolved.nativePath().is_err());
-        let recreated = PathMapper::new(root.clone(), root.join("workspaces")).withMountRegistry(registry.clone());
+        let recreated = PathMapper::new(root.clone(), root.join("workspaces"), storage.clone());
         assert_eq!(recreated.resolve(&path).unwrap(), resolved);
         registry.remove(&mount.vfsPath()).unwrap();
         assert!(mapper.resolve(&path).is_err());
@@ -942,11 +962,34 @@ mod tests {
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
+    fn builtinOnlyExplicitlyExcludesPersistedMounts() {
+        let root = std::env::temp_dir().join(format!("operit-builtin-mapper-test-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+            root.clone(), root.join("workspaces"),
+        ));
+        let registry = MountRegistry::withStorage(storage.clone());
+        let mount = registry.register("/mnt/test/resources", "test", "opaque", "Test").unwrap();
+        let path = format!("{}/file.txt", mount.vfsPath());
+        let persistent = PathMapper::new(root.clone(), root.join("workspaces"), storage);
+        assert!(persistent.resolve(&path).is_ok());
+
+        let builtin = PathMapper::builtinOnly(root.clone(), root.join("workspaces"));
+        assert!(builtin.resolve(&path).is_err());
+        assert_eq!(builtin.resolve("/app/data/config/example.json").unwrap().physicalPath,
+            root.join("config/example.json").to_string_lossy());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn nativeMountsAndResourceSearchResultsRespectTheirBoundaries() {
         let root = std::env::temp_dir().join(format!("operit-mapper-test-{}", uuid::Uuid::new_v4()));
-        let registry = super::super::MountRegistry::testRegistry(&root);
+        let storage = Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+            root.clone(), root.join("workspaces"),
+        ));
+        let registry = MountRegistry::withStorage(storage.clone());
         let mount = registry.register("/mnt/local/folders", "native", root.to_str().unwrap(), "Local").unwrap();
-        let mapper = PathMapper::new(root.clone(), root.join("workspaces")).withMountRegistry(registry.clone());
+        let mapper = PathMapper::new(root.clone(), root.join("workspaces"), storage.clone());
         assert_eq!(mapper.resolve(&format!("{}/a.txt", mount.vfsPath())).unwrap().nativePath().unwrap(), root.join("a.txt").to_string_lossy());
         for platform in ["android", "windows", "macos", "linux"] {
             let path = format!("/mnt/{platform}/folders/mount-a/project");

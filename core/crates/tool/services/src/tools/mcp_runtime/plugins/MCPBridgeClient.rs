@@ -123,12 +123,12 @@ impl MCPBridgeClient {
     }
 
     #[allow(non_snake_case)]
-    pub fn connect(&self) -> bool {
-        self.connectWithSpawnTimeoutMs(Self::DEFAULT_SPAWN_TIMEOUT_MS)
+    pub async fn connect(&self) -> bool {
+        self.connectWithSpawnTimeoutMs(Self::DEFAULT_SPAWN_TIMEOUT_MS).await
     }
 
     #[allow(non_snake_case)]
-    pub fn connectWithSpawnTimeoutMs(&self, spawnTimeoutMs: u64) -> bool {
+    pub async fn connectWithSpawnTimeoutMs(&self, spawnTimeoutMs: u64) -> bool {
         if self.ping() {
             self.isConnected.store(true, Ordering::SeqCst);
             self.setLastConnectionFailureDetail(None);
@@ -150,7 +150,7 @@ impl MCPBridgeClient {
         }
 
         let spawnResponse =
-            bridge.spawnMcpService(&self.context, &self.serviceName, Some(spawnTimeoutMs));
+            bridge.spawnMcpService(&self.context, &self.serviceName, Some(spawnTimeoutMs)).await;
         if spawnResponse
             .get("success")
             .and_then(Value::as_bool)
@@ -194,12 +194,12 @@ impl MCPBridgeClient {
     }
 
     #[allow(non_snake_case)]
-    pub fn spawnBlocking(&self, timeoutMs: u64) -> Value {
+    pub async fn spawn(&self, timeoutMs: u64) -> Value {
         MCPBridge::getInstance(&self.context).spawnMcpService(
             &self.context,
             &self.serviceName,
             Some(timeoutMs),
-        )
+        ).await
     }
 
     #[allow(non_snake_case)]
@@ -225,8 +225,8 @@ impl MCPBridgeClient {
 
     /// Sends one tool call exactly once after establishing a connection.
     #[allow(non_snake_case)]
-    pub fn callTool(&self, method: &str, params: Value) -> Value {
-        if !self.isConnected() && !self.connect() {
+    pub async fn callTool(&self, method: &str, params: Value) -> Value {
+        if !self.ping() && !self.connect().await {
             return json!({
                 "success": false,
                 "error": {
@@ -236,22 +236,20 @@ impl MCPBridgeClient {
             });
         }
         // A failed response does not prove that the server did not execute the tool.
-        MCPBridge::getInstance(&self.context).callTool(&self.serviceName, method, params)
+        MCPBridge::getInstance(&self.context).callTool(&self.serviceName, method, params).await
     }
 
     #[allow(non_snake_case)]
-    pub fn callToolSync(&self, method: &str, params: BTreeMap<String, Value>) -> Value {
+    pub async fn callToolWithArguments(&self, method: &str, params: BTreeMap<String, Value>) -> Value {
         self.callTool(
             method,
             Value::Object(params.into_iter().collect::<Map<String, Value>>()),
-        )
+        ).await
     }
 
     #[allow(non_snake_case)]
+    /// Reads discovered/cached metadata only; connection is an explicit async operation.
     pub fn getTools(&self) -> Vec<Value> {
-        if !self.isConnected() && !self.connect() {
-            return Vec::new();
-        }
         let response = MCPBridge::getInstance(&self.context).listTools(&self.serviceName);
         if !response
             .get("success")

@@ -54,7 +54,7 @@ impl MCPStarter {
 
     /// Starts one enabled MCP server without issuing model requests.
     #[allow(non_snake_case)]
-    pub fn startPlugin<F>(&self, pluginId: &str, mut statusCallback: F) -> bool
+    pub async fn startPlugin<F>(&self, pluginId: &str, mut statusCallback: F) -> bool
     where
         F: FnMut(StartStatus),
     {
@@ -62,12 +62,12 @@ impl MCPStarter {
             pluginId,
             MCPBridgeClient::DEFAULT_SPAWN_TIMEOUT_MS,
             &mut statusCallback,
-        )
+        ).await
     }
 
     /// Starts one enabled MCP server with a connection timeout.
     #[allow(non_snake_case)]
-    pub fn startPluginWithTimeout<F>(
+    pub async fn startPluginWithTimeout<F>(
         &self,
         pluginId: &str,
         timeoutMs: u64,
@@ -76,24 +76,24 @@ impl MCPStarter {
     where
         F: FnMut(StartStatus),
     {
-        self.startPluginInternal(pluginId, timeoutMs, &mut statusCallback)
+        self.startPluginInternal(pluginId, timeoutMs, &mut statusCallback).await
     }
 
     /// Attempts every enabled server and reports aggregate failures.
     #[allow(non_snake_case)]
-    pub fn startAllDeployedPlugins(&self) -> (usize, usize, PluginInitStatus) {
+    pub async fn startAllDeployedPlugins(&self) -> (usize, usize, PluginInitStatus) {
         let localServer = MCPLocalServer::getInstance(&self.context);
         let plugins = localServer
             .getAllPluginMetadata()
             .into_keys()
             .filter(|pluginId| localServer.isServerEnabled(pluginId))
             .collect::<Vec<_>>();
-        startEveryPlugin(&plugins, |pluginId| self.startPlugin(pluginId, |_| {}))
+        startEveryPlugin(&plugins, |pluginId| async move { self.startPlugin(&pluginId, |_| {}).await }).await
     }
 
     /// Applies an independent timeout to each enabled server.
     #[allow(non_snake_case)]
-    pub fn startAllDeployedPluginsWithTimeout(
+    pub async fn startAllDeployedPluginsWithTimeout(
         &self,
         timeoutSeconds: i32,
     ) -> (usize, usize, PluginInitStatus) {
@@ -108,11 +108,13 @@ impl MCPStarter {
             reportMcpPluginQueued(pluginId, &localServer);
         }
         startEveryPlugin(&plugins, |pluginId| {
-            reportMcpPluginStarting(pluginId, &localServer);
+            let localServer = &localServer;
+            async move {
+            reportMcpPluginStarting(&pluginId, &localServer);
             let mut lastError = String::new();
-            let started = self.startPluginWithTimeout(pluginId, timeoutMs, |status| {
+            let started = self.startPluginWithTimeout(&pluginId, timeoutMs, |status| {
                 let message = startStatusMessage(&status);
-                appendMcpPluginLog(pluginId, &message);
+                appendMcpPluginLog(&pluginId, &message);
                 if matches!(
                     &status,
                     StartStatus::Error(_)
@@ -121,19 +123,20 @@ impl MCPStarter {
                 ) {
                     lastError = message;
                 }
-            });
+            }).await;
             if started {
-                reportMcpPluginSuccess(pluginId);
+                reportMcpPluginSuccess(&pluginId);
             } else {
-                reportMcpPluginFailure(pluginId, &lastError);
+                reportMcpPluginFailure(&pluginId, &lastError);
             }
             started
-        })
+            }
+        }).await
     }
 
     /// Connects a server and publishes its discovered tools.
     #[allow(non_snake_case)]
-    fn startPluginInternal<F>(&self, pluginId: &str, timeoutMs: u64, statusCallback: &mut F) -> bool
+    async fn startPluginInternal<F>(&self, pluginId: &str, timeoutMs: u64, statusCallback: &mut F) -> bool
     where
         F: FnMut(StartStatus),
     {
@@ -223,7 +226,7 @@ impl MCPStarter {
         }
 
         let client = MCPBridgeClient::new(self.context.clone(), actualServiceName.clone());
-        if !client.connectWithSpawnTimeoutMs(timeoutMs) {
+        if !client.connectWithSpawnTimeoutMs(timeoutMs).await {
             statusCallback(StartStatus::Error(
                 client
                     .getLastConnectionFailureDetail()
@@ -383,21 +386,13 @@ fn reportMcpPluginFailure(pluginId: &str, message: &str) {
 
 /// Attempts every queued server exactly once and summarizes the observed results.
 #[allow(non_snake_case)]
-fn startEveryPlugin(
-    plugins: &[String],
-    mut start: impl FnMut(&str) -> bool,
-) -> (usize, usize, PluginInitStatus) {
+async fn startEveryPlugin<F, Fut>(plugins: &[String], mut start: F) -> (usize, usize, PluginInitStatus)
+where F: FnMut(String) -> Fut, Fut: std::future::Future<Output = bool> {
     let mut successCount = 0;
     for plugin in plugins {
-        if start(plugin) {
-            successCount += 1;
-        }
+        if start(plugin.clone()).await { successCount += 1; }
     }
-    let status = if successCount == plugins.len() {
-        PluginInitStatus::SUCCESS
-    } else {
-        PluginInitStatus::OTHER_ERROR
-    };
+    let status = if successCount == plugins.len() { PluginInitStatus::SUCCESS } else { PluginInitStatus::OTHER_ERROR };
     (successCount, plugins.len(), status)
 }
 
@@ -406,32 +401,32 @@ mod tests {
     use super::*;
 
     /// Keeps later servers eligible after the first server fails or times out.
-    #[test]
-    fn failedServerDoesNotTruncateStartup() {
+    #[tokio::test]
+    async fn failedServerDoesNotTruncateStartup() {
         let plugins = vec!["failed".to_string(), "ready".to_string()];
         let mut attempted = Vec::new();
         let result = startEveryPlugin(&plugins, |plugin| {
             attempted.push(plugin.to_string());
-            plugin == "ready"
-        });
+            std::future::ready(plugin == "ready")
+        }).await;
         assert_eq!(attempted, plugins);
         assert_eq!(result, (1, 2, PluginInitStatus::OTHER_ERROR));
     }
 
     /// Reports success only when every queued server starts successfully.
-    #[test]
-    fn successfulBatchReportsExactCounts() {
+    #[tokio::test]
+    async fn successfulBatchReportsExactCounts() {
         let plugins = vec!["one".to_string(), "two".to_string()];
         assert_eq!(
-            startEveryPlugin(&plugins, |_| true),
+            startEveryPlugin(&plugins, |_| std::future::ready(true)).await,
             (2, 2, PluginInitStatus::SUCCESS)
         );
         assert_eq!(
-            startEveryPlugin(&plugins, |_| false),
+            startEveryPlugin(&plugins, |_| std::future::ready(false)).await,
             (0, 2, PluginInitStatus::OTHER_ERROR)
         );
         assert_eq!(
-            startEveryPlugin(&[], |_| panic!("empty batch")),
+            startEveryPlugin(&[], |_| std::future::ready(panic!("empty batch"))).await,
             (0, 0, PluginInitStatus::SUCCESS)
         );
     }

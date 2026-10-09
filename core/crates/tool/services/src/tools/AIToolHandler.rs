@@ -666,7 +666,13 @@ impl AIToolHandler {
 
     /// Ensures default or package tools are registered, then reports whether a tool exists.
     #[allow(non_snake_case)]
-    pub fn getToolExecutorOrActivate(&mut self, toolName: &str) -> bool {
+    pub async fn getToolExecutorOrActivate(&mut self, toolName: &str) -> bool {
+        if let Some((packageName, _)) = toolName.split_once(':') {
+            let manager = self.getOrCreatePackageManager();
+            if RuntimePackageManager::prepareMcpPackage(&manager, packageName.trim()).await.is_err() {
+                return false;
+            }
+        }
         if self.hasToolExecutor(toolName) {
             if let Some((packageName, _)) = toolName.split_once(':') {
                 let packageName = packageName.trim();
@@ -728,7 +734,7 @@ impl AIToolHandler {
     #[allow(non_snake_case)]
     fn isMcpServiceActive(&self, packageName: &str) -> bool {
         let mcpManager = MCPManager::getInstance(self.getContext());
-        let Some(client) = mcpManager.getOrCreateClient(packageName) else {
+        let Some(client) = mcpManager.getClientForMetadata(packageName) else {
             return false;
         };
         client
@@ -759,7 +765,7 @@ impl AIToolHandler {
         for packageTool in executableTools {
             let toolName = format!("{}:{}", toolPackage.name, packageTool.name);
             if isMcpPackage {
-                self.registerTool(
+                self.registerAsyncTool(
                     toolName,
                     Box::new(MCPToolExecutor::new(MCPManager::getInstance(
                         context.clone(),
@@ -952,7 +958,7 @@ impl AIToolHandler {
         let workspaceRoot = storage.workspaceRootDir().ok_or_else(|| WorkspaceBoundaryError::InvalidRequest(
             "Runtime storage Host does not expose its workspace root".to_string()
         ))?;
-        let mapper = PathMapper::new(runtimeRoot, workspaceRoot).withMountStorage(storage.clone());
+        let mapper = PathMapper::new(runtimeRoot, workspaceRoot, storage.clone());
         let resolvedPath = mapper
             .resolve(path)
             .map_err(WorkspaceBoundaryError::InvalidRequest)?;
@@ -1011,7 +1017,7 @@ impl AIToolHandler {
                 ("parameters", parameterSummary.clone()),
             ],
         );
-        if !self.getToolExecutorOrActivate(&tool.name) {
+        if !self.getToolExecutorOrActivate(&tool.name).await {
             ChainLogger::warn(
                 TOOL_CHAIN,
                 "tool.stream.not_found",
@@ -1187,7 +1193,7 @@ impl AIToolHandler {
             self.notifyToolExecutionFinished(&tool);
             return result;
         }
-        self.getToolExecutorOrActivate(&tool.name);
+        self.getToolExecutorOrActivate(&tool.name).await;
         let Some(mut executor) = self.takeToolExecutorForExecution(&tool.name).await else {
             let notFoundResult = ToolResult {
                 toolName: tool.name.clone(),

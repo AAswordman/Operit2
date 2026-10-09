@@ -17,8 +17,8 @@ use operit_tools::tools::mcp_runtime::plugins::{
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
-#[test]
-fn streamed_responses_and_deadlines() {
+#[tokio::test]
+async fn streamed_responses_and_deadlines() {
     let (_fixture, base) = fixture_server();
     let context = HostManager {
         httpHost: Some(Arc::new(NativeHttpHost::new())),
@@ -50,12 +50,12 @@ fn streamed_responses_and_deadlines() {
         );
         let client = MCPBridgeClient::new(context.clone(), name.clone());
         let start = Instant::now();
-        let connected = client.connectWithSpawnTimeoutMs(200);
+        let connected = client.connectWithSpawnTimeoutMs(200).await;
         let elapsed = start.elapsed().as_millis();
         let calls = if connected {
             vec![
-                client.callTool("echo", json!({})),
-                client.callTool("echo", json!({})),
+                client.callTool("echo", json!({})).await,
+                client.callTool("echo", json!({})).await,
             ]
         } else {
             Vec::new()

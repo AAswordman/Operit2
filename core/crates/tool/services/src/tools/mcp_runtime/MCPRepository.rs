@@ -417,7 +417,7 @@ impl MCPRepository {
             .mcpLocalServer
             .getPluginMetadata(pluginId)
             .ok_or_else(|| "MCP server not found".to_string())?;
-        let toolDescriptions = self.collectToolDescriptionsForDescriptionGeneration(pluginId);
+        let toolDescriptions = self.collectToolDescriptionsForDescriptionGeneration(pluginId).await;
         if toolDescriptions.is_empty() {
             return Err("No tools available for description generation".to_string());
         }
@@ -438,7 +438,7 @@ impl MCPRepository {
 
     /// Collects tool descriptions from cached metadata or the live MCP bridge.
     #[allow(non_snake_case)]
-    fn collectToolDescriptionsForDescriptionGeneration(&self, pluginId: &str) -> Vec<String> {
+    async fn collectToolDescriptionsForDescriptionGeneration(&self, pluginId: &str) -> Vec<String> {
         let cachedToolDescriptions = self
             .mcpLocalServer
             .getCachedTools(pluginId)
@@ -462,7 +462,9 @@ impl MCPRepository {
         }
 
         let serviceName = self.serviceNameForDescriptionGeneration(pluginId);
-        MCPBridgeClient::new(self.context.clone(), serviceName).getToolDescriptions()
+        let client = MCPBridgeClient::new(self.context.clone(), serviceName);
+        if !client.connect().await { return Vec::new(); }
+        client.getToolDescriptions()
     }
 
     /// Resolves the service name used when querying live MCP tool descriptions.

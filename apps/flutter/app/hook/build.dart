@@ -540,6 +540,7 @@ const Set<String> _webRuntimeArtifactNames = <String>{
   'operit_runtime_bridge.js',
   'browser_system_capabilities.js',
   'browser_file_open.js',
+  'browser_http_stream.js',
   'operit_runtime_worker.js',
   'operit_model_install_worker.js',
   'v86_runtime_worker.js',

@@ -71,9 +71,17 @@ impl MCPManager {
             .cloned()
     }
 
+    /// Returns a metadata client without starting network I/O or waiting under a lock.
+    pub fn getClientForMetadata(&self, serverName: &str) -> Option<MCPBridgeClient> {
+        let guard = self.inner.lock().expect("mcp manager mutex poisoned");
+        if !guard.serverConfigCache.contains_key(serverName) { return None; }
+        Some(guard.clientCache.get(serverName).cloned()
+            .unwrap_or_else(|| MCPBridgeClient::new(guard.context.clone(), serverName.to_string())))
+    }
+
     /// Returns a connected bridge client for a registered MCP server.
     #[allow(non_snake_case)]
-    pub fn getOrCreateClient(&self, serverName: &str) -> Option<MCPBridgeClient> {
+    pub async fn getOrCreateClient(&self, serverName: &str) -> Option<MCPBridgeClient> {
         let cached = {
             self.inner
                 .lock()
@@ -83,10 +91,10 @@ impl MCPManager {
                 .cloned()
         };
         if let Some(client) = cached {
-            if client.isConnected() {
+            if client.ping() {
                 return Some(client);
             }
-            if client.connect() {
+            if client.connect().await {
                 self.inner
                     .lock()
                     .expect("mcp manager mutex poisoned")
@@ -125,7 +133,7 @@ impl MCPManager {
         }
 
         let client = MCPBridgeClient::new(context, serverName.to_string());
-        if client.connect() {
+        if client.connect().await {
             let mut guard = self.inner.lock().expect("mcp manager mutex poisoned");
             guard
                 .clientCache

@@ -21,14 +21,14 @@ pub struct LoadResult {
 
 impl MCPPackage {
     #[allow(non_snake_case)]
-    pub fn fromServer(context: &HostManager, serverConfig: MCPServerConfig) -> Option<MCPPackage> {
-        Self::loadFromServer(context, serverConfig).mcpPackage
+    pub async fn fromServer(context: &HostManager, serverConfig: MCPServerConfig) -> Option<MCPPackage> {
+        Self::loadFromServer(context, serverConfig).await.mcpPackage
     }
 
     #[allow(non_snake_case)]
-    pub fn loadFromServer(context: &HostManager, serverConfig: MCPServerConfig) -> LoadResult {
+    pub async fn loadFromServer(context: &HostManager, serverConfig: MCPServerConfig) -> LoadResult {
         let bridgeClient = MCPBridgeClient::new(context.clone(), serverConfig.name.clone());
-        if !bridgeClient.connect() {
+        if !bridgeClient.connect().await {
             return LoadResult {
                 mcpPackage: None,
                 errorMessage: Some(
@@ -41,7 +41,11 @@ impl MCPPackage {
             };
         }
 
-        let jsonTools = bridgeClient.getTools();
+        Self::fromToolMetadata(serverConfig, bridgeClient.getTools())
+    }
+
+    /// Builds the package view from metadata without performing synchronous network I/O.
+    pub fn fromToolMetadata(serverConfig: MCPServerConfig, jsonTools: Vec<Value>) -> LoadResult {
         if jsonTools.is_empty() {
             return LoadResult {
                 mcpPackage: Some(MCPPackage {

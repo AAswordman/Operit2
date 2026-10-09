@@ -3,9 +3,9 @@ use super::*;
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
     HttpDownloadResult, HttpImageDelivery, HttpStreamChunkCallback, HttpStreamClosedCallback,
-    HttpStreamHost, HttpStreamOpenedCallback,
+    HttpStreamHost, HttpStreamOpenedCallback, HttpStreamResponseCallback, HttpResponseHead,
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 struct StreamingHost {
     initial: Vec<u8>,
@@ -15,6 +15,7 @@ struct StreamingHost {
     closed: Mutex<Option<HttpStreamClosedCallback>>,
     requests: Mutex<Vec<HttpRequestData>>,
     cancelled: Mutex<Vec<String>>,
+    getStreamId: Mutex<Option<String>>,
 }
 
 impl StreamingHost {
@@ -27,6 +28,7 @@ impl StreamingHost {
             closed: Mutex::new(None),
             requests: Mutex::new(Vec::new()),
             cancelled: Mutex::new(Vec::new()),
+            getStreamId: Mutex::new(None),
         }
     }
 
@@ -41,40 +43,38 @@ impl StreamingHost {
 }
 
 impl HttpStreamHost for StreamingHost {
-    fn openHttpByteStream(
-        &self,
-        _id: String,
-        request: HttpRequestData,
-        opened: HttpStreamOpenedCallback,
-        chunk: HttpStreamChunkCallback,
-        closed: HttpStreamClosedCallback,
-    ) -> HostResult<()> {
-        assert_eq!(request.method, "GET");
-        assert_eq!(
-            request.readTimeoutSeconds, 0,
-            "startup timeout must not close an idle live session"
-        );
-        assert!(request
-            .headers
-            .iter()
-            .any(|(name, value)| name == "Accept" && value == "text/event-stream"));
-        *self.chunk.lock().unwrap() = Some(chunk.clone());
-        *self.closed.lock().unwrap() = Some(closed.clone());
+    fn openHttpByteStream(&self, _: String, _: HttpRequestData, _: HttpStreamOpenedCallback,
+        _: HttpStreamChunkCallback, _: HttpStreamClosedCallback) -> HostResult<()> {
+        panic!("MCP must request HTTP response metadata")
+    }
+    fn openHttpResponseStream(&self, streamId: String, request: HttpRequestData,
+        head: HttpStreamResponseCallback, onChunk: HttpStreamChunkCallback,
+        onClosed: HttpStreamClosedCallback) -> HostResult<()> {
+        if request.method == "POST" {
+            let response = self.executeHttpRequest(request)?;
+            head(HttpResponseHead { finalUrl: response.finalUrl, statusCode: response.statusCode,
+                statusMessage: response.statusMessage, headers: response.headers });
+            if !response.body.is_empty() { onChunk(response.body); }
+            onClosed(Ok(()));
+            return Ok(());
+        }
+        head(HttpResponseHead { finalUrl: request.url.clone(), statusCode: 200,
+            statusMessage: "OK".into(), headers: vec![("Content-Type".into(), "text/event-stream".into())] });
         self.requests.lock().unwrap().push(request);
-        opened();
-        for byte in &self.initial {
-            chunk(vec![*byte]);
-        }
-        if self.closeOnOpen {
-            closed(Err("scripted connection loss".to_string()));
-        }
+        *self.getStreamId.lock().unwrap() = Some(streamId);
+        *self.chunk.lock().unwrap() = Some(onChunk.clone());
+        *self.closed.lock().unwrap() = Some(onClosed.clone());
+        for byte in &self.initial { onChunk(vec![*byte]); }
+        if self.closeOnOpen { onClosed(Err("scripted connection loss".to_string())); }
         Ok(())
     }
 
     fn closeHttpByteStream(&self, id: &str) -> HostResult<()> {
-        self.cancelled.lock().unwrap().push(id.to_string());
-        self.chunk.lock().unwrap().take();
-        self.closed.lock().unwrap().take();
+        if self.getStreamId.lock().unwrap().as_deref() == Some(id) {
+            self.cancelled.lock().unwrap().push(id.to_string());
+            self.chunk.lock().unwrap().take();
+            self.closed.lock().unwrap().take();
+        }
         Ok(())
     }
 }
@@ -146,28 +146,29 @@ fn service() -> RegisteredService {
         headers: BTreeMap::new(),
         description: String::new(),
         env: BTreeMap::new(),
+        startupGate: Arc::new(tokio::sync::Mutex::new(())),
     }
 }
 
 const ENDPOINT: &str = ": heartbeat\r\n\r\nevent: endpoint\r\ndata: /message?sessionId=one\r\n\r\n";
 
-#[test]
-fn liveSseHandshakeAndRepeatedCallsReadFutureChunks() {
+#[tokio::test]
+async fn liveSseHandshakeAndRepeatedCallsReadFutureChunks() {
     let host = Arc::new(StreamingHost::new(ENDPOINT));
     let mut active = startRemoteServiceSession(
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    )
+    ).await
     .unwrap();
     assert!(active.ready);
     assert_eq!(active.tools[0]["name"], "echo");
     for _ in 0..2 {
-        let result = callRemoteMcpTool(&mut active, "echo", json!({}), 1000).unwrap();
+        let result = callRemoteMcpTool(&mut active, "echo", json!({}), 1000).await.unwrap();
         assert_eq!(result["content"][0]["text"], "实时读取正常");
     }
     let before = host.requests.lock().unwrap().len();
-    assert!(callRemoteMcpTool(&mut active, "unknown", json!({}), 1000)
+    assert!(callRemoteMcpTool(&mut active, "unknown", json!({}), 1000).await
         .unwrap_err()
         .contains("unknown tool"));
     assert_eq!(
@@ -180,15 +181,15 @@ fn liveSseHandshakeAndRepeatedCallsReadFutureChunks() {
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
-#[test]
-fn missingEndpointHonorsStartupDeadlineAndCancelsStream() {
+#[tokio::test]
+async fn missingEndpointHonorsStartupDeadlineAndCancelsStream() {
     let host = Arc::new(StreamingHost::new(": heartbeat\n\n"));
     let started = Instant::now();
     let error = startRemoteServiceSession(
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 30).unwrap(),
-    )
+    ).await
     .err()
     .unwrap();
     assert!(error.contains("timed out"), "{error}");
@@ -197,8 +198,8 @@ fn missingEndpointHonorsStartupDeadlineAndCancelsStream() {
     assert_eq!(host.requests.lock().unwrap().len(), 1);
 }
 
-#[test]
-fn closedStreamFailsImmediatelyInsteadOfSpinningUntilDeadline() {
+#[tokio::test]
+async fn closedStreamFailsImmediatelyInsteadOfSpinningUntilDeadline() {
     let mut scripted = StreamingHost::new("");
     scripted.closeOnOpen = true;
     let host = Arc::new(scripted);
@@ -207,7 +208,7 @@ fn closedStreamFailsImmediatelyInsteadOfSpinningUntilDeadline() {
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    )
+    ).await
     .err()
     .unwrap();
     assert!(error.contains("scripted connection loss"), "{error}");
@@ -215,8 +216,8 @@ fn closedStreamFailsImmediatelyInsteadOfSpinningUntilDeadline() {
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
-#[test]
-fn crossOriginEndpointIsRejectedAndStreamCancelled() {
+#[tokio::test]
+async fn crossOriginEndpointIsRejectedAndStreamCancelled() {
     let host = Arc::new(StreamingHost::new(
         "event: endpoint\ndata: https://other.invalid/message\n\n",
     ));
@@ -226,7 +227,7 @@ fn crossOriginEndpointIsRejectedAndStreamCancelled() {
         host.clone(),
         &registered,
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    )
+    ).await
     .err()
     .unwrap();
     assert!(error.contains("origin does not match"), "{error}");
@@ -238,8 +239,8 @@ fn crossOriginEndpointIsRejectedAndStreamCancelled() {
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
-#[test]
-fn ssePostAndResponseWaitShareOneBudget() {
+#[tokio::test]
+async fn ssePostAndResponseWaitShareOneBudget() {
     let mut scripted = StreamingHost::new(ENDPOINT);
     scripted.postDelay = Duration::from_millis(40);
     let host = Arc::new(scripted);
@@ -247,29 +248,29 @@ fn ssePostAndResponseWaitShareOneBudget() {
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    )
+    ).await
     .unwrap();
-    let error = callRemoteMcpTool(&mut active, "echo", json!({}), 10).unwrap_err();
+    let error = callRemoteMcpTool(&mut active, "echo", json!({}), 10).await.unwrap_err();
     assert!(error.contains("timed out"), "{error}");
     drop(active);
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
-#[test]
-fn readerReportsCleanClosureAndDisconnectWithoutBusyLoop() {
+#[tokio::test]
+async fn readerReportsCleanClosureAndDisconnectWithoutBusyLoop() {
+    use super::streamable_http::{ResponseStream, ResponseEvent};
     for closed in [true, false] {
-        let (sender, messages) = mpsc::channel();
+        let host = Arc::new(StreamingHost::new(""));
+        let stream = ResponseStream::open(host.clone(), remoteHttpRequest("GET", "https://test.invalid/sse", Vec::new(), Vec::new(), 1000)).unwrap();
+        let mut reader = RemoteSseReader::new(stream);
+        let deadline = StartupDeadline::new(testScheduler(), 1000).unwrap();
+        assert!(matches!(reader.stream.next(&deadline).await.unwrap(), ResponseEvent::Head(_)));
         if closed {
-            sender.send(RemoteSseMessage::Closed(Ok(()))).unwrap();
+            host.closed.lock().unwrap().as_ref().unwrap()(Ok(()));
+        } else {
+            host.chunk.lock().unwrap().take();
+            host.closed.lock().unwrap().take();
         }
-        drop(sender);
-        let mut reader = RemoteSseReader {
-            messages,
-            pending: Vec::new(),
-            offset: 0,
-            deadline: StartupDeadline::new(testScheduler(), 1000).unwrap(),
-        };
-        let error = reader.read(&mut [0; 1]).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(reader.next(&deadline).await.unwrap_err().contains(if closed { "closed" } else { "disconnected" }));
     }
 }

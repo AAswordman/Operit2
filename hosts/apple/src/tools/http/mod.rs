@@ -58,11 +58,6 @@ impl AppleHttpHost {
 }
 
 impl HttpHost for AppleHttpHost {
-    /// Preserves the underlying transport's response delivery capability.
-    fn responseDelivery(&self) -> operit_host_api::HttpResponseDelivery {
-        self.inner.responseDelivery()
-    }
-
     /// Declares the image delivery supported by this HTTP host.
     fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
         self.inner.imageDelivery()

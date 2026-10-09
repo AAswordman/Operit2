@@ -47,6 +47,7 @@ pub async fn run_package_command(
                 "usage: operit2 package import <js-ts-hjson-toolpkg-path>".to_string()
             })?;
             let package_manager = package_manager(&tool_handler);
+            operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager::prepareMcpPackage(&package_manager, name).await?;
             let mut guard = package_manager
                 .lock()
                 .expect("package manager mutex poisoned");
@@ -102,6 +103,7 @@ pub async fn run_package_command(
                 .ok_or_else(|| "package exec tool name must use package:tool format".to_string())?;
             {
                 let package_manager = package_manager(&tool_handler);
+                operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager::prepareMcpPackage(&package_manager, &package_name).await?;
                 let mut guard = package_manager
                     .lock()
                     .expect("package manager mutex poisoned");

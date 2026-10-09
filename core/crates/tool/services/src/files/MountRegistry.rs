@@ -206,10 +206,8 @@ mod tests {
             .register("/mnt/web/resources", "test", "first-root", "First").unwrap();
         let secondMount = MountRegistry::withStorage(second.clone())
             .register("/mnt/web/resources", "test", "second-root", "Second").unwrap();
-        let firstMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into())
-            .withMountStorage(first);
-        let secondMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into())
-            .withMountStorage(second);
+        let firstMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into(), first);
+        let secondMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into(), second);
         assert!(firstMapper.resolve(&firstMount.vfsPath()).is_ok());
         assert!(secondMapper.resolve(&secondMount.vfsPath()).is_ok());
         assert!(firstMapper.resolve(&secondMount.vfsPath()).is_err());

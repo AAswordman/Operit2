@@ -12,20 +12,28 @@ test('MCP clock and transport selection use capabilities instead of wasm gates',
   assert.doesNotMatch(bridge, /target_arch|TimeUtils|Instant|defaultHostRuntimeTaskSchedulerHost/);
   assert.match(bridge, /context\.hostRuntimeTaskSchedulerHost/);
   assert.match(bridge, /self\.scheduler\s*\.monotonicTimeMillis\(\)/);
-  assert.match(bridge, /match session\.httpHost\.responseDelivery\(\)/);
+  assert.doesNotMatch(bridge, /responseDelivery|Buffered|sendRemoteBuffered|recv_timeout|block_on/);
+  assert.match(bridge, /streamable_http::sendJsonRpc[\s\S]*?\.await/);
+  const transport = production(`${mcp}MCPStreamableHttp.rs`);
+  assert.match(transport, /openHttpResponseStream/);
+  assert.match(transport, /self\.events\.recv\(\)/);
+  assert.match(transport, /waitForHostRuntimeDelay/);
+  assert.doesNotMatch(transport, /recv_timeout|block_on|executeHttpRequest/);
   assert.doesNotMatch(production(`${mcp}MCPStreamableHttp.rs`), /Instant|target_arch/);
 });
 
-test('native HTTP wrappers forward delivery capability to their providers', () => {
+test('HTTP Hosts provide response streams instead of target-selected delivery modes', () => {
   for (const host of [
     'hosts/android/src/http.rs', 'hosts/ohos/src/http.rs',
     'hosts/apple/src/tools/http/mod.rs', 'hosts/linux/src/tools/http/mod.rs',
     'hosts/windows/src/tools/http/mod.rs',
   ]) {
-    assert.match(source(host), /fn responseDelivery\(&self\)[\s\S]*?self\.inner\.responseDelivery\(\)/, host);
+    assert.match(source(host), /fn openHttpResponseStream[\s\S]*?self\.inner\s*\.openHttpResponseStream/, host);
   }
-  assert.match(source('hosts/web/src/tools/http/mod.rs'),
-    /fn responseDelivery\(&self\)[\s\S]*?HttpResponseDelivery::Buffered/);
+  assert.match(source('hosts/web/src/tools/http/mod.rs'), /fn openHttpResponseStream/);
+  assert.doesNotMatch(source('core/crates/foundation/host-api/src/lib.rs'), /HttpResponseDelivery|responseDelivery/);
+  assert.match(source('apps/flutter/app/web/runtime/src/operit_runtime_bridge.ts'), /\.\.\.httpStreamHost/);
+  assert.match(source('apps/flutter/app/hook/build.dart'), /'browser_http_stream\.js'/);
 });
 
 test('mount persistence and permission checks never select a global storage Host', () => {
@@ -35,7 +43,7 @@ test('mount persistence and permission checks never select a global storage Host
   const start = handler.indexOf('fn checkWorkspaceWritePath(');
   const end = handler.indexOf('\n    fn ', start + 1);
   const check = handler.slice(start, end === -1 ? undefined : end);
-  assert.match(check, /withMountStorage\(storage\.clone\(\)\)/);
+  assert.match(check, /PathMapper::new\(runtimeRoot, workspaceRoot, storage\.clone\(\)\)/);
   assert.doesNotMatch(check, /RuntimeStorePaths::default\(\)/);
 });
 
@@ -49,4 +57,35 @@ test('peer watch-close scheduling retains the channel Host instead of using Toki
   assert.doesNotMatch(callback, /tokio::spawn|target_arch|defaultHost/);
   assert.match(callback, /self\.scheduler\.clone\(\)/);
   assert.match(callback, /scheduleHostRuntimeAsyncTask/);
+});
+
+test('persistent path mappers require their storage Host at construction', () => {
+  const mapper = production('core/crates/tool/services/src/files/PathMapper.rs');
+  assert.match(mapper, /pub fn new\([\s\S]*?storage: Arc<dyn RuntimeStorageHost>/);
+  assert.doesNotMatch(mapper, /pub fn withMount(?:Storage|Registry)|impl Default for PathMapper/);
+  assert.match(mapper, /pub fn builtinOnly\(/);
+  for (const path of [
+    'core/crates/command/core/src/commands/workspace.rs',
+    'core/crates/tool/services/src/tools/AIToolHandler.rs',
+    'core/crates/tool/services/src/tools/defaultTool/standard/StandardFileSystemTools.rs',
+    'core/crates/provider/services/src/chat/EnhancedAIService.rs',
+    'core/crates/runtime/application/src/core/application/OperitApplication.rs',
+    'core/crates/runtime/application/src/services/WorkspaceService.rs',
+    'core/crates/runtime/application/src/services/ChatServiceCore.rs',
+    'core/crates/runtime/application/src/services/RuntimeTerminalService.rs',
+    'core/crates/runtime/application/src/ui/features/chat/webview/workspace/WorkspaceBackupManager.rs',
+  ]) {
+    assert.doesNotMatch(production(path), /withMountStorage|PathMapper::builtinOnly/, path);
+  }
+});
+
+
+test('MCP tools register the async executor and metadata never connects synchronously', () => {
+  const executor = production('core/crates/tool/services/src/tools/mcp/MCPToolExecutor.rs');
+  assert.match(executor, /impl AsyncToolExecutor for MCPToolExecutor/);
+  assert.match(executor, /callToolWithArguments[\s\S]*?\.await/);
+  const client = production(`${mcp}MCPBridgeClient.rs`);
+  const metadata = client.slice(client.indexOf('pub fn getTools('), client.indexOf('pub fn getServiceInfo('));
+  assert.doesNotMatch(metadata, /connect\(|spawn|block_on/);
+  assert.match(production(`${mcp}MCPBridge.rs`), /active\.get\(serviceName\)\.cloned\(\)/);
 });

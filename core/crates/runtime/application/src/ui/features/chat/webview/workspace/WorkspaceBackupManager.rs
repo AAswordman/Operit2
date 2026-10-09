@@ -180,7 +180,7 @@ impl WorkspaceBackupManager {
                 .fileSystemHost
                 .clone()
                 .expect("FileSystemHost must be configured for WorkspaceBackupManager"),
-            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot).withMountStorage(runtimeStorageHost.clone()),
+            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot, runtimeStorageHost.clone()),
         )
     }
 

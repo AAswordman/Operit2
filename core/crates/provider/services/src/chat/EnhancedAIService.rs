@@ -538,7 +538,8 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                     Some(PathMapper::new(
                         storage.runtimeRootDir()?,
                         storage.workspaceRootDir()?,
-                    ).withMountStorage(storage.clone()))
+                        storage.clone(),
+                    ))
                 })
                 .map(|mapper| {
                     resolve_workspace_path_mappings(
@@ -3455,7 +3456,7 @@ mod workspace_path_tests {
     fn resolves_primary_and_all_folders_from_configured_roots() {
         let root = std::env::temp_dir().join("Operit My Projects");
         let workspace_root = root.join("workspaces");
-        let mapper = PathMapper::new(root.join("runtime"), workspace_root.clone());
+        let mapper = PathMapper::builtinOnly(root.join("runtime"), workspace_root.clone());
         let mappings = resolve_workspace_path_mappings(
             &mapper,
             Some("/app/workspaces/main"),
@@ -3487,7 +3488,7 @@ mod workspace_path_tests {
     #[test]
     fn workspace_switch_resolves_new_path() {
         let root = std::env::temp_dir().join("Operit workspace switch");
-        let mapper = PathMapper::new(root.join("runtime"), root.join("workspaces"));
+        let mapper = PathMapper::builtinOnly(root.join("runtime"), root.join("workspaces"));
         let first = resolve_workspace_path_mappings(&mapper, Some("/app/workspaces/first"), &[]);
         let second = resolve_workspace_path_mappings(&mapper, Some("/app/workspaces/second"), &[]);
         assert_eq!(
@@ -3507,7 +3508,7 @@ mod workspace_path_tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn resolves_external_macos_workspace_alongside_default_workspace() {
-        let mapper = PathMapper::new("/runtime".into(), "/workspaces".into());
+        let mapper = PathMapper::builtinOnly("/runtime".into(), "/workspaces".into());
         let mappings = resolve_workspace_path_mappings(
             &mapper,
             Some("/app/workspaces/main"),
@@ -3519,7 +3520,7 @@ mod workspace_path_tests {
 
     #[test]
     fn browser_storage_keys_are_not_advertised_as_terminal_paths() {
-        let mapper = PathMapper::new("runtime".into(), "workspaces".into());
+        let mapper = PathMapper::builtinOnly("runtime".into(), "workspaces".into());
         assert!(
             resolve_workspace_path_mappings(&mapper, Some("/app/workspaces/main"), &[]).is_empty()
         );

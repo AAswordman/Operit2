@@ -1,10 +1,11 @@
 use std::cell::RefCell;
+use std::sync::Arc;
 use std::collections::HashMap;
 
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadFileRequest, HttpDownloadFileResult,
     HttpDownloadProgress, HttpDownloadProgressCallback, HttpDownloadProgressState,
-    HttpDownloadRequest, HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData,
+    HttpDownloadRequest, HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpResponseHead, HttpStreamResponseCallback,
     HttpStreamChunkCallback, HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback,
 };
 use wasm_bindgen::closure::Closure;
@@ -18,6 +19,7 @@ use crate::common::{
 /// Retains browser callback closures until the associated HTTP byte stream closes.
 struct WebHttpByteStreamCallbacks {
     _opened: Closure<dyn FnMut()>,
+    _response: Option<Closure<dyn FnMut(JsValue)>>,
     _chunk: Closure<dyn FnMut(JsValue)>,
     _closed: Closure<dyn FnMut(JsValue)>,
 }
@@ -38,11 +40,6 @@ impl WebHttpHost {
 }
 
 impl HttpHost for WebHttpHost {
-    /// The synchronous worker XHR bridge supports finite responses, not live streams.
-    fn responseDelivery(&self) -> operit_host_api::HttpResponseDelivery {
-        operit_host_api::HttpResponseDelivery::Buffered
-    }
-
     /// Uses image elements so display does not require a CORS-readable Fetch response.
     fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
         operit_host_api::HttpImageDelivery::DisplayUrl
@@ -120,11 +117,38 @@ impl HttpStreamHost for WebHttpHost {
         onChunk: HttpStreamChunkCallback,
         onClosed: HttpStreamClosedCallback,
     ) -> HostResult<()> {
+        self.openStream(streamId, request, None, onOpened, onChunk, onClosed)
+    }
+
+    /// Delivers response metadata before Fetch body chunks, including HTTP error statuses.
+    fn openHttpResponseStream(
+        &self, streamId: String, request: HttpRequestData,
+        onResponse: HttpStreamResponseCallback, onChunk: HttpStreamChunkCallback,
+        onClosed: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
+        self.openStream(streamId, request, Some(onResponse), Arc::new(|| {}), onChunk, onClosed)
+    }
+
+    /// Requests cancellation for one browser-owned HTTP byte stream.
+    #[allow(non_snake_case)]
+    fn closeHttpByteStream(&self, streamId: &str) -> HostResult<()> {
+        call_http("closeHttpByteStream", &[JsValue::from_str(streamId)])?;
+        Ok(())
+    }
+}
+
+impl WebHttpHost {
+    fn openStream(
+        &self, streamId: String, request: HttpRequestData,
+        onResponse: Option<HttpStreamResponseCallback>, onOpened: HttpStreamOpenedCallback,
+        onChunk: HttpStreamChunkCallback, onClosed: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
         let opened = Closure::wrap(Box::new(move || onOpened()) as Box<dyn FnMut()>);
         let chunk = Closure::wrap(Box::new(move |value: JsValue| {
             onChunk(js_sys::Uint8Array::new(&value).to_vec());
         }) as Box<dyn FnMut(JsValue)>);
         let closedStreamId = streamId.clone();
+        let responseFailure = onClosed.clone();
         let closed = Closure::wrap(Box::new(move |value: JsValue| {
             let result = if value.is_null() || value.is_undefined() {
                 Ok(())
@@ -136,10 +160,20 @@ impl HttpStreamHost for WebHttpHost {
                 streams.borrow_mut().remove(&closedStreamId);
             });
         }) as Box<dyn FnMut(JsValue)>);
+        let response = onResponse.map(|callback| Closure::wrap(Box::new(move |value: JsValue| {
+            match js_http_response(value) {
+                Ok(data) => callback(HttpResponseHead {
+                    finalUrl: data.finalUrl, statusCode: data.statusCode,
+                    statusMessage: data.statusMessage, headers: data.headers,
+                }),
+                Err(error) => responseFailure(Err(error.to_string())),
+            }
+        }) as Box<dyn FnMut(JsValue)>));
+        let method = if response.is_some() { "openHttpResponseStream" } else { "openHttpByteStream" };
         let args = [
             JsValue::from_str(&streamId),
             http_request_to_js(request),
-            opened.as_ref().clone(),
+            response.as_ref().map(|callback| callback.as_ref().clone()).unwrap_or_else(|| opened.as_ref().clone()),
             chunk.as_ref().clone(),
             closed.as_ref().clone(),
         ];
@@ -154,22 +188,17 @@ impl HttpStreamHost for WebHttpHost {
                 streamId.clone(),
                 WebHttpByteStreamCallbacks {
                     _opened: opened,
+                    _response: response,
                     _chunk: chunk,
                     _closed: closed,
                 },
             );
-            if let Err(error) = call_http("openHttpByteStream", &args) {
-                streams.remove(&streamId);
-                return Err(error);
-            }
             Ok(())
-        })
-    }
-
-    /// Requests cancellation for one browser-owned HTTP byte stream.
-    #[allow(non_snake_case)]
-    fn closeHttpByteStream(&self, streamId: &str) -> HostResult<()> {
-        call_http("closeHttpByteStream", &[JsValue::from_str(streamId)])?;
+        })?;
+        if let Err(error) = call_http(method, &args) {
+            HTTP_BYTE_STREAM_CALLBACKS.with(|streams| { streams.borrow_mut().remove(&streamId); });
+            return Err(error);
+        }
         Ok(())
     }
 }

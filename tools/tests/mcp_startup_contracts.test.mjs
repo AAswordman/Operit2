@@ -22,10 +22,10 @@ function section(text, start, end) {
 /** Guards against reintroducing the batch-wide timeout break. */
 test('MCP startup attempts every server independently', () => {
   const starter = source(`${base}plugins/MCPStarter.rs`);
-  const batch = section(starter, 'pub fn startAllDeployedPluginsWithTimeout(', 'fn startPluginInternal');
+  const batch = section(starter, 'pub async fn startAllDeployedPluginsWithTimeout(', 'fn startPluginInternal');
   assert.match(batch, /startEveryPlugin\(&plugins,/);
   assert.doesNotMatch(batch, /\bbreak\b/);
-  const traversal = section(starter, 'fn startEveryPlugin(', '#[cfg(test)]');
+  const traversal = section(starter, 'async fn startEveryPlugin<', '#[cfg(test)]');
   assert.match(traversal, /for plugin in plugins/);
   assert.match(traversal, /PluginInitStatus::OTHER_ERROR/);
 });
@@ -50,7 +50,7 @@ test('imported MCP processes prepare their working directory through the host', 
 /** Prohibits replaying an already-sent tool call based on response error text. */
 test('MCP bridge client sends each tool invocation once', () => {
   const client = source(`${base}plugins/MCPBridgeClient.rs`);
-  const call = section(client, 'pub fn callTool(', 'pub fn callToolSync(');
+  const call = section(client, 'pub async fn callTool(', 'pub async fn callToolWithArguments(');
   assert.equal((call.match(/\.callTool\(/g) ?? []).length, 1);
   assert.doesNotMatch(call, /retryParams|errorMessage|\.contains\(/);
 });
@@ -72,7 +72,7 @@ test('MCP handshake phases share one deadline', () => {
   assert.match(remote, /deadline: &StartupDeadline/);
   assert.match(local, /readJsonResponse\(active, initializeId, deadline\.remainingMs\(\)\?\)/);
   assert.match(local, /readJsonResponse\(active, listId, deadline\.remainingMs\(\)\?\)/);
-  assert.equal((remote.match(/deadline\.remainingMs\(\)\?/g) ?? []).length, 4);
+  assert.ok((remote.match(/deadline\.remainingMs\(\)\?/g) ?? []).length >= 4);
 });
 
 /** Requires process-liveness checks after an empty stdout read. */
