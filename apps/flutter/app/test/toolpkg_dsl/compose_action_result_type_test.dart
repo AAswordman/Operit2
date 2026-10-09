@@ -68,39 +68,33 @@ void main() {
     }
   });
 
-  test(
-    'decodes nested transport envelopes without decoding callback content',
-    () {
-      const response = '{"success":true}';
-      final event = jsonDecode(_event(response)) as Map<String, Object?>;
-      event['result'] = jsonEncode(event['result']);
-      final parsed = parseComposeDslActionEventForTest(jsonEncode(event));
-      expect(parsed.actionResult, response);
-      expect(parsed.renderedActionResult, response);
-    },
-  );
+  test('rejects string tree envelopes instead of decoding them', () {
+    expect(() => parseComposeDslActionEventForTest({
+      'phase': 'final', 'result': jsonEncode({'tree': {}}),
+    }), throwsFormatException);
+  });
 
   test('outer action errors are still propagated', () {
     expect(
       () => parseComposeDslActionEventForTest(
-        jsonEncode({
+        {
           'phase': 'final',
-          'result': jsonEncode({'success': false, 'message': 'action failed'}),
-        }),
+          'result': {'success': false, 'message': 'action failed'},
+        },
       ),
       throwsA(predicate((error) => error.toString().contains('action failed'))),
     );
   });
 }
 
-/// Encodes the real Core watch envelope with an optional rendered tree.
-String _event(
+/// Supplies a structured action envelope without a UI-tree text codec.
+Map<String, Object?> _event(
   Object? actionResult, {
   String phase = 'final',
   bool includeTree = true,
-}) => jsonEncode({
+}) => {
   'phase': phase,
-  'result': jsonEncode({
+  'result': {
     'success': true,
     if (includeTree)
       'tree': {
@@ -111,5 +105,5 @@ String _event(
     'state': <String, Object?>{},
     'memo': <String, Object?>{},
     'actionResult': actionResult,
-  }),
-});
+  },
+};

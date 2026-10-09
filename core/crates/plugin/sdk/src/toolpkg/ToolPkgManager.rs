@@ -1106,7 +1106,7 @@ mod tests {
             _runtime_options: &BTreeMap<String, Value>,
             _env_overrides: &BTreeMap<String, String>,
             _text_resources: Arc<BTreeMap<String, String>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
             let result = (|| Ok(None))();
             Box::pin(std::future::ready(result))
         }
@@ -1118,7 +1118,7 @@ mod tests {
             _runtime_options: BTreeMap<String, Value>,
             _env_overrides: BTreeMap<String, String>,
             _text_resources: Arc<BTreeMap<String, String>>,
-        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<Value>>> {
             Box::pin(async { Ok(None) })
         }
 
@@ -1129,8 +1129,8 @@ mod tests {
             _payload: Option<Value>,
             _runtime_options: &BTreeMap<String, Value>,
             _env_overrides: &BTreeMap<String, String>,
-            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+            _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
             let result = (|| Ok(None))();
             Box::pin(std::future::ready(result))
         }
@@ -1142,8 +1142,8 @@ mod tests {
             _payload: Option<Value>,
             _runtime_options: BTreeMap<String, Value>,
             _env_overrides: BTreeMap<String, String>,
-            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<String>>> {
+            _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<Value>>> {
             Box::pin(async { Ok(None) })
         }
 

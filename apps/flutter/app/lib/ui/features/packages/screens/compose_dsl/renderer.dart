@@ -23,7 +23,7 @@ Widget buildComposeDslLayoutForTest({
   );
 }
 
-class _ComposeDslRenderer extends StatelessWidget {
+class _ComposeDslRenderer extends StatefulWidget {
   /// Creates the compose dsl renderer instance.
   const _ComposeDslRenderer({
     super.key,
@@ -49,9 +49,58 @@ class _ComposeDslRenderer extends StatelessWidget {
   final _ComposeDslModifierScope modifierScope;
   final bool embedDialog;
 
+  /// Creates the state that subscribes to nodes observed by this renderer.
+  @override
+  State<_ComposeDslRenderer> createState() => _ComposeDslRendererState();
+}
+
+class _ComposeDslRendererState extends State<_ComposeDslRenderer> {
+  final Set<_ComposeDslNode> _dependencies = {};
+
+  /// Reads the current node handle owned by this widget.
+  _ComposeDslNode get node => widget.node;
+  /// Reads the current action dispatcher without subscribing to a parent renderer.
+  Future<Object?> Function(String actionId, [Object? payload]) get onAction => widget.onAction;
+  /// Reads the current ordered text dispatcher.
+  Future<Object?> Function(String actionId, String text) get onTextInput => widget.onTextInput;
+  /// Reads the existing WebView execution context.
+  ComposeDslWebViewHostContext get webViewHostContext => widget.webViewHostContext;
+  /// Reads the existing Markdown splitter.
+  MarkdownContentSplitter get splitMarkdownContent => widget.splitMarkdownContent;
+  /// Uses the retained identity for node-owned resources and positional snapshot paths otherwise.
+  String get nodePath => widget.node.id ?? widget.nodePath;
+  /// Reads the parent's modifier scope.
+  _ComposeDslModifierScope get modifierScope => widget.modifierScope;
+  /// Reads the owning dialog's embedding policy.
+  bool get embedDialog => widget.embedDialog;
+
+  /// Requests a rebuild only after an observed node changes.
+  void _invalidate() { if (mounted) setState(() {}); }
+
+  /// Captures reads from immediate and deferred node builders.
+  Widget _trackBuild(Widget Function() build) {
+    final reads = <_ComposeDslNode>{};
+    try { return _ComposeDslReadScope.track(reads, build); } finally {
+      for (final dependency in reads) {
+        if (_dependencies.add(dependency)) dependency.addListener(_invalidate);
+      }
+    }
+  }
+
+  /// Removes subscriptions from the preceding build before recording current reads.
+  void _clearDependencies() {
+    for (final dependency in _dependencies) { dependency.removeListener(_invalidate); }
+    _dependencies.clear();
+  }
+
+  /// Releases every observed-node subscription on unmount.
+  @override
+  void dispose() { _clearDependencies(); super.dispose(); }
+
   /// Builds the widget for the current DSL state.
   @override
   Widget build(BuildContext context) {
+    _clearDependencies();
     return _guardNodeBuild(
       () => _withModifier(
         context,
@@ -67,7 +116,7 @@ class _ComposeDslRenderer extends StatelessWidget {
   /// Contains invalid plugin nodes without installing a global Flutter error handler.
   Widget _guardNodeBuild(Widget Function() buildNode) {
     try {
-      return buildNode();
+      return _trackBuild(buildNode);
     } catch (error, stackTrace) {
       ClientLogger.e(
         'event=compose_node_render_failed '

@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders navigation nodes for Compose DSL nodes.
-extension _ComposeNavigationNodes on _ComposeDslRenderer {
+extension _ComposeNavigationNodes on _ComposeDslRendererState {
   /// Builds navigation bar for the Compose DSL renderer.
   Widget _navigationBar(BuildContext context) {
     final items = _navigationContentNodes()

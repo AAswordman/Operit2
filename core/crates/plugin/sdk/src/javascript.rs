@@ -487,7 +487,7 @@ pub trait JsExecutionEngine: Send + Sync {
         runtime_options: &BTreeMap<String, Value>,
         env_overrides: &BTreeMap<String, String>,
         text_resources: Arc<BTreeMap<String, String>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>>;
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>>;
 
     /// Executes one Compose DSL render without blocking the caller runtime.
     fn execute_compose_dsl_script_async(
@@ -496,7 +496,7 @@ pub trait JsExecutionEngine: Send + Sync {
         runtime_options: BTreeMap<String, Value>,
         env_overrides: BTreeMap<String, String>,
         text_resources: Arc<BTreeMap<String, String>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>>;
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>>;
 
     /// Dispatches one Compose DSL action and emits intermediate render events.
     fn dispatch_compose_dsl_action(
@@ -505,8 +505,8 @@ pub trait JsExecutionEngine: Send + Sync {
         payload: Option<Value>,
         runtime_options: &BTreeMap<String, Value>,
         env_overrides: &BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>>;
+        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>>;
 
     /// Dispatches one Compose DSL action without blocking the caller runtime.
     fn dispatch_compose_dsl_action_result_async(
@@ -515,8 +515,8 @@ pub trait JsExecutionEngine: Send + Sync {
         payload: Option<Value>,
         runtime_options: BTreeMap<String, Value>,
         env_overrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>>;
+        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>>;
 
     /// Destroys any engine resources owned by this handle.
     fn destroy(&self);

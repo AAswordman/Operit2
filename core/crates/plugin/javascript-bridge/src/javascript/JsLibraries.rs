@@ -491,8 +491,8 @@ pub fn buildRuntimeBootstrapScript() -> String {
             return [String(kind || ''), String(identity || ''), String(source || '').length, __operitHashText(source)].join(':');
         }}
 
-        function __operitGetFactory(kind, identity, source) {{
-            var key = __operitBuildFactoryKey(kind, identity, source);
+        function __operitGetFactory(kind, identity, source, composeCompilation) {{
+            var key = __operitBuildFactoryKey(kind, identity, source) + ":compose=" + composeCompilation;
             var cache = __operitGetFactoryCache();
             if (typeof cache[key] === 'function') {{
                 return cache[key];
@@ -502,7 +502,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 'exports',
                 'require',
                 '__operit_call_runtime',
-                __operitRuntimePrelude + '\n' + source
+                __operitRuntimePrelude + '\n' + (composeCompilation ? OperitComposeCompiler.compile(source, identity) : source)
             );
             cache[key] = factory;
             return factory;
@@ -580,9 +580,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
             return names;
         }}
 
-        /** Runs one script inside its owning session using direct structured host operations. */
-
-        function __operitExecuteScriptFunction(callId, params, scriptText, targetFunctionName, timeoutSec, preTimeoutMs) {{
+        function __operitExecuteScriptFunction(callId, params, scriptText, targetFunctionName, timeoutSec, preTimeoutMs, structuredResult) {{
             var previousCallRuntime = globalThis.__operit_call_runtime_ref;
             var previousCallId = globalThis.__operitCurrentCallId;
             var registerCallSession = globalThis.__operitRegisterCallSession;
@@ -678,7 +676,11 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 if (!state || state.resultCompleted) {{
                     return;
                 }}
-                __operitNativeSetCallResult(callId, resultValue);
+                if (structuredResult) {{
+                    __operitNativeSetCallStructuredResult(callId, resultValue);
+                }} else {{
+                    __operitNativeSetCallResult(callId, resultValue);
+                }}
                 state.resultCompleted = true;
                 state.completed = Number(state.pendingReferences || 0) <= 0;
                 try {{
@@ -721,13 +723,17 @@ pub fn buildRuntimeBootstrapScript() -> String {
             /** Forwards intermediate application values directly to the structured host listener binding. */
             function emitIntermediate(value) {{
                 if (isActive()) {{
-                    __operitSendIntermediateResult(callId, value === undefined ? null : value);
+                    if (structuredResult) {{
+                        __operitNativeSendStructuredIntermediate(callId, __operitNormalizeSerializableValue(__operitNormalizeComposeResult(value), []));
+                    }} else {{
+                        __operitSendIntermediateResult(callId, value === undefined ? null : value);
+                    }}
                 }}
             }}
             /** Completes a structured result or reports the original conversion failure. */
             function complete(value) {{
                 try {{
-                    completeCall(value === undefined ? null : __operitNormalizeComposeResult(value));
+                    completeCall(value === undefined ? null : __operitNormalizeSerializableValue(__operitNormalizeComposeResult(value), []));
                 }} catch (error) {{
                     var report = callRuntimeReport(error, 'Result Serialization Failure');
                     var serializationMessage =
@@ -1206,7 +1212,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                     var localRequire = function(nextName) {{
                         return requireInternal(nextName, modulePath);
                     }};
-                    var factory = __operitGetFactory('module', packageTarget + ':' + modulePath, moduleText);
+                    var factory = __operitGetFactory('module', packageTarget + ':' + modulePath, moduleText, structuredResult);
                     var previousActiveModule = globalThis.__operitActiveModule;
                     var previousActiveExports = globalThis.__operitActiveModuleExports;
                     var previousModule = callState.currentModule;
@@ -1282,7 +1288,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                     moduleCache[mainModuleKey] = module;
                     exports = module.exports;
                     markStage('compile_main_script');
-                    var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath, scriptText);
+                    var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath, scriptText, structuredResult);
                     markStage('execute_main_script');
                     var previousActiveModule = globalThis.__operitActiveModule;
                     var previousActiveExports = globalThis.__operitActiveModuleExports;

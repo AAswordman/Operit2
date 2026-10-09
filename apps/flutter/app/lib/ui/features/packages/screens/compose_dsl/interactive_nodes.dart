@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders interactive nodes for Compose DSL nodes.
-extension _ComposeInteractiveNodes on _ComposeDslRenderer {
+extension _ComposeInteractiveNodes on _ComposeDslRendererState {
   /// Builds pull to refresh box for the Compose DSL renderer.
   Widget _pullToRefreshBox(BuildContext context) {
     final refreshing = _bool(node.props['isRefreshing']);

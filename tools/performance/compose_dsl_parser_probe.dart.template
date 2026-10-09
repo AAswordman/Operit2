@@ -1,0 +1,93 @@
+import 'dart:convert';
+import 'dart:io';
+
+const _scenarios = <String>[
+  'rows-20',
+  'rows-100',
+  'rows-500',
+  'state-1mib',
+  'state-4mib',
+  'async-rows-20',
+];
+
+/// Summarizes warmed measurements independently of setup and file IO.
+Map<String, double> _distribution(List<double> measurements) {
+  final sorted = [...measurements]..sort();
+  return {
+    'p50': sorted[(sorted.length * 0.50).ceil() - 1],
+    'p95': sorted[(sorted.length * 0.95).ceil() - 1],
+  };
+}
+
+/// Times one explicit parser without replacing the production implementation.
+Map<String, double> _measure(void Function() parse) {
+  for (var index = 0; index < 12; index++) {
+    parse();
+  }
+  final measurements = <double>[];
+  for (var index = 0; index < 40; index++) {
+    final watch = Stopwatch()..start();
+    parse();
+    watch.stop();
+    measurements.add(watch.elapsedMicroseconds / 1000);
+  }
+  return _distribution(measurements);
+}
+
+/// Exercises the checked-out parser against artifacts from the real SDK probe.
+void main(List<String> args) {
+  final directory = args.single;
+  final results = <Map<String, Object?>>[];
+  for (final scenario in _scenarios) {
+    final artifact = File('$directory/$scenario.event.json');
+    if (!artifact.existsSync()) {
+      throw StateError('Missing probe artifact: ${artifact.path}');
+    }
+    final event = artifact.readAsStringSync();
+    final envelope = jsonDecode(event) as Map<String, Object?>;
+    final raw = envelope['result'] as String;
+    final rawBytes = utf8.encode(raw).length;
+    final inner = jsonDecode(raw) as Map<String, Object?>;
+    final expected = inner['actionResult'];
+    final observed = _ParsedComposeDslActionEvent.parse(event);
+    if (observed.renderResult == null) throw StateError('Probe event has no tree');
+    if (observed.actionResult != expected) {
+      throw StateError('Action result changed');
+    }
+    final production = _measure(
+      /// Measures the entire existing production event parser.
+      () { _ParsedComposeDslActionEvent.parse(event); },
+    );
+    final singleDecodeBaseline = _measure(
+      /// Measures one envelope and one inner decode without constructing nodes.
+      () {
+        final outer = jsonDecode(event) as Map<String, Object?>;
+        final value = jsonDecode(outer['result'] as String) as Map<String, Object?>;
+        if (value['actionResult'] != expected) {
+          throw StateError('Action result changed');
+        }
+      },
+    );
+    final decodeOnly = _measure(
+      /// Isolates one inner JSON decode from all node construction work.
+      () { jsonDecode(raw); },
+    );
+    results.add({
+      'scenario': scenario,
+      'innerBytes': rawBytes,
+      'productionParserMs': production,
+      'outerPlusOneInnerDecodeMs': singleDecodeBaseline,
+      'oneInnerDecodeMs': decodeOnly,
+    });
+  }
+  final report = {
+    'scope': 'Unmodified production parser extracted into standalone Dart JIT; '
+        'CPU only, no Rust, IPC, widget layout or raster',
+    'warmup': 12,
+    'samples': 40,
+    'results': results,
+  };
+  File('$directory/dart-parser-probe.json')
+      .writeAsStringSync(const JsonEncoder.withIndent('  ').convert(report));
+  print(const JsonEncoder.withIndent('  ').convert(report));
+}

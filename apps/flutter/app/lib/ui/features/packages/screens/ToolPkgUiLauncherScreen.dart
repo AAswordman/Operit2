@@ -35,6 +35,7 @@ part 'compose_dsl/text_field.dart';
 part 'compose_dsl/canvas_painter.dart';
 part 'compose_dsl/size_reporting.dart';
 part 'compose_dsl/render_models.dart';
+part 'compose_dsl/retained_nodes.dart';
 part 'compose_dsl/modifiers.dart';
 part 'compose_dsl/value_parsers.dart';
 part 'compose_dsl/renderer.dart';
@@ -104,7 +105,13 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   String? _error;
   final _actionScheduler = ComposeDslActionScheduler();
   Future<void> _renderTail = Future<void>.value();
-  final Set<StreamSubscription<String>> _detachedComposeEventSubscriptions = {};
+  final _ComposeDslNodeStore _nodeStore = _ComposeDslNodeStore();
+  final Map<String, _ComposeDslPendingCommand> _composePending = {};
+  String? _composeSessionId;
+  StreamController<core_proxy.ToolPkgComposeDslCommand>? _composeCommands;
+  StreamSubscription<core_proxy.ToolPkgComposeDslEvent>? _composeUpdates;
+  Future<void>? _composeSubmission;
+  int _nextComposeRequestId = 0;
 
   GeneratedApplicationPackageManagerCoreProxy get _packageManager =>
       widget.clients.application.packageManager();
@@ -133,13 +140,12 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
 
   /// Recreates the visible plugin document after runtime packages reload.
   void _reloadDevelopmentPackage() {
-    setState(() {
-      _renderResult = null;
-      _loading = true;
-      _activeExecutionContext = null;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_loadRoute());
+    final executionContext = _activeExecutionContext;
+    _activeExecutionContext = null;
+    setState(() { _renderResult = null; _loading = true; });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (executionContext != null) await _releaseExecutionContext(executionContext);
+      if (mounted) await _loadRoute();
     });
   }
 
@@ -319,9 +325,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       }
       _scriptScreenPath = screenPath;
       final renderedTheme = _themeScheme;
-      final raw = await _packageManager.executeToolPkgComposeDslScript(
-        contextKey: executionContextKey,
-        containerPackageName: widget.plugin.packageName,
+      final command = await _submitComposeCommand(
+        operation: 'render',
         script: script,
         runtimeOptions: _runtimeOptions(
           uiModuleId: uiModuleId,
@@ -329,23 +334,14 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           executionContextKey: executionContextKey,
           updateInputs: updateInputs,
         ),
-        envOverrides: const <String, String>{},
       );
-      if (!_isCurrentRouteLoad(routeLoadGeneration)) {
-        return;
-      }
-      final result = _ComposeDslRenderResult.parse(raw);
-      if (!_isCurrentRouteLoad(routeLoadGeneration)) {
-        return;
-      }
-      setState(() {
-        _renderResult = result;
-        _loading = false;
-      });
+      if (!_isCurrentRouteLoad(routeLoadGeneration)) return;
+      if (_renderResult == null) throw StateError('Compose render completed without a root node');
+      setState(() { _loading = false; });
       if (_themeScheme != renderedTheme) {
         _scheduleThemeDispatchAfterRouteRender(routeLoadGeneration);
       }
-      _navigateCommands(_ComposeDslRenderResult.navigationCommandsOf(raw));
+      _navigateCommands(command.navigationCommands);
     } catch (error, stackTrace) {
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
@@ -379,26 +375,149 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       contextKey: executionContext.contextKey,
       containerPackageName: executionContext.containerPackageName,
     );
+    final sessionId = await _packageManager.openComposeDslSession(
+      contextKey: executionContext.contextKey,
+      containerPackageName: executionContext.containerPackageName,
+    );
+    _composeSessionId = sessionId;
+    final session = widget.clients.servicesComposeDslSessionService;
+    _composeUpdates = session.updates(sessionId: sessionId).listen(
+      _receiveComposeEvent,
+      onError: _failComposeCommands,
+      onDone: () => _failComposeCommands(StateError('Compose session update stream closed')),
+    );
+    final commands = StreamController<core_proxy.ToolPkgComposeDslCommand>();
+    _composeCommands = commands;
+    _composeSubmission = session.submit(sessionId: sessionId, commands: commands.stream).catchError((Object error, StackTrace stackTrace) {
+      _failComposeCommands(error, stackTrace);
+    });
   }
 
-  /// Releases one page-owned ToolPkg execution context.
+  /// Closes this page's two streams before releasing its existing engine ownership.
   Future<void> _releaseExecutionContext(
     ({String contextKey, String containerPackageName}) executionContext,
   ) async {
+    final commands = _composeCommands;
+    final updates = _composeUpdates;
+    final submission = _composeSubmission;
+    _composeCommands = null;
+    _composeUpdates = null;
+    _composeSubmission = null;
+    _composeSessionId = null;
+    _failComposeCommands(StateError('Compose execution context released'));
+    _composePending.clear();
+    if (commands != null) await commands.close();
+    if (submission != null) await submission;
+    if (updates != null) await updates.cancel();
     await _packageManager.releaseToolPkgExecutionEngine(
       contextKey: executionContext.contextKey,
       containerPackageName: executionContext.containerPackageName,
     );
   }
 
+  /// Resolves typed results while applying flat node commits to local retained handles.
+  void _receiveComposeEvent(core_proxy.ToolPkgComposeDslEvent event) {
+    if (event.phase == 'sessionError') {
+      _failComposeCommands(StateError(event.error!));
+      return;
+    }
+    final pending = _composePending[event.requestId];
+    if (pending == null) return;
+    if (!_isCurrentRouteLoad(pending.generation)) {
+      if (event.phase == 'error' && !pending.completion.isCompleted) {
+        pending.completion.completeError(StateError(event.error!));
+      }
+      if (event.phase == 'complete') {
+        if (!pending.completion.isCompleted) pending.completion.complete();
+        _composePending.remove(event.requestId);
+      }
+      return;
+    }
+    try {
+      switch (event.phase) {
+        case 'intermediate':
+        case 'final':
+          final oldRoot = _renderResult?.tree;
+          final update = event.update;
+          if (update != null) _nodeStore.apply(update);
+          if (oldRoot != null || update != null) {
+            final root = _nodeStore.root;
+            _renderResult = _ComposeDslRenderResult(
+              tree: root,
+              state: event.state ?? _renderResult?.state ?? const {},
+              memo: event.memo ?? _renderResult?.memo ?? const {},
+              actionResult: event.actionResult,
+            );
+            if (!identical(oldRoot, root) || _error != null) {
+              setState(() { _error = null; });
+            }
+          }
+          pending.actionResult = event.actionResult;
+          final navigation = event.navigationCommands.map(_composeNavigateCommand).toList();
+          if (pending.completion.isCompleted) {
+            _navigateCommands(navigation);
+          } else {
+            pending.navigationCommands.addAll(navigation);
+          }
+          break;
+        case 'error':
+          final error = event.error;
+          if (error == null) throw StateError('Compose error event requires an error');
+          setState(() { _error = error; });
+          if (!pending.completion.isCompleted) pending.completion.completeError(StateError(error));
+          break;
+        case 'complete':
+          if (!pending.completion.isCompleted) pending.completion.complete();
+          if (!pending.keepDetachedEvents) _composePending.remove(event.requestId);
+          break;
+        default:
+          throw StateError('Unsupported Compose event phase: ${event.phase}');
+      }
+    } catch (error, stackTrace) {
+      if (!pending.completion.isCompleted) pending.completion.completeError(error, stackTrace);
+      _printComposeError('event:${event.phase}', error, stackTrace);
+    }
+  }
+
+  /// Settles pending requests when either session stream reports a terminal error.
+  void _failComposeCommands(Object error, [StackTrace? stackTrace]) {
+    for (final pending in _composePending.values) {
+      if (!pending.completion.isCompleted) pending.completion.completeError(error, stackTrace);
+    }
+  }
+
+  /// Sends an application command through the generated ReverseStream object proxy.
+  Future<_ComposeDslPendingCommand> _submitComposeCommand({
+    required String operation,
+    required Map<String, Object?> runtimeOptions,
+    String? script,
+    String? actionId,
+    Object? payload,
+    bool keepDetachedEvents = false,
+  }) async {
+    final commands = _composeCommands;
+    if (commands == null) throw StateError('Compose session has not been acquired');
+    final requestId = 'compose:${_executionOwnerId}:${_nextComposeRequestId++}';
+    final pending = _ComposeDslPendingCommand(_routeLoadGeneration, keepDetachedEvents: keepDetachedEvents);
+    _composePending[requestId] = pending;
+    commands.add(core_proxy.ToolPkgComposeDslCommand(
+      requestId: requestId, operation: operation, script: script, actionId: actionId,
+      payload: payload, runtimeOptions: runtimeOptions, envOverrides: const {},
+    ));
+    try {
+      await pending.completion.future;
+      return pending;
+    } catch (_) {
+      _composePending.remove(requestId);
+      rethrow;
+    }
+  }
+
   /// Releases the active ToolPkg context when this page leaves the widget tree.
   @override
   void dispose() {
     PluginHotReload.revision.removeListener(_reloadDevelopmentPackage);
-    for (final subscription in _detachedComposeEventSubscriptions) {
-      unawaited(subscription.cancel());
-    }
-    _detachedComposeEventSubscriptions.clear();
+    _nodeStore.dispose();
     _routeLoadGeneration += 1;
     final executionContext = _activeExecutionContext;
     _activeExecutionContext = null;
@@ -483,80 +602,13 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         uiModuleId: uiModuleId,
         routeInstanceId: routeInstanceId,
         executionContextKey: executionContextKey,
-      )..['__operit_keep_compose_event_stream'] = keepDetachedEvents;
-      final eventStream = _packageManager.dispatchToolPkgComposeDslActionEvents(
-        contextKey: executionContextKey,
-        containerPackageName: widget.plugin.packageName,
-        actionId: actionId,
-        payload: payload,
-        runtimeOptions: runtimeOptions,
-        envOverrides: const <String, String>{},
+      )..remove('state')..remove('memo');
+      final command = await _submitComposeCommand(
+        operation: 'action', actionId: actionId, payload: payload,
+        runtimeOptions: runtimeOptions, keepDetachedEvents: keepDetachedEvents,
       );
-      final completion = Completer<void>();
-      late final StreamSubscription<String> subscription;
-      subscription = eventStream.listen(
-        (event) {
-          if (!mounted) {
-            if (!completion.isCompleted) {
-              completion.complete();
-            }
-            unawaited(subscription.cancel());
-            return;
-          }
-          final parsedEvent = _ParsedComposeDslActionEvent.parse(event);
-          final phase = parsedEvent.phase;
-          if (phase == 'intermediate' || phase == 'final') {
-            latestActionResult = parsedEvent.actionResult;
-            navigationCommands.addAll(parsedEvent.navigationCommands);
-            final result = parsedEvent.renderResult;
-            if (result == null) {
-              return;
-            }
-            if (!mounted) {
-              return;
-            }
-            setState(() {
-              _renderResult = result;
-              _error = null;
-            });
-          } else if (phase == 'error') {
-            final errorText = parsedEvent.errorText;
-            if (errorText == null) {
-              if (!completion.isCompleted) {
-                completion.completeError(
-                  StateError('compose_dsl action error event missing error'),
-                );
-              }
-              return;
-            }
-            if (!mounted) {
-              return;
-            }
-            setState(() {
-              _error = errorText;
-            });
-            if (!completion.isCompleted) {
-              completion.completeError(StateError(errorText));
-            }
-          } else if (phase == 'complete') {
-            if (!completion.isCompleted) {
-              completion.complete();
-            }
-            if (!keepDetachedEvents) {
-              unawaited(subscription.cancel());
-            }
-          }
-        },
-        onError: (Object error, StackTrace stackTrace) {
-          if (!completion.isCompleted) {
-            completion.completeError(error, stackTrace);
-          }
-        },
-      );
-      if (keepDetachedEvents) {
-        _detachedComposeEventSubscriptions.add(subscription);
-      }
-      await completion.future;
+      latestActionResult = command.actionResult;
+      navigationCommands.addAll(command.navigationCommands);
       _navigateCommands(navigationCommands);
       if (notifyActionResult) {
         _notifyActionResult(

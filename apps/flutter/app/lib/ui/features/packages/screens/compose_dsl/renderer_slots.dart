@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders renderer slots for Compose DSL nodes.
-extension _ComposeRendererSlots on _ComposeDslRenderer {
+extension _ComposeRendererSlots on _ComposeDslRendererState {
   /// Evaluates enabled for the Compose DSL renderer.
   bool _enabled() => node.props['enabled'] != false;
 

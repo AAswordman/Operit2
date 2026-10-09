@@ -3,7 +3,7 @@
 part of '../ToolPkgUiLauncherScreen.dart';
 
 /// Renders material controls for Compose DSL nodes.
-extension _ComposeMaterialControls on _ComposeDslRenderer {
+extension _ComposeMaterialControls on _ComposeDslRendererState {
   /// Builds button for the Compose DSL renderer.
   Widget _button(BuildContext context, String type) {
     final contentChildren = _slotChildren(

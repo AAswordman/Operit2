@@ -11,6 +11,8 @@ use crate::tools::packTool::ToolPkgPublicApiUiCatalog::{discover_public_api_owne
 use operit_store::ExtensionStore::{ExtensionRecord, ExtensionStore};
 use operit_store::PreferencesDataStore::CoreNodeStateStore;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use crate::tools::packTool::ToolPkgComposeDslSession::ToolPkgComposeDslSession;
+use crate::tools::packTool::ToolPkgDesktopWidgetService::ToolPkgDesktopWidgetSnapshot;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -62,8 +64,6 @@ use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
 use operit_plugin_sdk::PackageManager::{PackageStateResolver, PluginPackageManager};
 use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStoreError};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_util::stream::HotStream::MutableSharedStreamImpl;
-use operit_util::stream::Stream::{CollectFuture, Stream};
 use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -261,34 +261,13 @@ pub struct RuntimePackageManager {
     packageRegistryReadiness: PackageRegistryReadiness,
     scopeState: Arc<Mutex<BTreeMap<String, ExtensionRecord>>>,
     toolPkgExecutionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
+    composeDslSessions: Arc<Mutex<BTreeMap<(String, String), ToolPkgComposeDslSession>>>,
     dataStore: CoreNodeStateStore,
     storePaths: RuntimeStorePaths,
     fileSystemHost: Arc<dyn FileSystemHost>,
     context: HostManager,
     toolHandler: crate::tools::AIToolHandler::AIToolHandler,
     mcpManager: MCPManager,
-}
-
-/// Streams serialized Compose DSL action events for one action invocation.
-#[derive(Clone)]
-pub struct ToolPkgComposeDslActionEventStream {
-    upstream: MutableSharedStreamImpl<String>,
-}
-
-impl ToolPkgComposeDslActionEventStream {
-    /// Creates an action event stream backed by the supplied shared event channel.
-    fn new(upstream: MutableSharedStreamImpl<String>) -> Self {
-        Self { upstream }
-    }
-}
-
-impl Stream for ToolPkgComposeDslActionEventStream {
-    type Item = String;
-
-    /// Collects action events in the order emitted by the JavaScript runtime.
-    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
-        self.upstream.collect(collector)
-    }
 }
 
 impl RuntimePackageManager {
@@ -328,6 +307,7 @@ impl RuntimePackageManager {
             packageRegistryReadiness: PackageRegistryReadiness::new(),
             scopeState: Arc::new(Mutex::new(BTreeMap::new())),
             toolPkgExecutionEngineFactory,
+            composeDslSessions: Arc::new(Mutex::new(BTreeMap::new())),
             dataStore: CoreNodeStateStore::newWithStorage(
                 defaultRuntimeStorageHost(),
                 "runtime/extensions/device/manager.preferences.json",
@@ -464,6 +444,8 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     /// Releases one explicitly owned ToolPkg execution engine.
     pub fn releaseToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
+        let key = (contextKey.to_string(), containerPackageName.to_string());
+        if let Some(session) = self.composeDslSessions.lock().expect("Compose session registry mutex poisoned").remove(&key) { session.close(); }
         self.toolPkgManager()
             .releaseToolPkgExecutionEngine(contextKey, containerPackageName);
     }
@@ -486,96 +468,17 @@ impl RuntimePackageManager {
             .getToolPkgExecutionEngine(contextKey, containerPackageName)
     }
 
-    /// Executes a Compose DSL render through the host-owned asynchronous JavaScript boundary.
-    pub async fn executeToolPkgComposeDslScript(
-        &self,
-        contextKey: &str,
-        containerPackageName: &str,
-        script: &str,
-        runtimeOptions: BTreeMap<String, serde_json::Value>,
-        envOverrides: BTreeMap<String, String>,
-    ) -> Result<Option<String>, String> {
-        let textResources = self.toolPkgTextResources(containerPackageName)?;
-        self.getToolPkgExecutionEngine(contextKey, containerPackageName)
-            .execute_compose_dsl_script_async(
-                script.to_string(),
-                runtimeOptions,
-                envOverrides,
-                textResources,
-            )
-            .await
-            .map_err(|error| error.to_string())
-    }
-
-    /// Dispatches a Compose DSL action and immediately streams intermediate render events.
-    pub fn dispatchToolPkgComposeDslActionEvents(
-        &self,
-        contextKey: String,
-        containerPackageName: String,
-        actionId: String,
-        payload: Option<serde_json::Value>,
-        runtimeOptions: BTreeMap<String, serde_json::Value>,
-        envOverrides: BTreeMap<String, String>,
-    ) -> ToolPkgComposeDslActionEventStream {
-        let eventStream = MutableSharedStreamImpl::new(usize::MAX);
-        let eventStreamForTask = eventStream.clone();
-        let keep_event_stream_open = runtimeOptions
-            .get("__operit_keep_compose_event_stream")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        let engine = self.getToolPkgExecutionEngine(&contextKey, &containerPackageName);
-        let scheduler = self
-            .context
-            .hostRuntimeTaskSchedulerHost
-            .clone()
-            .expect("HostRuntimeTaskSchedulerHost is required for Compose DSL actions");
-        scheduler
-            .scheduleHostRuntimeAsyncTask(
-                "operit-compose-dsl-action",
-                Box::new(move || {
-                    Box::pin(async move {
-                        let intermediateStream = eventStreamForTask.clone();
-                        let finalEvent = engine
-                            .dispatch_compose_dsl_action_result_async(
-                                actionId.clone(),
-                                payload,
-                                runtimeOptions,
-                                envOverrides,
-                                Some(Arc::new(move |event| {
-                                    intermediateStream.emit(buildComposeDslActionEvent(
-                                        "intermediate",
-                                        None,
-                                        Some(&event),
-                                    ));
-                                })),
-                            )
-                            .await;
-                        match finalEvent {
-                            Ok(Some(event)) => {
-                                eventStreamForTask.emit(buildComposeDslActionEvent(
-                                    "final",
-                                    None,
-                                    Some(&event),
-                                ));
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                eventStreamForTask.emit(buildComposeDslActionEvent(
-                                    "error",
-                                    Some(&error.to_string()),
-                                    None,
-                                ));
-                            }
-                        }
-                        eventStreamForTask.emit(buildComposeDslActionEvent("complete", None, None));
-                        if !keep_event_stream_open {
-                            eventStreamForTask.close();
-                        }
-                    })
-                }),
-            )
-            .expect("HostRuntimeTaskSchedulerHost must schedule Compose DSL actions");
-        ToolPkgComposeDslActionEventStream::new(eventStream)
+    /// Resolves the same application session for every automatic object-proxy access.
+    pub fn openComposeDslSession(&self, contextKey: &str, containerPackageName: &str) -> Result<String, String> {
+        let key = (contextKey.to_string(), containerPackageName.to_string());
+        let mut sessions = self.composeDslSessions.lock().expect("Compose session registry mutex poisoned");
+        if let Some(session) = sessions.get(&key) { return Ok(session.id()); }
+        let session = ToolPkgComposeDslSession::new(
+            self.getToolPkgExecutionEngine(contextKey, containerPackageName),
+            self.toolPkgTextResources(containerPackageName)?,
+        );
+        sessions.insert(key, session.clone());
+        Ok(session.id())
     }
 
     #[allow(non_snake_case)]
@@ -1912,7 +1815,7 @@ impl RuntimePackageManager {
         widgetId: &str,
         instanceId: &str,
         useEnglish: bool,
-    ) -> Result<String, String> {
+    ) -> Result<ToolPkgDesktopWidgetSnapshot, String> {
         super::ToolPkgDesktopWidgetService::render(
             self,
             containerPackageName,
@@ -5622,27 +5525,7 @@ fn reportPackageScanProgress(result: &PackageScanCandidateResult) {
     }
 }
 
-/// Builds one serialized Compose DSL action event envelope.
-fn buildComposeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&str>) -> String {
-    let mut object = serde_json::Map::new();
-    object.insert(
-        "phase".to_string(),
-        serde_json::Value::String(phase.to_string()),
-    );
-    if let Some(error) = error {
-        object.insert(
-            "error".to_string(),
-            serde_json::Value::String(error.to_string()),
-        );
-    }
-    if let Some(result) = result {
-        object.insert(
-            "result".to_string(),
-            serde_json::Value::String(result.to_string()),
-        );
-    }
-    serde_json::Value::Object(object).to_string()
-}
+
 
 /// Selects one published method exactly once and rejects absent or duplicate declarations.
 #[allow(non_snake_case)]

@@ -86,9 +86,9 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _runtime_options: &BTreeMap<String, Value>,
         _env_overrides: &BTreeMap<String, String>,
         _text_resources: Arc<BTreeMap<String, String>>,
-    ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>>
+    ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>>
     {
-        let result = (|| Ok(Some(r#"{"tree":{"type":"Text"}}"#.to_string())))();
+        let result = (|| Ok(Some(serde_json::json!({"tree": {"type": "Text"}}))))();
         Box::pin(std::future::ready(result))
     }
 
@@ -99,8 +99,8 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _runtime_options: BTreeMap<String, Value>,
         _env_overrides: BTreeMap<String, String>,
         _text_resources: Arc<BTreeMap<String, String>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
-        Box::pin(async { Ok(Some(r#"{"tree":{"type":"Text"}}"#.to_string())) })
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
+        Box::pin(async { Ok(Some(serde_json::json!({"tree": {"type": "Text"}}))) })
     }
 
     /// Dispatches one Compose DSL action.
@@ -110,10 +110,10 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _payload: Option<Value>,
         _runtime_options: &BTreeMap<String, Value>,
         _env_overrides: &BTreeMap<String, String>,
-        _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>>
+        _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>>
     {
-        let result = (|| Ok(Some(format!("action:{action_id}"))))();
+        let result = (|| Ok(Some(Value::String(format!("action:{action_id}")))))();
         Box::pin(std::future::ready(result))
     }
 
@@ -124,9 +124,9 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _payload: Option<Value>,
         _runtime_options: BTreeMap<String, Value>,
         _env_overrides: BTreeMap<String, String>,
-        _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
-        Box::pin(async move { Ok(Some(format!("action:{action_id}"))) })
+        _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
+        Box::pin(async move { Ok(Some(Value::String(format!("action:{action_id}")))) })
     }
 
     /// Releases resources owned by this example engine.

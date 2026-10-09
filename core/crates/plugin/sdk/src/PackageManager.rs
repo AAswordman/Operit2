@@ -558,8 +558,8 @@ mod tests {
             _runtimeOptions: &BTreeMap<String, Value>,
             _envOverrides: &BTreeMap<String, String>,
             _textResources: Arc<BTreeMap<String, String>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>> {
-            let result = (|| Ok(Some(script.to_string())))();
+        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
+            let result = (|| Ok(Some(Value::String(script.to_string()))))();
             Box::pin(std::future::ready(result))
         }
 
@@ -570,8 +570,8 @@ mod tests {
             _runtime_options: BTreeMap<String, Value>,
             _env_overrides: BTreeMap<String, String>,
             _text_resources: Arc<BTreeMap<String, String>>,
-        ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
-            Box::pin(async move { Ok(Some(script)) })
+        ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
+            Box::pin(async move { Ok(Some(Value::String(script))) })
         }
 
         /// Returns the dispatched action id.
@@ -582,9 +582,9 @@ mod tests {
             _payload: Option<Value>,
             _runtimeOptions: &BTreeMap<String, Value>,
             _envOverrides: &BTreeMap<String, String>,
-            _onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<String>>> {
-            let result = (|| Ok(Some(actionId.to_string())))();
+            _onIntermediateResult: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
+            let result = (|| Ok(Some(Value::String(actionId.to_string()))))();
             Box::pin(std::future::ready(result))
         }
 
@@ -595,9 +595,9 @@ mod tests {
             _payload: Option<Value>,
             _runtimeOptions: BTreeMap<String, Value>,
             _envOverrides: BTreeMap<String, String>,
-            _on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
-            Box::pin(async move { Ok(Some(actionId)) })
+            _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+        ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
+            Box::pin(async move { Ok(Some(Value::String(actionId))) })
         }
 
         /// Releases no resources for the test engine.

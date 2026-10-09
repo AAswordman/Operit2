@@ -44,16 +44,38 @@ class _ComposeFlex extends Flex {
 class _ComposeRenderFlex extends RenderFlex {
   /// Configures standard flex measurement with plugin child metadata.
   _ComposeRenderFlex({
-    required this.nodes,
+    required List<_ComposeDslNode> nodes,
     required super.direction,
     required super.mainAxisSize,
     required super.mainAxisAlignment,
     required super.crossAxisAlignment,
     required super.textDirection,
     super.spacing,
-  });
+  }) : _nodes = nodes {
+    for (final node in _nodes) { node.addListener(_nodeChanged); }
+  }
 
-  List<_ComposeDslNode> nodes;
+  List<_ComposeDslNode> _nodes;
+  /// Exposes child metadata used by layout and paint.
+  List<_ComposeDslNode> get nodes => _nodes;
+
+  /// Rebinds child metadata listeners when the flex membership changes.
+  set nodes(List<_ComposeDslNode> value) {
+    for (final node in _nodes) { node.removeListener(_nodeChanged); }
+    _nodes = value;
+    for (final node in _nodes) { node.addListener(_nodeChanged); }
+    markNeedsLayout();
+  }
+
+  /// Invalidates layout and drawing when retained child metadata changes.
+  void _nodeChanged() { markNeedsLayout(); markNeedsPaint(); }
+
+  /// Releases retained child subscriptions with the render object.
+  @override
+  void dispose() {
+    for (final node in _nodes) { node.removeListener(_nodeChanged); }
+    super.dispose();
+  }
 
   /// Applies explicit child alignment after Flutter distributes flex space.
   @override

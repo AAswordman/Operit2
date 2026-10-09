@@ -69,3 +69,6 @@ pub(crate) mod media;
 #[path = "AttachmentTransferManager.rs"]
 pub mod AttachmentTransferManager;
 pub use AttachmentTransferManager::*;
+
+#[path = "ComposeDslSessionService.rs"]
+pub mod ComposeDslSessionService;

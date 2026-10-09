@@ -16,7 +16,7 @@ class ToolPkgDesktopWidgetFrame {
     required String instanceId,
     required bool useEnglish,
   }) async {
-    final raw = await clients.application
+    final snapshot = await clients.application
         .packageManager()
         .renderToolPkgDesktopWidget(
           containerPackageName: definition.containerPackageName,
@@ -24,12 +24,14 @@ class ToolPkgDesktopWidgetFrame {
           instanceId: instanceId,
           useEnglish: useEnglish,
         );
-    final snapshot = (jsonDecode(raw) as Map).cast<String, Object?>();
     return ToolPkgDesktopWidgetFrame._(
-      core_proxy.ToolPkgDesktopWidget.fromJson(
-        (snapshot['widget'] as Map).cast<String, Object?>(),
+      snapshot.widget,
+      _ComposeDslRenderResult(
+        tree: _ComposeDslNode.fromSnapshot(snapshot.renderResult.tree),
+        state: snapshot.renderResult.state,
+        memo: snapshot.renderResult.memo,
+        actionResult: null,
       ),
-      _ComposeDslRenderResult.parse(jsonEncode(snapshot['renderResult'])),
     );
   }
 

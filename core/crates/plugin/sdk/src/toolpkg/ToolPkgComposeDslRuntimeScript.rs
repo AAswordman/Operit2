@@ -18,7 +18,12 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                     navigationCommands: __includeNavigation ? __bundle.takeNavigationCommands() : []
                 }};
                 if (typeof __tree !== 'undefined') {{
-                    __response.tree = __tree;
+                    var __update = __bundle.composition.commit(__tree);
+                    if (__bundle.retainedDelivery) {{
+                        __response.update = __update;
+                    }} else {{
+                        __response.tree = __tree;
+                    }}
                 }}
                 if (typeof __actionResult !== 'undefined') {{
                     __response.actionResult = __actionResult;
@@ -28,7 +33,7 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
 
             /// Builds a response while preserving the caller's navigation delivery policy.
             function __operit_build_compose_response(__bundle, __entry, __actionResult, __includeNavigation = true) {{
-                var __tree = __entry(__bundle.ctx);
+                var __tree = OperitComposeReactive.render(__bundle.ctx, __entry);
                 if (__operit_is_promise(__tree)) {{
                     return __tree.then(function(__resolvedTree) {{
                         return __operit_wrap_compose_response(

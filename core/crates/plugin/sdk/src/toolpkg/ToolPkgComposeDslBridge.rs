@@ -1,7 +1,7 @@
 /// Returns the stable JavaScript context bridge used by ToolPkg Compose DSL screens.
 #[allow(non_snake_case)]
 pub fn buildComposeDslContextBridgeDefinition() -> String {
-    r#"
+    format!("{}\n{}\n{}\n{}\n{}", format!("var __operitAcorn = {{}}; (function(exports, module) {{ {} }})(__operitAcorn, {{exports: __operitAcorn}});", include_str!("vendor/acorn.js")), include_str!("ToolPkgComposeDslCompiler.js"), include_str!("ToolPkgComposeDslRetained.js"), include_str!("ToolPkgComposeDslReactive.js"), r#"
         var OperitComposeDslRuntime = (function() {
             function cloneObject(input) {
                 if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -140,13 +140,13 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                 var node = {
                     __composeNode: true,
                     type: String(type || 'Box'),
-                    props: normalizeSerializableValue(nodeProps, runtime, []),
+                    props: nodeProps,
                     children: normalizedChildren
                 };
                 if (Object.keys(slots).length > 0) {
                     node.slots = slots;
                 }
-                return node;
+                return OperitComposeGeneration.observeNode(node);
             }
 
             /// Resolves an optional package argument inside its owning runtime.
@@ -249,6 +249,7 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     runtime.actionCounter += 1;
                     var actionId = '__action_' + runtime.actionCounter;
                     runtime.actionStore[actionId] = handler;
+                    runtime.composition.trackAction(actionId);
                     return actionId;
                 };
 
@@ -462,6 +463,7 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     var next = readThemeSnapshot(value);
                     if (JSON.stringify(next) === JSON.stringify(themeSnapshot)) return;
                     themeSnapshot = next;
+                    OperitComposeReactive.environmentChanged(runtime.ctx);
                     for (var listener of Array.from(themeListeners)) await listener(next);
                 };
                 var ctx = {
@@ -491,6 +493,7 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                             runtime.stateStore[stateKey],
                             function(nextValue) {
                                 runtime.stateStore[stateKey] = nextValue;
+                                OperitComposeReactive.stateChanged(runtime.ctx, stateKey);
                                 notifyStateChanged();
                             }
                         ];
@@ -650,6 +653,10 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                 };
 
                 runtime.ctx = ctx;
+                OperitComposeGeneration.attach(ctx);
+                OperitComposeReactive.attach(ctx);
+                runtime.composition = OperitComposeRetained.create(runtime);
+                runtime.retainedDelivery = options.__operit_compose_retained_session === true;
                 /// Transfers each navigation request to exactly one render response.
                 runtime.takeNavigationCommands = function() {
                     return runtime.navigationCommands.splice(0);
@@ -679,6 +686,5 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                 createContext: createContext
             };
         })();
-    "#
-    .to_string()
+    "#)
 }

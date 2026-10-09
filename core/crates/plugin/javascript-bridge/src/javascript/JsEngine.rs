@@ -23,7 +23,7 @@ use operit_host_api::{
     HostError, HostErrorKind, HostJavaScriptAsyncJsonCallback, HostJavaScriptExecutionInterrupt,
     HostJavaScriptInterruptHandler, HostJavaScriptJsonCallback, HostJavaScriptRuntime,
     HostJavaScriptRuntimeHost, HostJavaScriptRuntimeStateHandle, HostJavaScriptRuntimeStateOutput,
-    HostResult,
+    HostResult, HostJavaScriptValueCallback,
 };
 use operit_plugin_sdk::execution_result::{
     build_js_execution_error_payload as buildJsExecutionErrorPayload,
@@ -58,10 +58,12 @@ thread_local! {
     static CURRENT_ACTIVE_CALL_CONTEXTS: RefCell<BTreeMap<String, JsCallContext>> = RefCell::new(BTreeMap::new());
     static CURRENT_EXECUTION_HOST: RefCell<Option<Arc<dyn JsExecutionHost>>> = RefCell::new(None);
     static CURRENT_REGISTRATION_CONFIG_PARAMS: RefCell<Option<BTreeMap<String, Value>>> = RefCell::new(None);
-    static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(String) + Send + Sync>>> = RefCell::new(None);
+    static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(Value) + Send + Sync>>> = RefCell::new(None);
     static CURRENT_EXECUTION_LISTENER: RefCell<Option<JsExecutionListenerRef>> = RefCell::new(None);
+    static CURRENT_DETACHED_INTERMEDIATE_CALLBACKS: RefCell<BTreeMap<String, Arc<dyn Fn(Value) + Send + Sync>>> =
+        RefCell::new(BTreeMap::new());
     static CURRENT_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
-    static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
+    static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, JsExecutionResult<Value>>> = RefCell::new(BTreeMap::new());
     static CURRENT_TEXT_RESOURCE_SOURCE: RefCell<Option<JsTextResourceSource>> = RefCell::new(None);
 }
 
@@ -113,7 +115,7 @@ enum JsTextResourceSource {
 #[derive(Clone)]
 struct JsCallContext {
     executionHost: Option<Arc<dyn JsExecutionHost>>,
-    intermediateCallback: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    intermediateCallback: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     executionListener: Option<JsExecutionListenerRef>,
     envOverrides: Arc<Mutex<BTreeMap<String, String>>>,
     textResourceSource: JsTextResourceSource,
@@ -142,12 +144,12 @@ impl Drop for JsPendingScriptExecution {
 
 /// Owns the result sink independently from the lifetime of detached script work.
 type JsScriptCompletion =
-    Arc<Mutex<Option<tokio::sync::oneshot::Sender<JsExecutionResult<Option<String>>>>>>;
+    Arc<Mutex<Option<tokio::sync::oneshot::Sender<JsExecutionResult<Option<Value>>>>>>;
 
 /// Completes a call once without holding the result lock while waking its caller.
 fn completeScriptExecution(
     completion: &JsScriptCompletion,
-    result: JsExecutionResult<Option<String>>,
+    result: JsExecutionResult<Option<Value>>,
 ) {
     let sender = completion
         .lock()
@@ -165,7 +167,7 @@ struct JsScriptRequest {
     functionName: String,
     params: BTreeMap<String, Value>,
     envOverrides: BTreeMap<String, String>,
-    onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    onIntermediateResult: Option<Arc<dyn Fn(Value) + Send + Sync>>,
     timeout: Duration,
     timeoutSec: u64,
     executionListener: Option<JsExecutionListenerRef>,
@@ -381,14 +383,14 @@ impl JsEngineWorker {
         functionName: String,
         params: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
         _dispatchIntermediateOnMain: bool,
         timeout: Duration,
         timeoutSec: u64,
         executionListener: Option<JsExecutionListenerRef>,
         textResources: Option<Arc<ToolPkgTextResources>>,
         useComposeDslTextResources: bool,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
         let worker = self.clone();
         Box::pin(async move {
             if !worker.alive.load(Ordering::Acquire) {
@@ -755,19 +757,19 @@ impl JsEngine {
             return Box::pin(async move { Err(JsExecutionError::timeout(reason)) });
         }
         let timeoutSec = (timeoutMillis - 1) / 1_000 + 1;
-        self.worker.execute_script_function_async(
+        textScriptCompletion(self.worker.execute_script_function_async(
             script,
             functionName,
             params,
             envOverrides,
-            on_intermediate_result,
+            textIntermediateCallback(on_intermediate_result),
             dispatchIntermediateOnMain,
             Duration::from_millis(timeoutMillis),
             timeoutSec,
             executionListener,
             None,
             false,
-        )
+        ))
     }
 
     /// Executes JavaScript with the supplied native deadline and whole-second script metadata.
@@ -786,19 +788,19 @@ impl JsEngine {
         textResources: Option<Arc<ToolPkgTextResources>>,
         useComposeDslTextResources: bool,
     ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
-        self.worker.execute_script_function_async(
+        textScriptCompletion(self.worker.execute_script_function_async(
             script.to_owned(),
             functionName.to_owned(),
             params.clone(),
             envOverrides.clone(),
-            on_intermediate_result,
+            textIntermediateCallback(on_intermediate_result),
             dispatchIntermediateOnMain,
             timeout,
             timeoutSec,
             executionListener,
             textResources,
             useComposeDslTextResources,
-        )
+        ))
     }
 
     /// Executes a ToolPkg registration function and captures its declaration.
@@ -867,7 +869,7 @@ impl JsEngine {
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
         textResources: Arc<ToolPkgTextResources>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
         self.executeComposeDslFunction(
             &buildComposeDslRuntimeWrappedScript(script),
             "__operit_render_compose_dsl",
@@ -886,7 +888,7 @@ impl JsEngine {
         runtimeOptions: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
         textResources: Arc<ToolPkgTextResources>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
         self.executeComposeDslFunctionAsync(
             buildComposeDslRuntimeWrappedScript(&script),
             "__operit_render_compose_dsl".to_string(),
@@ -904,8 +906,8 @@ impl JsEngine {
         payload: Option<Value>,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
         let normalizedActionId = actionId.trim();
         if normalizedActionId.is_empty() {
             return Box::pin(async {
@@ -940,8 +942,8 @@ impl JsEngine {
         payload: Option<Value>,
         runtimeOptions: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
         let normalizedActionId = actionId.trim().to_string();
         if normalizedActionId.is_empty() {
             return Box::pin(async {
@@ -970,7 +972,7 @@ impl JsEngine {
         &self,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
         self.executeComposeDslFunction(
             "",
             "__operit_rerender_compose_dsl",
@@ -989,14 +991,14 @@ impl JsEngine {
         functionName: &str,
         params: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        onIntermediateResult: Option<Arc<dyn Fn(Value) + Send + Sync>>,
         textResources: Option<Arc<ToolPkgTextResources>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
-        self.execute_script_function_with_timeout(
-            script,
-            functionName,
-            params,
-            envOverrides,
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
+        self.worker.execute_script_function_async(
+            script.to_owned(),
+            functionName.to_owned(),
+            params.clone(),
+            envOverrides.clone(),
             onIntermediateResult,
             true,
             Duration::from_secs(TOOLPKG_SCRIPT_TIMEOUT_SECONDS),
@@ -1015,9 +1017,9 @@ impl JsEngine {
         functionName: String,
         params: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+        onIntermediateResult: Option<Arc<dyn Fn(Value) + Send + Sync>>,
         textResources: Option<Arc<ToolPkgTextResources>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
         self.worker.execute_script_function_async(
             script,
             functionName,
@@ -1052,12 +1054,12 @@ impl JsEngine {
 }
 
 impl Stream for JsComposeDslActionEventStream {
-    type Item = String;
+    type Item = Value;
 
     /// Collects Compose DSL action events without blocking the collector task.
     fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
         Box::pin(async move {
-            let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
             let intermediateEventsForCallback = intermediateEvents.clone();
             let result = self
                 .engine
@@ -1097,16 +1099,16 @@ impl Stream for JsComposeDslActionEventStream {
 }
 
 #[allow(non_snake_case)]
-fn composeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&str>) -> String {
+fn composeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&Value>) -> Value {
     let mut object = serde_json::Map::new();
     object.insert("phase".to_string(), Value::String(phase.to_string()));
     if let Some(error) = error {
         object.insert("error".to_string(), Value::String(error.to_string()));
     }
     if let Some(result) = result {
-        object.insert("result".to_string(), Value::String(result.to_string()));
+        object.insert("result".to_string(), result.clone());
     }
-    Value::Object(object).to_string()
+    Value::Object(object)
 }
 
 /// Validates and converts one Host JavaScript callback argument list.
@@ -1287,15 +1289,20 @@ impl JsEngineState {
                     .insert("__operit_package_lang".to_string(), Value::String(language));
             }
             clearNativeExecutionSession(&callId);
-            if let Err(error) = self.invokeExecutionFunction(
-                &callId,
-                effectiveParams,
-                &script,
-                &functionName,
-                timeoutSec,
+            if let Err(error) = self.runtime.callHostJavaScriptFunction(
+                "__operitExecuteScriptFunction",
+                &[
+                    Value::String(callId.clone()),
+                    Value::Object(effectiveParams.into_iter().collect()),
+                    Value::String(script),
+                    Value::String(functionName),
+                    Value::from(timeoutSec),
+                    Value::from(10000),
+                    Value::Bool(useComposeDslTextResources),
+                ],
             ) {
                 self.cancelJavaScriptExecution(&callId);
-                return Err(JsExecutionError::runtime(error));
+                return Err(JsExecutionError::runtime(error.to_string()));
             }
             Ok(JsPendingScriptExecution {
                 callId,
@@ -1332,7 +1339,7 @@ impl JsEngineState {
             *host.borrow_mut() = self.executionHost.clone();
         });
         CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
-            *callback.borrow_mut() = on_intermediate_result;
+            *callback.borrow_mut() = textIntermediateCallback(on_intermediate_result);
         });
         CURRENT_EXECUTION_LISTENER.with(|listener| {
             *listener.borrow_mut() = executionListener;
@@ -1630,12 +1637,7 @@ impl JsEngineState {
                             pending.timeout.as_millis(),
                         ))))
                     } else {
-                        readNativeExecutionSession(&callId).map(|output| {
-                            match extractJsExecutionErrorMessage(Some(&output)) {
-                                Some(message) => Err(JsExecutionError::runtime(message)),
-                                None => Ok(Some(output)),
-                            }
-                        })
+                        readNativeExecutionSession(&callId).map(|output| output.map(Some))
                     }
                 }
             };
@@ -1780,7 +1782,7 @@ impl JsEngineState {
                 return Err(JsExecutionError::runtime(error));
             }
             if let Some(output) = readNativeExecutionSession(callId) {
-                return Ok(Some(output));
+                return textScriptResult(output.map(Some));
             }
             let nowMillis = currentTimeMillisU128();
             if nowMillis >= deadlineMillis {
@@ -1910,6 +1912,25 @@ impl JsEngineState {
                 .map_err(|error| error.to_string())?;
         }
 
+        let structuredFunctions: Vec<(&str, HostJavaScriptValueCallback)> = vec![
+            ("__operitNativeSetCallStructuredResult", Arc::new(|arguments| {
+                let [callId, value]: [Value; 2] = arguments.try_into().map_err(|_| HostError::new("Structured result requires call id and value"))?;
+                let callId = callId.as_str().ok_or_else(|| HostError::new("Structured call id must be a string"))?;
+                CURRENT_CALL_RESULTS.with(|results| { results.borrow_mut().insert(callId.to_string(), Ok(value)); });
+                Ok(())
+            })),
+            ("__operitNativeSendStructuredIntermediate", Arc::new(|arguments| {
+                let [callId, value]: [Value; 2] = arguments.try_into().map_err(|_| HostError::new("Structured intermediate requires call id and value"))?;
+                let callId = callId.as_str().ok_or_else(|| HostError::new("Structured call id must be a string"))?;
+                sendStructuredIntermediate(callId, value);
+                Ok(())
+            })),
+        ];
+        for (name, callback) in structuredFunctions {
+            self.runtime.registerHostJavaScriptValueFunction(name, callback).map_err(|error| error.to_string())?;
+        }
+
+        let executionHost = self.executionHost.clone();
         let asyncCallbackSender = self.asyncCallbackSender.clone();
         let backgroundWake = self.backgroundWake.clone();
         let asyncCallbackSink: JsAsyncCallbackSink = Arc::new(move |callback| {
@@ -2516,7 +2537,7 @@ impl JsExecutionEngine for JsEngine {
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
         textResources: Arc<BTreeMap<String, String>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
         JsEngine::execute_compose_dsl_script(
             self,
             script,
@@ -2534,7 +2555,7 @@ impl JsExecutionEngine for JsEngine {
         runtimeOptions: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
         textResources: Arc<BTreeMap<String, String>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
         JsEngine::execute_compose_dsl_script_async(
             self,
             script,
@@ -2552,8 +2573,8 @@ impl JsExecutionEngine for JsEngine {
         payload: Option<Value>,
         runtimeOptions: &BTreeMap<String, Value>,
         envOverrides: &BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
         JsEngine::execute_compose_dsl_action(
             self,
             actionId,
@@ -2572,8 +2593,8 @@ impl JsExecutionEngine for JsEngine {
         payload: Option<Value>,
         runtimeOptions: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
+        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
         JsEngine::dispatch_compose_dsl_action_result_async(
             self,
             actionId,
@@ -2607,9 +2628,77 @@ fn deliverIntermediateResult(callId: String, result: String) -> HostResult<()> {
         listener.on_intermediate_result(&callId, &result);
     }
     if let Some(callback) = context.intermediateCallback {
-        callback(result);
+        callback(Value::String(result));
     }
     Ok(())
+}
+
+/// Adapts the ordinary-script result contract without interpreting DSL objects as text.
+fn textScriptCompletion(completion: JsExecutionCompletion<JsExecutionResult<Option<Value>>>) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+    Box::pin(async move { textScriptResult(completion.await) })
+}
+
+/// Extracts the explicit text variant used by existing non-DSL callers.
+fn textScriptResult(result: JsExecutionResult<Option<Value>>) -> JsExecutionResult<Option<String>> {
+    match result? {
+        None => Ok(None),
+        Some(Value::String(text)) => match extractJsExecutionErrorMessage(Some(&text)) {
+            Some(message) => Err(JsExecutionError::runtime(message)),
+            None => Ok(Some(text)),
+        },
+        Some(_) => Err(JsExecutionError::serialization("Ordinary script returned a structured DSL result")),
+    }
+}
+
+/// Preserves text callbacks for ordinary scripts while keeping the internal channel structured.
+fn textIntermediateCallback(callback: Option<Arc<dyn Fn(String) + Send + Sync>>) -> Option<Arc<dyn Fn(Value) + Send + Sync>> {
+    callback.map(|callback| Arc::new(move |value| {
+        let Value::String(text) = value else { panic!("Text intermediate callback received a structured value"); };
+        callback(text);
+    }) as Arc<dyn Fn(Value) + Send + Sync>)
+}
+
+/// Delivers DSL values to their active or detached execution owner without JSON text.
+fn sendStructuredIntermediate(callId: &str, value: Value) {
+    let active = CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().get(callId).and_then(|context| context.intermediateCallback.clone()));
+    let detached = CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|callbacks| callbacks.borrow().get(callId).cloned());
+    match (active, detached) {
+        (Some(callback), _) => callback(value),
+        (None, Some(callback)) => callback(value),
+        (None, None) => {},
+    }
+}
+
+#[allow(non_snake_case)]
+fn nativeSendIntermediateResultString(callId: String, result: String) {
+    if let Some(context) =
+        CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().get(&callId).cloned())
+    {
+        if let Some(listener) = context.executionListener {
+            listener.on_intermediate_result(&callId, &result);
+        }
+        if let Some(callback) = context.intermediateCallback {
+            callback(Value::String(result));
+        }
+        return;
+    }
+
+    let detachedCallback = CURRENT_DETACHED_INTERMEDIATE_CALLBACKS
+        .with(|callbacks| callbacks.borrow().get(&callId).cloned());
+    CURRENT_EXECUTION_LISTENER.with(|listener| {
+        if let Some(listener) = listener.borrow().as_ref() {
+            listener.on_intermediate_result(&callId, &result);
+        }
+    });
+    CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
+        if let Some(callback) = callback.borrow().as_ref() {
+            callback(Value::String(result));
+            return;
+        }
+        if let Some(callback) = detachedCallback {
+            callback(Value::String(result));
+        }
+    });
 }
 
 /// Executes one named host capability using typed structured arguments and results.
@@ -2968,7 +3057,7 @@ fn storeExecutionResult(callId: String, result: String) -> HostResult<()> {
         return Err(HostError::new("Completion requires an active owning call"));
     }
     CURRENT_CALL_RESULTS.with(|results| {
-        results.borrow_mut().insert(callId, result);
+        results.borrow_mut().insert(callId, Ok(Value::String(result)));
     });
     Ok(())
 }
@@ -2983,7 +3072,7 @@ fn storeExecutionError(callId: String, error: String) -> HostResult<()> {
         listener.on_failed(&callId, &error);
     }
     CURRENT_CALL_RESULTS.with(|results| {
-        results.borrow_mut().insert(callId, error);
+        results.borrow_mut().insert(callId, Err(JsExecutionError::runtime(extractJsExecutionErrorMessage(Some(&error)).expect("Native error must contain a structured error message"))));
     });
     Ok(())
 }
@@ -3086,7 +3175,7 @@ fn parseBooleanFlag(value: &str) -> bool {
 }
 
 #[allow(non_snake_case)]
-fn readNativeExecutionSession(callId: &str) -> Option<String> {
+fn readNativeExecutionSession(callId: &str) -> Option<JsExecutionResult<Value>> {
     CURRENT_CALL_RESULTS.with(|results| results.borrow().get(callId).cloned())
 }
 

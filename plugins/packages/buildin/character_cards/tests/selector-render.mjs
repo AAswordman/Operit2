@@ -43,6 +43,9 @@ export function mountRegisteredComposeRoute(plugin, presentation, routeId, expor
   assert.equal(routes[0].route, "toolpkg:com.operit.character_cards:ui:" + routeId);
   const module = { exports: { Screen: routes[0].screen } };
   const context = vm.createContext({ module, exports: module.exports, console, setTimeout, clearTimeout });
+  for (const file of ["ToolPkgComposeDslCompiler.js", "ToolPkgComposeDslRetained.js", "ToolPkgComposeDslReactive.js"]) {
+    vm.runInContext(readFileSync(new URL("../../../../../core/crates/plugin/sdk/src/toolpkg/" + file, import.meta.url), "utf8"), context);
+  }
   vm.runInContext(sdkScript("ToolPkgComposeDslBridge.rs", "buildComposeDslContextBridgeDefinition"), context);
   const wrapped = sdkScript("ToolPkgComposeDslRuntimeScript.rs", "buildComposeDslRuntimeWrappedScript");
   assert.equal(wrapped.split("{script}").length, 2);

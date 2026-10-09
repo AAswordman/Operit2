@@ -1632,7 +1632,7 @@ async fn compose_dsl_default_export_can_capture_later_lexical_constants() {
             .await,
         "compose lexical initialization render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
 
     assert_eq!(parsed["tree"]["props"]["fontSize"], 13);
     assert_eq!(parsed["tree"]["props"]["hintFontSize"], 11);
@@ -1682,7 +1682,7 @@ async fn compose_dsl_resource_snapshot_avoids_host_reentry_for_render_and_action
             .await,
         "compose resource snapshot render result",
     );
-    let rendered = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let rendered = raw.clone();
     assert_eq!(rendered["tree"]["props"]["label"], "resource-snapshot");
     let actionId = rendered["tree"]["props"]["onClick"]["__actionId"]
         .as_str()
@@ -1694,7 +1694,7 @@ async fn compose_dsl_resource_snapshot_avoids_host_reentry_for_render_and_action
             .await,
         "compose resource snapshot action result",
     );
-    let action = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let action = actionRaw.clone();
     assert_eq!(action["actionResult"], "resource-snapshot");
     assert_eq!(
         executionHost
@@ -1740,7 +1740,7 @@ async fn compose_dsl_action_uses_rendered_runtime() {
             .await,
         "compose render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
     let actionId = parsed["tree"]["props"]["onClick"]["__actionId"]
         .as_str()
         .expect("action id");
@@ -1751,7 +1751,7 @@ async fn compose_dsl_action_uses_rendered_runtime() {
             .await,
         "compose action result",
     );
-    let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let actionParsed = actionRaw.clone();
     assert_eq!(actionParsed["actionResult"], 1);
 }
 
@@ -1789,7 +1789,7 @@ async fn compose_dsl_action_updates_runtime_options_state_store() {
             .await,
         "compose render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
     let actionId = parsed["tree"]["props"]["onCheckedChange"]["__actionId"]
         .as_str()
         .expect("action id")
@@ -1809,7 +1809,7 @@ async fn compose_dsl_action_updates_runtime_options_state_store() {
             .await,
         "compose action result",
     );
-    let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let actionParsed = actionRaw.clone();
 
     assert_eq!(actionParsed["state"]["enabled"], true);
     assert_eq!(actionParsed["tree"]["props"]["checked"], true);
@@ -1852,7 +1852,7 @@ async fn compose_dsl_async_toggle_action_renders_settled_state() {
             .await,
         "compose async toggle render result",
     );
-    let rendered = serde_json::from_str::<Value>(&raw).expect("compose async toggle render json");
+    let rendered = raw.clone();
     let actionId = rendered["tree"]["props"]["onCheckedChange"]["__actionId"]
         .as_str()
         .expect("async toggle action id")
@@ -1873,7 +1873,7 @@ async fn compose_dsl_async_toggle_action_renders_settled_state() {
         "compose async toggle action result",
     );
     let action =
-        serde_json::from_str::<Value>(&actionRaw).expect("compose async toggle action json");
+        actionRaw.clone();
 
     assert_eq!(action["state"]["enabled"], true);
     assert_eq!(action["tree"]["props"]["checked"], true);
@@ -1914,7 +1914,7 @@ async fn compose_dsl_action_can_access_bootstrap_globals() {
             .await,
         "compose render result",
     );
-    let parsed = serde_json::from_str::<Value>(&raw).expect("compose render json");
+    let parsed = raw.clone();
     let actionId = parsed["tree"]["props"]["onLoad"]["__actionId"]
         .as_str()
         .expect("action id");
@@ -1925,7 +1925,7 @@ async fn compose_dsl_action_can_access_bootstrap_globals() {
             .await,
         "compose action result",
     );
-    let actionParsed = serde_json::from_str::<Value>(&actionRaw).expect("compose action json");
+    let actionParsed = actionRaw.clone();
 
     assert_eq!(actionParsed["actionResult"]["readResource"], "function");
     assert_eq!(actionParsed["actionResult"]["icon"], "SportsEsports");
@@ -2274,7 +2274,7 @@ fn render_planask_through_async_compose_host() {
         )),
         "planask async render",
     );
-    let result: Value = serde_json::from_str(&raw).unwrap();
+    let result: Value = raw.clone();
     assert!(
         result["tree"].is_object(),
         "Unexpected render result: {raw}"
@@ -2297,7 +2297,7 @@ fn render_planask_through_async_compose_host() {
         )),
         "planask onLoad",
     );
-    let result: Value = serde_json::from_str(&raw).unwrap();
+    let result: Value = raw.clone();
     assert!(
         result["tree"].is_object(),
         "Unexpected action result: {raw}"
@@ -2308,7 +2308,7 @@ fn render_planask_through_async_compose_host() {
         "onLoad must deliver intermediate renders"
     );
     for raw in intermediate.iter() {
-        let result: Value = serde_json::from_str(raw).unwrap();
+        let result: Value = raw.clone();
         assert!(
             result["tree"].is_object(),
             "Unexpected intermediate result: {raw}"
@@ -2349,7 +2349,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
         )),
         "Compose timer initial render",
     );
-    let rendered: Value = serde_json::from_str(&renderedRaw).expect("initial render JSON");
+    let rendered: Value = renderedRaw.clone();
     let actionId = rendered["tree"]["props"]["onLoad"]["__actionId"]
         .as_str()
         .expect("Compose onLoad action id")
@@ -2357,7 +2357,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
     let mut actionParams = params;
     actionParams.insert("state".to_string(), rendered["state"].clone());
     actionParams.insert("memo".to_string(), rendered["memo"].clone());
-    let intermediate = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let intermediate = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let intermediateForCallback = intermediate.clone();
     let finalRaw = expect_js_output(
         runtime.block_on(engine.dispatch_compose_dsl_action_result_async(
@@ -2374,7 +2374,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
         )),
         "Compose timer action",
     );
-    let finalResult: Value = serde_json::from_str(&finalRaw).expect("final action JSON");
+    let finalResult: Value = finalRaw.clone();
     assert_eq!(finalResult["state"]["count"], 0);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -2383,9 +2383,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
             .expect("Compose timer intermediate mutex poisoned")
             .iter()
             .any(|raw| {
-                serde_json::from_str::<Value>(raw)
-                    .ok()
-                    .and_then(|value| value["state"]["count"].as_i64())
+                raw["state"]["count"].as_i64()
                     == Some(1)
             })
         {
@@ -2428,7 +2426,7 @@ async fn render_message_insert_compose_dsl_screen() {
         .execute_compose_dsl_script(&script, &params, &BTreeMap::new(), Arc::new(textResources))
         .await;
     let raw = expect_js_output(output, "message_insert compose render");
-    let rendered = serde_json::from_str::<Value>(&raw).expect("message_insert compose render JSON");
+    let rendered = raw.clone();
     assert!(rendered["tree"].is_object());
     engine.destroy();
 }
@@ -2472,7 +2470,7 @@ async fn message_insert_compose_master_switch_updates_before_async_persistence()
             .await,
         "message_insert compose render",
     );
-    let rendered = serde_json::from_str::<Value>(&renderedRaw).expect("rendered JSON");
+    let rendered = renderedRaw.clone();
     let actionId = find_switch_action_for_text(&rendered["tree"], "额外信息注入")
         .expect("master switch action id");
     let mut actionParams = params.clone();
@@ -2490,7 +2488,7 @@ async fn message_insert_compose_master_switch_updates_before_async_persistence()
             .await,
         "message_insert master toggle action",
     );
-    let action = serde_json::from_str::<Value>(&actionRaw).expect("action JSON");
+    let action = actionRaw.clone();
     assert_eq!(action["state"]["masterEnabled"], true);
     assert_eq!(find_switch_checked_for_text(&action["tree"]), Some(true));
     engine.destroy();

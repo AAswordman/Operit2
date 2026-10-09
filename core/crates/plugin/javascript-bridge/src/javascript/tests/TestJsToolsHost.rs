@@ -158,7 +158,7 @@ pub fn rejecting_js_future<T>(message: &'static str) -> JsFuture<T> {
 }
 
 /// Unwraps a JavaScript execution result into its serialized output string.
-pub fn expect_js_output(output: JsExecutionResult<Option<String>>, context: &str) -> String {
+pub fn expect_js_output<T>(output: JsExecutionResult<Option<T>>, context: &str) -> T {
     output
         .expect(context)
         .expect("JavaScript execution should return a value")

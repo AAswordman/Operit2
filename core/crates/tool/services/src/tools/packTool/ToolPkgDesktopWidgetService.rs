@@ -1,10 +1,20 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use operit_plugin_sdk::toolpkg::ToolPkgComposeDslParser::ToolPkgComposeDslParser;
+use operit_plugin_sdk::toolpkg::ToolPkgComposeDslParser::{ToolPkgComposeDslParser, ToolPkgComposeDslRenderResult};
+use operit_plugin_sdk::toolpkg::ToolPkgPackageModels::ToolPkgDesktopWidget;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::RuntimePackageManager::RuntimePackageManager;
+
+/// Delivers a desktop widget snapshot as a typed object through unchanged CoreLink.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ToolPkgDesktopWidgetSnapshot {
+    pub widget: ToolPkgDesktopWidget,
+    pub renderResult: ToolPkgComposeDslRenderResult,
+}
 
 static NEXT_RENDER_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -30,7 +40,7 @@ pub(super) async fn render(
     widget_id: &str,
     instance_id: &str,
     use_english: bool,
-) -> Result<String, String> {
+) -> Result<ToolPkgDesktopWidgetSnapshot, String> {
     if instance_id.trim().is_empty() {
         return Err("Desktop widget instanceId must not be empty".into());
     }
@@ -114,14 +124,13 @@ pub(super) async fn render(
             .map_err(|error| error.to_string())?;
         result = decode_render(loaded)?;
     }
-    serde_json::to_string(&json!({"widget": widget, "renderResult": result}))
-        .map_err(|error| error.to_string())
+    Ok(ToolPkgDesktopWidgetSnapshot { widget, renderResult: serde_json::from_value(result).map_err(|error| error.to_string())? })
 }
 
 /// Rejects failed or malformed renders instead of presenting an older widget snapshot.
-fn decode_render(raw: Option<String>) -> Result<Value, String> {
+fn decode_render(raw: Option<Value>) -> Result<Value, String> {
     let raw = raw.ok_or("Desktop widget returned no render result")?;
-    let value: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let value = raw;
     if value.get("success").and_then(Value::as_bool) == Some(false) {
         return Err(format!("Desktop widget render failed: {value}"));
     }
@@ -139,10 +148,10 @@ mod tests {
     #[test]
     fn rejects_failed_and_missing_trees() {
         assert!(decode_render(None).is_err());
-        assert!(decode_render(Some(r#"{"success":false,"tree":{}}"#.into())).is_err());
-        assert!(decode_render(Some(r#"{"success":true}"#.into())).is_err());
+        assert!(decode_render(Some(serde_json::json!({"success": false, "tree": {}}))).is_err());
+        assert!(decode_render(Some(serde_json::json!({"success": true}))).is_err());
         assert!(decode_render(Some(
-            r#"{"tree":{"type":"Text","props":{},"children":[]}}"#.into()
+            serde_json::json!({"tree": {"type": "Text", "props": {}, "children": []}})
         ))
         .is_ok());
     }
