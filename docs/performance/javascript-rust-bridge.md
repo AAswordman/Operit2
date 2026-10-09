@@ -150,5 +150,30 @@ cargo test --release --manifest-path core/Cargo.toml -p operit-js-bridge \
 不同运行轮次受其他构建、系统负载和线程调度影响，绝对耗时有波动；测试不设
 耗时断言。不能推论真实网络/文件工具或整个插件能获得同等加速。
 
+### 3 MB / 3 MiB 大文本实测
+
+手动基准支持用环境变量覆盖 payload 与批次迭代次数，默认小数据基准不变：
+
+```sh
+OPERIT_JS_BRIDGE_BENCH_SIZES=3000000,3145728 \
+OPERIT_JS_BRIDGE_BENCH_ITERATIONS=50 \
+cargo test --release --manifest-path core/Cargo.toml -p operit-js-bridge \
+  bridge_roundtrip_benchmark -- --ignored --nocapture --test-threads=1
+```
+
+同一设备、相同 echo 往返流程，每种模式预热 50 次，取五批 × 50 次的批均值中位数。
+参数是单个 ASCII 文本字段，完整结果由 Rust 返回 JS；不是单向网络传输或二进制吞吐量。
+
+| payload | 旧式 JSON + eval | JSON + 直接回调 | 结构化 Promise |
+| --- | ---: | ---: | ---: |
+| 3 MB（3,000,000 字节） | 25.668 ms | 9.590 ms | 0.396 ms |
+| 3 MiB（3,145,728 字节） | 26.380 ms | 9.480 ms | 0.415 ms |
+| 3 MiB，独立重跑 | 26.088 ms | 9.450 ms | 0.416 ms |
+
+3 MiB 重跑的旧式/结构化耗时比约 62.7 倍，每次 echo 往返减少约 25.67 ms（98.4%）。
+这个结果只适用于此处的大文本桥接基准。包含大量属性的对象、需要转义的文本、
+真实工具 I/O、其他设备和内存压力下的数字可能不同；结构化路径也仍有字符串拷贝，
+不是零拷贝。二进制仍走原有 base64/句柄通道，不能套用此表。
+
 后续应另行设计工具非阻塞能力声明、批量请求和二进制 buffer/句柄所有权，
 而不是直接把所有工具塞进常驻本地执行器。

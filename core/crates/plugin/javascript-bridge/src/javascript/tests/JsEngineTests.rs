@@ -3219,7 +3219,19 @@ async fn structured_tool_calls_recover_from_invalid_parameters_and_preserve_bina
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "manual release bridge benchmark"]
 async fn bridge_roundtrip_benchmark() {
-    for size in [64usize, 4096, 65536] {
+    let sizes = std::env::var("OPERIT_JS_BRIDGE_BENCH_SIZES")
+        .map(|sizes| {
+            sizes
+                .split(',')
+                .map(|size| size.trim().parse::<usize>().expect("benchmark payload size"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|_| vec![64, 4096, 65536]);
+    let iterations = std::env::var("OPERIT_JS_BRIDGE_BENCH_ITERATIONS")
+        .map(|value| value.parse::<usize>().expect("benchmark iteration count"))
+        .unwrap_or(500);
+    assert!(iterations > 0, "benchmark iterations must be positive");
+    for size in sizes {
         for mode in [
             "baseline-json-eval",
             "legacy-json-direct-callback",
@@ -3238,7 +3250,7 @@ async fn bridge_roundtrip_benchmark() {
             let params = BTreeMap::from([
                 ("legacy".to_string(), Value::Bool(legacy)),
                 ("size".to_string(), serde_json::json!(size)),
-                ("iterations".to_string(), serde_json::json!(500)),
+                ("iterations".to_string(), serde_json::json!(iterations)),
             ]);
             let script = r#"exports.main=async function(params){
                 if(params.legacy)globalThis.__operitNativeCallToolStructured=undefined;
@@ -3281,7 +3293,7 @@ async fn bridge_roundtrip_benchmark() {
                     "benchmark",
                 );
                 assert_eq!(output, size.to_string());
-                times.push(start.elapsed().as_secs_f64() * 1e6 / 500.0);
+                times.push(start.elapsed().as_secs_f64() * 1e6 / iterations as f64);
             }
             times.sort_by(|a, b| a.total_cmp(b));
             eprintln!(
