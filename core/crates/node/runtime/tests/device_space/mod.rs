@@ -61,3 +61,9 @@ mod policy_contracts {
         "/tests/device_space/policy_contracts.rs"
     ));
 }
+mod approving_exit {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/approving_exit.rs"
+    ));
+}

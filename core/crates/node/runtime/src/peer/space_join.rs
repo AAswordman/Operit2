@@ -18,24 +18,24 @@ const OFFLINE_GRACE_MS: i64 = 30_000;
 static MUTATION: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Record {
-    request: SpaceJoinRequest,
-    sourceSpaceId: String,
-    sourceRevision: i64,
-    targetSpaceId: String,
-    profile: CoreSpaceDeviceProfile,
-    source: PeerSpaceSnapshot,
+pub(crate) struct Record {
+    pub(crate) request: SpaceJoinRequest,
+    pub(crate) sourceSpaceId: String,
+    pub(crate) sourceRevision: i64,
+    pub(crate) targetSpaceId: String,
+    pub(crate) profile: CoreSpaceDeviceProfile,
+    pub(crate) source: PeerSpaceSnapshot,
     // Keep the uncommon receipt out of every pending record / BTreeMap node.
     // Box is serialization-transparent and avoids oversized Xtensa node moves.
-    accepted: Option<Box<PeerSpaceJoin>>,
+    pub(crate) accepted: Option<Box<PeerSpaceJoin>>,
     #[serde(default)]
-    unavailableSince: Option<i64>,
+    pub(crate) unavailableSince: Option<i64>,
     #[serde(default)]
-    approvedDecision: Option<bool>,
+    pub(crate) approvedDecision: Option<bool>,
     #[serde(default)]
-    decisionRevision: Option<i64>,
+    pub(crate) decisionRevision: Option<i64>,
     #[serde(default)]
-    cancelRequested: bool,
+    pub(crate) cancelRequested: bool,
 }
 #[derive(Serialize, Deserialize)]
 struct Submission {
@@ -86,7 +86,7 @@ fn load(service: &dyn NodeSpaceContext, path: &str, id: &str) -> Result<Record, 
 // Accepted control history already lives in the common synchronization log.
 // Persist only the decision/membership receipt, not another complete log per
 // request. Rehydrate the wire response below; old full records remain readable.
-fn saveRecord(service: &dyn NodeSpaceContext, path: &str, id: &str, record: &Record) -> Result<(), String> {
+pub(crate) fn saveRecord(service: &dyn NodeSpaceContext, path: &str, id: &str, record: &Record) -> Result<(), String> {
     let durable = Record {
         request: record.request.clone(), sourceSpaceId: record.sourceSpaceId.clone(),
         sourceRevision: record.sourceRevision, targetSpaceId: record.targetSpaceId.clone(),
@@ -134,8 +134,34 @@ fn hopDistances(source: &str, edges: &[CoreSpaceDeviceConnection], transit: &BTr
     }
     distances
 }
-fn assign(service: &dyn NodeSpaceContext, record: &mut Record, now: i64) -> Result<(), String> {
-    if record.request.status != SpaceJoinStatus::Pending { return Ok(()); }
+/// A decision is committed once its admission operation reached the control
+/// log. The log, not any local receipt, is the authority: every replica
+/// replaying the shared history determines this identically, which is what
+/// makes commit-based pinning and recovery safe across crashes.
+pub(crate) fn admissionCommitted(service: &dyn NodeSpaceContext, record: &Record) -> Result<bool, String> {
+    let Some(reviewer) = record.request.reviewerDeviceId.as_deref() else { return Ok(false); };
+    let id = format!("control-review-{}-{}", record.request.requestId, record.request.assignmentVersion);
+    let members = record.source.space.members.iter().cloned().collect::<BTreeSet<_>>();
+    Ok(service.networkControlStore().currentSpaceOperations()?.into_iter().any(|operation| {
+        operation.entityId == id && operation.originDeviceId == reviewer
+            && NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
+                command.spaceId == record.targetSpaceId && command.issuerNodeId == operation.originDeviceId
+                    && matches!(command.command, NetworkControlCommand::AdmitSpace { sourceSpaceId, nodeIds }
+                        if sourceSpaceId == record.sourceSpaceId && nodeIds == members)
+            })
+    }))
+}
+pub(crate) fn assign(service: &dyn NodeSpaceContext, record: &mut Record, now: i64) -> Result<(), String> {
+    // Only requests nobody claimed and decisions whose admission never reached
+    // the control log may move between reviewers. A committed admission is
+    // durable membership: it stays pinned to its reviewer for retry/recovery,
+    // and recoverCommittedApproval completes it without a new decision.
+    let reassignable = match record.request.status {
+        SpaceJoinStatus::Pending => true,
+        SpaceJoinStatus::Approving => !admissionCommitted(service, record)?,
+        _ => false,
+    };
+    if !reassignable { return Ok(()); }
     let local = service.localNodeId();
     let space = service.spaceStore().initialize()?;
     let capable = |node: &str| -> Result<bool, String> {
@@ -181,9 +207,39 @@ fn assign(service: &dyn NodeSpaceContext, record: &mut Record, now: i64) -> Resu
     record.unavailableSince = None;
     Ok(())
 }
-fn reconcile(service: &dyn NodeSpaceContext, record: &mut Record) -> Result<(), String> {
+/// Completes a claimed approval locally when its admission is already durable
+/// policy but the reviewer crashed between applying the operation and writing
+/// the result record. Membership already exists in the replayed policy; this
+/// only rebuilds the projection and the applicant-facing receipt.
+fn recoverCommittedApproval(service: &dyn NodeSpaceContext, record: &mut Record, current: &CoreSpace) -> Result<(), String> {
+    if record.request.status != SpaceJoinStatus::Approving || record.approvedDecision != Some(true) { return Ok(()); }
+    if !admissionCommitted(service, record)? { return Ok(()); }
+    // Only forge the receipt when replay still admits every source member. A
+    // later policy change that excluded them leaves the record pinned for the
+    // reviewer's own retry; doctor reports it instead of inventing approval.
+    let state = service.networkControlStore().currentState()?;
+    if !record.source.space.members.iter().all(|node| state.memberNodeIds.contains(node)) { return Ok(()); }
+    restoreClaimedMemberProfiles(service, record, current)?;
+    // The projection rebuild needs the applicant's own presentation facts;
+    // restoreClaimedMemberProfiles only covers members already projected.
+    service.spaceStore().importDeviceProfiles(record.source.deviceProfiles.clone())?;
+    service.spaceStore().importTopologyRecords(record.source.topology.clone())?;
+    let mut joined = current.clone();
+    joined.members.extend(record.source.space.members.iter().cloned());
+    joined.members.sort();
+    joined.members.dedup();
+    if let Some(revision) = record.decisionRevision {
+        joined.spaceRevision = joined.spaceRevision.max(revision);
+    }
+    record.accepted = Some(Box::new(peerSpaceSnapshotFor(service, service.spaceStore().adoptAt(joined, record.request.createdAt)?)?));
+    record.request.status = SpaceJoinStatus::Approved;
+    Ok(())
+}
+pub(crate) fn reconcile(service: &dyn NodeSpaceContext, record: &mut Record) -> Result<(), String> {
     let now = currentTimeMillis();
-    expire(record, now, &service.spaceStore().initialize()?.spaceId);
+    let current = service.spaceStore().initialize()?;
+    expire(record, now, &current.spaceId);
+    recoverCommittedApproval(service, record, &current)?;
     assign(service, record, now)
 }
 
@@ -536,17 +592,7 @@ fn restoreClaimedMemberProfiles(service: &dyn NodeSpaceContext, record: &Record,
     }
     let profiles = service.spaceStore().deviceProfiles()?;
     if current.members.iter().all(|node| profiles.contains_key(node)) { return Ok(()); }
-    let id = format!("control-review-{}-{}", record.request.requestId, record.request.assignmentVersion);
-    let members = record.source.space.members.iter().cloned().collect::<BTreeSet<_>>();
-    let admitted = service.networkControlStore().currentSpaceOperations()?.into_iter().any(|operation| {
-        operation.entityId == id && operation.originDeviceId == record.request.reviewerDeviceId.as_deref().unwrap_or("")
-            && NetworkControlCommandRecord::deserialize(&operation.payload).is_ok_and(|command| {
-                command.spaceId == current.spaceId && command.issuerNodeId == operation.originDeviceId
-                    && matches!(command.command, NetworkControlCommand::AdmitSpace { sourceSpaceId, nodeIds }
-                        if sourceSpaceId == record.sourceSpaceId && nodeIds == members)
-            })
-    });
-    if !admitted { return Ok(()); }
+    if !admissionCommitted(service, record)? { return Ok(()); }
     CoreSpaceStore::validateSpaceProfiles(&record.source.space, &record.source.deviceProfiles)?;
     service.spaceStore().importDeviceProfiles(record.source.deviceProfiles.iter()
         .filter(|profile| current.members.contains(&profile.nodeId) && !profiles.contains_key(&profile.nodeId))
