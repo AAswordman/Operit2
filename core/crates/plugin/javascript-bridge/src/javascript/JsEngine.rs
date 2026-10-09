@@ -91,10 +91,16 @@ struct JsEngineWorker {
     executionHost: Option<Arc<dyn JsExecutionHost>>,
 }
 
-struct JsAsyncCallback {
-    callbackId: String,
-    result: String,
-    isError: bool,
+enum JsAsyncCallback {
+    Legacy {
+        callbackId: String,
+        result: String,
+        isError: bool,
+    },
+    Structured {
+        requestId: u64,
+        result: Value,
+    },
 }
 
 type JsAsyncCallbackSink = Arc<dyn Fn(JsAsyncCallback) + Send + Sync>;
@@ -298,7 +304,7 @@ impl JsEngineWorker {
                 })
             });
             if let Err(error) =
-                taskScheduler.scheduleHostRuntimeAsyncTask("operit-js-detached", task)
+                taskScheduler.scheduleHostRuntimeCooperativeAsyncTask("operit-js-detached", task)
             {
                 scheduled.store(false, Ordering::Release);
                 AppLogger::e(
@@ -1543,20 +1549,16 @@ impl JsEngineState {
     /// Cancels one JavaScript call and releases its call-scoped callbacks and timers.
     #[allow(non_snake_case)]
     fn cancelJavaScriptExecution(&mut self, callId: &str) {
-        let callIdJson = match serde_json::to_string(callId) {
-            Ok(value) => value,
-            Err(error) => {
-                AppLogger::e(
-                    TAG,
-                    &format!("cancel JavaScript execution serialization failed: {error}"),
-                );
-                return;
-            }
-        };
-        let script = format!(
-            "if (typeof __operitCancelCallSession === 'function') {{ __operitCancelCallSession({callIdJson}); }}"
-        );
-        if let Err(error) = self.evalJavaScriptVoid(&script) {
+        if let Err(error) = self.runtime.cancelHostJavaScriptPromises(callId) {
+            AppLogger::e(
+                TAG,
+                &format!("cancel structured JavaScript promises failed: {error}"),
+            );
+        }
+        if let Err(error) = self.runtime.callHostJavaScriptFunction(
+            "__operitCancelCallSession",
+            &[Value::String(callId.to_string())],
+        ) {
             AppLogger::e(
                 TAG,
                 &format!("cancel JavaScript execution failed callId={callId}: {error}"),
@@ -1809,15 +1811,25 @@ impl JsEngineState {
     /// Delivers one asynchronous host result to its JavaScript callback.
     #[allow(non_snake_case)]
     fn deliverAsyncCallback(&mut self, callback: JsAsyncCallback) -> Result<(), String> {
-        let callbackIdJson =
-            serde_json::to_string(&callback.callbackId).map_err(|error| error.to_string())?;
-        let resultJson =
-            serde_json::to_string(&callback.result).map_err(|error| error.to_string())?;
-        let callbackScript = format!(
-            "(function() {{ var callback = globalThis[{callbackIdJson}]; if (typeof callback === 'function') {{ callback({resultJson}, {}); }} }})();",
-            callback.isError
-        );
-        self.evalJavaScriptVoid(&callbackScript)
+        match callback {
+            JsAsyncCallback::Legacy {
+                callbackId,
+                result,
+                isError,
+            } => self
+                .runtime
+                .callHostJavaScriptFunction(
+                    &callbackId,
+                    &[Value::String(result), Value::Bool(isError)],
+                )
+                .map_err(|error| error.to_string()),
+            // Business failures remain fulfilled result envelopes. The public
+            // __operitParseToolResult still decides whether to throw, unchanged.
+            JsAsyncCallback::Structured { requestId, result } => self
+                .runtime
+                .settleHostJavaScriptPromise(requestId, &result, false)
+                .map_err(|error| error.to_string()),
+        }
     }
 
     #[allow(non_snake_case)]
@@ -2141,6 +2153,22 @@ impl JsEngineState {
                 wake();
             }
         });
+        let structuredHost = self.executionHost.clone();
+        let structuredSink = asyncCallbackSink.clone();
+        self.runtime
+            .registerHostJavaScriptAsyncJsonFunction(
+                "__operitNativeCallToolStructured",
+                Arc::new(move |requestId, arguments| {
+                    dispatchStructuredToolCall(
+                        structuredHost.clone(),
+                        structuredSink.clone(),
+                        requestId,
+                        arguments,
+                    );
+                    Ok(())
+                }),
+            )
+            .map_err(|error| error.to_string())?;
         let toolExecutionHost = self.executionHost.clone();
         let toolAsyncCallbackSink = asyncCallbackSink.clone();
         let timerCallbackSink = asyncCallbackSink.clone();
@@ -2316,7 +2344,7 @@ fn dispatchToolCallAsync(
         return;
     }
     let Some(executionHost) = executionHost else {
-        callbackSink(JsAsyncCallback {
+        callbackSink(JsAsyncCallback::Legacy {
             callbackId: normalizedCallbackId,
             result: serde_json::json!({
                 "success": false,
@@ -2340,7 +2368,7 @@ fn dispatchToolCallAsync(
                     &paramsJson,
                 )
                 .await;
-                callbackSinkForTask(JsAsyncCallback {
+                callbackSinkForTask(JsAsyncCallback::Legacy {
                     callbackId: callbackIdForTask,
                     result,
                     isError,
@@ -2349,7 +2377,7 @@ fn dispatchToolCallAsync(
         }),
     );
     if let Err(error) = scheduleResult {
-        callbackSink(JsAsyncCallback {
+        callbackSink(JsAsyncCallback::Legacy {
             callbackId: normalizedCallbackId,
             result: serde_json::json!({
                 "success": false,
@@ -2358,6 +2386,63 @@ fn dispatchToolCallAsync(
             .to_string(),
             isError: true,
         });
+    }
+}
+
+/// Executes a structured request with the same SDK validation and result envelope
+/// as the legacy path; only owned Rust values cross task/thread boundaries.
+/// Tools retain the ordinary executor: they may block or use exclusive TLS.
+/// Only the JS continuation wake uses the cooperative reusable executor.
+#[allow(non_snake_case)]
+fn dispatchStructuredToolCall(
+    executionHost: Option<Arc<dyn JsExecutionHost>>,
+    callbackSink: JsAsyncCallbackSink,
+    requestId: u64,
+    arguments: Vec<Value>,
+) {
+    let fail = |message: String| {
+        callbackSink(JsAsyncCallback::Structured {
+            requestId,
+            result: serde_json::json!({"success": false, "message": message}),
+        })
+    };
+    let [toolType, toolName, params]: [Value; 3] = match arguments.try_into() {
+        Ok(arguments) => arguments,
+        Err(_) => {
+            fail("Structured tool call requires three arguments".to_string());
+            return;
+        }
+    };
+    let (Some(toolType), Some(toolName)) = (toolType.as_str(), toolName.as_str()) else {
+        fail("Tool type and name must be strings".to_string());
+        return;
+    };
+    let request = match JsNativeInterfaceDelegates::parseToolCallValue(toolType, toolName, params) {
+        Ok(request) => request,
+        Err(error) => {
+            fail(error);
+            return;
+        }
+    };
+    let Some(executionHost) = executionHost else {
+        fail("JavaScript execution host is unavailable".to_string());
+        return;
+    };
+    let sink = callbackSink.clone();
+    let scheduled = defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+        "operit-js-tool-call",
+        Box::new(move || {
+            Box::pin(async move {
+                let result = executionHost.execute_tool_call(request).await;
+                sink(JsAsyncCallback::Structured {
+                    requestId,
+                    result: JsNativeInterfaceDelegates::toolExecutionResultValue(result),
+                });
+            })
+        }),
+    );
+    if let Err(error) = scheduled {
+        fail(format!("Schedule JavaScript tool call failed: {error}"));
     }
 }
 
@@ -2382,7 +2467,7 @@ fn dispatchJavaScriptTimer(
             "operit-js-timer",
             delayMillis,
             Box::new(move || {
-                callbackSink(JsAsyncCallback {
+                callbackSink(JsAsyncCallback::Legacy {
                     callbackId: callbackIdForTask,
                     result: String::new(),
                     isError: false,
@@ -2429,7 +2514,7 @@ fn dispatchToolPkgIpcAsync(
     ) {
         Ok(request) => request,
         Err(error) => {
-            callbackSink(JsAsyncCallback {
+            callbackSink(JsAsyncCallback::Legacy {
                 callbackId: normalizedCallbackId,
                 result: error,
                 isError: false,
@@ -2439,7 +2524,7 @@ fn dispatchToolPkgIpcAsync(
     };
     request.dependency_caller = dependencyCaller;
     let Some(executionHost) = executionHost else {
-        callbackSink(JsAsyncCallback {
+        callbackSink(JsAsyncCallback::Legacy {
             callbackId: normalizedCallbackId,
             result: buildToolPkgIpcFailure("JavaScript execution host is unavailable"),
             isError: false,
@@ -2479,7 +2564,7 @@ fn dispatchToolPkgIpcAsync(
                     callbackIdForCompletion, isError
                 ),
             );
-            callbackSinkForCompletion(JsAsyncCallback {
+            callbackSinkForCompletion(JsAsyncCallback::Legacy {
                 callbackId: callbackIdForCompletion,
                 result,
                 isError,
@@ -2487,7 +2572,7 @@ fn dispatchToolPkgIpcAsync(
         }),
     );
     if let Err(error) = submitResult {
-        callbackSink(JsAsyncCallback {
+        callbackSink(JsAsyncCallback::Legacy {
             callbackId: normalizedCallbackId,
             result: buildToolPkgIpcFailure(&format!("ToolPkg.ipc async dispatch failed: {error}")),
             isError: false,

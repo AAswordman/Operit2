@@ -1083,6 +1083,7 @@ name = "operit-host-native-scheduler"
 version = "0.1.0"
 dependencies = [
  "operit-host-api",
+ "serde_json",
  "tokio",
 ]
 

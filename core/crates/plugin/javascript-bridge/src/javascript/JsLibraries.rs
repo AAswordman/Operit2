@@ -638,6 +638,12 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 name = String(arguments[1] || '');
                 params = arguments[2] || {{}};
             }}
+            if (typeof __operitNativeCallToolStructured === 'function') {{
+                var structured = await __operitNativeCallToolStructured(
+                    String(globalThis.__operitCurrentCallId || ''), type, name, params
+                );
+                return __operitParseToolResult(structured, false);
+            }}
             var raw = await NativeInterface.callTool(type, name, JSON.stringify(params));
             var parsed;
             try {{
