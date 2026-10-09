@@ -51,9 +51,9 @@ pub struct PathMapper {
 }
 
 impl PathMapper {
-    /// Creates a mapper from runtime and workspace collection roots.
+    /// Creates a built-in-only mapper. Runtime consumers must bind their storage Host.
     pub fn new(runtimeStoreRoot: PathBuf, workspaceCollectionRoot: PathBuf) -> Self {
-        let mountRegistry = MountRegistry::new(&runtimeStoreRoot);
+        let mountRegistry = MountRegistry::withoutStorage(&runtimeStoreRoot);
         Self { runtimeStoreRoot, workspaceCollectionRoot, mountRegistry }
     }
 

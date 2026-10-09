@@ -152,6 +152,18 @@ impl OperitFlutterBridge {
             .map_err(|error| format!("Runtime task result channel closed: {error}"))
     }
 
+    /// Executes owner event ingress on the runtime's scheduler for C/JNI callers.
+    pub(crate) fn emitRuntimeEvent(&self, encoded: &str) -> String {
+        let result =
+            crate::PlatformRuntimeFactory::runtimeEventRequest(encoded).and_then(|request| {
+                let task = self.prepareCall(request);
+                self.runHostRuntimeAsyncTask("operit-flutter-runtime-event", move || task.execute())
+                    .map_err(CoreLinkError::internal)?
+                    .result
+            });
+        crate::PlatformRuntimeFactory::runtimeEventResponse(result)
+    }
+
     /// Adapts the local Core async API to the blocking C and JNI ABI.
     pub(crate) fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
@@ -227,6 +239,15 @@ impl OperitFlutterBridge {
 }
 #[cfg(target_arch = "wasm32")]
 impl OperitFlutterBridge {
+    /// Preserves owner event ingress without blocking the browser event loop.
+    pub(crate) async fn emitRuntimeEvent(&self, encoded: &str) -> String {
+        let result = match crate::PlatformRuntimeFactory::runtimeEventRequest(encoded) {
+            Ok(request) => self.prepareCall(request).execute().await.result,
+            Err(error) => Err(error),
+        };
+        crate::PlatformRuntimeFactory::runtimeEventResponse(result)
+    }
+
     /// Adapts the shared local Core API to a browser Promise.
     pub(crate) async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         self.callShared(request).await

@@ -1,4 +1,4 @@
-//! Incremental POST responses for native Streamable HTTP MCP transports.
+//! Incremental POST responses for Host-provided Streamable HTTP MCP transports.
 use super::*;
 use operit_host_api::HttpResponseHead;
 
@@ -29,7 +29,7 @@ pub(super) fn sendJsonRpc(
     expectedId: Option<u64>,
     timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
     let id = format!("mcp-http-{}", uuid::Uuid::new_v4());
     let (sender, events) = mpsc::channel();
     let headSender = sender.clone();
@@ -63,7 +63,7 @@ pub(super) fn sendJsonRpc(
         host: session.httpHost.clone(),
         id,
     };
-    let head = match nextEvent(&events, deadline)? {
+    let head = match nextEvent(&events, &deadline)? {
         ResponseEvent::Head(head) => head,
         ResponseEvent::Closed(Err(error)) => return Err(error),
         _ => {
@@ -74,7 +74,7 @@ pub(super) fn sendJsonRpc(
     };
     if !isSuccess(head.statusCode) {
         // Bound diagnostics by the same deadline; never wait for an endless error body.
-        let detail = match nextEvent(&events, deadline) {
+        let detail = match nextEvent(&events, &deadline) {
             Ok(ResponseEvent::Bytes(bytes)) => {
                 let mut preview = bytes[..bytes.len().min(4096)].to_vec();
                 while preview.len() < 4096 {
@@ -120,12 +120,12 @@ pub(super) fn sendJsonRpc(
     };
     let mut decoder = ResponseDecoder::new(sse, expectedId);
     loop {
-        match nextEvent(&events, deadline)? {
+        match nextEvent(&events, &deadline)? {
             ResponseEvent::Bytes(bytes) => {
                 if let Some(response) = decoder.push(&bytes)? {
-                    if Instant::now() >= deadline {
-                        return Err("Remote MCP HTTP request timed out".to_string());
-                    }
+                    deadline
+                        .remainingMs()
+                        .map_err(|error| format!("Remote MCP HTTP request timed out: {error}"))?;
                     return Ok(Some(response));
                 }
             }
@@ -141,11 +141,15 @@ pub(super) fn sendJsonRpc(
 }
 
 #[allow(non_snake_case)]
-fn nextEvent(events: &Receiver<ResponseEvent>, deadline: Instant) -> Result<ResponseEvent, String> {
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .filter(|remaining| !remaining.is_zero())
-        .ok_or_else(|| "Remote MCP HTTP request timed out".to_string())?;
+fn nextEvent(
+    events: &Receiver<ResponseEvent>,
+    deadline: &StartupDeadline,
+) -> Result<ResponseEvent, String> {
+    let remaining = Duration::from_millis(
+        deadline
+            .remainingMs()
+            .map_err(|error| format!("Remote MCP HTTP request timed out: {error}"))?,
+    );
     events.recv_timeout(remaining).map_err(|error| match error {
         mpsc::RecvTimeoutError::Timeout => "Remote MCP HTTP request timed out".to_string(),
         mpsc::RecvTimeoutError::Disconnected => "Remote MCP HTTP stream disconnected".to_string(),

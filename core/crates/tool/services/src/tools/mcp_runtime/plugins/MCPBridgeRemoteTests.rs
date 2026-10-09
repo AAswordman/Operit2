@@ -1,11 +1,11 @@
 //! Deterministic tests for live legacy SSE transport, independent of public servers.
 use super::*;
-use std::time::Instant;
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
     HttpDownloadResult, HttpImageDelivery, HttpStreamChunkCallback, HttpStreamClosedCallback,
     HttpStreamHost, HttpStreamOpenedCallback,
 };
+use std::time::Instant;
 
 struct StreamingHost {
     initial: Vec<u8>,
@@ -154,8 +154,12 @@ const ENDPOINT: &str = ": heartbeat\r\n\r\nevent: endpoint\r\ndata: /message?ses
 #[test]
 fn liveSseHandshakeAndRepeatedCallsReadFutureChunks() {
     let host = Arc::new(StreamingHost::new(ENDPOINT));
-    let mut active =
-        startRemoteServiceSession(host.clone(), &service(), &StartupDeadline::new(1000)).unwrap();
+    let mut active = startRemoteServiceSession(
+        host.clone(),
+        &service(),
+        &StartupDeadline::new(testScheduler(), 1000).unwrap(),
+    )
+    .unwrap();
     assert!(active.ready);
     assert_eq!(active.tools[0]["name"], "echo");
     for _ in 0..2 {
@@ -180,9 +184,13 @@ fn liveSseHandshakeAndRepeatedCallsReadFutureChunks() {
 fn missingEndpointHonorsStartupDeadlineAndCancelsStream() {
     let host = Arc::new(StreamingHost::new(": heartbeat\n\n"));
     let started = Instant::now();
-    let error = startRemoteServiceSession(host.clone(), &service(), &StartupDeadline::new(30))
-        .err()
-        .unwrap();
+    let error = startRemoteServiceSession(
+        host.clone(),
+        &service(),
+        &StartupDeadline::new(testScheduler(), 30).unwrap(),
+    )
+    .err()
+    .unwrap();
     assert!(error.contains("timed out"), "{error}");
     assert!(started.elapsed() < Duration::from_millis(500));
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
@@ -195,9 +203,13 @@ fn closedStreamFailsImmediatelyInsteadOfSpinningUntilDeadline() {
     scripted.closeOnOpen = true;
     let host = Arc::new(scripted);
     let started = Instant::now();
-    let error = startRemoteServiceSession(host.clone(), &service(), &StartupDeadline::new(1000))
-        .err()
-        .unwrap();
+    let error = startRemoteServiceSession(
+        host.clone(),
+        &service(),
+        &StartupDeadline::new(testScheduler(), 1000).unwrap(),
+    )
+    .err()
+    .unwrap();
     assert!(error.contains("scripted connection loss"), "{error}");
     assert!(started.elapsed() < Duration::from_millis(500));
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
@@ -210,9 +222,13 @@ fn crossOriginEndpointIsRejectedAndStreamCancelled() {
     ));
     let mut registered = service();
     registered.bearerToken = Some("secret-for-same-origin-only".to_string());
-    let error = startRemoteServiceSession(host.clone(), &registered, &StartupDeadline::new(1000))
-        .err()
-        .unwrap();
+    let error = startRemoteServiceSession(
+        host.clone(),
+        &registered,
+        &StartupDeadline::new(testScheduler(), 1000).unwrap(),
+    )
+    .err()
+    .unwrap();
     assert!(error.contains("origin does not match"), "{error}");
     assert_eq!(
         host.requests.lock().unwrap().len(),
@@ -227,8 +243,12 @@ fn ssePostAndResponseWaitShareOneBudget() {
     let mut scripted = StreamingHost::new(ENDPOINT);
     scripted.postDelay = Duration::from_millis(40);
     let host = Arc::new(scripted);
-    let mut active =
-        startRemoteServiceSession(host.clone(), &service(), &StartupDeadline::new(1000)).unwrap();
+    let mut active = startRemoteServiceSession(
+        host.clone(),
+        &service(),
+        &StartupDeadline::new(testScheduler(), 1000).unwrap(),
+    )
+    .unwrap();
     let error = callRemoteMcpTool(&mut active, "echo", json!({}), 10).unwrap_err();
     assert!(error.contains("timed out"), "{error}");
     drop(active);
@@ -247,7 +267,7 @@ fn readerReportsCleanClosureAndDisconnectWithoutBusyLoop() {
             messages,
             pending: Vec::new(),
             offset: 0,
-            deadline: monotonicTimeMillis() + 1000,
+            deadline: StartupDeadline::new(testScheduler(), 1000).unwrap(),
         };
         let error = reader.read(&mut [0; 1]).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);

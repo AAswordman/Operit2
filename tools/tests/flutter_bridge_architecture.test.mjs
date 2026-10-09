@@ -51,7 +51,7 @@ test('owner media implementations use the host traits directly', () => {
 test('platform construction has one explicit selection boundary', () => {
   const factory = source(bridge + 'PlatformRuntimeFactory.rs');
   const selector = source(bridge + 'platform_runtime/mod.rs');
-  assert.doesNotMatch(factory, /#\[cfg\(target_(?:os|arch|env)/);
+  assert.doesNotMatch(factory, /target_arch|target_os|target_env/);
   for (const name of ['android', 'ios', 'linux', 'macos', 'ohos', 'web', 'windows']) {
     const platform = source(`${bridge}platform_runtime/${name}.rs`);
     assert.match(platform, /fn create_host_context\(/, name);

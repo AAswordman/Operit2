@@ -5,6 +5,7 @@ use operit_host_api::{
     HttpStreamHost, HttpStreamOpenedCallback, HttpStreamResponseCallback,
 };
 use std::collections::VecDeque;
+use std::time::Instant;
 
 struct ScriptedResponse {
     head: Option<HttpResponseHead>,
@@ -116,8 +117,9 @@ impl HttpHost for ResponseHost {
     }
 }
 
-fn session(host: Arc<ResponseHost>) -> RemoteMcpSession {
+fn session(host: Arc<dyn HttpHost>) -> RemoteMcpSession {
     RemoteMcpSession {
+        scheduler: testScheduler(),
         httpHost: host,
         endpoint: "https://test.invalid/mcp".into(),
         connectionType: "httpStream".into(),
@@ -305,8 +307,12 @@ fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
         description: String::new(),
         env: BTreeMap::new(),
     };
-    let active =
-        startRemoteServiceSession(host.clone(), &service, &StartupDeadline::new(1000)).unwrap();
+    let active = startRemoteServiceSession(
+        host.clone(),
+        &service,
+        &StartupDeadline::new(testScheduler(), 1000).unwrap(),
+    )
+    .unwrap();
     assert!(active.ready);
     assert_eq!(active.tools[0]["name"], "echo");
     let requests = host.requests.lock().unwrap();
@@ -362,4 +368,102 @@ fn decoderRejectsOversizedOrMismatchedResponses() {
         .push(b"{\"id\":8,\"result\":{}}")
         .unwrap_err()
         .contains("does not match"));
+}
+
+struct BufferedHost {
+    body: String,
+}
+impl HttpStreamHost for BufferedHost {
+    fn openHttpByteStream(
+        &self,
+        _: String,
+        _: HttpRequestData,
+        _: HttpStreamOpenedCallback,
+        _: HttpStreamChunkCallback,
+        _: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
+        panic!("buffered Hosts must not be forced onto callback channels");
+    }
+    fn closeHttpByteStream(&self, _: &str) -> HostResult<()> {
+        panic!("no stream was opened");
+    }
+}
+impl HttpHost for BufferedHost {
+    fn responseDelivery(&self) -> operit_host_api::HttpResponseDelivery {
+        operit_host_api::HttpResponseDelivery::Buffered
+    }
+    fn imageDelivery(&self) -> HttpImageDelivery {
+        HttpImageDelivery::Bytes
+    }
+    fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
+        Ok(HttpResponseData {
+            finalUrl: request.url,
+            statusCode: 200,
+            statusMessage: "OK".into(),
+            headers: Vec::new(),
+            body: self.body.as_bytes().to_vec(),
+        })
+    }
+    fn downloadFiles(
+        &self,
+        _: HttpDownloadRequest,
+        _: HttpDownloadControl,
+        _: HttpDownloadProgressCallback,
+    ) -> HostResult<HttpDownloadResult> {
+        unreachable!()
+    }
+}
+
+#[test]
+fn transportSelectionUsesHostCapabilitiesNotCompilationTarget() {
+    let host = Arc::new(BufferedHost {
+        body: json!({"jsonrpc":"2.0", "id":7, "result":{"text":"buffered"}}).to_string(),
+    });
+    let response = sendRemoteJsonRpc(&mut session(host), request(7), Some(7), 1000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(response["id"], 7);
+    assert_eq!(response["result"]["text"], "buffered");
+    let streamed = ResponseHost::with(vec![ScriptedResponse::response(
+        "application/json",
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}",
+    )]);
+    assert!(
+        sendRemoteJsonRpc(&mut session(streamed), request(7), Some(7), 1000)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn bufferedHostDoesNotAcknowledgeWrongOrMissingResponses() {
+    for body in ["", "{\"jsonrpc\":\"2.0\",\"id\":8,\"result\":{}}"] {
+        let host = Arc::new(BufferedHost { body: body.into() });
+        assert!(
+            sendRemoteJsonRpc(&mut session(host), request(7), Some(7), 1000)
+                .unwrap_err()
+                .contains("response 7")
+        );
+    }
+}
+
+#[test]
+fn bufferedNotificationsOnlyRequireSuccessfulHttpStatus() {
+    let host = Arc::new(BufferedHost { body: "".into() });
+    assert!(sendRemoteJsonRpc(
+        &mut session(host),
+        json!({"method":"notifications/initialized"}),
+        None,
+        1000
+    )
+    .unwrap()
+    .is_none());
+}
+
+#[test]
+fn finiteResponseHostRejectsLiveSseBeforeOpeningAStream() {
+    let host = Arc::new(BufferedHost { body: "".into() });
+    assert!(connectRemoteSse(&mut session(host), 1000)
+        .unwrap_err()
+        .contains("not live MCP SSE"));
 }

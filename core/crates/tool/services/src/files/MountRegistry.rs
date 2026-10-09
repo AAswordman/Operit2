@@ -75,11 +75,9 @@ impl std::fmt::Debug for MountRegistry {
 }
 
 impl MountRegistry {
-    /// Uses only the active identity's storage host, never another runtime root.
-    pub fn new(runtimeRoot: &Path) -> Self {
-        let storage = operit_store::RuntimeStorageHost::defaultRuntimeStorageHostOption()
-            .filter(|host| host.runtimeRootDir().as_deref() == Some(runtimeRoot));
-        Self { catalog: runtimeRoot.join("config/vfs_mounts.json"), storage }
+    /// Creates a built-in-only mapper catalog; persistence requires an explicit Host.
+    pub(super) fn withoutStorage(runtimeRoot: &Path) -> Self {
+        Self { catalog: runtimeRoot.join("config/vfs_mounts.json"), storage: None }
     }
 
     /// Binds a catalog explicitly to its identity-owned storage host.
@@ -197,6 +195,25 @@ mod tests {
         host.rejectWrites.store(false, std::sync::atomic::Ordering::Relaxed);
         reopened.remove(&mount.vfsPath()).unwrap();
         assert!(registry.list().unwrap().is_empty());
+    }
+
+    /// Identical virtual roots are not an identity: the owning Host selects the catalog.
+    #[test]
+    fn virtualStorageHostsDoNotShareMountResolution() {
+        let first = Arc::new(VirtualStorage::default());
+        let second = Arc::new(VirtualStorage::default());
+        let firstMount = MountRegistry::withStorage(first.clone())
+            .register("/mnt/web/resources", "test", "first-root", "First").unwrap();
+        let secondMount = MountRegistry::withStorage(second.clone())
+            .register("/mnt/web/resources", "test", "second-root", "Second").unwrap();
+        let firstMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into())
+            .withMountStorage(first);
+        let secondMapper = super::super::PathMapper::PathMapper::new("runtime".into(), "workspaces".into())
+            .withMountStorage(second);
+        assert!(firstMapper.resolve(&firstMount.vfsPath()).is_ok());
+        assert!(secondMapper.resolve(&secondMount.vfsPath()).is_ok());
+        assert!(firstMapper.resolve(&secondMount.vfsPath()).is_err());
+        assert!(secondMapper.resolve(&firstMount.vfsPath()).is_err());
     }
 
     #[test]
