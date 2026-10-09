@@ -38,6 +38,19 @@ pub struct PairingPrompt {
     pub confirmationCode: String,
 }
 
+/// Volatile transport identity, not a Binding or a business-state replica.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpaceClientIdentity {
+    pub spaceId: String,
+    pub peerNodeId: String,
+    pub generation: String,
+}
+
+pub struct SpaceClientConnection {
+    pub identity: SpaceClientIdentity,
+    pub client: Arc<dyn operit_link::CoreLinkSharedClient + Send + Sync>,
+}
+
 /// 一个节点共享一个实例；业务操作由注入的 RuntimePeerService 负责。
 /// 克隆只共享服务，不创建第二套配对记录、监听器或连接。
 #[derive(Clone)]
