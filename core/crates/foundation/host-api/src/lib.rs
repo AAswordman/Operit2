@@ -1922,6 +1922,11 @@ pub type HostRuntimeAsyncTask =
 /// Represents one host-owned asynchronous runtime turn boundary that may cross runtime schedulers.
 pub type HostRuntimeTurnFuture = Pin<Box<dyn Future<Output = HostResult<()>> + Send + 'static>>;
 
+/// Submits an owned JSON-compatible request. The request id refers to a Promise
+/// whose JS resolve/reject functions remain on the runtime's owning executor.
+pub type HostJavaScriptAsyncJsonCallback =
+    Arc<dyn Fn(u64, Vec<Value>) -> HostResult<()> + Send + Sync + 'static>;
+
 /// Handles one host JavaScript function that returns a string value.
 pub type HostJavaScriptStringCallback =
     Arc<dyn Fn(Vec<String>) -> HostResult<String> + Send + Sync + 'static>;
@@ -1953,6 +1958,47 @@ pub trait HostJavaScriptRuntime {
         &mut self,
         handler: Option<HostJavaScriptInterruptHandler>,
     ) -> HostResult<()>;
+
+    /// Calls a global callback (built-in hosts do not construct source). Missing or
+    /// non-callable callbacks are ignored, as on the legacy delivery path.
+    /// The default keeps third-party hosts source-compatible; built-in hosts
+    /// override it with their engine's direct function-call API.
+    fn callHostJavaScriptFunction(&mut self, name: &str, arguments: &[Value]) -> HostResult<()> {
+        let name = serde_json::to_string(name).map_err(|e| HostError::new(e.to_string()))?;
+        let args = serde_json::to_string(arguments).map_err(|e| HostError::new(e.to_string()))?;
+        self.evaluateHostJavaScriptVoid("host-callback", &format!(
+            "(function() {{ var f = globalThis[{name}]; if (typeof f === 'function') f.apply(undefined, {args}); }})();"
+        ))
+    }
+
+    /// Optionally registers an asynchronous structured binding. Its first JS
+    /// argument is a cancellation scope; remaining arguments are converted with
+    /// JSON.stringify-compatible value semantics, without producing JSON text.
+    /// Returns false when this host does not implement the structured capability.
+    fn registerHostJavaScriptAsyncJsonFunction(
+        &mut self,
+        _name: &str,
+        _callback: HostJavaScriptAsyncJsonCallback,
+    ) -> HostResult<bool> {
+        Ok(false)
+    }
+
+    /// Settles a Promise on the owning executor. Cancelled/unknown ids are ignored.
+    fn settleHostJavaScriptPromise(
+        &mut self,
+        _id: u64,
+        _value: &Value,
+        _reject: bool,
+    ) -> HostResult<()> {
+        Err(HostError::new(
+            "Structured JavaScript promises are not supported by this host",
+        ))
+    }
+
+    /// Drops only the Promise handles belonging to a cancelled execution scope.
+    fn cancelHostJavaScriptPromises(&mut self, _scope: &str) -> HostResult<()> {
+        Ok(())
+    }
 
     /// Registers one global JavaScript function that returns a string.
     fn registerHostJavaScriptStringFunction(
@@ -2119,6 +2165,17 @@ pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
         taskName: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()>;
+
+    /// Schedules an opt-in nonblocking task on a reusable affine executor.
+    /// Hosts without this capability retain their existing scheduling behavior.
+    /// Callers must not block the executor or rely on exclusive thread-local state.
+    fn scheduleHostRuntimeCooperativeAsyncTask(
+        &self,
+        taskName: &str,
+        task: HostRuntimeAsyncTask,
+    ) -> HostResult<()> {
+        self.scheduleHostRuntimeAsyncTask(taskName, task)
+    }
 
     /// Schedules a named runtime task after a platform-owned delay.
     fn scheduleDelayedHostRuntimeTask(

@@ -2,6 +2,8 @@
 
 #[cfg(feature = "javascript")]
 mod javascript_runtime;
+#[cfg(feature = "javascript")]
+mod javascript_values;
 mod runtime_event_scheduler;
 mod runtime_task_scheduler;
 
