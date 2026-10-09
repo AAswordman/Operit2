@@ -2,8 +2,8 @@
 use super::*;
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
-    HttpDownloadResult, HttpImageDelivery, HttpStreamChunkCallback, HttpStreamClosedCallback,
-    HttpStreamHost, HttpStreamOpenedCallback, HttpStreamResponseCallback, HttpResponseHead,
+    HttpDownloadResult, HttpImageDelivery, HttpResponseHead, HttpStreamChunkCallback,
+    HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback, HttpStreamResponseCallback,
 };
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,7 @@ struct StreamingHost {
     initial: Vec<u8>,
     closeOnOpen: bool,
     postDelay: Duration,
+    holdToolResponses: bool,
     chunk: Mutex<Option<HttpStreamChunkCallback>>,
     closed: Mutex<Option<HttpStreamClosedCallback>>,
     requests: Mutex<Vec<HttpRequestData>>,
@@ -24,6 +25,7 @@ impl StreamingHost {
             initial: initial.as_bytes().to_vec(),
             closeOnOpen: false,
             postDelay: Duration::ZERO,
+            holdToolResponses: false,
             chunk: Mutex::new(None),
             closed: Mutex::new(None),
             requests: Mutex::new(Vec::new()),
@@ -43,29 +45,54 @@ impl StreamingHost {
 }
 
 impl HttpStreamHost for StreamingHost {
-    fn openHttpByteStream(&self, _: String, _: HttpRequestData, _: HttpStreamOpenedCallback,
-        _: HttpStreamChunkCallback, _: HttpStreamClosedCallback) -> HostResult<()> {
+    fn openHttpByteStream(
+        &self,
+        _: String,
+        _: HttpRequestData,
+        _: HttpStreamOpenedCallback,
+        _: HttpStreamChunkCallback,
+        _: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
         panic!("MCP must request HTTP response metadata")
     }
-    fn openHttpResponseStream(&self, streamId: String, request: HttpRequestData,
-        head: HttpStreamResponseCallback, onChunk: HttpStreamChunkCallback,
-        onClosed: HttpStreamClosedCallback) -> HostResult<()> {
+    fn openHttpResponseStream(
+        &self,
+        streamId: String,
+        request: HttpRequestData,
+        head: HttpStreamResponseCallback,
+        onChunk: HttpStreamChunkCallback,
+        onClosed: HttpStreamClosedCallback,
+    ) -> HostResult<()> {
         if request.method == "POST" {
             let response = self.executeHttpRequest(request)?;
-            head(HttpResponseHead { finalUrl: response.finalUrl, statusCode: response.statusCode,
-                statusMessage: response.statusMessage, headers: response.headers });
-            if !response.body.is_empty() { onChunk(response.body); }
+            head(HttpResponseHead {
+                finalUrl: response.finalUrl,
+                statusCode: response.statusCode,
+                statusMessage: response.statusMessage,
+                headers: response.headers,
+            });
+            if !response.body.is_empty() {
+                onChunk(response.body);
+            }
             onClosed(Ok(()));
             return Ok(());
         }
-        head(HttpResponseHead { finalUrl: request.url.clone(), statusCode: 200,
-            statusMessage: "OK".into(), headers: vec![("Content-Type".into(), "text/event-stream".into())] });
+        head(HttpResponseHead {
+            finalUrl: request.url.clone(),
+            statusCode: 200,
+            statusMessage: "OK".into(),
+            headers: vec![("Content-Type".into(), "text/event-stream".into())],
+        });
         self.requests.lock().unwrap().push(request);
         *self.getStreamId.lock().unwrap() = Some(streamId);
         *self.chunk.lock().unwrap() = Some(onChunk.clone());
         *self.closed.lock().unwrap() = Some(onClosed.clone());
-        for byte in &self.initial { onChunk(vec![*byte]); }
-        if self.closeOnOpen { onClosed(Err("scripted connection loss".to_string())); }
+        for byte in &self.initial {
+            onChunk(vec![*byte]);
+        }
+        if self.closeOnOpen {
+            onClosed(Err("scripted connection loss".to_string()));
+        }
         Ok(())
     }
 
@@ -95,7 +122,9 @@ impl HttpHost for StreamingHost {
         self.requests.lock().unwrap().push(request.clone());
         std::thread::sleep(self.postDelay);
         let id = payload.get("id");
-        if let Some(id) = id {
+        if let Some(id) =
+            id.filter(|_| !(self.holdToolResponses && payload["method"] == "tools/call"))
+        {
             let response = match payload["method"].as_str().unwrap() {
                 "initialize" => json!({"jsonrpc": "2.0", "id": id,
                     "result": {"protocolVersion": "2024-11-05", "capabilities": {},
@@ -159,16 +188,20 @@ async fn liveSseHandshakeAndRepeatedCallsReadFutureChunks() {
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    ).await
+    )
+    .await
     .unwrap();
     assert!(active.ready);
     assert_eq!(active.tools[0]["name"], "echo");
     for _ in 0..2 {
-        let result = callRemoteMcpTool(&mut active, "echo", json!({}), 1000).await.unwrap();
+        let result = callRemoteMcpTool(&mut active, "echo", json!({}), 1000)
+            .await
+            .unwrap();
         assert_eq!(result["content"][0]["text"], "实时读取正常");
     }
     let before = host.requests.lock().unwrap().len();
-    assert!(callRemoteMcpTool(&mut active, "unknown", json!({}), 1000).await
+    assert!(callRemoteMcpTool(&mut active, "unknown", json!({}), 1000)
+        .await
         .unwrap_err()
         .contains("unknown tool"));
     assert_eq!(
@@ -189,7 +222,8 @@ async fn missingEndpointHonorsStartupDeadlineAndCancelsStream() {
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 30).unwrap(),
-    ).await
+    )
+    .await
     .err()
     .unwrap();
     assert!(error.contains("timed out"), "{error}");
@@ -208,7 +242,8 @@ async fn closedStreamFailsImmediatelyInsteadOfSpinningUntilDeadline() {
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    ).await
+    )
+    .await
     .err()
     .unwrap();
     assert!(error.contains("scripted connection loss"), "{error}");
@@ -227,7 +262,8 @@ async fn crossOriginEndpointIsRejectedAndStreamCancelled() {
         host.clone(),
         &registered,
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    ).await
+    )
+    .await
     .err()
     .unwrap();
     assert!(error.contains("origin does not match"), "{error}");
@@ -248,9 +284,12 @@ async fn ssePostAndResponseWaitShareOneBudget() {
         host.clone(),
         &service(),
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    ).await
+    )
+    .await
     .unwrap();
-    let error = callRemoteMcpTool(&mut active, "echo", json!({}), 10).await.unwrap_err();
+    let error = callRemoteMcpTool(&mut active, "echo", json!({}), 10)
+        .await
+        .unwrap_err();
     assert!(error.contains("timed out"), "{error}");
     drop(active);
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
@@ -258,19 +297,164 @@ async fn ssePostAndResponseWaitShareOneBudget() {
 
 #[tokio::test]
 async fn readerReportsCleanClosureAndDisconnectWithoutBusyLoop() {
-    use super::streamable_http::{ResponseStream, ResponseEvent};
+    use super::streamable_http::{ResponseEvent, ResponseStream};
     for closed in [true, false] {
         let host = Arc::new(StreamingHost::new(""));
-        let stream = ResponseStream::open(host.clone(), remoteHttpRequest("GET", "https://test.invalid/sse", Vec::new(), Vec::new(), 1000)).unwrap();
+        let stream = ResponseStream::open(
+            host.clone(),
+            remoteHttpRequest(
+                "GET",
+                "https://test.invalid/sse",
+                Vec::new(),
+                Vec::new(),
+                1000,
+            ),
+        )
+        .unwrap();
         let mut reader = RemoteSseReader::new(stream);
         let deadline = StartupDeadline::new(testScheduler(), 1000).unwrap();
-        assert!(matches!(reader.stream.next(&deadline).await.unwrap(), ResponseEvent::Head(_)));
+        assert!(matches!(
+            reader.stream.next(&deadline).await.unwrap(),
+            ResponseEvent::Head(_)
+        ));
         if closed {
             host.closed.lock().unwrap().as_ref().unwrap()(Ok(()));
         } else {
             host.chunk.lock().unwrap().take();
             host.closed.lock().unwrap().take();
         }
-        assert!(reader.next(&deadline).await.unwrap_err().contains(if closed { "closed" } else { "disconnected" }));
+        assert!(reader
+            .next(&deadline)
+            .await
+            .unwrap_err()
+            .contains(if closed { "closed" } else { "disconnected" }));
     }
+}
+
+struct RegisteredFixture {
+    bridge: MCPBridge,
+    context: HostManager,
+    name: String,
+}
+
+impl RegisteredFixture {
+    fn new(host: Arc<StreamingHost>) -> Self {
+        let mut context = HostManager::default().withHostRuntimeTaskSchedulerHost(testScheduler());
+        context.httpHost = Some(host);
+        let bridge = MCPBridge::getInstance(&context);
+        let name = format!("async-fixture-{}", uuid::Uuid::new_v4());
+        let registration = bridge.registerRemoteMcpService(
+            name.clone(),
+            "https://test.invalid/sse".into(),
+            Some("sse".into()),
+            None,
+            None,
+            BTreeMap::new(),
+        );
+        assert_eq!(registration["success"], true);
+        Self {
+            bridge,
+            context,
+            name,
+        }
+    }
+
+    async fn spawn(&self) -> Value {
+        self.bridge
+            .spawnMcpService(&self.context, &self.name, Some(1000))
+            .await
+    }
+}
+
+impl Drop for RegisteredFixture {
+    fn drop(&mut self) {
+        self.bridge.unregisterMcpService(&self.name);
+    }
+}
+
+#[tokio::test]
+async fn droppedStartupRemovesInitializingServiceAndCancelsItsStream() {
+    let host = Arc::new(StreamingHost::new(": heartbeat\n\n"));
+    let fixture = RegisteredFixture::new(host.clone());
+    let mut startup = Box::pin(fixture.spawn());
+    assert!(futures_util::poll!(startup.as_mut()).is_pending());
+    let info = fixture.bridge.getServiceInfo(&fixture.name).unwrap();
+    assert!(info.active);
+    assert!(!info.ready);
+    drop(startup);
+    assert!(!fixture.bridge.getServiceInfo(&fixture.name).unwrap().active);
+    assert_eq!(host.cancelled.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn stopCancelsPendingAndQueuedCallsWithoutBlockingMetadata() {
+    let mut scripted = StreamingHost::new(ENDPOINT);
+    scripted.holdToolResponses = true;
+    let host = Arc::new(scripted);
+    let fixture = RegisteredFixture::new(host.clone());
+    assert_eq!(fixture.spawn().await["success"], true);
+    let before = host.requests.lock().unwrap().len();
+    let mut first = Box::pin(fixture.bridge.callTool(&fixture.name, "echo", json!({})));
+    let mut queued = Box::pin(fixture.bridge.callTool(&fixture.name, "echo", json!({})));
+    assert!(futures_util::poll!(first.as_mut()).is_pending());
+    assert!(futures_util::poll!(queued.as_mut()).is_pending());
+    assert_eq!(host.requests.lock().unwrap().len(), before + 1);
+    // All metadata stays accessible while the first call owns the async service lock.
+    assert!(fixture.bridge.getServiceInfo(&fixture.name).unwrap().ready);
+    assert_eq!(
+        fixture.bridge.listTools(&fixture.name)["result"]["tools"][0]["name"],
+        "echo"
+    );
+    assert_eq!(
+        fixture.bridge.listMcpServices(Some(&fixture.name))["success"],
+        true
+    );
+    assert_eq!(
+        fixture.bridge.getServiceLogs(&fixture.name)["success"],
+        true
+    );
+    fixture.bridge.unspawnMcpService(&fixture.name);
+    assert_eq!(first.await["error"]["message"], "MCP service stopped");
+    assert_eq!(queued.await["error"]["message"], "MCP service stopped");
+    assert_eq!(
+        host.requests.lock().unwrap().len(),
+        before + 1,
+        "queued calls must not execute after stop"
+    );
+    assert_eq!(host.cancelled.lock().unwrap().len(), 1);
+    assert!(!fixture.bridge.getServiceInfo(&fixture.name).unwrap().active);
+}
+
+#[tokio::test]
+async fn waitingServiceDoesNotBlockAnotherHostsStartupOrCalls() {
+    let blockedHost = Arc::new(StreamingHost::new(": heartbeat\n\n"));
+    let blocked = RegisteredFixture::new(blockedHost.clone());
+    let mut startup = Box::pin(blocked.spawn());
+    assert!(futures_util::poll!(startup.as_mut()).is_pending());
+    let otherHost = Arc::new(StreamingHost::new(ENDPOINT));
+    let other = RegisteredFixture::new(otherHost.clone());
+    assert_eq!(other.spawn().await["success"], true);
+    let result = other.bridge.callTool(&other.name, "echo", json!({})).await;
+    assert_eq!(result["success"], true);
+    assert_eq!(blockedHost.requests.lock().unwrap().len(), 1);
+    assert!(otherHost.requests.lock().unwrap().len() > 1);
+    drop(startup);
+    assert_eq!(blockedHost.cancelled.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn concurrentStartupIsSerializedAndDroppedOwnerReleasesGate() {
+    let host = Arc::new(StreamingHost::new(": heartbeat\n\n"));
+    let fixture = RegisteredFixture::new(host.clone());
+    let mut first = Box::pin(fixture.spawn());
+    let mut second = Box::pin(fixture.spawn());
+    assert!(futures_util::poll!(first.as_mut()).is_pending());
+    assert!(futures_util::poll!(second.as_mut()).is_pending());
+    assert_eq!(host.requests.lock().unwrap().len(), 1);
+    drop(first);
+    assert!(futures_util::poll!(second.as_mut()).is_pending());
+    assert_eq!(host.requests.lock().unwrap().len(), 2);
+    drop(second);
+    assert_eq!(host.cancelled.lock().unwrap().len(), 2);
+    assert!(!fixture.bridge.getServiceInfo(&fixture.name).unwrap().active);
 }

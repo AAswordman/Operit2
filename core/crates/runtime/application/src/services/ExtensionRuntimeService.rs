@@ -64,9 +64,9 @@ pub fn start(host: HostManager, tools: AIToolHandler) -> Option<SyncAppliedSubsc
             .ok_or_else(|| "Runtime scheduler is required for extension activation".to_string())
             .and_then(|scheduler| {
                 scheduler
-                    .scheduleHostRuntimeTask(
+                    .scheduleHostRuntimeAsyncTask(
                         "operit-extension-refresh",
-                        Box::new(move || task.run()),
+                        Box::new(move || Box::pin(async move { task.run().await })),
                     )
                     .map_err(|e| e.to_string())
             });
@@ -106,7 +106,7 @@ fn classify(operations: &[SyncOperation]) -> Changes {
 }
 
 impl Worker {
-    fn run(&self) {
+    async fn run(&self) {
         // Retry activation independently of already committed data. Failed work remains pending
         // for the next notification; normal startup also reconstructs runtime state from storage.
         let mut failures = 0;
@@ -119,7 +119,7 @@ impl Worker {
                 }
                 std::mem::take(&mut pending.changes)
             };
-            match self.refresh(changes) {
+            match self.refresh(changes).await {
                 Ok(()) => failures = 0,
                 Err(error) => {
                     AppLogger::e(
@@ -138,7 +138,7 @@ impl Worker {
         }
     }
 
-    fn refresh(&self, changes: Changes) -> Result<(), String> {
+    async fn refresh(&self, changes: Changes) -> Result<(), String> {
         if changes.packages || changes.settings {
             let storage = self
                 .host

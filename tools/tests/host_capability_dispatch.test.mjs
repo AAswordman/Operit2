@@ -87,5 +87,19 @@ test('MCP tools register the async executor and metadata never connects synchron
   const client = production(`${mcp}MCPBridgeClient.rs`);
   const metadata = client.slice(client.indexOf('pub fn getTools('), client.indexOf('pub fn getServiceInfo('));
   assert.doesNotMatch(metadata, /connect\(|spawn|block_on/);
-  assert.match(production(`${mcp}MCPBridge.rs`), /active\.get\(serviceName\)\.cloned\(\)/);
+  assert.match(production(`${mcp}MCPBridge.rs`), /active\s*\.get\(serviceName\)\s*\.cloned\(\)/);
+});
+
+test('extension and CLI command futures run on the owning Host rather than nested runtimes', () => {
+  const extensions = production('core/crates/runtime/application/src/services/ExtensionRuntimeService.rs');
+  assert.match(extensions, /scheduleHostRuntimeAsyncTask/);
+  assert.match(extensions, /async fn refresh/);
+  assert.match(extensions, /self\.refresh\(changes\)\.await/);
+  const command = production('core/crates/command/core/src/commands/mcp.rs');
+  assert.match(command, /generate_mcp_description\(application, args, output\)\.await/);
+  assert.doesNotMatch(command, /block_in_place|block_on/);
+  const cli = production('apps/cli/src/bootstrap.rs');
+  assert.match(cli, /commandContext\.hostRuntimeTaskSchedulerHost/);
+  assert.match(cli, /scheduleHostRuntimeAsyncTask\("operit-cli-core-command"/);
+  assert.match(cli, /sender\.closed\(\)/);
 });

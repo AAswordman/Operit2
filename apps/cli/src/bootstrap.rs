@@ -127,10 +127,25 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     context.withCoreCommandExecutor(Arc::new(move |args: Vec<String>| {
         let commandContext = commandContext.clone();
         Box::pin(async move {
-            let output =
-                operit_command_core::run_core_command_with_context(commandContext, &args).await?;
-            persist_cli_storage_config(&output.stdout)?;
-            Ok(output.stdout)
+            let scheduler = commandContext.hostRuntimeTaskSchedulerHost.clone()
+                .ok_or_else(|| "Runtime task scheduler host is not configured".to_string())?;
+            let (mut sender, receiver) = tokio::sync::oneshot::channel();
+            // Core may await executor-local Host futures. Create and poll those
+            // futures on the owning Host, returning only an owned result across threads.
+            scheduler.scheduleHostRuntimeAsyncTask("operit-cli-core-command", Box::new(move || {
+                Box::pin(async move {
+                    tokio::select! {
+                        biased;
+                        _ = sender.closed() => {},
+                        result = async {
+                            let output = operit_command_core::run_core_command_with_context(commandContext, &args).await?;
+                            persist_cli_storage_config(&output.stdout)?;
+                            Ok(output.stdout)
+                        } => { let _ = sender.send(result); }
+                    }
+                })
+            })).map_err(|error| error.to_string())?;
+            receiver.await.map_err(|_| "Core command task ended without a result".to_string())?
         })
     }))
 }

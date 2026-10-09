@@ -147,7 +147,8 @@ async fn heldOpenSseReturnsMatchingResultWithoutEofAndCancels() {
         wire,
     )]);
     let started = Instant::now();
-    let response = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000).await
+    let response = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000)
+        .await
         .unwrap()
         .unwrap();
     assert_eq!(response["result"]["text"], "实时读取");
@@ -163,7 +164,8 @@ async fn heldOpenJsonReturnsAsSoonAsComplete() {
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}",
     )]);
     assert!(
-        sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000).await
+        sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000)
+            .await
             .unwrap()
             .is_some()
     );
@@ -183,7 +185,9 @@ async fn deadlinesCoverHeadersAndIncompleteBodies() {
     ] {
         let host = ResponseHost::with(vec![response]);
         let started = Instant::now();
-        let error = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 25).await.unwrap_err();
+        let error = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 25)
+            .await
+            .unwrap_err();
         assert!(error.contains("timed out"), "{error}");
         assert!(started.elapsed() < Duration::from_millis(500));
         assert_eq!(host.cancelled.lock().unwrap().len(), 1);
@@ -201,7 +205,8 @@ async fn notificationNeedsOnlyAcceptedStatusAndStillCancelsBody() {
             json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
             None,
             1000
-        ).await
+        )
+        .await
         .unwrap(),
         None
     );
@@ -230,7 +235,9 @@ async fn failuresNeverReplayAndAlwaysCancel() {
     ] {
         response.closed = Some(Ok(()));
         let host = ResponseHost::with(vec![response]);
-        let error = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000).await.unwrap_err();
+        let error = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000)
+            .await
+            .unwrap_err();
         assert!(error.contains(needle), "{error}");
         assert_eq!(host.requests.lock().unwrap().len(), 1);
         assert_eq!(host.cancelled.lock().unwrap().len(), 1);
@@ -247,7 +254,9 @@ async fn prematureEofAndConnectionErrorsFailImmediately() {
         response.closed = Some(closed);
         let host = ResponseHost::with(vec![response]);
         let started = Instant::now();
-        let error = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000).await.unwrap_err();
+        let error = sendJsonRpc(&mut session(host.clone()), request(7), Some(7), 1000)
+            .await
+            .unwrap_err();
         assert!(error.contains(needle), "{error}");
         assert!(started.elapsed() < Duration::from_millis(500));
         assert_eq!(host.cancelled.lock().unwrap().len(), 1);
@@ -267,15 +276,17 @@ async fn httpErrorKeepsStatusAndBoundedDiagnosticsWithoutPoisoningSession() {
     let host = ResponseHost::with(vec![response]);
     let mut session = session(host.clone());
     session.sessionId = Some("valid-session".into());
-    let error = sendJsonRpc(&mut session, request(7), Some(7), 1000).await.unwrap_err();
+    let error = sendJsonRpc(&mut session, request(7), Some(7), 1000)
+        .await
+        .unwrap_err();
     assert!(error.contains("status 401"), "{error}");
     assert!(error.contains("authentication"), "{error}");
     assert_eq!(session.sessionId.as_deref(), Some("valid-session"));
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
-#[test]
-fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
+#[tokio::test]
+async fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
     let mut initialize = ScriptedResponse::response(
         "text/event-stream",
         "data: {\"id\":1,\"result\":{\"protocolVersion\":\"2025-03-26\"}}\n\n",
@@ -305,12 +316,14 @@ fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
         headers: BTreeMap::from([("X-Api-Key".into(), "fixture-key".into())]),
         description: String::new(),
         env: BTreeMap::new(),
+        startupGate: Arc::new(tokio::sync::Mutex::new(())),
     };
     let active = startRemoteServiceSession(
         host.clone(),
         &service,
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
     )
+    .await
     .unwrap();
     assert!(active.ready);
     assert_eq!(active.tools[0]["name"], "echo");
@@ -369,17 +382,27 @@ fn decoderRejectsOversizedOrMismatchedResponses() {
         .contains("does not match"));
 }
 
-
 #[tokio::test]
 async fn streamedNotificationsDoNotRequireBodyOrEof() {
     let host = ResponseHost::with(vec![ScriptedResponse::response("application/json", "")]);
-    assert!(sendRemoteJsonRpc(&mut session(host.clone()), json!({"method":"notifications/initialized"}), None, 1000).await.unwrap().is_none());
+    assert!(sendRemoteJsonRpc(
+        &mut session(host.clone()),
+        json!({"method":"notifications/initialized"}),
+        None,
+        1000
+    )
+    .await
+    .unwrap()
+    .is_none());
     assert_eq!(host.cancelled.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
 async fn droppedPendingResponseCancelsItsHostStream() {
-    let host = ResponseHost::with(vec![ScriptedResponse::response("application/json", "{\"id\":7")]);
+    let host = ResponseHost::with(vec![ScriptedResponse::response(
+        "application/json",
+        "{\"id\":7",
+    )]);
     let mut session = session(host.clone());
     let mut future = Box::pin(sendJsonRpc(&mut session, request(7), Some(7), 1000));
     assert!(futures_util::poll!(&mut future).is_pending());

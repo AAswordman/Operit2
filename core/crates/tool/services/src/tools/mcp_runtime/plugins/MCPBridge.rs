@@ -121,35 +121,62 @@ struct RemoteSseReader {
 
 impl RemoteSseReader {
     fn new(stream: streamable_http::ResponseStream) -> Self {
-        Self { stream, buffer: Vec::new(), eventName: String::new(), eventData: String::new(),
-            skipLf: false, frames: std::collections::VecDeque::new() }
+        Self {
+            stream,
+            buffer: Vec::new(),
+            eventName: String::new(),
+            eventData: String::new(),
+            skipLf: false,
+            frames: std::collections::VecDeque::new(),
+        }
     }
 
     fn push(&mut self, bytes: &[u8]) -> Result<(), String> {
         let bytes = if self.skipLf && !bytes.is_empty() {
             self.skipLf = false;
             bytes.strip_prefix(b"\n").unwrap_or(bytes)
-        } else { bytes };
-        if self.buffer.len().saturating_add(self.eventData.len()).saturating_add(bytes.len()) > 16 * 1024 * 1024 {
+        } else {
+            bytes
+        };
+        if self
+            .buffer
+            .len()
+            .saturating_add(self.eventData.len())
+            .saturating_add(bytes.len())
+            > 16 * 1024 * 1024
+        {
             return Err("Remote MCP SSE event exceeds 16 MiB limit".to_string());
         }
         self.buffer.extend_from_slice(bytes);
         let mut consumed = 0;
-        while let Some(offset) = self.buffer[consumed..].iter().position(|b| *b == b'\n' || *b == b'\r') {
+        while let Some(offset) = self.buffer[consumed..]
+            .iter()
+            .position(|b| *b == b'\n' || *b == b'\r')
+        {
             let end = consumed + offset;
-            let line = std::str::from_utf8(&self.buffer[consumed..end]).map_err(|e| e.to_string())?.to_string();
+            let line = std::str::from_utf8(&self.buffer[consumed..end])
+                .map_err(|e| e.to_string())?
+                .to_string();
             consumed = end + 1;
             if self.buffer[end] == b'\r' {
-                if self.buffer.get(consumed) == Some(&b'\n') { consumed += 1; }
-                else if consumed == self.buffer.len() { self.skipLf = true; }
+                if self.buffer.get(consumed) == Some(&b'\n') {
+                    consumed += 1;
+                } else if consumed == self.buffer.len() {
+                    self.skipLf = true;
+                }
             }
             if line.is_empty() {
                 let data = std::mem::take(&mut self.eventData);
                 let name = std::mem::take(&mut self.eventName);
-                if !data.is_empty() { self.frames.push_back((name, data)); }
+                if !data.is_empty() {
+                    self.frames.push_back((name, data));
+                }
             } else if let Some(data) = line.strip_prefix("data:") {
-                if !self.eventData.is_empty() { self.eventData.push('\n'); }
-                self.eventData.push_str(data.strip_prefix(' ').unwrap_or(data));
+                if !self.eventData.is_empty() {
+                    self.eventData.push('\n');
+                }
+                self.eventData
+                    .push_str(data.strip_prefix(' ').unwrap_or(data));
             } else if let Some(name) = line.strip_prefix("event:") {
                 self.eventName = name.strip_prefix(' ').unwrap_or(name).to_string();
             }
@@ -161,22 +188,38 @@ impl RemoteSseReader {
     async fn next(&mut self, deadline: &StartupDeadline) -> Result<(String, String), String> {
         loop {
             deadline.remainingMs()?;
-            if let Some(frame) = self.frames.pop_front() { return Ok(frame); }
+            if let Some(frame) = self.frames.pop_front() {
+                return Ok(frame);
+            }
             match self.stream.next(deadline).await? {
                 streamable_http::ResponseEvent::Bytes(bytes) => self.push(&bytes)?,
-                streamable_http::ResponseEvent::Closed(result) => return Err(result.err().unwrap_or_else(|| "Remote MCP SSE stream closed".into())),
-                streamable_http::ResponseEvent::Head(_) => return Err("Remote MCP SSE sent duplicate response headers".into()),
+                streamable_http::ResponseEvent::Closed(result) => {
+                    return Err(result
+                        .err()
+                        .unwrap_or_else(|| "Remote MCP SSE stream closed".into()))
+                }
+                streamable_http::ResponseEvent::Head(_) => {
+                    return Err("Remote MCP SSE sent duplicate response headers".into())
+                }
             }
         }
     }
 }
 
 impl Drop for ActiveService {
-    fn drop(&mut self) { if let Some(process) = &self.process { let _ = process.kill(); } }
+    fn drop(&mut self) {
+        if let Some(process) = &self.process {
+            let _ = process.kill();
+        }
+    }
 }
 
 #[derive(Clone, Default)]
-struct ServiceSnapshot { ready: bool, tools: Vec<Value>, logs: String }
+struct ServiceSnapshot {
+    ready: bool,
+    tools: Vec<Value>,
+    logs: String,
+}
 
 /// One async lock per service; registry and metadata locks are never held across I/O.
 struct ActiveServiceHandle {
@@ -188,25 +231,53 @@ struct ActiveServiceHandle {
 impl ActiveServiceHandle {
     fn new(service: ActiveService) -> Self {
         let (cancellation, _) = tokio::sync::watch::channel(false);
-        Self { service: tokio::sync::Mutex::new(service), snapshot: Mutex::new(ServiceSnapshot::default()), cancellation }
+        let snapshot = ServiceSnapshot {
+            ready: service.ready,
+            tools: service.tools.clone(),
+            logs: service.logs.clone(),
+        };
+        Self {
+            service: tokio::sync::Mutex::new(service),
+            snapshot: Mutex::new(snapshot),
+            cancellation,
+        }
     }
-    fn snapshot(&self) -> ServiceSnapshot { self.snapshot.lock().expect("MCP metadata mutex poisoned").clone() }
+    fn snapshot(&self) -> ServiceSnapshot {
+        self.snapshot
+            .lock()
+            .expect("MCP metadata mutex poisoned")
+            .clone()
+    }
     fn publish(&self, active: &ActiveService) {
         *self.snapshot.lock().expect("MCP metadata mutex poisoned") = ServiceSnapshot {
-            ready: active.ready, tools: active.tools.clone(), logs: active.logs.clone(),
+            ready: active.ready,
+            tools: active.tools.clone(),
+            logs: active.logs.clone(),
         };
     }
-    fn cancel(&self) { self.cancellation.send_replace(true); }
+    fn cancel(&self) {
+        self.cancellation.send_replace(true);
+    }
 }
 
 /// A cancelled/dropped startup must not leave an initializing service or process registered.
-struct StartupLease { name: String, handle: Arc<ActiveServiceHandle>, committed: bool }
+struct StartupLease {
+    name: String,
+    handle: Arc<ActiveServiceHandle>,
+    committed: bool,
+}
 impl Drop for StartupLease {
     fn drop(&mut self) {
-        if self.committed { return; }
+        if self.committed {
+            return;
+        }
         self.handle.cancel();
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-        if state.active.get(&self.name).is_some_and(|current| Arc::ptr_eq(current, &self.handle)) {
+        if state
+            .active
+            .get(&self.name)
+            .is_some_and(|current| Arc::ptr_eq(current, &self.handle))
+        {
             state.active.remove(&self.name);
         }
     }
@@ -243,7 +314,9 @@ impl MCPBridge {
             return errorResponse("register", -32602, "Invalid local MCP service registration");
         }
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-        if let Some(previous) = state.active.remove(&name) { previous.cancel(); }
+        if let Some(previous) = state.active.remove(&name) {
+            previous.cancel();
+        }
         state.services.insert(
             name.clone(),
             RegisteredService {
@@ -283,7 +356,9 @@ impl MCPBridge {
             );
         }
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-        if let Some(previous) = state.active.remove(&name) { previous.cancel(); }
+        if let Some(previous) = state.active.remove(&name) {
+            previous.cancel();
+        }
         state.services.insert(
             name.clone(),
             RegisteredService {
@@ -362,7 +437,9 @@ impl MCPBridge {
         Some(ServiceInfo {
             name: registered.name.clone(),
             active: active.is_some(),
-            ready: active.map(|service| service.snapshot().ready).unwrap_or(false),
+            ready: active
+                .map(|service| service.snapshot().ready)
+                .unwrap_or(false),
             toolCount: toolNames.len(),
             toolNames,
         })
@@ -371,7 +448,10 @@ impl MCPBridge {
     /// Starts a registered MCP service and initializes its tool list.
     #[allow(non_snake_case)]
     pub async fn spawnMcpService(
-        &self, context: &HostManager, name: &str, timeoutMs: Option<u64>,
+        &self,
+        context: &HostManager,
+        name: &str,
+        timeoutMs: Option<u64>,
     ) -> Value {
         let registered = {
             let state = bridgeState().lock().expect("mcp bridge mutex poisoned");
@@ -381,12 +461,17 @@ impl MCPBridge {
             }
         };
         let Some(scheduler) = context.hostRuntimeTaskSchedulerHost.clone() else {
-            return errorResponse("spawn", -32603, "Runtime task scheduler host is not configured");
+            return errorResponse(
+                "spawn",
+                -32603,
+                "Runtime task scheduler host is not configured",
+            );
         };
-        let deadline = match StartupDeadline::new(scheduler.clone(), timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS)) {
-            Ok(deadline) => deadline,
-            Err(message) => return errorResponse("spawn", -32603, &message),
-        };
+        let deadline =
+            match StartupDeadline::new(scheduler.clone(), timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS)) {
+                Ok(deadline) => deadline,
+                Err(message) => return errorResponse("spawn", -32603, &message),
+            };
         // Concurrent connects share a startup gate and their own deadline, not a process-global I/O lock.
         let _startup = tokio::select! {
             biased;
@@ -400,15 +485,26 @@ impl MCPBridge {
         };
         {
             let state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-            if !state.services.get(name).is_some_and(|current| Arc::ptr_eq(&current.startupGate, &registered.startupGate)) {
+            if !state
+                .services
+                .get(name)
+                .is_some_and(|current| Arc::ptr_eq(&current.startupGate, &registered.startupGate))
+            {
                 return errorResponse("spawn", -32603, "MCP registration changed while connecting");
             }
             if let Some(active) = state.active.get(name) {
                 let snapshot = active.snapshot();
-                if snapshot.ready { return successResponse("spawn", json!({"status":"started","name":name,"toolCount":snapshot.tools.len(),"ready":true})); }
+                if snapshot.ready {
+                    return successResponse(
+                        "spawn",
+                        json!({"status":"started","name":name,"toolCount":snapshot.tools.len(),"ready":true}),
+                    );
+                }
             }
         }
-        if let Err(error) = deadline.remainingMs() { return errorResponse("spawn", -32603, &error); }
+        if let Err(error) = deadline.remainingMs() {
+            return errorResponse("spawn", -32603, &error);
+        }
         let startResult = if registered.serviceType == "remote" {
             match context.httpHost.as_ref() {
                 Some(host) => createRemoteServiceSession(host.clone(), &registered, &deadline),
@@ -423,22 +519,38 @@ impl MCPBridge {
         let active = match startResult {
             Ok(active) => active,
             Err(message) => {
-                bridgeState().lock().expect("mcp bridge mutex poisoned").errors.insert(name.into(), message.clone());
+                bridgeState()
+                    .lock()
+                    .expect("mcp bridge mutex poisoned")
+                    .errors
+                    .insert(name.into(), message.clone());
                 return errorResponse("spawn", -32603, &message);
             }
         };
         let handle = Arc::new(ActiveServiceHandle::new(active));
         {
             let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-            if !state.services.get(name).is_some_and(|current| Arc::ptr_eq(&current.startupGate, &registered.startupGate)) {
+            if !state
+                .services
+                .get(name)
+                .is_some_and(|current| Arc::ptr_eq(&current.startupGate, &registered.startupGate))
+            {
                 return errorResponse("spawn", -32603, "MCP service stopped while connecting");
             }
-            if let Some(previous) = state.active.insert(name.into(), handle.clone()) { previous.cancel(); }
+            if let Some(previous) = state.active.insert(name.into(), handle.clone()) {
+                previous.cancel();
+            }
         }
-        let mut lease = StartupLease { name: name.into(), handle: handle.clone(), committed: false };
+        let mut lease = StartupLease {
+            name: name.into(),
+            handle: handle.clone(),
+            committed: false,
+        };
         let mut cancelled = handle.cancellation.subscribe();
         let mut active = handle.service.lock().await;
-        let result = if *cancelled.borrow() { Err("MCP service stopped while connecting".into()) } else {
+        let result = if *cancelled.borrow() {
+            Err("MCP service stopped while connecting".into())
+        } else {
             tokio::select! {
                 biased;
                 _ = cancelled.changed() => Err("MCP service stopped while connecting".into()),
@@ -450,14 +562,21 @@ impl MCPBridge {
         };
         handle.publish(&active);
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-        if !state.active.get(name).is_some_and(|current| Arc::ptr_eq(current, &handle)) {
+        if !state
+            .active
+            .get(name)
+            .is_some_and(|current| Arc::ptr_eq(current, &handle))
+        {
             return errorResponse("spawn", -32603, "MCP service stopped while connecting");
         }
         match result {
             Ok(()) => {
                 lease.committed = true;
                 state.errors.remove(name);
-                successResponse("spawn", json!({"status":"started","name":name,"toolCount":active.tools.len(),"ready":true}))
+                successResponse(
+                    "spawn",
+                    json!({"status":"started","name":name,"toolCount":active.tools.len(),"ready":true}),
+                )
             }
             Err(message) => {
                 handle.cancel();
@@ -472,7 +591,9 @@ impl MCPBridge {
     #[allow(non_snake_case)]
     pub fn unspawnMcpService(&self, name: &str) -> Value {
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
-        if let Some(service) = state.services.get_mut(name) { service.startupGate = Arc::new(tokio::sync::Mutex::new(())); }
+        if let Some(service) = state.services.get_mut(name) {
+            service.startupGate = Arc::new(tokio::sync::Mutex::new(()));
+        }
         if let Some(active) = state.active.remove(name) {
             active.cancel();
         }
@@ -507,17 +628,28 @@ impl MCPBridge {
     #[allow(non_snake_case)]
     pub async fn callTool(&self, serviceName: &str, method: &str, params: Value) -> Value {
         let handle = {
-            bridgeState().lock().expect("mcp bridge mutex poisoned").active.get(serviceName).cloned()
+            bridgeState()
+                .lock()
+                .expect("mcp bridge mutex poisoned")
+                .active
+                .get(serviceName)
+                .cloned()
         };
-        let Some(handle) = handle else { return errorResponse("toolcall", -32603, "MCP service is not active"); };
+        let Some(handle) = handle else {
+            return errorResponse("toolcall", -32603, "MCP service is not active");
+        };
         let mut cancelled = handle.cancellation.subscribe();
-        if *cancelled.borrow() { return errorResponse("toolcall", -32603, "MCP service stopped"); }
+        if *cancelled.borrow() {
+            return errorResponse("toolcall", -32603, "MCP service stopped");
+        }
         let mut active = tokio::select! {
             biased;
             _ = cancelled.changed() => return errorResponse("toolcall", -32603, "MCP service stopped"),
             active = handle.service.lock() => active,
         };
-        if !active.ready { return errorResponse("toolcall", -32603, "MCP service is not ready"); }
+        if !active.ready {
+            return errorResponse("toolcall", -32603, "MCP service is not ready");
+        }
         let result = tokio::select! {
             biased;
             _ = cancelled.changed() => Err("MCP service stopped".into()),
@@ -758,24 +890,25 @@ fn createRemoteServiceSession(
     Ok(active)
 }
 
-#[cfg(test)]
-async fn startRemoteServiceSession(
-    httpHost: Arc<dyn HttpHost>, service: &RegisteredService, deadline: &StartupDeadline,
-) -> Result<ActiveService, String> {
-    let mut active = createRemoteServiceSession(httpHost, service, deadline)?;
-    initializeRemoteService(&mut active, deadline).await?;
-    Ok(active)
-}
-
 #[allow(non_snake_case)]
 async fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<(), String> {
     let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
-    let mut request = remoteHttpRequest("GET", &session.endpoint, buildRemoteHeaders(session, false)?, Vec::new(), timeoutMs);
+    let mut request = remoteHttpRequest(
+        "GET",
+        &session.endpoint,
+        buildRemoteHeaders(session, false)?,
+        Vec::new(),
+        timeoutMs,
+    );
     request.readTimeoutSeconds = 0;
     let mut stream = streamable_http::ResponseStream::open(session.httpHost.clone(), request)?;
     match stream.next(&deadline).await? {
-        streamable_http::ResponseEvent::Head(head) if isSuccess(head.statusCode) => rememberRemoteSessionId(session, &head.headers)?,
-        streamable_http::ResponseEvent::Head(head) => return Err(format!("Remote MCP SSE HTTP status {}", head.statusCode)),
+        streamable_http::ResponseEvent::Head(head) if isSuccess(head.statusCode) => {
+            rememberRemoteSessionId(session, &head.headers)?
+        }
+        streamable_http::ResponseEvent::Head(head) => {
+            return Err(format!("Remote MCP SSE HTTP status {}", head.statusCode))
+        }
         _ => return Err("Remote MCP SSE stream did not send response headers".into()),
     }
     let mut reader = RemoteSseReader::new(stream);
@@ -784,7 +917,12 @@ async fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Res
         if eventName == "endpoint" {
             let base = Url::parse(&session.endpoint).map_err(|error| error.to_string())?;
             let endpoint = base.join(data.trim()).map_err(|error| error.to_string())?;
-            if endpoint.origin() != base.origin() { return Err(format!("Endpoint origin does not match connection origin: {}", endpoint.origin().ascii_serialization())); }
+            if endpoint.origin() != base.origin() {
+                return Err(format!(
+                    "Endpoint origin does not match connection origin: {}",
+                    endpoint.origin().ascii_serialization()
+                ));
+            }
             session.sseEndpoint = Some(endpoint.to_string());
             session.sseReader = Some(reader);
             return Ok(());
@@ -798,7 +936,11 @@ async fn initializeRemoteService(
     active: &mut ActiveService,
     deadline: &StartupDeadline,
 ) -> Result<(), String> {
-    if active.remote.as_ref().is_some_and(|session| session.connectionType.eq_ignore_ascii_case("sse")) {
+    if active
+        .remote
+        .as_ref()
+        .is_some_and(|session| session.connectionType.eq_ignore_ascii_case("sse"))
+    {
         connectRemoteSse(active.remote.as_mut().unwrap(), deadline.remainingMs()?).await?;
     }
     let initializeId = nextRequestId(active);
@@ -819,7 +961,8 @@ async fn initializeRemoteService(
         }),
         Some(initializeId),
         deadline.remainingMs()?,
-    ).await?
+    )
+    .await?
     .ok_or_else(|| "Remote MCP initialize returned an empty response".to_string())?;
     if initializeResponse.get("error").is_some() {
         return Err(format!("MCP initialize failed: {initializeResponse}"));
@@ -851,7 +994,8 @@ async fn initializeRemoteService(
         }),
         None,
         deadline.remainingMs()?,
-    ).await?;
+    )
+    .await?;
 
     let listId = nextRequestId(active);
     let listResponse = sendRemoteJsonRpc(
@@ -867,7 +1011,8 @@ async fn initializeRemoteService(
         }),
         Some(listId),
         deadline.remainingMs()?,
-    ).await?
+    )
+    .await?
     .ok_or_else(|| "Remote MCP tools/list returned an empty response".to_string())?;
     if listResponse.get("error").is_some() {
         return Err(format!("MCP tools/list failed: {listResponse}"));
@@ -885,7 +1030,10 @@ async fn initializeRemoteService(
 
 /// Initializes a local server without resetting the startup budget.
 #[allow(non_snake_case)]
-async fn initializeService(active: &mut ActiveService, deadline: &StartupDeadline) -> Result<(), String> {
+async fn initializeService(
+    active: &mut ActiveService,
+    deadline: &StartupDeadline,
+) -> Result<(), String> {
     deadline.remainingMs()?;
     let initializeId = nextRequestId(active);
     let process = active
@@ -907,7 +1055,8 @@ async fn initializeService(active: &mut ActiveService, deadline: &StartupDeadlin
             .to_string(),
         )
         .map_err(|error| error.to_string())?;
-    let initializeResponse = readJsonResponse(active, initializeId, deadline.remainingMs()?).await?;
+    let initializeResponse =
+        readJsonResponse(active, initializeId, deadline.remainingMs()?).await?;
     if initializeResponse.get("error").is_some() {
         return Err(format!("MCP initialize failed: {initializeResponse}"));
     }
@@ -1015,7 +1164,8 @@ async fn callRemoteMcpTool(
         }),
         Some(id),
         timeoutMs,
-    ).await?
+    )
+    .await?
     .ok_or_else(|| format!("Remote MCP tools/call returned an empty response for {method}"))?;
     if let Some(error) = response.get("error") {
         return Err(format!("{error}"));
@@ -1046,20 +1196,37 @@ async fn sendRemoteJsonRpc(
 
 #[allow(non_snake_case)]
 async fn sendRemoteSseJsonRpc(
-    session: &mut RemoteMcpSession, payload: Value, expectedId: Option<u64>, timeoutMs: u64,
+    session: &mut RemoteMcpSession,
+    payload: Value,
+    expectedId: Option<u64>,
+    timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
     let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
-    let endpoint = session.sseEndpoint.clone().ok_or("Remote MCP SSE endpoint is not connected")?;
-    streamable_http::sendJsonRpcTo(session, payload, None, deadline.remainingMs()?, &endpoint).await?;
-    let Some(expectedId) = expectedId else { return Ok(None); };
-    let reader = session.sseReader.as_mut().ok_or("Remote MCP SSE reader is not attached")?;
+    let endpoint = session
+        .sseEndpoint
+        .clone()
+        .ok_or("Remote MCP SSE endpoint is not connected")?;
+    streamable_http::sendJsonRpcTo(session, payload, None, deadline.remainingMs()?, &endpoint)
+        .await?;
+    let Some(expectedId) = expectedId else {
+        return Ok(None);
+    };
+    let reader = session
+        .sseReader
+        .as_mut()
+        .ok_or("Remote MCP SSE reader is not attached")?;
     loop {
         let (event, data) = reader.next(&deadline).await?;
-        if !event.is_empty() && event != "message" { continue; }
-        if data.trim() == "[DONE]" { continue; }
+        if !event.is_empty() && event != "message" {
+            continue;
+        }
+        if data.trim() == "[DONE]" {
+            continue;
+        }
         let parsed: Value = serde_json::from_str(&data).map_err(|error| error.to_string())?;
         if parsed.get("id").and_then(Value::as_u64) == Some(expectedId)
-            && (parsed.get("result").is_some() || parsed.get("error").is_some()) {
+            && (parsed.get("result").is_some() || parsed.get("error").is_some())
+        {
             return Ok(Some(parsed));
         }
     }
@@ -1193,7 +1360,11 @@ async fn readJsonResponse(
                     "MCP process exited before response {targetId}. {stderr}"
                 ));
             }
-            active.scheduler.waitForHostRuntimeDelay(waitMs).await.map_err(|error| error.to_string())?;
+            active
+                .scheduler
+                .waitForHostRuntimeDelay(waitMs)
+                .await
+                .map_err(|error| error.to_string())?;
             continue;
         };
         let parsed = match serde_json::from_str::<Value>(&line) {
@@ -1334,6 +1505,13 @@ mod startup_tests {
         ) -> HostResult<()> {
             unreachable!()
         }
+        fn scheduleHostRuntimeCooperativeAsyncTask(
+            &self,
+            _: &str,
+            _: operit_host_api::HostRuntimeAsyncTask,
+        ) -> HostResult<()> {
+            unreachable!()
+        }
         fn scheduleDelayedHostRuntimeTask(
             &self,
             _: &str,
@@ -1438,7 +1616,8 @@ mod startup_tests {
                 scheduler: testScheduler(),
                 expiresAt: 0
             }
-        ).await
+        )
+        .await
         .is_err());
         assert!(writes.lock().unwrap().is_empty());
         assert!(!active.ready);
@@ -1492,9 +1671,11 @@ mod startup_tests {
             .lock()
             .unwrap()
             .active
-            .insert(name.clone(), active);
+            .insert(name.clone(), Arc::new(ActiveServiceHandle::new(active)));
         let client = MCPBridgeClient::new(context, name.clone());
-        let response = client.callTool("write_file", json!({"path": "test.txt"})).await;
+        let response = client
+            .callTool("write_file", json!({"path": "test.txt"}))
+            .await;
         bridge.unregisterMcpService(&name);
         assert_eq!(response["success"], false);
         assert_eq!(response["error"]["message"], serverError.to_string());
@@ -1509,4 +1690,15 @@ mod remote_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 fn testScheduler() -> Arc<dyn HostRuntimeTaskSchedulerHost> {
     Arc::new(operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new())
+}
+
+#[cfg(test)]
+async fn startRemoteServiceSession(
+    httpHost: Arc<dyn HttpHost>,
+    service: &RegisteredService,
+    deadline: &StartupDeadline,
+) -> Result<ActiveService, String> {
+    let mut active = createRemoteServiceSession(httpHost, service, deadline)?;
+    initializeRemoteService(&mut active, deadline).await?;
+    Ok(active)
 }
