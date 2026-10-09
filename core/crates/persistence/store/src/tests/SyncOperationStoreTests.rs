@@ -928,3 +928,65 @@ fn missing_journal_scans_as_absent() {
     assert_eq!(scan.totalLines, 0);
     assert!(scan.findings.is_empty());
 }
+
+/// Quarantine removes exactly the damaged lines, keeps them reversible and
+/// leaves the journal readable through the same and fresh store instances.
+#[test]
+fn quarantine_moves_damaged_lines_to_a_reversible_sidecar() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(storage.clone(), "quarantine-journal");
+    for sequence in 1..=2 {
+        store
+            .appendUnobservedOperation(&operation(
+                sequence,
+                "message",
+                &format!("m{sequence}"),
+                "upsert",
+                SyncOperationSemantics::EntityState,
+                json!({"text": "x"}),
+            ))
+            .unwrap();
+    }
+    let path = "quarantine-journal/operations/device-a.jsonl";
+    let original = storage.readBytes(path).unwrap();
+    let lines: Vec<&[u8]> = original.split_inclusive(|byte| *byte == b'\n').collect();
+    let badOffset = lines[0].len() as u64;
+    let mut corrupted = Vec::new();
+    corrupted.extend_from_slice(lines[0]);
+    corrupted.extend_from_slice(b"not json at all\n");
+    corrupted.extend_from_slice(lines[1]);
+    storage.writeBytes(path, &corrupted).unwrap();
+
+    let scan = store.scanOperationLog("device-a").unwrap();
+    assert_eq!(scan.findings.len(), 1);
+    let offsets: Vec<u64> = scan.findings.iter().map(|finding| finding.byteOffset).collect();
+    assert_eq!(offsets, vec![badOffset]);
+
+    let moved = store.quarantineOperationLines("device-a", &offsets).unwrap();
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].byteOffset, badOffset);
+    assert_eq!(moved[0].line, "not json at all");
+    assert!(!moved[0].lineHash.is_empty());
+
+    // The journal is clean again for both the same instance and a fresh one.
+    let rescan = store.scanOperationLog("device-a").unwrap();
+    assert!(rescan.findings.is_empty());
+    assert_eq!(rescan.decodedLines, 2);
+    assert_eq!(rescan.highestSequence, 2);
+    let reopened = SyncOperationStore::new(storage.clone(), "quarantine-journal");
+    assert_eq!(
+        sequences(&reopened.operationsSince(&SyncClock::empty(), &[], 100).unwrap()),
+        vec![1, 2]
+    );
+
+    // The sidecar preserves the removed bytes verbatim for manual recovery.
+    let sidecar = storage.readBytes("quarantine-journal/operations/device-a.jsonl.quarantine").unwrap();
+    let sidecarLine = String::from_utf8(sidecar).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(sidecarLine.trim_end_matches('\n')).unwrap();
+    assert_eq!(entry["line"].as_str().unwrap(), "not json at all");
+    assert_eq!(entry["byteOffset"].as_u64().unwrap(), badOffset);
+
+    // Quarantining offsets that no longer match any line is a no-op.
+    let empty = store.quarantineOperationLines("device-a", &[999_999]).unwrap();
+    assert!(empty.is_empty());
+}

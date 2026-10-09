@@ -126,6 +126,17 @@ pub struct OperationLogScan {
     pub findings: Vec<OperationLogLineFinding>,
 }
 
+/// One journal line moved to the quarantine sidecar by an explicit repair.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuarantinedOperationLine {
+    pub deviceId: String,
+    pub byteOffset: u64,
+    pub byteLength: u64,
+    pub lineHash: String,
+    pub quarantinedAt: i64,
+    pub line: String,
+}
+
 /// Defines the deterministic total order used to resolve concurrent entity operations.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SyncOperationOrder {
@@ -1335,6 +1346,90 @@ impl SyncOperationStore {
             self.rootPath,
             storageSafeId(deviceId)
         )
+    }
+
+    /// Returns the reversible quarantine sidecar path for one origin device.
+    #[allow(non_snake_case)]
+    fn quarantinePath(&self, deviceId: &str) -> String {
+        format!(
+            "{}/operations/{}.jsonl.quarantine",
+            self.rootPath,
+            storageSafeId(deviceId)
+        )
+    }
+
+    /// Moves the journal lines at the given byte offsets out of one origin
+    /// log into a reversible quarantine sidecar, holding the same per-origin
+    /// lock as appends, then invalidates every cached view of the journal.
+    /// Nothing is deleted: each moved line is preserved verbatim with its
+    /// original offset, a stable hash and a timestamp. Offsets must come from
+    /// scanOperationLog findings; the byte accounting is identical.
+    #[allow(non_snake_case)]
+    pub fn quarantineOperationLines(
+        &self,
+        deviceId: &str,
+        byteOffsets: &[u64],
+    ) -> Result<Vec<QuarantinedOperationLine>, SyncOperationStoreError> {
+        let operationLog = self.operationLog(deviceId)?;
+        let mut index = lockSyncState(&operationLog, "operation log")?;
+        let content = self.readOperationLog(deviceId)?;
+        let targets: BTreeSet<u64> = byteOffsets.iter().copied().collect();
+        let mut kept = String::new();
+        let mut moved = Vec::new();
+        let mut byteOffset = 0u64;
+        let now = tryCurrentTimeMillis().map_err(SyncOperationStoreError::Message)?;
+        for line in content.split_inclusive('\n') {
+            let lineLength = u64::try_from(line.len()).map_err(|_| {
+                SyncOperationStoreError::Message(
+                    "sync operation line length does not fit u64".to_string(),
+                )
+            })?;
+            if targets.contains(&byteOffset) {
+                let mut hasher = DefaultHasher::new();
+                line.hash(&mut hasher);
+                moved.push(QuarantinedOperationLine {
+                    deviceId: deviceId.to_string(),
+                    byteOffset,
+                    byteLength: lineLength,
+                    lineHash: format!("{:016x}", hasher.finish()),
+                    quarantinedAt: now,
+                    line: line.trim_end_matches('\n').to_string(),
+                });
+            } else {
+                kept.push_str(line);
+            }
+            byteOffset += lineLength;
+        }
+        if moved.is_empty() {
+            return Ok(moved);
+        }
+        let sidecarPath = self.quarantinePath(deviceId);
+        let mut sidecar = if self.storageHost.exists(&sidecarPath)? {
+            String::from_utf8(self.storageHost.readBytes(&sidecarPath)?)
+                .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?
+        } else {
+            String::new()
+        };
+        for entry in &moved {
+            let encoded = serde_json::to_vec(entry)?;
+            sidecar.push_str(
+                std::str::from_utf8(&encoded)
+                    .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?,
+            );
+            sidecar.push('\n');
+        }
+        self.storageHost
+            .writeBytes(&self.operationsPath(deviceId), kept.as_bytes())?;
+        self.storageHost.writeBytes(&sidecarPath, sidecar.as_bytes())?;
+        index.domainOperations.clear();
+        index.operationIds.clear();
+        index.sequenceOffsets.clear();
+        index.highestSequence = 0;
+        index.encodedByteLength = 0;
+        index.findings.clear();
+        index.loaded = false;
+        publishSyncMutation();
+        Ok(moved)
     }
 }
 
