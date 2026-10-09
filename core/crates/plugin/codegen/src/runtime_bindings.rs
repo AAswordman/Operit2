@@ -31,8 +31,8 @@ const HOST_TRAITS: &[(&str, &str, &str)] = &[
     ),
     ("js_sdk/chat.rs", "ChatHost", "Chat"),
     ("js_sdk/memory.rs", "MemoryHost", "Memory"),
-    ("js_sdk/edge.rs", "EdgeHost", "edge"),
-    ("js_sdk/edge.rs", "IoHost", "io"),
+    ("js_sdk/edge.rs", "EdgeHost", "Edge"),
+    ("js_sdk/edge.rs", "IoHost", "Io"),
 ];
 
 /// Generates concrete active Tools host trait implementations from canonical Rust signatures.
@@ -440,7 +440,11 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
             for segment in namespace.split('.') {
                 expression.push_str(&format!("[\"{segment}\"]"));
                 if initialized_namespaces.insert(expression.clone()) {
-                    output.push_str(&format!("{expression} = {expression} || {{}};\n"));
+                    if matches!(namespace.as_str(), "Edge" | "Io") {
+                        output.push_str(&format!("{expression} = class {segment} {{ constructor() {{ throw new Error('{segment} is a static class'); }} }};\n"));
+                    } else {
+                        output.push_str(&format!("{expression} = {expression} || {{}};\n"));
+                    }
                 }
             }
         }

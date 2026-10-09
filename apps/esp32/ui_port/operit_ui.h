@@ -24,6 +24,10 @@ bool operit_ui_init(uint16_t width,
                       operit_ui_touch_cb_t touch_cb,
                       operit_ui_action_cb_t action_cb,
                       void *user_data);
+/* External bounded strip painter. It may only modify its leased region (y >= 24). */
+typedef void (*operit_ui_scene_cb_t)(uint8_t *pixels, size_t length, unsigned y, unsigned rows, uint32_t tick, void *user_data);
+void operit_ui_scene_painter(operit_ui_scene_cb_t painter);
+void operit_ui_set_scene(bool active, uint32_t revision, uint32_t tick);
 void operit_ui_pump(uint32_t elapsed_ms);
 void operit_ui_set_touch(uint16_t x, uint16_t y, bool pressed);
 void operit_ui_navigate_home(void);

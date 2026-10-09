@@ -566,16 +566,17 @@ impl<'a> EmitContext<'a> {
                 );
             }
         }
+        let static_host = matches!(name.as_str(), "Edge" | "Io") && group.kind == "class";
+        if static_host {
+            output.push_str(&format!("{child_indent}private constructor();\n"));
+        }
         for method in self.group_methods(group) {
-            self.emit_method(
-                output,
-                method.attrs(),
-                method.signature(),
-                scope,
-                &child_indent,
-                false,
-                false,
-            );
+            let mut signature = method.signature().clone();
+            if static_host {
+                signature.inputs = signature.inputs.into_iter()
+                    .filter(|arg| !matches!(arg, FnArg::Receiver(_))).collect();
+            }
+            self.emit_method(output, method.attrs(), &signature, scope, &child_indent, false, false);
         }
         output.push_str(indent);
         output.push_str("}\n\n");
@@ -1413,8 +1414,8 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
     if let ItemRef::Trait(_) = item {
         let namespace = match rust_name.as_str() {
             "FilesHost" => Some(vec!["Files".to_string()]),
-            "EdgeHost" => Some(vec!["edge".to_string()]),
-            "IoHost" => Some(vec!["io".to_string()]),
+            "EdgeHost" => Some(vec!["Edge".to_string()]),
+            "IoHost" => Some(vec!["Io".to_string()]),
             "NetHost" => Some(vec!["Net".to_string()]),
             "NetFutureHost" => Some(vec!["Net".to_string()]),
             "SystemHost" => Some(vec!["System".to_string()]),
@@ -1434,7 +1435,12 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
             _ => None,
         };
         if let Some(path) = namespace {
-            return Some((path, "namespace".to_string()));
+            let kind = if matches!(rust_name.as_str(), "EdgeHost" | "IoHost") {
+                "class"
+            } else {
+                "namespace"
+            };
+            return Some((path, kind.to_string()));
         }
     }
     let declaration_name = rust_name.strip_suffix("Methods").unwrap_or(&rust_name);

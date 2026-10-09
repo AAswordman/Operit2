@@ -31,6 +31,8 @@ unsafe extern "C" {
         action_cb: Option<ActionCallback>,
         user_data: *mut c_void,
     ) -> bool;
+    fn operit_ui_scene_painter(painter: Option<unsafe extern "C" fn(*mut u8, usize, u32, u32, u32, *mut c_void)>);
+    fn operit_ui_set_scene(active: bool, revision: u32, tick: u32);
     fn operit_ui_pump(elapsed_ms: u32);
     fn operit_ui_set_touch(x: u16, y: u16, pressed: bool);
     fn operit_ui_set_connection(wifi_ready: bool, edge_ready: bool);
@@ -79,6 +81,7 @@ pub struct Esp32Ui {
 struct UiContext {
     board: *const operit_board_esp32::Esp32Board,
     actions: Mutex<VecDeque<String>>,
+    scene: Option<std::sync::Arc<operit_node_edge::scene::ScenePlugin>>,
 }
 
 unsafe impl Send for UiContext {}
@@ -89,6 +92,7 @@ impl Esp32Ui {
         let runtime = Self {
             context: Box::new(UiContext {
                 board,
+                scene: None,
                 actions: Mutex::new(VecDeque::new()),
             }),
             lastTouch: None,
@@ -132,8 +136,26 @@ impl Esp32Ui {
         unsafe { operit_ui_set_touch(x, y, pressed) };
     }
 
-    /// Advances the self-drawn UI animations and flushes pending display regions.
+    /// Attaches the bounded native painter to the existing RGB565 strip.
+    pub fn attachScene(&mut self, scene: std::sync::Arc<operit_node_edge::scene::ScenePlugin>) {
+        self.context.scene = Some(scene);
+        unsafe {
+            operit_ui_scene_painter(Some(scenePainter));
+        }
+    }
+
+    /// Advances animations and flushes pending display regions.
     pub fn pump(&mut self, elapsedMs: u32) {
+        if let Some(scene) = &self.context.scene {
+            let state = scene.summary();
+            unsafe {
+                operit_ui_set_scene(
+                    state["active"].as_bool().unwrap_or(false),
+                    state["revision"].as_u64().unwrap_or(0) as u32,
+                    scene.tick(),
+                );
+            }
+        }
         unsafe { operit_ui_pump(elapsedMs) };
     }
 
@@ -420,4 +442,23 @@ pub fn updateStatus(
     } else {
         "Waiting for Space"
     });
+}
+
+unsafe extern "C" fn scenePainter(
+    pixels: *mut u8,
+    len: usize,
+    y: u32,
+    rows: u32,
+    tick: u32,
+    context: *mut c_void,
+) {
+    let context = unsafe { &*(context as *const UiContext) };
+    if let Some(scene) = &context.scene {
+        scene.paint_strip(
+            unsafe { std::slice::from_raw_parts_mut(pixels, len) },
+            y as u16,
+            rows as u16,
+            tick,
+        );
+    }
 }

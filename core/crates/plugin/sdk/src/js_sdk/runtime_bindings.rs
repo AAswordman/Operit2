@@ -31,8 +31,8 @@ pub struct JsToolApiVariant {
 /// Contains every active JavaScript Tools method binding.
 #[rustfmt::skip]
 pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
-    JsToolBinding { namespace: "edge", method: "execute", tool: BuiltinToolName::EdgeExecute },
-    JsToolBinding { namespace: "io", method: "execute", tool: BuiltinToolName::IoExecute },
+    JsToolBinding { namespace: "Edge", method: "execute", tool: BuiltinToolName::EdgeExecute },
+    JsToolBinding { namespace: "Io", method: "execute", tool: BuiltinToolName::IoExecute },
     JsToolBinding { namespace: "Chat", method: "agentStatus", tool: BuiltinToolName::AgentStatus },
     JsToolBinding { namespace: "Chat", method: "createNew", tool: BuiltinToolName::CreateNewChat },
     JsToolBinding { namespace: "Chat", method: "deleteChat", tool: BuiltinToolName::DeleteChat },

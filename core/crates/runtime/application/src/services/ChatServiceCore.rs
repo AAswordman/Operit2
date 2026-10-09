@@ -152,6 +152,12 @@ pub struct ChatPluginTestResult {
     pub message: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatEdgeEventAck {
+    pub success: bool,
+    pub next: u64,
+    pub message: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatPluginPage {
     pub items: Vec<ChatPluginItem>,
     pub total: u32,
@@ -2515,6 +2521,88 @@ impl ChatServiceCore {
             success: result.is_ok(),
             message: result.err().unwrap_or_default().chars().take(80).collect(),
         }
+    }
+
+    /// Fixed generic Edge event callback, not an arbitrary tool/JS invocation API.
+    /// The Space router authenticates nodeId against the preserved route origin.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.write")]
+    pub async fn chatEdgeEvent(
+        &self,
+        chatId: String,
+        nodeId: String,
+        packageName: String,
+        payload: serde_json::Value,
+    ) -> ChatEdgeEventAck {
+        let result = self
+            .runEdgeEvent(chatId, nodeId, packageName, payload)
+            .await;
+        match result {
+            Ok(next) => ChatEdgeEventAck {
+                success: true,
+                next,
+                message: String::new(),
+            },
+            Err(message) => ChatEdgeEventAck {
+                success: false,
+                next: 0,
+                message: message.chars().take(80).collect(),
+            },
+        }
+    }
+    async fn runEdgeEvent(
+        &self,
+        chatId: String,
+        nodeId: String,
+        packageName: String,
+        payload: serde_json::Value,
+    ) -> Result<u64, String> {
+        use operit_edge_contract::events::{MAX_REQUEST, EdgeEventBatch};
+        let batch: EdgeEventBatch = serde_json::from_value(payload.clone())
+            .map_err(|_| "Invalid Edge event batch".to_string())?;
+        let args = serde_json::json!({"chatId":chatId,"nodeId":nodeId,"packageName":packageName,"payload":payload});
+        if chatId.is_empty()
+            || chatId.len() > 128
+            || nodeId.is_empty()
+            || nodeId.len() > 128
+            || packageName.is_empty()
+            || packageName.len() > 108
+            || !batch.valid()
+            || serde_json::to_vec(&args)
+                .map_err(|_| "Invalid Edge event".to_string())?
+                .len()
+                > MAX_REQUEST
+        {
+            return Err("Invalid or oversized Edge event".into());
+        }
+        let manager = self.pluginPageManager();
+        let plugin = manager
+            .getToolPkgContainerRuntimes()
+            .into_iter()
+            .find(|p| p.packageName == packageName)
+            .ok_or("Edge receiver plugin is not registered")?;
+        if !manager.isPackageEnabled(&packageName)
+            || !plugin.dependencyIssues.is_empty()
+            || manager
+                .getRegisteredToolPkgMainScript(&packageName)
+                .is_none()
+        {
+            return Err("Edge receiver plugin is disabled or unavailable".into());
+        }
+        // Only this export; enabled checks and nested tool permissions are unchanged.
+        // No JS output/stack leaves this bounded ACK. ACK is contingent on persistence.
+        let raw = manager.runToolPkgMainHookWithTimeoutMillis(&packageName, "on_edge_event",
+            operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_EDGE_EVENT,
+            Some("edge_event"), None, None,
+            serde_json::json!({"chatId":chatId,"nodeId":nodeId,"batch":payload}),
+            None, None, None, 6000).await
+            .map_err(|_| "Edge callback failed or timed out".to_string())?
+            .ok_or("Edge callback did not acknowledge")?;
+        let ack: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|_| "Invalid Edge callback ACK")?;
+        if ack["accepted"] != true || ack["next"].as_u64() != Some(batch.next) {
+            return Err("Edge callback did not acknowledge this batch".into());
+        }
+        Ok(batch.next)
     }
 
     async fn runChatPluginTest(&self, chatId: String, packageName: String, testKind: Option<String>) -> Result<(), String> {

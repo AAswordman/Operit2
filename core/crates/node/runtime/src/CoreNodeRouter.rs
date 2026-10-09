@@ -29,6 +29,33 @@ use crate::RuntimeRemoteLinkService::{
 #[path = "peer/sync_dispatch.rs"]
 mod sync_dispatch;
 
+// An event sender may not impersonate another Edge or use Target to bypass the
+// Binding permission path. Called only after normal incoming-route validation.
+fn validateEdgeEventOrigin(
+    request: &CoreCallRequest,
+    origin: &str,
+    kind: RoutedCoreRequestKind,
+) -> Result<(), CoreLinkError> {
+    if request.target != CORE_INTERNAL_TARGET || request.methodName != "chatEdgeEvent" {
+        return Ok(());
+    }
+    let node = match &request.args {
+        CoreValue::Map(args) => args.get("nodeId"),
+        _ => None,
+    };
+    if !matches!(
+        kind,
+        RoutedCoreRequestKind::SpaceBinding | RoutedCoreRequestKind::SpaceRoute
+    ) || !matches!(node, Some(CoreValue::String(id)) if id == origin)
+    {
+        return Err(CoreLinkError::new(
+            "EDGE_EVENT_ORIGIN_DENIED",
+            "Edge event requires its authenticated Space origin",
+        ));
+    }
+    Ok(())
+}
+
 /// Reports both persisted ownership and the device currently selected by routing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindingRouteStatus {
@@ -1008,6 +1035,9 @@ impl CoreNodeRouter {
         originNodeId: String,
     ) -> CoreCallResponse {
         let requestId = request.requestId.clone();
+        if let Err(error) = validateEdgeEventOrigin(&request, &originNodeId, RoutedCoreRequestKind::SpaceBinding) {
+            return CoreCallResponse::err(requestId, error);
+        }
         let route = match crate::generated_space_call_route(&request) {
             Some(route) => route,
             None => {
@@ -2083,6 +2113,9 @@ impl CoreNodeRouter {
         }
         match self.validateIncomingRoute(&previousNodeId, &request) {
             Ok(true) => {
+                if let Err(error) = validateEdgeEventOrigin(&request.payload, &request.originNodeId, request.routeKind) {
+                    return CoreCallResponse::err(requestId, error);
+                }
                 if request.payload.target == crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET {
                     if request.routeKind != RoutedCoreRequestKind::Target {
                         return CoreCallResponse::err(requestId, CoreLinkError::new("CONTROL_ROUTE_INVALID", "Control exchange requires an explicit same-Space target"));
@@ -5685,4 +5718,28 @@ mod tests {
     mod chat_input_menu_tests { use super::*; include!("router_chat_input_menu_tests.rs"); }
     mod device_space_tests { include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/device_space/mod.rs")); }
 
+}
+
+#[cfg(test)]
+mod edge_event_origin_tests {
+    use super::*;
+    #[test]
+    fn edge_event_sender_is_authenticated_not_a_self_reported_node_or_target_bypass() {
+        let args =
+            operit_link::toCoreValue(serde_json::json!({"chatId":"chat","nodeId":"edge"})).unwrap();
+        let request =
+            CoreCallRequest::new("event", CORE_INTERNAL_TARGET, "chatEdgeEvent", args);
+        for kind in [
+            RoutedCoreRequestKind::SpaceBinding,
+            RoutedCoreRequestKind::SpaceRoute,
+        ] {
+            assert!(validateEdgeEventOrigin(&request, "edge", kind).is_ok());
+            assert!(validateEdgeEventOrigin(&request, "impostor", kind).is_err());
+        }
+        assert!(validateEdgeEventOrigin(&request, "edge", RoutedCoreRequestKind::Target).is_err());
+        let unrelated = CoreCallRequest::new("device", "device.status", "read", CoreValue::Null);
+        assert!(
+            validateEdgeEventOrigin(&unrelated, "edge", RoutedCoreRequestKind::Target).is_ok()
+        );
+    }
 }

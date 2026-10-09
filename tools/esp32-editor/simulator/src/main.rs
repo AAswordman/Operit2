@@ -112,6 +112,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
         model: "ESP32-2432S028-SIM".into(),
     };
     let edgeRouter = EdgePeerRouter::new(nodeId.clone());
+    let scenePlugin = Arc::new(operit_node_edge::scene::ScenePlugin::new(320, 240, true));
     let mut edgeNode = operit_node_edge::EdgeNode::fromHostManager(hostManager.clone())
         .withPlugin(Arc::new(SimulatorStatusPlugin {
             address: configuredAddress.clone(),
@@ -157,9 +158,15 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
         updatedAt: operit_host_api::TimeUtils::currentTimeMillis(),
     })?;
     edgeRouter.installSpace(spaceService.clone())?;
+    edgeNode = edgeNode
+        .withPlugin(scenePlugin.clone())
+        .map_err(|error| error.message)?;
     edgeNode = edgeNode.withNodeServices(services.clone());
     let edgeNode = Arc::new(edgeNode);
     edgeRouter.install(edgeNode.clone())?;
+    let _sceneEvents = edge_chat::startEdgeEvents(
+        services.clone(), scenePlugin.clone(), nodeId.clone(),
+    );
     if startListener {
         services.peers().startListening(&[PeerTransport::Tcp]).await?;
     }
@@ -213,6 +220,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                     .ok()
                     .and_then(|requests| requests.into_iter().find(|request| request.canApprove));
                 Ok(serde_json::json!({"address": address,
+                "scene": scenePlugin.summary(),
                 "memory": memory::snapshot(),
                 "deviceId": "esp32-edge-simulator", "paired": paired,
                 "peerServiceAvailable": services.is_ok(),
@@ -229,6 +237,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                     Err(error) => serde_json::json!({"ok": false, "error": error}),
                 })}))
             }
+            Some("sceneView") => Ok(scenePlugin.visual_snapshot()),
             Some("memory") => Ok(memory::snapshot()),
             // Decision/cleanup failures belong to this RPC, not to run(). In
             // particular a stale approval tap after cancellation must not
@@ -236,7 +245,20 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
             Some("action") => async {
                 let action = request["action"].as_str().unwrap_or("");
                 *lastAction.lock().unwrap() = action.to_string();
-                if action == "edge_space_approve" || action == "edge_space_reject" {
+                if action == "edge_scene_exit" {
+                    scenePlugin.system_exit();
+                } else if let Some(point) = action.strip_prefix("edge_scene_touch:") {
+                    let (x, y) = point.split_once(':').ok_or("Invalid scene point")?;
+                    if pairing_code.is_empty()
+                        && spaceService.incomingDeviceSpaceJoins().await
+                            .map_err(|error| error.to_string())?.is_empty()
+                    {
+                        scenePlugin.touch(
+                            x.parse().map_err(|_| "Invalid scene x")?,
+                            y.parse().map_err(|_| "Invalid scene y")?,
+                        );
+                    }
+                } else if action == "edge_space_approve" || action == "edge_space_reject" {
                     // Match firmware's captured pending request/version. A stale
                     // screen must never approve a different, newer submission.
                     let requestId = request["requestId"].as_str()

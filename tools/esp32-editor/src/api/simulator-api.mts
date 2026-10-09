@@ -186,6 +186,8 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, token: ready ? token : '', device});
+    } else if (url.pathname === '/api/simulator/scene-view' && req.method === 'GET') {
+      reply(200, ready ? await rpc('sceneView') : null);
     } else if (url.pathname === '/api/simulator/memory' && req.method === 'GET') {
       reply(200, ready ? await rpc('memory') : null);
     } else if (url.pathname === '/api/simulator/send-image' && req.method === 'POST') {

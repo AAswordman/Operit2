@@ -2399,6 +2399,7 @@ version = "0.1.0"
 dependencies = [
  "operit-link",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2866,6 +2867,7 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
+ "operit-edge-contract",
  "operit-host-api",
  "operit-js-bridge",
  "operit-link",

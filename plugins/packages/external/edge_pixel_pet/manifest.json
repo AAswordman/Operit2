@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.edge_pixel_pet",
+  "version": "0.1.0",
+  "main": "dist/main.js",
+  "display_name": "像素桌宠 · Edge 原生场景示例",
+  "description": "Core 保存养成数据和素材，ESP32 原生显示；默认关闭。",
+  "enabled_by_default": false,
+  "subpackages": [
+    {
+      "id": "edge_pixel_pet",
+      "entry": "dist/packages/edge_pixel_pet.js",
+      "display_name": "像素桌宠",
+      "enabled_by_default": true,
+      "description": "显示/事件推送/关闭桌宠及协议能力测试"
+    }
+  ],
+  "api_version": "2.0.0"
+}

@@ -47,6 +47,8 @@ const exports = [
   '_simulator_stack_size',
   '_simulator_stack_free',
   '_simulator_touch',
+  '_operit_ui_scene_painter',
+  '_operit_ui_set_scene',
   '_operit_ui_pump',
   '_operit_ui_navigate_home',
   '_operit_ui_navigate_apps',
@@ -325,7 +327,8 @@ const linkArgs = [
   '-sSTACK_OVERFLOW_CHECK=2',
   '-sASSERTIONS=1',
   '-sEXPORTED_FUNCTIONS=' + JSON.stringify(exports),
-  '-sEXPORTED_RUNTIME_METHODS=["ccall","HEAPU8"]',
+  '-sALLOW_TABLE_GROWTH=1',
+  '-sEXPORTED_RUNTIME_METHODS=["ccall","HEAPU8","addFunction","removeFunction"]',
   '-o',
   path.join(staging, 'ui.mjs'),
 ];

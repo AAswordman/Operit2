@@ -6,7 +6,7 @@
  */
 
 // Import types that will be used in global declarations
-import { edge as EdgeType, io as IoType } from './edge';
+import { Edge as EdgeType, Io as IoType } from './edge';
 import { ToolReturnType, ToolCatalogEntry } from './core';
 import {
     JavaBridgeApi as JavaBridgeApiType,
@@ -113,8 +113,8 @@ export { UI, UINode } from './ui';
 export { ToolPkg } from './toolpkg';
 export { Chat } from './chat';
 export { Memory } from './memory';
-export { edge, io } from './edge';
-export type { EdgeInterfaceInfo, IoInterfaceInfo } from './edge';
+export { Edge, Io } from './edge';
+export type { EdgeInterfaceInfo, IoInterfaceInfo, EdgeActionEvent, EdgeEventBatch, EdgeEventPayload, EdgeEventHookEvent, EdgeEventAck } from './edge';
 
 // Export Android utilities
 export {
@@ -286,8 +286,8 @@ declare global {
         UI: typeof UIType;
         Chat: typeof ChatType;
         Memory: typeof MemoryType;
-        edge: typeof EdgeType;
-        io: typeof IoType;
+        Edge: typeof EdgeType;
+        Io: typeof IoType;
     };
 
     /** Lowercase alias of the existing Core plugin Tools object. */

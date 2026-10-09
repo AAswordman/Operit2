@@ -3203,10 +3203,14 @@ async fn edge_io_sdk_aliases_forward_node_interface_args_and_reject_failures() {
     let output=engine.execute_script_function(r#"
         exports.ports = async function() {
             if (tools !== Tools) throw Error('different Tools object');
-            const edge=await tools.edge.execute('edge-one',{pluginId:'device.status',action:'read'},{text:'ping'});
-            const io=await Tools.io.execute('edge-two',{port:'gpio',operation:'read'},{pin:2});
+            if (typeof Tools.Edge !== 'function' || typeof Tools.Io !== 'function') throw Error('static classes missing');
+            if (Tools.edge !== undefined || Tools.io !== undefined) throw Error('noncanonical namespace');
+            try { new Tools.Edge(); throw Error('Edge must not be instantiated'); }
+            catch(error) { if (!String(error).includes('static class')) throw error; }
+            const edge=await Tools.Edge.execute('edge-one',{pluginId:'device.status',action:'read'},{text:'ping'});
+            const io=await Tools.Io.execute('edge-two',{port:'gpio',operation:'read'},{pin:2});
             let failure='';
-            try { await tools.edge.execute('unauthorized',{pluginId:'device.status',action:'read'}); }
+            try { await Tools.Edge.execute('unauthorized',{pluginId:'device.status',action:'read'}); }
             catch(error) { failure=String(error.message || error); }
             return {edge:edge.nodeId,io:io.nodeId,failure};
         };

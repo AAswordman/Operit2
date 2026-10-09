@@ -1,6 +1,6 @@
 //! Explicit-node hardware ports. Plugins execute on Core; hardware actions execute on Edge.
 use super::results::EdgePortResultData;
-use super::{JsAny, JsFuture};
+use super::{JsAny, JsFuture, JsObject};
 use serde::{Deserialize, Serialize};
 
 /// Identifies one firmware-registered Edge plugin action, not a Core RPC target.
@@ -43,4 +43,54 @@ pub trait IoHost: Send + Sync {
         interfaceInfo: IoInterfaceInfo,
         args: Option<JsAny>,
     ) -> JsFuture<EdgePortResultData>;
+}
+
+/// One received device action. The action identifies business meaning, not a callable method.
+pub struct EdgeActionEvent {
+    /// Monotonic producer sequence, safe as a JavaScript integer.
+    pub seq: f64,
+    /// Examples: target.tap, gpio.changed, sensor.sample, serial.message.
+    pub action: String,
+    /// Producer-defined JSON object; validated by that action's handler.
+    pub data: JsObject,
+}
+/// Generic bounded event batch shared by all device event producers.
+pub struct EdgeEventBatch {
+    /// Protocol version, currently 1.
+    pub v: f64,
+    /// Firmware service that produced this batch.
+    pub source: String,
+    /// Producer stream identity; renewed after reset/re-subscription.
+    pub stream: String,
+    /// Up to four ordered action events.
+    pub events: Vec<EdgeActionEvent>,
+    /// Last sequence in this batch; acknowledge only after persistence.
+    pub next: f64,
+    /// Last irrecoverably lost sequence; gaps are explicit.
+    pub lostBefore: f64,
+}
+/// Core attaches routing context to a generic Edge event batch.
+pub struct EdgeEventPayload {
+    /// Existing authorized chat Binding, never implicitly created.
+    pub chatId: String,
+    /// Device identity authenticated against the route origin.
+    pub nodeId: String,
+    /// Device-independent action envelope.
+    pub batch: EdgeEventBatch,
+}
+/// Argument of the fixed on_edge_event export in the existing ToolPkg main runtime.
+pub struct EdgeEventHookEvent {
+    /// Dedicated generic event discriminator: edge_event.
+    pub event: String,
+    /// Repeats the event discriminator.
+    pub eventName: String,
+    /// Trusted route context and bounded device events.
+    pub eventPayload: EdgeEventPayload,
+}
+/// Return after applying/persisting this batch; never acknowledge merely on reception.
+pub struct EdgeEventAck {
+    /// False rejects this receiver/source/stream or unhandled action.
+    pub accepted: bool,
+    /// Required for acceptance; must equal the delivered batch next.
+    pub next: Option<f64>,
 }

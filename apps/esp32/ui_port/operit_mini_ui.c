@@ -24,6 +24,9 @@ typedef struct {
     uint8_t status;
 } plugin_t;
 typedef struct {
+    operit_ui_scene_cb_t scene_painter;
+    bool scene_active, scene_press;
+    uint32_t scene_revision, scene_tick, frame_tick;
     operit_ui_flush_cb_t flush;
     operit_ui_action_cb_t action;
     void *context;
@@ -68,7 +71,7 @@ static uint16_t rgb(unsigned c) { return (uint16_t)(((c >> 8) & 0xf800) | ((c >>
 static void invalidate(void) {
     if (!ui.dirty) ui.render_y = 0;
     else if (ui.render_y > 0) ui.refresh_again = true;
-    ui.dirty = true; ui.pressed_node = -1;
+    ui.dirty = true; ui.pressed_node = -1; ui.scene_press = false;
 }
 /* Copy whole UTF-8 characters; never leave a truncated multibyte glyph. */
 static bool copy(char *dst, size_t capacity, const char *src) {
@@ -227,9 +230,10 @@ static bool chat_swipe(const char *direction) {
     } else return false;
     invalidate();return true;
 }
-static int page(void) { return ui.code[0] ? 0 : ui.prompt[0] ? 3 : ui.sidebar ? 8 : ui.page; }
+static int page(void) { return ui.code[0] ? 0 : ui.prompt[0] ? 3 : ui.scene_active&&!ui.error[0] ? 12 : ui.sidebar ? 8 : ui.page; }
 const char *operit_ui_current_page(void) {
     switch(page()) {
+        case 12: return "edge_scene";
         case 0:return "Pairing"; case 1:return "Settings"; case 2:return "Chat";
         case 3:return "Space"; case 4:return "Unpair"; case 5:return "LeaveSpace";
         case 6:return "Plugins"; case 7:return "Expression"; case 8:return "Sidebar";
@@ -238,6 +242,7 @@ const char *operit_ui_current_page(void) {
 }
 static const char *page_title(void) {
     switch(page()) {
+        case 12: return "edge_scene";
         case 0:return "配对码"; case 1:return "设置"; case 2:return "Operit";
         case 3:return "空间审批"; case 4:return "解除配对"; case 5:return "退出空间";
         case 6:return "插件"; case 7:return "表情"; case 8:return "Operit";
@@ -254,6 +259,11 @@ static void icon_node(const char *id,const char *caption,const char *action,int 
 }
 static void scene(void) {
     ui.node_count=0;
+    if(page()==12) {
+        node("scene_title","EDGE SCENE",NULL,8,0,250,24,true,1);
+        icon_node("scene_exit","","edge_scene_exit",276,0,44,24,true,ICON_CLOSE);
+        return;
+    }
     if(page()==6&&ui.plugin_dialog&&!ui.error[0]) {
         const plugin_t *p=ui.plugins+ui.plugin_selected;
         node("plugin_dialog_title",p->name,NULL,8,2,260,30,true,1);
@@ -624,6 +634,7 @@ static void paint_nodes(void) {
 }
 static void paint_page(void) {
     rect(0,0,WIDTH,HEIGHT,rgb(0x11171b));
+    if(page()==12 && ui.scene_painter) ui.scene_painter(strip,sizeof(strip),ui.render_y,ROWS,ui.frame_tick,ui.context);
     if(page()==2&&!ui.error[0]) {
         rect(117,58,1,116,rgb(0x25332e));
         outline(CHAT_X,187,132,40,rgb(0x344b3d));
@@ -683,8 +694,17 @@ bool operit_ui_init(uint16_t w,uint16_t h,operit_ui_flush_cb_t flush,operit_ui_t
     memset(&ui,0,sizeof(ui)); ui.page=2; ui.flush=flush; ui.action=action; ui.context=context; ui.pressed_node=-1;ui.chat_follow_tail=true;
     copy(ui.space,sizeof(ui.space),"等待加入设备空间"); invalidate(); scene(); return true;
 }
+void operit_ui_scene_painter(operit_ui_scene_cb_t painter) { ui.scene_painter=painter; }
+void operit_ui_set_scene(bool active,uint32_t revision,uint32_t tick) {
+    if(ui.scene_active!=active||ui.scene_revision!=revision) {
+        ui.scene_active=active;ui.scene_revision=revision;invalidate();
+    }
+    ui.scene_tick=tick;
+}
 void operit_ui_pump(uint32_t elapsed) {
     (void)elapsed;
+    if(page()==12 && !ui.dirty) { ui.render_y=0;ui.dirty=true; }
+    if(ui.render_y==0) ui.frame_tick=ui.scene_tick;
     if(!ui.dirty||!ui.flush) return;
     scene();
     /* Bound SPI work per main-loop iteration; no whole-frame stack buffer. */
@@ -712,11 +732,15 @@ void operit_ui_pump(uint32_t elapsed) {
 }
 void operit_ui_set_touch(uint16_t x,uint16_t y,bool down) {
     scene();
-    if(down&&!ui.pressed) { ui.pressed_node=hit(x,y); ui.press_x=x;ui.press_y=y; }
+    if(down&&!ui.pressed) { ui.pressed_node=hit(x,y); ui.press_x=x;ui.press_y=y; ui.scene_press=page()==12&&y>=24; }
     if(!down&&ui.pressed) {
         int found=hit(x,y),previous=ui.pressed_node;
         int dx=(int)x-ui.press_x,dy=(int)y-ui.press_y;
         ui.pressed=false;ui.pressed_node=-1;
+        if(page()==12 && ui.scene_press && y>=24 && ui.press_y>=24 && dx<16&&dx>-16&&dy<16&&dy>-16) {
+            char action[48];snprintf(action,sizeof(action),"edge_scene_touch:%u:%u",x,y);
+            if(ui.action) ui.action(action,ui.context);return;
+        }
         if(page()==6&&ui.plugin_dialog&&ui.press_y>=36&&ui.press_y<144&&dx<48&&dx>-48&&(dy>24||dy<-24)){chat_swipe(dy>0?"down":"up");return;}
         if(page()==2&&ui.press_x>=CHAT_X&&x>=CHAT_X&&dx<48&&dx>-48&&(dy>24||dy<-24)){chat_swipe(dy>0?"down":"up");return;}
         if(previous>=0&&previous==found&&dx<16&&dx>-16&&dy<16&&dy>-16) activate(ui.nodes[found].action);

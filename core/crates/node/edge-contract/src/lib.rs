@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use operit_link::CoreValue;
 
 pub mod image_preview;
+pub mod scene;
+pub mod events;
 
 /// Link target reserved for the Edge device I/O service namespace.
 pub const EDGE_DEVICE_IO_OBJECT_ID: &str = "edge.deviceIo";
