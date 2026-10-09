@@ -5,6 +5,8 @@
 > **事实基线**：标注 `[已核实]` 的代码事实于 2026-10-09 在 #236 合入后的 `upstream/main`（`51b92fab`；其后的 `..09be5d7a` 仅 JS bridge 变更，不涉及被引用文件）逐条复核过，动工前不必重新考古。存储布局与 wire 面速查见 §6 附录。
 >
 > **背景**：一次 Space 成员记录分裂事故的复盘产物。#234（堵住新增污染入口：拒绝自引用 join、append 前校验）与 #236（`reconcileSharedSpace` 成对对账，2026-10-09 合入 `51b92fab`）均已进入上游。本文回答下一个问题：如何让这套新机制在野外活下来，然后如何从结构上消灭这类分歧。
+>
+> **实施状态（2026-10-09）**：第一梯队四项已在本仓库落地——3.3 Approving 出口、3.1 读路径旁路+quarantine+doctor、3.7 收敛属性测试（P1/P2）、3.2 增量/分页/限流协议。实施中两处偏离原设计并被本文吸收：quarantine 落盘为单文件 jsonl 旁车（§3.1）；增量差集用精确 opId 集合而非向量时钟游标（§3.2，属性测试证伪了时钟方案）。
 
 ## 1. 总原则
 
@@ -17,7 +19,8 @@
 - wire 入口：`core/crates/node/runtime/src/NodeSpaceService.rs:202`，edge 变体 `RuntimeRemoteLinkService.rs:563`；实现在 `core/crates/node/runtime/src/peer/space_reconcile.rs`。
 - `ReconciliationOffer`/`ReconciliationOutcome`（space_reconcile.rs:11-24）只有 `spaceId / operations / deviceProfiles`，**没有时钟字段**；发送与应答都取 `currentSpaceOperations()`，其内部是 `operationsSince(&SyncClock::empty(), …, usize::MAX)`（NetworkControlStore.rs:382-385、673-681）——从空时钟全量导出。
 - 去重逻辑 `mergePeerOperations`（space_reconcile.rs:48-64）：按 `opId` 跳过已知、只接受 `originDeviceId == peer`，**对对方 offer 的内容照单全收，无数量/字节上限**。
-- `SyncOperationStore::operationsSince(&SyncClock, &[String], usize)` 已存在（SyncOperationStore.rs:561-566），全库唯一传真实时钟的调用方是文件同步桥（RuntimeFileSyncStore.rs:561/590）——增量化的地基现成。`SyncClock` 是向量时钟 `BTreeMap<originDeviceId, sequence>`，`sequence` 由 origin 设备分配、跨副本不变，是天然的增量游标。
+- `SyncOperationStore::operationsSince(&SyncClock, &[String], usize)` 已存在（SyncOperationStore.rs:561-566），全库唯一传真实时钟的调用方是文件同步桥（RuntimeFileSyncStore.rs:561/590）——增量化的地基现成。`SyncClock` 是向量时钟 `BTreeMap<originDeviceId, sequence>`，`sequence` 由 origin 设备分配、跨副本不变。
+- **勘误（实施时发现）**：向量时钟只记录每 origin 的最大 sequence，隐含"前缀连续覆盖"假设；分裂后的副本可持有对端日志的任意子集（这正是 #236 要修的状态），时钟会谎报覆盖完整。增量对账因此不能以时钟为差集依据，见 §3.2 的修正设计。
 - 对账挂在 `space_join::request` 的分裂自愈路径上（space_join.rs:249），意味着分页循环的预算上限同时约束 join 触发的对账。
 
 ### 2.2 消息上限：受限设备 8KB / 默认 4MB `[已核实]`
@@ -104,7 +107,7 @@ plan（只读生成 RepairPlan：待隔离行清单 + 预期效果）
 → selfcheck（验收等式，见下；不过等式 → 从备份还原并报错）
 ```
 
-- quarantine = **移入旁路文件而非删除**：`operations/{id}.jsonl.quarantine/{offset}-{sha8}.line`，旁路文件首行写元数据（原 offset、hash、原因、时间戳），完全可逆。
+- quarantine = **移入旁路文件而非删除**：`operations/{id}.jsonl.quarantine` 单文件 jsonl 旁车（每行一条 `{deviceId, byteOffset, byteLength, lineHash, quarantinedAt, line}`；实施时放弃"目录+逐行文件"形态——RuntimeStorageHost 不承诺目录语义，单文件在受限主机上可原子重写且可逐行追加），完全可逆。
 - 写入路径：新增 `SyncOperationStore::quarantineLines(deviceId, &[offset])` 专用入口——内部持有与 append 相同的 per-origin 锁，做字节级行剔除 + 索引缓存失效。不经过任何通用 append/read API；这是对 §2.3"绕过 store API"的精确化：绕开失败语义，不绕锁纪律。
 - **selfcheck 等式**：坏行会让"修复前 replay"根本无法计算（Err），所以等式不能写成"修复后 == 修复前减被隔离行"。正确等式：**修复后 store 的 `orderedCommands`+replay 输出 == doctor 影子 replay（R4 层好行，剔除被隔离行）的输出**。影子 replay 逻辑与 3.4 投影泵同源，一处实现两处用。
 - 埋计数器：`runtime/diagnostics/space_doctor_counters.preferences.json`——divergence 检出次数、quarantine 条数、对账成功率/轮次（对账侧在 space_reconcile 成功路径埋点）。
@@ -113,43 +116,51 @@ plan（只读生成 RepairPlan：待隔离行清单 + 预期效果）
 
 #### 3.2 对账增量化 + 限流（最大的契约变更，按能力变化对待）
 
-**设计目标**：offer/outcome 从"报全量"改为"报时钟、补差异、按页装"，使 8KB 受限设备与长期离线节点都能完成对账；同时给接受/发送两侧装上上限。**分页与时钟同属一个协议版本，限流与增量化必须同 PR**——增量交换存在之前，"未知操作数上限"会误伤合法追赶。
+**设计目标**：offer/outcome 从"报全量"改为"报持有集合、补差集、按页装"，使 8KB 受限设备与长期离线节点都能完成对账；同时给接受/发送两侧装上上限。**分页与差集同属一个协议版本，限流与增量化必须同 PR**——增量交换存在之前，"未知操作数上限"会误伤合法追赶。
+
+**差集依据的修正（实施时由 3.7 属性测试证伪原设计）**：原方案以向量时钟为增量游标（"报时钟、补差异"）。P1 测试里"随机子集预合并"制造了对端日志的洞（持有 a:1,2,7-10 却缺 3-6），最大序列时钟声称已覆盖到 10，对端据此永不补发——这正是分裂事故后副本的真实形态。落地协议改为**精确 opId 集合对账**：offer/outcome 各携带发送方的完整操作 id 集合（`haveOpIds`），接收方回放"对方集合未覆盖的差集"分页；集合超出页预算时降级为 `None`（= 请发全量分页），正确性永不因预算破坏。时钟字段保留在报文中，仅作 export-floor 缺口（`historyGap`）的 advisory。
 
 **wire 变更（全部新字段 serde default，旧端反序列化自动忽略未知字段，不炸）**
 
 ```rust
-struct ReconciliationOffer / ReconciliationOutcome {
+struct ReconciliationOffer {
     spaceId: String,
     operations: Vec<SyncOperation>,
-    deviceProfiles: Vec<CoreSpaceDeviceProfile>,   // Outcome 另有 members: Vec<String>
+    deviceProfiles: Vec<CoreSpaceDeviceProfile>,
     // ── v2 新增 ──
-    protocolVersion: u32,          // 缺失 = v1 对端
-    have: Option<SyncClock>,       // 发送方当前时钟（合并完本消息后）
-    floors: Option<SyncClock>,     // 发送方各 origin 的 export floor
-    maxPageBytes: Option<u32>,     // 发送方作为"下一页接收方"愿意收的页上限
-    more: Option<bool>,            // 本消息 operations 是否被截断
-    historyGap: Option<Vec<String>>, // 对方要的 sequence 已在 floor 之下、无法回填的 origin
+    protocolVersion: Option<u32>,        // 缺失 = v1 对端
+    have: Option<SyncClock>,             // advisory：发送方时钟（供 floors/historyGap 判定）
+    maxPageBytes: Option<u32>,           // 发送方愿意收的页上限
+    haveOpIds: Option<Vec<String>>,      // 发送方持有的全部操作 id；None = 集合超预算，请回全量分页
+}
+struct ReconciliationOutcome {
+    …同上…, members: Vec<String>,
+    floors: Option<SyncClock>,           // 网关各 origin 的 export floor
+    more: Option<bool>,                  // 本消息 operations 是否被截断
+    historyGap: Option<Vec<String>>,     // 对方要的 sequence 已在 floor 之下、无法回填的 origin
+    haveOpIds: Option<Vec<String>>,      // 网关合并后的完整 id 集合；None = 超预算
 }
 ```
 
-**交换循环（发起方 I，网关 G；每轮双向各带一页）**
+**交换循环（发起方 I，网关 G；每轮双向各带一页，差集按精确 id 集合）**
 
-1. 首轮 offer：`have = H_I`，`operations` 视 G 能力缓存（下述）为**全量**（对端能力未知时，等价今天的行为）或 `operationsSince(H_G上轮)`（首轮为空）。`maxPageBytes` 声明自己能收的页上限。
-2. G 合并 offer（`mergePeerOperations` 语义不变：opId 去重、`originDeviceId == peer`、spaceId 校验），回 outcome：`operations = operationsSince(offer.have)` 按 `offer.maxPageBytes` 截断，`have = H_G`（合并后），`more` 标截断，附自己的 `maxPageBytes` 与 `floors`。
-3. I 合并 outcome；若 `outcome.more == true` 或 `H_G` 未覆盖自己的全部操作，发起下一轮：offer 带 `operationsSince(H_G)` 按 `outcome.maxPageBytes` 截断的一页。循环直至双方 `more == false` 且时钟互相包含。
-4. 对齐副作用（`importDeviceProfiles` / `alignRemoteMemberRecord` / 排除时的 `leave`）幂等，每轮执行或在终止轮执行均可；终止条件未达成而轮次预算（`MAX_RECONCILE_ROUNDS = 32`）耗尽时，返回 `incomplete`，由 availability worker 择机重跑（每轮合并都是幂等前缀推进，中断无部分提交风险——安全性论据写进 PR）。
+1. 首轮 offer：对端能力未知时 `operations` 为**全量**（等价今天的行为，v1 网关照常）；`haveOpIds = I 的完整 id 集合`（超预算则 None）。`maxPageBytes` 声明自己能收的页上限（默认 6KB，受限链路安全）。
+2. G 合并 offer（`mergePeerOperations` 语义不变：opId 去重、`originDeviceId == peer`、spaceId 校验 + 4096/4MB 硬顶），回 outcome：`operations = G 持有且 offer.haveOpIds 未覆盖的差集`按 `offer.maxPageBytes` 截断一页，`more` 标截断，`haveOpIds = G 合并后的完整集合`（超预算 None），附 `maxPageBytes`/`floors`/`historyGap`。
+3. I 合并 outcome；若 `outcome.more == true` 或 I 仍持有 `outcome.haveOpIds` 未覆盖的操作，发起下一轮：offer 带"差集"按 `outcome.maxPageBytes` 截断的一页。循环直至双方 `more == false` 且按集合判定的双向差集为空。
+4. 对齐副作用（`importDeviceProfiles` / `alignRemoteMemberRecord` / 排除时的 `leave`）幂等，循环结束后执行一次；终止条件未达成而轮次预算（`MAX_RECONCILE_ROUNDS = 32`）耗尽时，返回 `converged = false`，由 availability worker 择机重跑（每轮合并都是幂等前缀推进，中断无部分提交风险——安全性论据写进 PR）。
 5. `historyGap` 处理：I 对 gap origin 不再等待回填，行为等同今天（收并集）；doctor 计数器记录。控制域 floor 今天只在 leave 时推进（`markLocalOperationsUnexportable`），gap 语义无害；此判断写进 PR 供 review 复核。
 
 **版本回退与混合舰队（显式声明）**
 
-- 能力缓存：`runtime/link_access/space_reconcile_caps.preferences.json` 记录 peer→v2；首次见到 outcome 带 `protocolVersion = 2` 时写入。
+- 能力缓存：`runtime/link_access/space_reconcile_caps.preferences.json` 记录 peer→v2/v1；outcome 是否带 `protocolVersion = 2` 即判定（v2 网关即使收到 v1 形状的 offer 也回 v2 报文，旧端 serde 忽略未知字段）。
 - 对无缓存 peer：首轮 offer 携带全量（v1 语义，v1 对端照常工作）；若对方是 v2，首轮即完成增量协商，后续对账全增量。**混合舰队语义 = 对新端首触全量、其后增量，对旧端永远全量**；只损失效率，无正确性风险。preview 阶段接受该破坏窗口。
 
 **限流（同 PR）**
 
-- 接收侧：`mergePeerOperations` 增加页级上限——字节数以对方声明的 `maxPageBytes` 为准并设硬顶（`MAX_RECONCILE_PAGE_OPS = 4096`）；超限**拒绝并中止交换**（不再照单全收），计对抗计数器。未知 origin、跨 space 拒绝规则不变。
+- 接收侧：`mergePeerOperations` 增加页级硬顶（`MAX_RECONCILE_PAGE_OPS = 4096` / 4MB）；超限**整页拒绝并中止交换**（不再照单全收），计对抗计数器（doctor `oversizeOffersRefused`）。未知 origin、跨 space 拒绝规则不变。
 - 发送侧：分页产出本身就是上限；对未声明预算的 v1 对端沿用全量（今天的资源压力面不变，不恶化）。
-- 受限链路自适应：`maxPageBytes` 由各端按自身 `PeerRuntimeLimits`（8KB 链路给 ~6KB 预算，留 envelope 余量）声明，解决 ESP32 8KB 下的合法回填。
+- 受限链路自适应：各端默认声明 6KB 页预算（`DEFAULT_RECONCILE_PAGE_BYTES`，8KB 链路留 envelope 余量；RuntimePeerService 不暴露链路上限，故取保守常量而非按 `PeerRuntimeLimits` 自适应——待上游加访问器后可升级），解决 ESP32 8KB 下的合法回填。
+- 集合预算：`haveOpIds` 序列化超 6KB 时降级为 None（= 请发全量分页），差集正确性永不因预算破坏。
 
 **合入门禁**
 
