@@ -565,11 +565,16 @@ mod tests {
         assert_eq!(callRouteKind(&call("ensureRoutedChat")), RoutedCoreRequestKind::SpaceBinding);
         assert!(!crate::generated_space_call_route(&call("ensureRoutedChat")).unwrap().createBindingCapability.is_empty());
         assert_eq!(callRouteKind(&call("createRoutedChat")), RoutedCoreRequestKind::SpaceBinding);
-        for method in ["chatAvailablePlugins", "chatPluginStatus"] {
+        // Metadata reads and diagnostic execution must keep distinct permissions.
+        for (method, permission) in [
+            ("chatAvailablePlugins", "chat.read"),
+            ("chatPluginDetails", "chat.read"),
+            ("chatPluginStatus", "chat.write"),
+        ] {
             let request = call(method);
             assert_eq!(callRouteKind(&request), RoutedCoreRequestKind::SpaceBinding);
             let route = crate::generated_space_call_route(&request).unwrap();
-            assert_eq!(route.permissionCapability, "chat.read");
+            assert_eq!(route.permissionCapability, permission);
             assert!(route.createBindingCapability.is_empty());
         }
         assert!(crate::generated_space_call_route(&call("createRoutedChat")).unwrap().createBindingCapability.is_empty());
