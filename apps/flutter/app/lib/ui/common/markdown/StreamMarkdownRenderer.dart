@@ -48,6 +48,18 @@ String sanitizeUtf16(String value) {
   return buffer.toString();
 }
 
+/// Reports whether a Markdown surface is preparing its first content layout.
+class MarkdownLayoutNotification extends Notification {
+  /// Identifies one surface so containing rows can track nested preparation.
+  const MarkdownLayoutNotification({
+    required this.source,
+    required this.isPending,
+  });
+
+  final Object source;
+  final bool isPending;
+}
+
 class StreamMarkdownRenderer extends StatefulWidget {
   const StreamMarkdownRenderer({
     super.key,
@@ -441,6 +453,16 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     });
   }
 
+  /// Releases the row reservation before this surface leaves its ancestors.
+  @override
+  void deactivate() {
+    MarkdownLayoutNotification(
+      source: this,
+      isPending: false,
+    ).dispatch(context);
+    super.deactivate();
+  }
+
   @override
   void dispose() {
     _renderTimer?.cancel();
@@ -451,6 +473,12 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
   /// Builds the Markdown node column inside a stable selection boundary.
   @override
   Widget build(BuildContext context) {
+    MarkdownLayoutNotification(
+      source: this,
+      isPending:
+          _rendererState.renderNodes.isEmpty &&
+          !_rendererState.streamParsingCompletedSuccessfully,
+    ).dispatch(context);
     final content = _MarkdownNodeColumn(
       nodes: _rendererState.renderNodes,
       rendererId: _rendererId,

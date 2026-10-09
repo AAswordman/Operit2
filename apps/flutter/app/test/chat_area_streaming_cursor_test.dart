@@ -15,6 +15,7 @@ import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRendererState.dart';
 import 'package:operit2/ui/features/chat/components/ChatArea.dart';
+import 'package:operit2/ui/features/chat/components/ChatMessageExtent.dart';
 import 'package:operit2/ui/features/chat/components/ChatScrollNavigator.dart';
 import 'package:operit2/ui/features/chat/components/part/StructuredMessagePartRenderer.dart';
 import 'package:operit2/ui/features/chat/components/part/ThinkToolsXmlNodeGrouper.dart';
@@ -26,6 +27,180 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Verifies transcript rendering and scroll ownership across asynchronous updates.
 void main() {
+  testWidgets(
+    'keeps measured scroll extent stable during a manual upward drag',
+    (tester) async {
+      final scrollController = ScrollController();
+      final autoScrollToBottom = ValueNotifier<bool>(false);
+      addTearDown(scrollController.dispose);
+      addTearDown(autoScrollToBottom.dispose);
+      final messages = List.generate(
+        18,
+        (index) => _heightTestMessage(index, lines: index % 4 == 0 ? 20 : 1),
+      );
+      await tester.pumpWidget(
+        _chatArea(
+          messages: messages,
+          isLoading: false,
+          scrollController: scrollController,
+          autoScrollToBottom: autoScrollToBottom,
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (var step = 0; step < 100; step++) {
+        final position = scrollController.position;
+        if (position.extentAfter < 1) {
+          break;
+        }
+        scrollController.jumpTo(
+          (position.pixels + 120).clamp(0, position.maxScrollExtent),
+        );
+        await tester.pumpAndSettle();
+      }
+      expect(scrollController.position.extentAfter, lessThan(1));
+      final measuredBottom = scrollController.position.maxScrollExtent;
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byType(CustomScrollView)),
+      );
+      for (var step = 0; step < 18; step++) {
+        await gesture.moveBy(const Offset(0, 60));
+        await tester.pump();
+        expect(
+          scrollController.position.maxScrollExtent,
+          closeTo(measuredBottom, 1),
+          reason: 'Measured rows must not be replaced by a visible-row average',
+        );
+      }
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(autoScrollToBottom.value, isFalse);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'keeps the manual viewport fixed while an earlier row changes height',
+    (tester) async {
+      final scrollController = ScrollController();
+      final autoScrollToBottom = ValueNotifier<bool>(false);
+      final changedContent = Completer<List<MarkdownStreamEvent>>();
+      addTearDown(scrollController.dispose);
+      addTearDown(autoScrollToBottom.dispose);
+      final messages = List.generate(
+        12,
+        (index) => _heightTestMessage(100 + index, lines: 5),
+      );
+
+      /// Hosts the same transcript while delaying the edited first row's parsing.
+      Widget transcript(List<ChatUiMessage> rows) => _chatArea(
+        messages: rows,
+        isLoading: false,
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+        splitMarkdownContent: (content) => content == 'height-test-edited'
+            ? changedContent.future
+            : _splitMarkdownContent(content),
+      );
+
+      await tester.pumpWidget(transcript(messages));
+      await tester.pumpAndSettle();
+      final target = find.byWidgetPredicate(
+        (widget) =>
+            widget is CursorStyleChatMessage &&
+            widget.message.timestamp == messages[1].timestamp,
+      );
+      final viewportTop = tester.getTopLeft(find.byType(CustomScrollView)).dy;
+      scrollController.jumpTo(tester.getTopLeft(target).dy - viewportTop - 40);
+      await tester.pumpAndSettle();
+      final targetTop = tester.getTopLeft(target).dy;
+      final previousOffset = scrollController.offset;
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byType(CustomScrollView)),
+      );
+      final edited = _heightTestMessageWithContent(100, 'height-test-edited');
+      await tester.pumpWidget(transcript([edited, ...messages.skip(1)]));
+      await tester.pump();
+      expect(tester.getTopLeft(target).dy, closeTo(targetTop, 1));
+      expect(scrollController.offset, closeTo(previousOffset, 1));
+      changedContent.complete([
+        _markdownBlockStart(),
+        _markdownBlockChunk(List.filled(24, 'Expanded earlier row').join('\n')),
+        _markdownCompleted(),
+      ]);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.getTopLeft(target).dy, closeTo(targetTop, 1));
+      expect(scrollController.offset, greaterThan(previousOffset));
+      await gesture.moveBy(const Offset(0, 60));
+      await tester.pump();
+      final dragOffset = scrollController.offset;
+      await gesture.moveBy(const Offset(0, 60));
+      await tester.pump();
+      expect(scrollController.offset, closeTo(dragOffset - 60, 1));
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(autoScrollToBottom.value, isFalse);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('retains row distance across display-window changes', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(false);
+    final pending = Completer<List<MarkdownStreamEvent>>();
+    addTearDown(scrollController.dispose);
+    addTearDown(autoScrollToBottom.dispose);
+
+    /// Renders one window without changing the chat's stable identity.
+    Widget window(ChatUiMessage message) => _chatArea(
+      message: message,
+      isLoading: false,
+      scrollController: scrollController,
+      autoScrollToBottom: autoScrollToBottom,
+      splitMarkdownContent: (content) => content == 'window-height-delayed'
+          ? pending.future
+          : _splitMarkdownContent(content),
+    );
+
+    await tester.pumpWidget(window(_heightTestMessage(200, lines: 15)));
+    await tester.pumpAndSettle();
+    final originalExtent = tester
+        .widget<ChatMessageExtentBox>(find.byType(ChatMessageExtentBox))
+        .extent;
+    final originalHeight = tester
+        .getSize(find.byType(ChatMessageExtentBox))
+        .height;
+    await tester.pumpWidget(window(_heightTestMessage(201)));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      window(_heightTestMessageWithContent(200, 'window-height-delayed')),
+    );
+    expect(
+      tester
+          .widget<ChatMessageExtentBox>(find.byType(ChatMessageExtentBox))
+          .extent,
+      same(originalExtent),
+    );
+    expect(
+      tester.getSize(find.byType(ChatMessageExtentBox)).height,
+      originalHeight,
+    );
+    pending.complete([
+      _markdownBlockStart(),
+      _markdownBlockChunk('Shortened window message'),
+      _markdownCompleted(),
+    ]);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byType(ChatMessageExtentBox)).height,
+      lessThan(originalHeight),
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('keeps following disabled when scrolling away from the bottom', (
     tester,
   ) async {
@@ -2042,6 +2217,33 @@ Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
     _markdownBlockChunk(content),
     _markdownCompleted(),
   ];
+}
+
+/// Creates a completed row with distinct content for height-cache regressions.
+ChatUiMessage _heightTestMessage(int index, {int lines = 1}) {
+  return _heightTestMessageWithContent(
+    index,
+    List.generate(lines, (line) => 'Height row $index line $line').join('\n'),
+  );
+}
+
+/// Creates a completed height-test row with an explicit Markdown payload.
+ChatUiMessage _heightTestMessageWithContent(int index, String content) {
+  return _aiMessage(
+    timestamp: 80000 + index,
+    completedAt: 1,
+    parts: [
+      MessagePart(
+        partId: 'height-part-$index',
+        sequence: 0,
+        kind: MessagePartKind.markdown,
+        content: content,
+        toolCallId: null,
+        toolName: null,
+        attributes: const {},
+      ),
+    ],
+  );
 }
 
 /// Creates the active AI message used to verify transcript cursor ownership.

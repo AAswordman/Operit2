@@ -14,6 +14,7 @@ import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'ChatLayoutMetrics.dart';
+import 'ChatMessageExtent.dart';
 import 'MessageContextMenu.dart';
 import 'MessageCopyPreview.dart';
 import 'ChatScrollNavigator.dart';
@@ -115,6 +116,7 @@ class _ChatAreaState extends State<ChatArea>
     with SingleTickerProviderStateMixin {
   final GlobalKey _viewportKey = GlobalKey();
   final Map<int, GlobalKey> _messageKeys = <int, GlobalKey>{};
+  final Map<Key, ChatMessageExtent> _rowExtents = <Key, ChatMessageExtent>{};
   final ValueNotifier<Map<int, ChatScrollMessageAnchor>>
   _messageAnchorsNotifier = ValueNotifier<Map<int, ChatScrollMessageAnchor>>(
     const <int, ChatScrollMessageAnchor>{},
@@ -173,6 +175,7 @@ class _ChatAreaState extends State<ChatArea>
         (showLoadingIndicator || widget.errorMessage != null ? 1 : 0);
 
     if (itemCount == 0) {
+      _disposeRowExtents();
       return ValueListenableBuilder<bool>(
         valueListenable: newChatIntroActive,
         builder: (context, introActive, _) =>
@@ -180,6 +183,14 @@ class _ChatAreaState extends State<ChatArea>
       );
     }
 
+    final messageStartIndex = widget.hasOlderDisplayHistory ? 1 : 0;
+    final messageEndIndex = messageStartIndex + widget.messages.length;
+    final rowExtents = List<ChatMessageExtent>.generate(itemCount, (index) {
+      final key = _extentKeyForIndex(index, messageStartIndex, messageEndIndex);
+      final extent = _rowExtents.putIfAbsent(key, ChatMessageExtent.new);
+      extent.updateTrailingSpacing(index == itemCount - 1 ? 0 : 8);
+      return extent;
+    }, growable: false);
     final anchorIndex = widget.messages.indexWhere(
       (message) => message.timestamp == _layoutAnchorTimestamp,
     );
@@ -216,8 +227,13 @@ class _ChatAreaState extends State<ChatArea>
                     if (centerIndex > 0)
                       SliverPadding(
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                        sliver: SliverList.builder(
-                          itemCount: centerIndex,
+                        sliver: ChatMessageSliverList(
+                          extents: rowExtents
+                              .take(centerIndex)
+                              .toList()
+                              .reversed
+                              .toList(),
+                          preserveViewport: _shouldPreserveManualViewport,
                           itemBuilder: (context, index) =>
                               _buildListRow(centerIndex - index - 1, itemCount),
                         ),
@@ -230,8 +246,9 @@ class _ChatAreaState extends State<ChatArea>
                         16,
                         16 + widget.bottomContentInset,
                       ),
-                      sliver: SliverList.builder(
-                        itemCount: itemCount - centerIndex,
+                      sliver: ChatMessageSliverList(
+                        extents: rowExtents.skip(centerIndex).toList(),
+                        preserveViewport: _shouldPreserveManualViewport,
                         itemBuilder: (context, index) =>
                             _buildListRow(centerIndex + index, itemCount),
                       ),
@@ -341,17 +358,24 @@ class _ChatAreaState extends State<ChatArea>
         child: StreamingCursor(),
       );
     }
-    return Padding(
-      key: ValueKey<Key>(
-        _rowKeyForIndex(index, messageStartIndex, messageEndIndex),
-      ),
-      padding: EdgeInsets.only(bottom: index == itemCount - 1 ? 0 : 8),
-      child: SizeChangedLayoutNotifier(
-        key: _rowKeyForIndex(index, messageStartIndex, messageEndIndex),
-        child: _LiveBottomStreamSizeObserver(
-          observesGrowth: observesLiveBottomGrowth,
-          onSizeGrown: _scheduleBottomFollow,
-          child: _ChatAreaContentColumn(child: child),
+    final rowKey = _rowKeyForIndex(index, messageStartIndex, messageEndIndex);
+    return observeChatMessageExtent(
+      key: ValueKey<Key>(rowKey),
+      extent:
+          _rowExtents[_extentKeyForIndex(
+            index,
+            messageStartIndex,
+            messageEndIndex,
+          )]!,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: index == itemCount - 1 ? 0 : 8),
+        child: SizeChangedLayoutNotifier(
+          key: rowKey,
+          child: _LiveBottomStreamSizeObserver(
+            observesGrowth: observesLiveBottomGrowth,
+            onSizeGrown: _scheduleBottomFollow,
+            child: _ChatAreaContentColumn(child: child),
+          ),
         ),
       ),
     );
@@ -548,6 +572,12 @@ class _ChatAreaState extends State<ChatArea>
         widget.autoScrollToBottomListenable.value &&
         !widget.hasNewerDisplayHistory &&
         !widget.isLoadingDisplayWindow;
+  }
+
+  /// Preserves visible message geometry while the user owns transcript scrolling.
+  bool _shouldPreserveManualViewport() {
+    return !widget.autoScrollToBottomListenable.value ||
+        _activeUserScrollPointers.isNotEmpty;
   }
 
   /// Aligns static history before paint without taking over live output following.
@@ -810,6 +840,20 @@ class _ChatAreaState extends State<ChatArea>
     return _messageKeys.putIfAbsent(timestamp, GlobalKey.new);
   }
 
+  /// Keeps measurements keyed by timestamps across display-window changes.
+  Key _extentKeyForIndex(
+    int index,
+    int messageStartIndex,
+    int messageEndIndex,
+  ) {
+    if (index >= messageStartIndex && index < messageEndIndex) {
+      return ValueKey<int>(
+        widget.messages[index - messageStartIndex].timestamp,
+      );
+    }
+    return _rowKeyForIndex(index, messageStartIndex, messageEndIndex);
+  }
+
   /// Identifies message and action rows independently of their list index.
   Key _rowKeyForIndex(int index, int messageStartIndex, int messageEndIndex) {
     if (index >= messageStartIndex && index < messageEndIndex) {
@@ -837,6 +881,7 @@ class _ChatAreaState extends State<ChatArea>
       _lastScrollMaxExtent = null;
       _messageKeys.clear();
       _messageRowCache.clear();
+      _disposeRowExtents();
       _messageAnchorsNotifier.value = const <int, ChatScrollMessageAnchor>{};
       _showNavigatorChipNotifier.value = false;
       _userScrollSessionActive = false;
@@ -884,6 +929,24 @@ class _ChatAreaState extends State<ChatArea>
     );
   }
 
+  /// Releases measurements after their old row render trees have detached.
+  void _releaseRowExtents(List<ChatMessageExtent> extents) {
+    if (extents.isEmpty) {
+      return;
+    }
+    scheduleMicrotask(() {
+      for (final extent in extents) {
+        extent.dispose();
+      }
+    });
+  }
+
+  /// Retires all measurements when their chat identity leaves the transcript.
+  void _disposeRowExtents() {
+    _releaseRowExtents(_rowExtents.values.toList());
+    _rowExtents.clear();
+  }
+
   /// Releases timers, cached rows, and navigation state.
   @override
   void dispose() {
@@ -898,6 +961,7 @@ class _ChatAreaState extends State<ChatArea>
     _showNavigatorChipNotifier.dispose();
     _messageKeys.clear();
     _messageRowCache.clear();
+    _disposeRowExtents();
     super.dispose();
   }
 
