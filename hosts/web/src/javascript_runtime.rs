@@ -41,6 +41,46 @@ impl WebHostJavaScriptRuntime {
         Ok(())
     }
 
+    /// Creates callback arguments as data, including safe own properties such as
+    /// __proto__. No JSON source or dynamically generated script is evaluated.
+    fn callbackValue<'a>(
+        &'a self,
+        value: &serde_json::Value,
+        depth: usize,
+        nodes: &mut usize,
+    ) -> anyhow::Result<QuickJsValueRef<'a>> {
+        *nodes += 1;
+        if depth > 128 || *nodes > 1_000_000 {
+            anyhow::bail!("JavaScript callback exceeds structured bridge depth/node limit");
+        }
+        match value {
+            serde_json::Value::Null => self.context.null_value(),
+            serde_json::Value::Bool(value) => self.context.value_from_bool(*value),
+            serde_json::Value::Number(value) => self
+                .context
+                .value_from_f64(value.as_f64().unwrap_or(f64::NAN)),
+            serde_json::Value::String(value) => self.context.value_from_str(value),
+            serde_json::Value::Array(values) => {
+                let array = self.context.array_value()?;
+                for (index, value) in values.iter().enumerate() {
+                    array.set_property(
+                        index.to_string(),
+                        self.callbackValue(value, depth + 1, nodes)?,
+                    )?;
+                }
+                Ok(array)
+            }
+            serde_json::Value::Object(values) => {
+                let object = self.context.object_value()?;
+                for (key, value) in values {
+                    object
+                        .set_property(key.as_str(), self.callbackValue(value, depth + 1, nodes)?)?;
+                }
+                Ok(object)
+            }
+        }
+    }
+
     /// Converts one QuickJS callback argument to its string representation.
     fn callbackArgument(args: &[QuickJsValueRef], index: usize) -> String {
         args[index].to_string()
@@ -89,6 +129,38 @@ impl HostJavaScriptRuntime for WebHostJavaScriptRuntime {
     ) -> HostResult<()> {
         self.interruptHandler = handler;
         Ok(())
+    }
+
+    /// Delivers legacy string callbacks using JS_Call, never source evaluation.
+    fn callHostJavaScriptFunction(
+        &mut self,
+        name: &str,
+        arguments: &[serde_json::Value],
+    ) -> HostResult<()> {
+        self.ensureExecutionActive()?;
+        let global = self
+            .context
+            .global_object()
+            .map_err(|e| HostError::new(e.to_string()))?;
+        let function = global
+            .get_property(name)
+            .map_err(|e| HostError::new(e.to_string()))?;
+        if function.is_function() {
+            let mut nodes = 0;
+            let args = arguments
+                .iter()
+                .map(|value| self.callbackValue(value, 0, &mut nodes))
+                .collect::<anyhow::Result<Vec<_>>>()
+                .map_err(|e| HostError::new(e.to_string()))?;
+            let receiver = self
+                .context
+                .undefined_value()
+                .map_err(|e| HostError::new(e.to_string()))?;
+            function
+                .call(&receiver, &args)
+                .map_err(|e| HostError::new(e.to_string()))?;
+        }
+        self.ensureExecutionActive()
     }
 
     /// Registers one browser QuickJS global function returning a string.

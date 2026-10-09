@@ -432,3 +432,73 @@ async fn gateway_rejects_a_submission_whose_source_equals_the_target_space() {
     // The rejected submission leaves no durable inbound record behind.
     assert!(protocolRecords(&pair.b, INBOUND_RECORDS).is_empty());
 }
+
+/// Leaving is local, so a target that keeps hosting its Space still holds the
+/// earlier admission. A re-application from the forked source Space must
+/// retire that stale record and go through a fresh review instead of being
+/// blocked forever.
+#[tokio::test]
+async fn rejoin_after_only_the_applicant_leaves_starts_a_fresh_review() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (macRouter, mac) = approvalService("rejoin-mac");
+    let (iosRouter, ios) = approvalService("rejoin-ios");
+    let _link = installTestPeer(
+        &macRouter,
+        iosRouter.localNodeId(),
+        TestCoreNodeRouterEndpoint::new(iosRouter.clone()),
+    )
+    .unwrap();
+    let first = mac
+        .requestDeviceSpaceJoin("rejoin-ios".into())
+        .await
+        .unwrap();
+    ios.incomingDeviceSpaceJoins().await.unwrap();
+    ios.decideDeviceSpaceJoin(first.requestId.clone(), first.assignmentVersion, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        mac.refreshDeviceSpaceJoin(first.requestId.clone())
+            .await
+            .unwrap()
+            .status,
+        SpaceJoinStatus::Joined
+    );
+    // Only the applicant leaves; the target keeps hosting the same Space.
+    let targetSpace = ios.deviceSpace().unwrap();
+    mac.leaveDeviceSpace().unwrap();
+    assert_eq!(ios.deviceSpace().unwrap(), targetSpace);
+    // The stale admission is retired, so the new application is accepted...
+    let second = mac
+        .requestDeviceSpaceJoin("rejoin-ios".into())
+        .await
+        .unwrap();
+    assert_eq!(second.status, SpaceJoinStatus::Pending);
+    assert_ne!(second.requestId, first.requestId);
+    assert_eq!(second.reviewerDeviceId.as_deref(), Some("rejoin-ios"));
+    // ...but the retired admission can no longer be decided.
+    assert!(ios
+        .decideDeviceSpaceJoin(
+            first.requestId.clone(),
+            first.assignmentVersion,
+            true
+        )
+        .await
+        .is_err());
+    // Membership still needs an explicit approval of the fresh application.
+    let incoming = ios.incomingDeviceSpaceJoins().await.unwrap();
+    assert_eq!(incoming.len(), 1);
+    assert_eq!(incoming[0].requestId, second.requestId);
+    assert!(incoming[0].canApprove);
+    ios.decideDeviceSpaceJoin(second.requestId.clone(), second.assignmentVersion, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        mac.refreshDeviceSpaceJoin(second.requestId)
+            .await
+            .unwrap()
+            .status,
+        SpaceJoinStatus::Joined
+    );
+    assert_eq!(mac.deviceSpace().unwrap().spaceId, targetSpace.spaceId);
+}
