@@ -113,7 +113,30 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
           const input = JSON.parse(body);
           providerRequests.push(input);
           const prompt = JSON.stringify(input.messages);
-          const text = prompt.includes('SIM_RECONNECT') ? 'SIM_RECONNECT_OK' : 'SIM_CHAT_OK';
+          // XML tool results also arrive as user turns; do not mistake them
+          // for the user's latest request when selecting the fixture response.
+          const lastUserIndex = input.messages.findLastIndex(message =>
+            message.role === 'user' && !String(message.content).includes('status=') &&
+            /SIM_(CHAT|RECONNECT|CORE_PLUGIN)/.test(JSON.stringify(message.content)));
+          const lastUser = input.messages[lastUserIndex];
+          const pluginTurn = JSON.stringify(lastUser?.content ?? '').includes('SIM_CORE_PLUGIN');
+          let text = prompt.includes('SIM_RECONNECT') ? 'SIM_RECONNECT_OK' : 'SIM_CHAT_OK';
+          if (pluginTurn) {
+            // The provider requests a tool; only Core may execute it. Never
+            // substitute a fixture date or call the plugin from this server.
+            const followup = input.messages.slice(lastUserIndex + 1)
+              .map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content)).join('\n');
+            const result = followup.match(/<[^>]+\bname="daily_life:get_current_date"[^>]*\bstatus="success"[^>]*>([\s\S]*?)<\//);
+            if (result) {
+              const date = JSON.parse(result[1].replace(/^<content>/, ''));
+              assert.equal(typeof date.iso, 'string', 'Core tool result must contain the actual date');
+              text = 'SIM_CORE_PLUGIN_OK ' + date.iso;
+            } else {
+              assert(!followup.includes('name="daily_life:get_current_date"'),
+                'the plugin must execute successfully before a model follow-up');
+              text = '<tool name="daily_life:get_current_date"></tool>';
+            }
+          }
           if (input.stream) {
             res.writeHead(200, {'Content-Type': 'text/event-stream'});
             for (const content of [text.slice(0, 4), text.slice(4)]) {
@@ -218,6 +241,21 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
       messages.forEach((message,index)=>call('set_message',['number','number','string'],
         [index,message.sender==='user'?1:0,message.text]));
       call('finish_messages',['number'],[messages.length]);
+      const plugins=device.plugins ?? {};
+      call('set_plugin_category',['number'],[plugins.category==='exclusive'?1:0]);
+      (plugins.items ?? []).slice(0,6).forEach((item,index)=>{
+        call('set_plugin',['number','string','string','number','number'],[index,item.id,item.name,
+          item.status==='probing'?1:item.status==='success'?2:item.status==='failure'?3:0,item.latencyMs??0]);
+        call('set_plugin_test',['number','number','number','string'],[index,
+          item.toolStatus==='probing'?1:item.toolStatus==='success'?2:item.toolStatus==='failure'?3:0,
+          item.toolLatencyMs??0,item.testError??'']);
+      });
+      const details=plugins.details??{};
+      call('set_plugin_details',['string','string','string','number','number','number','string'],
+        [details.id??'',details.description??'',(details.tools??[]).join('\n'),details.toolOffset??0,details.toolTotal??0,details.loading?1:0,details.error??'']);
+      call('set_plugin_testing',['number'],[plugins.testing?1:0]);
+      call('finish_plugins',['number','number','number','number','string'],
+        [(plugins.items??[]).length,plugins.offset??0,plugins.total??0,plugins.loading?1:0,plugins.error??'']);
       call('set_chat_screen', ['string'], [device.chatScreen]);
       call('set_chat_task', ['string'], [device.chatTask]);
       call('set_paired', ['number'], [device.paired ? 1 : 0]);
@@ -243,6 +281,9 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     await startCore();
     const first = await startEdge();
     const node = first.device.deviceId;
+    const edgePortArgs={node_id:node,interface_info:{pluginId:'device.status',action:'read'},args:{}};
+    await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]),
+      'plugin port API must not pair, route to a guessed address, or grant access to an unadmitted node');
     const pairing = await core.command(['pair-start', node, first.device.address, 'tcp', '--token', first.token]);
     await update();
     assert.equal(screen().page, 'Pairing');
@@ -258,7 +299,58 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     const former = await core.command(['space', 'show']);
     assert(former.members.includes(node));
     t.diagnostic('paired using the C-rendered screen code; first UI approval completed');
-    await waitDevice('automatic chat route installation after admission', device => device.chat.connected);
+    const initialChat = await waitDevice('automatic remote chat provisioning after admission',
+      device => device.chat.connected && device.chat.chatId && !device.chat.initializing && !device.chat.error);
+    assert.match(initialChat.chat.chatId, /^[0-9a-f-]{36}$/i, 'first admitted session has a valid nonempty chat ID');
+    t.diagnostic('first chat was provisioned through Core before message/state subscriptions opened');
+    const edgePort=await core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]);
+    assert.equal(edgePort.success,true);assert.equal(edgePort.result.nodeId,node);
+    assert.equal(edgePort.result.data.boardId,'ESP32-2432S028-SIM');
+    await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify({...edgePortArgs,
+      interface_info:{pluginId:'device.status',action:'undeclared'}})]),/not declared|not found/i);
+    await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify({...edgePortArgs,
+      interface_info:{target:'core.internal',methodName:'erase'}})]),/interface/i);
+    await assert.rejects(()=>core.command(['core','tool','exec','io_execute',JSON.stringify({node_id:node,
+      interface_info:{port:'serial',operation:'read'},args:{}})]),/serial|unsupported/i);
+    await assert.rejects(()=>core.command(['core','tool','exec','io_execute',JSON.stringify({node_id:node,
+      interface_info:{port:'gpio',operation:'read'},args:{pin:2}})]),/unavailable|not available|missing|not configured|not installed|unsupported/i,
+      'simulator without a DeviceIoHost must not pretend it read a physical GPIO');
+    t.diagnostic('Core plugin hardware executors route to the real Edge native action and reject unpaired nodes, undeclared actions, RPC injection, unsupported serial and absent GPIO Host');
+
+    // Execute the public APIs from a real Core JavaScript package, not just
+    // through CLI built-in tool calls or a mocked JS execution host.
+    const fixture = path.join(directory, 'edge_ports_fixture.js');
+    const fixtureMetadata = {name:'edge_ports_fixture', description:'Isolated hardware SDK integration test',
+      enabledByDefault:true, tools:[{name:'probe', description:'Read a declared Edge native action',
+        parameters:[{name:'node_id',description:'Explicit Edge node',type:'string',required:true}]}]};
+    await writeFile(fixture, `/* METADATA
+${JSON.stringify(fixtureMetadata)}
+*/
+      exports.probe = async function(params) {
+        const response = await tools.edge.execute(params.node_id, {pluginId:'device.status',action:'read'}, {});
+        let unsupported = '';
+        try { await tools.io.execute(params.node_id, {port:'serial',operation:'read'}, {}); }
+        catch(error) { unsupported = String(error.message || error); }
+        let missingHost = '';
+        try { await tools.io.execute(params.node_id, {port:'gpio',operation:'read'}, {pin:2}); }
+        catch(error) { missingHost = String(error.message || error); }
+        return {nodeId:response.nodeId, boardId:response.data.boardId, sameAlias:tools === Tools, unsupported, missingHost};
+      };
+    `);
+    await core.command(['core','package','import',fixture]);
+    try {
+      const probe = await core.command(['core','package','exec','edge_ports_fixture:probe',JSON.stringify({node_id:node})]);
+      assert.equal(probe.success,true);
+      const payload = probe.result?.value ?? probe.result;
+      const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
+      assert.equal(data.nodeId,node); assert.equal(data.boardId,'ESP32-2432S028-SIM');
+      assert.equal(data.sameAlias,true); assert.match(data.unsupported,/serial|unsupported/i);
+      assert.match(data.missingHost,/device I.O Host API is not installed/i);
+    } finally {
+      await core.command(['core','package','delete','edge_ports_fixture']);
+    }
+    t.diagnostic('Real Core JS package -> tools.edge/tools.io -> existing tool runtime -> authenticated Edge action passed');
+
     const provider = await core.command(['core', 'model', 'provider-create', 'Simulator deterministic provider',
       'OPENAI_GENERIC', base + '/v1/chat/completions']);
     await core.command(['core', 'model', 'provider-set-key', provider.providerId, 'isolated-test-key']);
@@ -266,7 +358,7 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     await core.command(['core', 'model', 'use', provider.providerId, 'sim-model']);
     // Create through the real rendered button; send via the editor's public API.
     await update(); call('navigate_home'); await tap('sidebar_toggle'); await tap('sidebar_settings'); await tap('settings_device'); await tap('edge_new');
-    const created = await waitDevice('Edge-created chat', device => device.chat.chatId && !device.chat.sending);
+    const created = await waitDevice('Edge-created chat', device => device.chat.chatId && device.chat.chatId !== initialChat.chat.chatId && !device.chat.sending);
     const chatId = created.chat.chatId;
     await post('/api/simulator/send', {text: 'SIM_CHAT'});
     const firstReply = await waitDevice('first streamed reply', device =>
@@ -283,15 +375,121 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     const stored = await core.command(['core', 'chat', 'show', chatId]);
     assert(JSON.stringify(stored).includes('SIM_CHAT_OK'), 'reply must be stored on Core, not fabricated by simulator');
     t.diagnostic('automatic Space chat route, rendered new-chat action, Edge send and real Core streamed reply passed (local deterministic provider)');
+    // Exercise the same Edge send/Binding route with a real bundled Core
+    // ToolPkg. Inspect structured persisted parts, not just a model's claim.
+    const beforePlugin = providerRequests.length;
+    await post('/api/simulator/send', {text: 'SIM_CORE_PLUGIN: call the Core daily-life date plugin'});
+    const pluginReply = await waitDevice('Core plugin result on Edge', device =>
+      device.chat.messages.some(message => message.text.includes('SIM_CORE_PLUGIN_OK ')) &&
+      device.chat.messages.some(message => message.text.includes('\x1eS|daily_life:get_current_date\x1f')) && !device.chat.generating);
+    assert.equal(pluginReply.chat.error, null);
+    assert.equal(pluginReply.chat.sending, false);
+    assert.equal(providerRequests.length - beforePlugin, 2, 'tool request and model follow-up must both run');
+    const pluginStored = await core.command(['core', 'chat', 'show', chatId]);
+    const pluginMessage = pluginStored.messages.find(message => message.parts.some(part =>
+      part.kind === 'tool_result' && part.toolName === 'daily_life:get_current_date'));
+    assert(pluginMessage, 'real plugin result must be persisted in the Core chat');
+    const toolResult = pluginMessage.parts.find(part => part.kind === 'tool_result' && part.toolName === 'daily_life:get_current_date');
+    assert.equal(toolResult.attributes.status, 'success');
+    const pluginDate = JSON.parse(toolResult.content);
+    assert.equal(new Date(pluginDate.timestamp).toISOString(), pluginDate.iso);
+    assert(pluginReply.chat.messages.some(message => message.text.includes('SIM_CORE_PLUGIN_OK ' + pluginDate.iso)),
+      'Edge must display the actual Core plugin result');
+    assert(pluginMessage.completedAt > 0 && pluginMessage.contentStream === null, 'plugin turn must finish and persist');
+    assert(pluginMessage.parts.some(part => part.kind === 'tool_call' && part.toolName === 'daily_life:get_current_date'));
+    await update();
+    assert(screen().nodes.find(node => node.id === 'chat_text').text.includes('SIM_CORE_PLUGIN_OK'),
+      'plugin reply must reach the rendered Edge UI');
+    assert(screen().toolCards.some(card => card.icon === 'plugin' && card.name === 'daily_life:get_current_date' && card.status === '成功'),
+      'real Core tool execution must render as a named plugin card with success status');
+    assert(!JSON.stringify(pluginReply.chat.messages).includes('\\"timestamp\\"'), 'raw tool result JSON must not enter Edge display rows');
+    t.diagnostic('Edge chat triggered the real Core daily_life plugin; named success card rendered without raw tool payloads');
+    await update();await tap('sidebar_toggle');await tap('sidebar_plugins');
+    const pluginList=await waitDevice('enabled Core plugins in Edge page',device=>
+      device.plugins?.items?.some(item=>item.id==='com.operit.daily_life')&&!device.plugins.loading);
+    const enabledPlugins=(await core.command(['core','plugin','list'])).filter(item=>item.enabled);
+    assert.deepEqual(pluginList.plugins.items.map(item=>item.id).sort(),enabledPlugins.map(item=>item.name).sort());
+    assert(!pluginList.plugins.items.some(item=>item.id==='com.operit.workflow'),'disabled plugins are not shown');
+    await update();const pluginNodes=screen().nodes.filter(item=>item.id.startsWith('plugin_probe_'));
+    assert.equal(new Set(pluginNodes.map(item=>item.rect.x)).size,2);
+    const pluginIndex=pluginList.plugins.items.findIndex(item=>item.id==='com.operit.daily_life');
+    await tap('plugin_probe_'+pluginIndex);
+    assert.equal(screen().pluginDialogOpen,true);
+    const metadata=await waitDevice('bounded Core package details',device=>device.plugins.details?.id==='com.operit.daily_life'&&!device.plugins.details.loading);
+    assert(metadata.plugins.details.description.length>0);
+    assert.equal(metadata.plugins.details.tools.length,3,'tools are paginated, not copied wholesale');
+    assert(metadata.plugins.details.toolTotal>=4);
+    assert(metadata.plugins.details.tools.every(tool=>typeof tool==='string'&&!tool.includes('function')));
+    await update();assert.match(screen().nodes.find(n=>n.id==='plugin_info').text,/包 ID: com.operit.daily_life/);
+    await tap('plugin_tools_next');
+    await waitDevice('second bounded Core tool page',device=>!device.plugins.details.loading&&device.plugins.details.toolOffset===3);
+    await update();await tap('plugin_tools_prev');
+    await waitDevice('first Core tool page restored',device=>!device.plugins.details.loading&&device.plugins.details.toolOffset===0);
+    await update();await tap('plugin_test_connection');
+    const probe=await waitDevice('Core plugin availability probe',device=>
+      device.plugins.items[pluginIndex]?.status==='success');
+    assert(probe.plugins.items[pluginIndex].latencyMs>=0);
+    await update();await tap('plugin_test_tool');
+    const toolProbe=await waitDevice('real plugin diagnostic tool call',device=>
+      device.plugins.items[pluginIndex]?.toolStatus==='success');
+    assert(toolProbe.plugins.items[pluginIndex].toolLatencyMs>=0);
+    await update();assert(screen().nodes.find(n=>n.id==='plugin_tool_result').text.includes('成功'));
+    await tap('plugin_dialog_close');
+    await tap('plugins_test_all');
+    const batch=await waitDevice('all enabled plugin connection functions executed',device=>
+      !device.plugins.testing&&device.plugins.tested===enabledPlugins.length);
+    assert.equal(batch.plugins.failed,0);
+    const uiOnlyIndex=batch.plugins.items.findIndex(item=>item.id==='com.operit.thinking_guidance');
+    await update();await tap('plugin_probe_'+uiOnlyIndex);
+    const noTool=await waitDevice('UI-only plugin metadata has no business tools',device=>
+      device.plugins.details?.id==='com.operit.thinking_guidance'&&!device.plugins.details.loading);
+    assert.equal(noTool.plugins.details.toolTotal,0);
+    await update();assert(!screen().nodes.some(n=>n.id==='plugin_test_tool'));
+    assert(!screen().nodes.find(n=>n.id==='plugin_info').text.includes('工具:'));
+    await tap('plugin_dialog_close');
+    await tap('plugins_exclusive');
+    await waitDevice('exclusive tab is an explicit empty category',device=>device.plugins.category==='exclusive'&&!device.plugins.loading&&device.plugins.total===0);
+    await update();assert.equal(screen().pluginCategory,'exclusive');
+    assert.match(screen().nodes.find(n=>n.id==='plugins_empty').text,/专属/);
+    await tap('plugins_general');
+    await waitDevice('general tab restores enabled Core packages',device=>device.plugins.category==='general'&&!device.plugins.loading&&device.plugins.total===enabledPlugins.length);
+    await update();
+    // Stale enabled row must turn red if the Core disabled it in the meantime.
+    await core.command(['core','plugin','disable','com.operit.daily_life']);
+    await update();await tap('plugin_probe_'+pluginIndex);
+    await waitDevice('disabled package metadata reports bounded error',device=>device.plugins.details?.id==='com.operit.daily_life'&&!device.plugins.details.loading);
+    await update();await tap('plugin_test_connection');
+    const failedProbe=await waitDevice('disabled plugin probe failure',device=>
+      device.plugins.items[pluginIndex]?.status==='failure');
+    assert(failedProbe.plugins.items[pluginIndex].latencyMs>=0);
+    // A package change may also reopen Core chat watches. Paint the exact
+    // acknowledged probe projection rather than racing that next session.
+    failedProbe.plugins.items.forEach((item,index)=>call('set_plugin',
+      ['number','string','string','number','number'],[index,item.id,item.name,
+        item.status==='success'?2:item.status==='failure'?3:0,item.latencyMs??0]));
+    call('finish_plugins',['number','number','number','number','string'],
+      [failedProbe.plugins.items.length,failedProbe.plugins.offset,failedProbe.plugins.total,0,'']);
+    call('set_plugin_test',['number','number','number','string'],[pluginIndex,0,0,'']);
+    if(screen().pluginDialogOpen)call('debug_tap',['string'],['plugin_dialog_close']);
+    const failedNode=screen().nodes.find(item=>item.id==='plugin_probe_'+pluginIndex);
+    assert(failedNode,'failed plugin row must stay visible: '+JSON.stringify(screen()));
+    assert.equal(failedNode.probeState,3);
+    await core.command(['core','plugin','enable','com.operit.daily_life']);
+    await tap('plugins_refresh');
+    await waitDevice('plugin refresh clears old probe latency',device=>!device.plugins.loading&&
+      device.plugins.items.some(item=>item.id==='com.operit.daily_life'&&item.status==='untested'));
+    t.diagnostic('exclusive/general tabs, bounded package ID/description/tools, hidden empty tools and pagination verified; existing Core diagnostic exports report real RTT');
+    call('navigate_home');
+    const requestsBeforeRestart = providerRequests.length;
     await core.stop();
     await waitDevice('chat offline after Core stops', device => !device.chat.connected);
     await startCore();
-    await waitDevice('automatic chat reconnect after Core restart', device => device.chat.connected && device.chat.chatId === chatId);
+    await waitDevice('automatic chat reconnect after Core restart', device => device.chat.connected && device.chat.chatId === chatId && !device.chat.initializing && !device.chat.error);
     await post('/api/simulator/send', {text: 'SIM_RECONNECT'});
     const secondReply = await waitDevice('reply after reconnect', device =>
       device.chat.messages.some(message => message.text === 'SIM_RECONNECT_OK') && !device.chat.generating);
     assert(secondReply.chat.messages.some(message => message.text === 'SIM_CHAT_OK'), 'previous history must survive reconnect');
-    assert.equal(providerRequests.length, 2);
+    assert.equal(providerRequests.length, requestsBeforeRestart + 1);
     assert.deepEqual(await core.command(['peers']), credentials, 'Core restart must not require pairing again');
     t.diagnostic('Core stop produced offline; restart restored the same chat and a second streamed round-trip without re-pairing');
     await leave();
