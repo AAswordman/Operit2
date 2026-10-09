@@ -47,15 +47,29 @@ impl ResolvedVfsPath {
 pub struct PathMapper {
     runtimeStoreRoot: PathBuf,
     workspaceCollectionRoot: PathBuf,
+    mountRegistry: MountRegistry,
 }
 
 impl PathMapper {
     /// Creates a mapper from runtime and workspace collection roots.
     pub fn new(runtimeStoreRoot: PathBuf, workspaceCollectionRoot: PathBuf) -> Self {
-        Self {
-            runtimeStoreRoot,
-            workspaceCollectionRoot,
-        }
+        let mountRegistry = MountRegistry::new(&runtimeStoreRoot);
+        Self { runtimeStoreRoot, workspaceCollectionRoot, mountRegistry }
+    }
+
+    /// Pins mount resolution to an explicitly supplied identity-local catalog.
+    pub fn withMountRegistry(mut self, registry: MountRegistry) -> Self {
+        self.mountRegistry = registry;
+        self
+    }
+
+    /// Uses the same storage capability as the owning runtime, not a mutable default.
+    pub fn withMountStorage(self, storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>) -> Self {
+        self.withMountRegistry(MountRegistry::withStorage(storage))
+    }
+
+    fn mounts(&self) -> Result<Vec<super::MountRegistry::VfsMount>, String> {
+        self.mountRegistry.list()
     }
 
     /// Returns the VFS root containing all runtime workspaces.
@@ -167,7 +181,7 @@ impl PathMapper {
         let normalizedPath = normalizeAbsoluteVfsPath(path)?;
         let segments = pathSegments(&normalizedPath);
         let mounts = if normalizedPath == "/" || normalizedPath == "/mnt" || normalizedPath.starts_with("/mnt/") {
-            MountRegistry::new(&self.runtimeStoreRoot).list()?
+            self.mounts()?
         } else { Vec::new() };
         let mut entries = match segments.as_slice() {
             [] => {
@@ -203,7 +217,7 @@ impl PathMapper {
         let normalizedPath = Self::canonicalizeVfsPath(path)?;
         let segments = pathSegments(&normalizedPath);
         if normalizedPath.starts_with("/mnt/") {
-            for mount in MountRegistry::new(&self.runtimeStoreRoot).list()? {
+            for mount in self.mounts()? {
                 let root = mount.vfsPath();
                 let relative = if normalizedPath == root { Some("") } else { normalizedPath.strip_prefix(&format!("{root}/")) };
                 if let Some(relative) = relative {
@@ -331,10 +345,7 @@ impl PathMapper {
 impl Default for PathMapper {
     /// Creates an empty mapper used by tests and placeholder contexts.
     fn default() -> Self {
-        Self {
-            runtimeStoreRoot: PathBuf::new(),
-            workspaceCollectionRoot: PathBuf::new(),
-        }
+        Self::new(PathBuf::new(), PathBuf::new())
     }
 }
 
@@ -905,11 +916,12 @@ mod tests {
         assert!(mapper().resolve("/app/workspaces/../x").is_err());
     }
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn registeredMountsListResolveRestoreAndUnregister() {
         let root = std::env::temp_dir().join(format!("operit-mapper-test-{}", uuid::Uuid::new_v4()));
-        let registry = MountRegistry::new(&root);
+        let registry = super::super::MountRegistry::testRegistry(&root);
         let mount = registry.register("/mnt/android/documents", "android_documents", "content://com.termux.documents/tree/opaque%2Fid", "Termux").unwrap();
-        let mapper = PathMapper::new(root.clone(), root.join("workspaces"));
+        let mapper = PathMapper::new(root.clone(), root.join("workspaces")).withMountRegistry(registry.clone());
         for (parent, child) in [("/mnt", "android"), ("/mnt/android", "documents"), ("/mnt/android/documents", mount.id.as_str())] {
             assert!(mapper.virtualDirectoryEntries(parent).unwrap().unwrap().iter().any(|e| e.name == child));
         }
@@ -921,7 +933,7 @@ mod tests {
         assert_eq!(resource.path, "src/项目.py");
         assert_eq!(resource.root, mount.root);
         assert!(resolved.nativePath().is_err());
-        let recreated = PathMapper::new(root.clone(), root.join("workspaces"));
+        let recreated = PathMapper::new(root.clone(), root.join("workspaces")).withMountRegistry(registry.clone());
         assert_eq!(recreated.resolve(&path).unwrap(), resolved);
         registry.remove(&mount.vfsPath()).unwrap();
         assert!(mapper.resolve(&path).is_err());
@@ -929,11 +941,12 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn nativeMountsAndResourceSearchResultsRespectTheirBoundaries() {
         let root = std::env::temp_dir().join(format!("operit-mapper-test-{}", uuid::Uuid::new_v4()));
-        let registry = MountRegistry::new(&root);
+        let registry = super::super::MountRegistry::testRegistry(&root);
         let mount = registry.register("/mnt/local/folders", "native", root.to_str().unwrap(), "Local").unwrap();
-        let mapper = PathMapper::new(root.clone(), root.join("workspaces"));
+        let mapper = PathMapper::new(root.clone(), root.join("workspaces")).withMountRegistry(registry.clone());
         assert_eq!(mapper.resolve(&format!("{}/a.txt", mount.vfsPath())).unwrap().nativePath().unwrap(), root.join("a.txt").to_string_lossy());
         for platform in ["android", "windows", "macos", "linux"] {
             let path = format!("/mnt/{platform}/folders/mount-a/project");

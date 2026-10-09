@@ -471,7 +471,7 @@ fn terminal_vfs(context: &HostManager) -> Result<VisualFileSystem, String> {
         context.fileSystemHost.clone().ok_or_else(|| {
             "FileSystemHost is not registered for terminal working directory".to_string()
         })?,
-        PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot),
+        PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot).withMountStorage(runtimeStorageHost.clone()),
     ))
 }
 

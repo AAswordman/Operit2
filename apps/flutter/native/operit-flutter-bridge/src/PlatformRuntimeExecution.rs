@@ -12,6 +12,11 @@ use operit_link::{
 use crate::BridgeCodec::native_watch_event_vec;
 use crate::OperitFlutterBridge;
 
+#[cfg(target_arch = "wasm32")]
+use js_sys::Function;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsValue;
+
 /// Owns transport resources selected at the host boundary.
 pub(crate) struct PlatformBridgeState {
     #[cfg(not(target_arch = "wasm32"))]

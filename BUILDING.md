@@ -672,11 +672,39 @@ The Web frontend is the standard Flutter Web project under
 workflow still builds this frontend and publishes `apps/flutter/app/build/web`
 to the `gh-pages` branch for `web.operit.app`.
 
+The Web build hook also compiles the Rust browser runtime and synchronizes the
+built-in plugins. From a clean checkout, prepare its dependencies at the repository
+root (use `python3` instead of `python` if required by your shell):
+
+```sh
+python -m venv .venv
+npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+cd plugins/packages/buildin/workflow
+corepack pnpm install --frozen-lockfile
+cd ../../../..
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.122 --locked
+```
+
+The `wasm-bindgen` CLI version must match the bridge's `Cargo.lock`. The build hook
+downloads the pinned WASI SDK and browser guest assets; the first build requires
+network access. Later builds reuse cached BIOS resources only after verifying their
+pinned SHA-256 digests again. The deployment workflow performs the same dependency
+preparation.
+
 Build it locally with the same command used by GitHub Actions:
 
-```powershell
-cd apps\flutter\app
+```sh
+cd apps/flutter/app
 fvm flutter build web --release --no-wasm-dry-run --base-href /
+```
+
+For a quicker Rust-only check, run these from the repository root. Both are needed:
+the host crate does not compile all of the Flutter Web ABI adapters.
+
+```sh
+cargo check --locked --manifest-path hosts/web/Cargo.toml --target wasm32-unknown-unknown
+cargo check --locked --manifest-path apps/flutter/native/operit-flutter-bridge/Cargo.toml --target wasm32-unknown-unknown
 ```
 
 To trigger the GitHub Pages deployment manually:

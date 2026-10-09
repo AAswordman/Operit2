@@ -32,3 +32,36 @@ pub fn tryCurrentTimeMillisU128() -> Result<u128, String> {
             .map_err(|error| error.to_string())
     }
 }
+
+/// Reads a host-compatible monotonic clock for elapsed-time budgets, not Unix time.
+pub fn monotonicTimeMillis() -> u128 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        START.get_or_init(std::time::Instant::now).elapsed().as_millis()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let global = js_sys::global();
+        let performance = js_sys::Reflect::get(&global, &"performance".into())
+            .expect("Host must expose a monotonic performance clock");
+        let now = js_sys::Reflect::get(&performance, &"now".into())
+            .expect("Host must expose performance.now");
+        assert!(now.is_function(), "performance.now must be callable");
+        let now = js_sys::Function::from(now);
+        now.call0(&performance)
+            .expect("performance.now must succeed")
+            .as_f64()
+            .expect("performance.now must return milliseconds") as u128
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn monotonicClockReadingsDoNotGoBackwards() {
+        let before = super::monotonicTimeMillis();
+        let after = super::monotonicTimeMillis();
+        assert!(after >= before);
+    }
+}

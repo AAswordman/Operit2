@@ -1729,6 +1729,12 @@ pub trait RuntimeStorageHost: Send + Sync {
     }
     /// Writes bytes to a virtual runtime storage path.
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
+    /// Publishes a complete private catalog without exposing a partially written file.
+    /// Persistent hosts must flush data before publishing; unsupported hosts fail explicitly.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        let _ = (path, content);
+        Err(HostError::new("Runtime storage host does not expose atomic catalog writes"))
+    }
     /// Appends bytes to a virtual runtime storage path.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()>;
     /// Deletes a virtual runtime storage entry.

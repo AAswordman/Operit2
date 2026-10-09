@@ -1,8 +1,7 @@
 //! Identity-local persistent mount catalog, independent of platform filesystem backends.
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use operit_host_api::RuntimeStorageHost;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use operit_host_api::FileSystemResource::FileSystemResource;
@@ -61,21 +60,41 @@ fn safeSegment(s: &str) -> bool {
 #[derive(Serialize, Deserialize)]
 struct Catalog { version: u32, mounts: Vec<VfsMount> }
 
-#[derive(Clone, Debug)]
-pub struct MountRegistry { catalog: PathBuf }
+const CATALOG_PATH: &str = "runtime/config/vfs_mounts.json";
+
+#[derive(Clone)]
+pub struct MountRegistry {
+    catalog: PathBuf,
+    storage: Option<Arc<dyn RuntimeStorageHost>>,
+}
+
+impl std::fmt::Debug for MountRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MountRegistry").field("catalog", &self.catalog).finish_non_exhaustive()
+    }
+}
 
 impl MountRegistry {
-    pub fn new(runtimeRoot: &Path) -> Self { Self { catalog: runtimeRoot.join("config/vfs_mounts.json") } }
+    /// Uses only the active identity's storage host, never another runtime root.
+    pub fn new(runtimeRoot: &Path) -> Self {
+        let storage = operit_store::RuntimeStorageHost::defaultRuntimeStorageHostOption()
+            .filter(|host| host.runtimeRootDir().as_deref() == Some(runtimeRoot));
+        Self { catalog: runtimeRoot.join("config/vfs_mounts.json"), storage }
+    }
+
+    /// Binds a catalog explicitly to its identity-owned storage host.
+    pub fn withStorage(storage: Arc<dyn RuntimeStorageHost>) -> Self {
+        let root = storage.runtimeRootDir().unwrap_or_default();
+        Self { catalog: root.join("config/vfs_mounts.json"), storage: Some(storage) }
+    }
     pub fn list(&self) -> Result<Vec<VfsMount>, String> {
-        // Web hosts have no native catalog filesystem. Built-in VFS paths must
-        // remain usable; a future web catalog adapter can implement persistence.
-        #[cfg(target_arch = "wasm32")]
-        return Ok(Vec::new());
-        let bytes = match fs::read(&self.catalog) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(format!("Cannot read VFS mounts: {e}")),
-        };
+        // Without an installed storage capability, built-in VFS mounts still work.
+        let Some(storage) = &self.storage else { return Ok(Vec::new()) };
+        if !storage.exists(CATALOG_PATH).map_err(|e| format!("Cannot inspect VFS mounts: {e}"))? {
+            return Ok(Vec::new());
+        }
+        let bytes = storage.readBytes(CATALOG_PATH)
+            .map_err(|e| format!("Cannot read VFS mounts: {e}"))?;
         let catalog: Catalog = serde_json::from_slice(&bytes).map_err(|e| format!("Invalid VFS mount catalog: {e}"))?;
         if catalog.version != 1 { return Err("Unsupported VFS mount catalog version".into()) }
         let mut paths = std::collections::HashSet::new();
@@ -106,34 +125,99 @@ impl MountRegistry {
         self.save(mounts)
     }
     fn save(&self, mounts: Vec<VfsMount>) -> Result<(), String> {
-        let parent = self.catalog.parent().ok_or("Invalid mount catalog path")?;
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let temporary = parent.join(format!(".vfs-mounts-{}.tmp", Uuid::new_v4()));
-        let result = (|| {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-            let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
-            let bytes = serde_json::to_vec_pretty(&Catalog { version: 1, mounts }).map_err(|e| e.to_string())?;
-            file.write_all(&bytes).map_err(|e| e.to_string())?;
-            file.sync_all().map_err(|e| e.to_string())?;
-            fs::rename(&temporary, &self.catalog).map_err(|e| e.to_string())
-        })();
-        if result.is_err() { let _ = fs::remove_file(temporary); }
-        result
+        let storage = self.storage.as_ref().ok_or("VFS mount storage host is not configured for this runtime root")?;
+        let bytes = serde_json::to_vec_pretty(&Catalog { version: 1, mounts }).map_err(|e| e.to_string())?;
+        storage.writeBytesAtomically(CATALOG_PATH, &bytes).map_err(|e| e.to_string())
     }
 }
 fn catalogLock() -> &'static Mutex<()> { static LOCK: OnceLock<Mutex<()>> = OnceLock::new(); LOCK.get_or_init(|| Mutex::new(())) }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use std::fs;
     struct TempRoot(PathBuf);
     impl TempRoot {
         fn new() -> Self { Self(std::env::temp_dir().join(format!("operit-mount-test-{}", Uuid::new_v4()))) }
-        fn registry(&self) -> MountRegistry { MountRegistry::new(&self.0) }
+        fn registry(&self) -> MountRegistry { testRegistry(&self.0) }
     }
     impl Drop for TempRoot { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
+    /// No native paths are read until a matching identity-owned Host is installed.
+    #[test]
+    fn unavailableStorageKeepsBuiltinMountsUsableButRejectsWrites() {
+        let registry = MountRegistry { catalog: PathBuf::from("runtime/config/vfs_mounts.json"), storage: None };
+        assert!(registry.list().unwrap().is_empty());
+        let error = registry.register("/mnt/test/resources", "test", "opaque", "Test").unwrap_err();
+        assert!(error.contains("storage host is not configured"), "{error}");
+    }
+
+    /// Models OPFS-like storage that exposes a logical root, not a native filesystem.
+    #[derive(Default)]
+    struct VirtualStorage {
+        bytes: Mutex<Option<Vec<u8>>>,
+        rejectWrites: std::sync::atomic::AtomicBool,
+    }
+    impl RuntimeStorageHost for VirtualStorage {
+        fn runtimeRootDir(&self) -> Option<PathBuf> { Some(PathBuf::from("runtime")) }
+        fn workspaceRootDir(&self) -> Option<PathBuf> { Some(PathBuf::from("workspaces")) }
+        fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+            assert_eq!(path, CATALOG_PATH);
+            self.bytes.lock().unwrap().clone().ok_or_else(|| operit_host_api::HostError::new("missing catalog"))
+        }
+        fn writeBytes(&self, _: &str, _: &[u8]) -> operit_host_api::HostResult<()> {
+            panic!("catalog must use atomic publication")
+        }
+        fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+            assert_eq!(path, CATALOG_PATH);
+            if self.rejectWrites.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(operit_host_api::HostError::new("scripted write failure"));
+            }
+            *self.bytes.lock().unwrap() = Some(content.to_vec());
+            Ok(())
+        }
+        fn appendBytes(&self, _: &str, _: &[u8]) -> operit_host_api::HostResult<()> { unreachable!() }
+        fn delete(&self, _: &str, _: bool) -> operit_host_api::HostResult<()> { unreachable!() }
+        fn exists(&self, path: &str) -> operit_host_api::HostResult<bool> {
+            assert_eq!(path, CATALOG_PATH);
+            Ok(self.bytes.lock().unwrap().is_some())
+        }
+        fn list(&self, _: &str) -> operit_host_api::HostResult<Vec<operit_host_api::RuntimeStorageEntry>> { unreachable!() }
+    }
+
+    #[test]
+    fn virtualHostCatalogPersistsAcrossRegistriesAndFailedWrites() {
+        let host = Arc::new(VirtualStorage::default());
+        let registry = MountRegistry::withStorage(host.clone());
+        let mount = registry.register("/mnt/web/resources", "test", "opaque", "Web").unwrap();
+        let reopened = MountRegistry::withStorage(host.clone());
+        assert_eq!(reopened.list().unwrap(), vec![mount.clone()]);
+        host.rejectWrites.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(registry.remove(&mount.vfsPath()).unwrap_err().contains("scripted write failure"));
+        assert_eq!(reopened.list().unwrap(), vec![mount.clone()]);
+        host.rejectWrites.store(false, std::sync::atomic::Ordering::Relaxed);
+        reopened.remove(&mount.vfsPath()).unwrap();
+        assert!(registry.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn duplicateVirtualCatalogEntriesAreRejected() {
+        let host = Arc::new(VirtualStorage::default());
+        let registry = MountRegistry::withStorage(host.clone());
+        let mount = registry.register("/mnt/web/resources", "test", "opaque", "Web").unwrap();
+        *host.bytes.lock().unwrap() = Some(serde_json::to_vec(&Catalog { version: 1, mounts: vec![mount.clone(), mount] }).unwrap());
+        assert!(registry.list().unwrap_err().contains("Duplicate VFS mount path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nativeCatalogRetainsPrivatePermissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TempRoot::new();
+        let registry = root.registry();
+        registry.register("/mnt/test/resources", "test", "opaque", "Test").unwrap();
+        assert_eq!(fs::metadata(registry.catalog).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
     #[test]
     fn persistentCatalogIsStableAndIdentityLocal() {
         let first = TempRoot::new();
@@ -184,4 +268,11 @@ mod tests {
         for job in jobs { job.join().unwrap(); }
         assert_eq!(registry.list().unwrap().len(), 8);
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(super) fn testRegistry(root: &Path) -> MountRegistry {
+    MountRegistry::withStorage(Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(
+        root.to_path_buf(), root.join("workspaces"),
+    )))
 }

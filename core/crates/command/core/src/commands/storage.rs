@@ -25,8 +25,9 @@ pub fn run_storage_command(
 
 /// Registers native folders or platform resource backends without adding VFS special cases.
 fn run_mount_command(application: &OperitApplication, args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
-    let config = storage_root_config(application)?;
-    let registry = operit_tools::files::MountRegistry::MountRegistry::new(&config.runtime_root);
+    let storage = application.hostManager.runtimeStorageHost.clone()
+        .ok_or("RuntimeStorageHost is not registered for mount commands")?;
+    let registry = operit_tools::files::MountRegistry::MountRegistry::withStorage(storage);
     match args.first().map(String::as_str) {
         Some("list") if args.len() == 1 => {
             output.setJsonStdout(serde_json::json!({"mounts": registry.list()?}));

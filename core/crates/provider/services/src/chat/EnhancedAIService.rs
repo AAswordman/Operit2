@@ -538,7 +538,7 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                     Some(PathMapper::new(
                         storage.runtimeRootDir()?,
                         storage.workspaceRootDir()?,
-                    ))
+                    ).withMountStorage(storage.clone()))
                 })
                 .map(|mapper| {
                     resolve_workspace_path_mappings(

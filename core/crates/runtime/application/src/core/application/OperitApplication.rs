@@ -98,7 +98,8 @@ impl OperitApplication {
                 .fileSystemHost
                 .clone()
                 .expect("runtime storage host requires a file-system host for logging");
-            let pathMapper = PathMapper::new(runtimeRoot.clone(), workspaceRoot.clone());
+            let pathMapper = PathMapper::new(runtimeRoot.clone(), workspaceRoot.clone())
+                .withMountStorage(runtimeStorageHost.clone());
             let logFile = pathMapper
                 .resolve("/app/data/logs/operit.log")
                 .expect("runtime log path must resolve through the file-system host")
@@ -254,7 +255,7 @@ impl OperitApplication {
         })?;
         Ok(VisualFileSystem::new(
             fileSystemHost,
-            PathMapper::new(runtimeRoot, workspaceRoot),
+            PathMapper::new(runtimeRoot, workspaceRoot).withMountStorage(runtimeStorageHost.clone()),
         ))
     }
 
