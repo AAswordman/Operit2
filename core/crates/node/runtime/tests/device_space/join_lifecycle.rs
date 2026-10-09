@@ -354,9 +354,10 @@ async fn lost_submission_reply_reuses_request_and_does_not_duplicate_receiver_in
     );
 }
 
-/// Exercises a target advertising the applicant's own space identity without the
-/// applicant as a member is a membership split, never a joinable target through
-/// isolated runtime stores.
+/// Exercises a target advertising the applicant's own space identity without
+/// the applicant as a member is a membership split: the join attempt
+/// reconciles both control logs, retires the stale local membership when the
+/// converged policy excludes this device, and never submits a request.
 #[tokio::test]
 async fn join_request_rejects_target_advertising_the_local_space_without_membership() {
     let _guard = routeTestGlobalLock().lock().await;
@@ -381,10 +382,86 @@ async fn join_request_rejects_target_advertising_the_local_space_without_members
         .await
         .unwrap_err();
     assert!(
-        error.contains("reconcile the split membership"),
+        error.contains("Membership split") && error.contains("not a member"),
         "unexpected error: {error}"
     );
     // A same-identity target must not leave behind a durable join request.
+    assert!(pair
+        .applicant
+        .outgoingDeviceSpaceJoins()
+        .unwrap()
+        .is_empty());
+    assert!(protocolRecords(&pair.b, INBOUND_RECORDS).is_empty());
+    // The merged log excludes this device, so the stale membership record was
+    // retired exactly like an explicit leave, and the shared Space's history
+    // is now present locally for any later review.
+    assert_ne!(
+        pair.a.spaceStore.space().unwrap().spaceId,
+        receiverSpace.spaceId
+    );
+    let merged = pair
+        .a
+        .networkControlStore
+        .spaceOperations(&receiverSpace.spaceId)
+        .unwrap();
+    assert!(merged
+        .iter()
+        .any(|operation| operation.originDeviceId == pair.b.localNodeId()));
+    assert_eq!(
+        pair.b.spaceStore.space().unwrap().members,
+        vec![pair.b.localNodeId()]
+    );
+}
+
+/// Exercises reconciliation restores both replicas when the shared control log
+/// admits the applicant: records, profiles and policy converge without any
+/// fresh admission command.
+#[tokio::test]
+async fn reconciliation_restores_members_the_shared_log_admits() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let pair = IndependentPair::new("reconcile-restore");
+    // The shared Space's policy already admits the applicant; only its record
+    // projection forked away from the shared identity.
+    pair.b
+        .networkControlStore
+        .admitMember(pair.a.localNodeId())
+        .unwrap();
+    let shared = pair.b.spaceStore.space().unwrap();
+    pair.a
+        .spaceStore
+        .adopt(operit_store::CoreSpaceStore::CoreSpace {
+            spaceId: shared.spaceId.clone(),
+            spaceName: shared.spaceName.clone(),
+            spaceRevision: shared.spaceRevision + 1,
+            members: vec![pair.a.localNodeId()],
+        })
+        .unwrap();
+    let error = pair
+        .applicant
+        .requestDeviceSpaceJoin(pair.b.localNodeId())
+        .await
+        .unwrap_err();
+    assert!(
+        error.contains("already a member"),
+        "unexpected error: {error}"
+    );
+    // Both replicas converge on one log: member records, profiles and policy
+    // agree, without any new admission command.
+    let mut restoredA = pair.a.spaceStore.space().unwrap().members;
+    restoredA.sort();
+    let mut restoredB = pair.b.spaceStore.space().unwrap().members;
+    restoredB.sort();
+    let mut expected = vec![pair.a.localNodeId(), pair.b.localNodeId()];
+    expected.sort();
+    assert_eq!(restoredA, expected);
+    assert_eq!(restoredB, expected);
+    let applicantState = pair.a.networkControlStore.currentState().unwrap();
+    let targetState = pair.b.networkControlStore.currentState().unwrap();
+    assert_eq!(applicantState.memberNodeIds, targetState.memberNodeIds);
+    assert!(applicantState
+        .memberNodeIds
+        .contains(&pair.a.localNodeId()));
     assert!(pair
         .applicant
         .outgoingDeviceSpaceJoins()

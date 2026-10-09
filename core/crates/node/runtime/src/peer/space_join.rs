@@ -240,13 +240,23 @@ pub(crate) async fn request(service: &dyn NodeSpaceContext, deviceId: String) ->
     let localId = service.localNodeId();
     // One shared space identity is never joinable: either both sides already
     // agree on membership, or their member tables diverged. The divergent case
-    // must be reconciled through synced control operations, never re-admitted
-    // through a fresh AdmitSpace whose source would equal the target Space.
+    // is reconciled on the spot - both control logs merge into one policy - so
+    // the retried submission sees a single truth instead of a split.
     if local.spaceId == snapshot.space.spaceId {
         if snapshot.space.members.contains(&localId) {
             return Err("This device is already a member of the target Space".into());
         }
-        return Err("Target advertises the local Space without this device as a member; reconcile the split membership instead of submitting a join request".into());
+        let reconciled = space_reconcile::reconcile(service, &deviceId).await?;
+        let converged: PeerSpaceSnapshot = callPeerSpace(service, &deviceId, "snapshot", CoreValue::Null).await?;
+        if converged.space.members.contains(&localId) {
+            return Err("This device is already a member of the target Space".into());
+        }
+        return Err(format!(
+            "Membership split with {deviceId} reconciled; the shared Space control log admits {} \
+             and this device is {}. Submit a new join request from the reconciled state.",
+            reconciled.members.join(", "),
+            if reconciled.localIsMember { "a member" } else { "not a member" }
+        ));
     }
     let profile = source.deviceProfiles.iter().find(|p| p.nodeId == localId)
         .cloned().ok_or("Local device profile missing")?;

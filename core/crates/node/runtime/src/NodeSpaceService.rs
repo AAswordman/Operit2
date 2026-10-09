@@ -58,6 +58,8 @@ pub struct SpaceJoinRequest {
 
 #[path = "peer/space_join.rs"]
 pub(crate) mod space_join;
+#[path = "peer/space_reconcile.rs"]
+pub(crate) mod space_reconcile;
 
 /// Hooks provided by the existing node runtime, not a second wire protocol.
 #[async_trait::async_trait(?Send)]
@@ -197,6 +199,7 @@ impl NodeSpaceService {
                 toCoreValue(self.space.observePairedDeviceSpace(peer.to_string(), space)?).map_err(|e| e.to_string())
             }
             "requestJoin" | "joinStatus" | "cancelJoin" => space_join::receive(self, peer, request),
+            "reconcileSharedSpace" => space_reconcile::receive(self, peer, request),
             "join" => Err("SPACE_JOIN_APPROVAL_REQUIRED: Submit a join request for local approval first".into()),
             _ => Err("Unknown node Space method".into()),
         }
