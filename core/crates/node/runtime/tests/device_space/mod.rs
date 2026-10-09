@@ -73,6 +73,12 @@ mod doctor {
         "/tests/device_space/doctor.rs"
     ));
 }
+mod reconcile_protocol {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/reconcile_protocol.rs"
+    ));
+}
 mod convergence_properties {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
