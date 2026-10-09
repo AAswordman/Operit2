@@ -952,6 +952,21 @@ impl ChatHistoryManager {
         Ok(())
     }
 
+    /// Changes native folder membership atomically without touching plugin namespaces.
+    pub fn updateChatGroups(&self, chatIds: Vec<String>, groupName: Option<String>) -> ChatHistoryManagerResult<()> {
+        let name = groupName.map(|name| name.trim().to_string()).filter(|name| !name.is_empty());
+        let mut chats = Vec::new();
+        for id in &chatIds {
+            let mut chat = self.chatDao.getChatById(id)?.ok_or_else(|| ChatHistoryManagerError::IllegalArgument(format!("Chat does not exist: {id}")))?;
+            chat.group = name.clone();
+            chat.updatedAt = currentTimeMillis();
+            chats.push(chat);
+        }
+        self.chatDao.updateChats(chats)?;
+        for id in chatIds { self.recordChatMetadata(&id)?; }
+        Ok(())
+    }
+
     /// Returns the persistent synchronization clock observed by this chat store.
     #[allow(non_snake_case)]
     pub fn syncClock(&self) -> ChatHistoryManagerResult<crate::SyncOperationStore::SyncClock> {

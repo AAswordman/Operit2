@@ -1,15 +1,10 @@
-import type { GroupValues } from "../../../src/model";
 import type { EditorContext } from "../../bridge/context";
 import { dataValue } from "../../shared/dom";
 import { copy } from "../../shared/ui/html";
 /** Binds groups actions operations to one editor context. */
 export function createGroupsActionsFeature(context: EditorContext) {
-  const { snapshot, state, topDialog, pushDialog, popDialog, request, renderMain, renderDialogs, toast } = context;
+  const { snapshot, state, topDialog, pushDialog, popDialog, request, renderMain, toast } = context;
 
-  /** Renumbers explicitly selected group members after an order change. */
-  function renumberMembers(group: GroupValues): void {
-    for (let index = 0; index < group.members.length; index++) group.members[index].orderIndex = index;
-  }
   /** Executes only this feature's registered actions without choosing another transport. */
   async function handleAction(action: string, element: HTMLElement | SVGElement): Promise<void> {
     const id = element.dataset.id;
@@ -35,18 +30,8 @@ export function createGroupsActionsFeature(context: EditorContext) {
 
       case "delete-group": pushDialog({ type: "confirm", title: "删除群组", message: `确定删除“${topDialog("group").group.name}”？`, operation: { action: "deleteGroup", id: topDialog("group").group.id }, closeParent: true }); return;
 
-      case "member-up":
-      case "member-down": {
-        const group = topDialog("group").group;
-        let index = -1;
-        for (let i = 0; i < group.members.length; i++) if (group.members[i].characterCardId === id) index = i;
-        const target = index + (action === "member-up" ? -1 : 1);
-        if (index < 0 || target < 0 || target >= group.members.length) throw new Error("群组成员顺序无效");
-        [group.members[index], group.members[target]] = [group.members[target], group.members[index]];
-        renumberMembers(group); renderDialogs(); return;
-      }
       default: throw new Error(`Unknown groups/actions action: ${action}`);
     }
   }
-  return { names: ["activate-group", "create-group", "edit-group", "save-group", "delete-group", "member-up", "member-down"], handleAction };
+  return { names: ["activate-group", "create-group", "edit-group", "save-group", "delete-group"], handleAction };
 }

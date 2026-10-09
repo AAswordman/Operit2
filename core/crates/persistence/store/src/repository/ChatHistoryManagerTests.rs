@@ -304,6 +304,7 @@ fn new_user_message_promotes_chat_below_pins_and_preserves_metadata() {
     assert_eq!(
         promoted.clone(),
         ChatEntity {
+            group: None,
             displayOrder: promoted.displayOrder,
             updatedAt: promoted.updatedAt,
             ..original

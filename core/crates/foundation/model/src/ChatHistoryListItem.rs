@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 pub struct ChatHistoryListItem {
     pub id: String,
     pub title: String,
+    /// Native conversation folder; independent of plugin-owned role bindings.
+    #[serde(default)]
+    pub group: Option<String>,
     pub updatedAt: String,
     pub displayOrder: i64,
     pub workspaceId: Option<String>,
@@ -19,6 +22,7 @@ impl ChatHistoryListItem {
         Self {
             id: history.id.clone(),
             title: history.title.clone(),
+            group: history.group.clone(),
             updatedAt: history.updatedAt.clone(),
             displayOrder: history.displayOrder,
             workspaceId: history.workspaceId.clone(),

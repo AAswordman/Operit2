@@ -91,7 +91,7 @@ for (const version of [10, 20, 21]) {
       }
       const target = body.slice(body.indexOf("chats.push(OperitArchivedChat {"));
       assert.match(target, /pluginExtensions: std::collections::BTreeMap::new\(\)/);
-      assert.doesNotMatch(target, /\b(?:group|characterCardName|characterGroupId)\s*:|default_character|activePrompt/);
+      assert.doesNotMatch(target, /\b(?:characterCardName|characterGroupId)\s*:|default_character|activePrompt/);
       assert.equal(db.prepare("PRAGMA user_version").get().user_version, version);
     } finally { db.close(); }
   });

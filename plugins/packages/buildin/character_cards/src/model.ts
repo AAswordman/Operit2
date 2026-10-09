@@ -61,13 +61,9 @@ export interface ConversationGroupRecord {
   updatedAt: number;
 }
 /** Requires an explicit scope and pin state when creating a genuinely new empty manual group. */
-export interface ConversationGroupCreate { ownerSelection: string | null; name: string; pinned: boolean }
 /** Restricts manual group edits to their independent editable metadata. */
-export interface ConversationGroupChanges { name?: string; pinned?: boolean }
 /** Reports explicit membership without inventing an ungrouped record. */
-export interface ConversationGroupMoveResult { chatId: string; previousGroupId: string | null; groupId: string | null }
 /** Releases all manual memberships without deleting any host chats. */
-export interface ConversationGroupDeletion { id: string; deleted: true; releasedChatIds: string[] }
 
 export type GroupValues = Pick<Group, "id" | "name" | "description" | "members" | "themeConfigId">;
 
@@ -253,12 +249,6 @@ export type Request =
   | { action: "readChatBinding"; chatId: string }
   | { action: "writeChatBinding"; chatId: string; selection: string }
   | { action: "deleteChatBinding"; chatId: string }
-  | { action: "listConversationGroups"; ownerSelection: string | null }
-  | { action: "createConversationGroup"; values: ConversationGroupCreate }
-  | { action: "updateConversationGroup"; id: string; changes: ConversationGroupChanges }
-  | { action: "deleteConversationGroup"; id: string }
-  | { action: "moveConversationGroupChat"; chatId: string; groupId: string | null; ownerSelection: string | null }
-  | { action: "reorderConversationGroups"; ownerSelection: string | null; ids: string[] }
   | { action: "listGroups" }
   | { action: "getGroup"; id: string }
   | { action: "saveGroup"; group: GroupValues; create: boolean }
@@ -434,12 +424,6 @@ export interface RequestResults {
   readChatBinding: import("./api").ChatBindingRecord;
   writeChatBinding: import("./api").ChatBindingRecord;
   deleteChatBinding: { chatId: string; deleted: boolean; };
-  listConversationGroups: ConversationGroupRecord[];
-  createConversationGroup: ConversationGroupRecord;
-  updateConversationGroup: ConversationGroupRecord;
-  deleteConversationGroup: ConversationGroupDeletion;
-  moveConversationGroupChat: ConversationGroupMoveResult;
-  reorderConversationGroups: ConversationGroupRecord[];
   listGroups: Group[];
   getGroup: Group;
   saveGroup: Snapshot;

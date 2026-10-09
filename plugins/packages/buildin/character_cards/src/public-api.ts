@@ -3,31 +3,6 @@ import { parseDomainPayload } from "./domain";
 import { dispatchDomain } from "./service-runtime";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
-/** Lists persisted scoped conversation groups through the sole file-backed service. */
-export async function conversationGroupListApi(event: ToolPkg.PublicApiEvent<DomainInput<"conversation-group.list">>): Promise<DomainOutput<"conversation-group.list">> {
-  return dispatchDomain("conversation-group.list", parseDomainPayload("conversation-group.list", event.payload));
-}
-/** Creates one explicit empty manual group through the same publication queue. */
-export async function conversationGroupCreateApi(event: ToolPkg.PublicApiEvent<DomainInput<"conversation-group.create">>): Promise<DomainOutput<"conversation-group.create">> {
-  return dispatchDomain("conversation-group.create", parseDomainPayload("conversation-group.create", event.payload));
-}
-/** Saves only the explicitly submitted editable metadata of a manual group. */
-export async function conversationGroupUpdateApi(event: ToolPkg.PublicApiEvent<DomainInput<"conversation-group.update">>): Promise<DomainOutput<"conversation-group.update">> {
-  return dispatchDomain("conversation-group.update", parseDomainPayload("conversation-group.update", event.payload));
-}
-/** Removes metadata without invoking deletion of its referenced host chats. */
-export async function conversationGroupDeleteApi(event: ToolPkg.PublicApiEvent<DomainInput<"conversation-group.delete">>): Promise<DomainOutput<"conversation-group.delete">> {
-  return dispatchDomain("conversation-group.delete", parseDomainPayload("conversation-group.delete", event.payload));
-}
-/** Moves a real chat into one explicit scope or makes its membership ungrouped. */
-export async function conversationGroupMoveChatApi(event: ToolPkg.PublicApiEvent<DomainInput<"conversation-group.moveChat">>): Promise<DomainOutput<"conversation-group.moveChat">> {
-  return dispatchDomain("conversation-group.moveChat", parseDomainPayload("conversation-group.moveChat", event.payload));
-}
-/** Publishes one complete scope's manual group order through the shared service. */
-export async function conversationGroupReorderApi(event: ToolPkg.PublicApiEvent<DomainInput<"conversation-group.reorder">>): Promise<DomainOutput<"conversation-group.reorder">> {
-  return dispatchDomain("conversation-group.reorder", parseDomainPayload("conversation-group.reorder", event.payload));
-}
-
 /** Resolves this chat's persisted configuration through the sole initialized service. */
 export async function chatConfigurationResolveApi(event: ToolPkg.PublicApiEvent<ChatConfigurationRequest>): Promise<ChatConfigurationResult> {
   if (event.callerPackage !== "host") throw new Error("chat.configuration.resolve requires an authenticated host caller");
@@ -409,12 +384,6 @@ export async function memoryImportApi(event: ToolPkg.PublicApiEvent<DomainInput<
 
 /** Publishes independent typed methods backed by the same service as commands and UI. */
 export function registerDomainApis(): void {
-  ToolPkg.registerApi<DomainInput<"conversation-group.list">, DomainOutput<"conversation-group.list">>({ name: "conversation-group.list", function: conversationGroupListApi });
-  ToolPkg.registerApi<DomainInput<"conversation-group.create">, DomainOutput<"conversation-group.create">>({ name: "conversation-group.create", function: conversationGroupCreateApi });
-  ToolPkg.registerApi<DomainInput<"conversation-group.update">, DomainOutput<"conversation-group.update">>({ name: "conversation-group.update", function: conversationGroupUpdateApi });
-  ToolPkg.registerApi<DomainInput<"conversation-group.delete">, DomainOutput<"conversation-group.delete">>({ name: "conversation-group.delete", function: conversationGroupDeleteApi });
-  ToolPkg.registerApi<DomainInput<"conversation-group.moveChat">, DomainOutput<"conversation-group.moveChat">>({ name: "conversation-group.moveChat", function: conversationGroupMoveChatApi });
-  ToolPkg.registerApi<DomainInput<"conversation-group.reorder">, DomainOutput<"conversation-group.reorder">>({ name: "conversation-group.reorder", function: conversationGroupReorderApi });
   ToolPkg.registerApi<DomainInput<"memory.searchWithOptions">, DomainOutput<"memory.searchWithOptions">>({ name: "memory.searchWithOptions", function: memorySearchWithOptionsApi });
   ToolPkg.registerApi<DomainInput<"memory.candidate.enqueue">, DomainOutput<"memory.candidate.enqueue">>({ name: "memory.candidate.enqueue", function: memoryCandidateEnqueueApi });
   ToolPkg.registerApi<DomainInput<"memory.embeddings.rebuild">, DomainOutput<"memory.embeddings.rebuild">>({ name: "memory.embeddings.rebuild", function: memoryEmbeddingsRebuildApi });

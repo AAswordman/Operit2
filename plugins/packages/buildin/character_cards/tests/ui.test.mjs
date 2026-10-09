@@ -1,14 +1,15 @@
+import { packageRuntime } from "./package-runtime.mjs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
 import http from "node:http";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fixture, installBrowserFixture } from "./fixtures.mjs";
-import { buildMainScript, createHtmlDocument } from "../scripts/build.mjs";
+import { buildMainScript, buildUiScreenScripts, createHtmlDocument } from "../scripts/build.mjs";
 import { createDiskHarness } from "./disk-files.mjs";
 import { importedCallCount } from "./runtime.mjs";
 import { keyedNode, mountRegisteredSelector } from "./selector-render.mjs";
@@ -26,7 +27,7 @@ test.before(async () => {
   server = http.createServer(
     /** Serves explicitly selected current-source or installed HTML without substituting a missing artifact. */
     (request, response) => {
-      if (request.url !== "/" && request.url !== "/installed") { response.writeHead(404); response.end("Unknown test document"); return; }
+      if (request.url !== "/" && request.url !== "/installed" && request.url !== "/memory") { response.writeHead(404); response.end("Unknown test document"); return; }
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       response.end(request.url === "/installed" ? installedHtml : html);
     },
@@ -51,7 +52,7 @@ function installManagementPresentation() {
   const bridge = window.CharacterMemoryHost;
   if (bridge === undefined) throw new Error("Management test requires its explicitly installed browser fixture");
   /** Supplies the exact legal management input rather than inferring a missing screen. */
-  bridge.currentScreen = async () => ({ requestId: null, input: { mode: "manage" } });
+  bridge.currentScreen = async () => ({ requestId: null, input: window.location.pathname === "/memory" ? { mode: "manage", view: "memory" } : { mode: "manage" } });
   /** Rejects completion because a management page has no presentation request. */
   bridge.completeScreen = async () => { throw new Error("Management has no presentation completion channel"); };
   /** Rejects cancellation because a management page has no presentation request. */
@@ -64,7 +65,7 @@ async function page(width = 1100, height = 950, data = fixture()) {
   await context.addInitScript({ content: `(${installBrowserFixture.toString()})(${JSON.stringify(data)}); (${installManagementPresentation.toString()})();` });
   const page = await context.newPage();
   await page.goto(origin);
-  await page.locator('#app h1, #app [role="alert"]').first().waitFor();
+  await page.locator('#app h1, #app h2, #app [role="alert"]').first().waitFor();
   const startupErrors = await page.locator('#app [role="alert"]').allTextContents();
   assert.ok(await page.getByRole("heading", { name: "角色卡", exact: true }).count() > 0, `Current UI did not initialize: ${startupErrors.join("\n")}`);
   return { page, context };
@@ -74,13 +75,13 @@ async function page(width = 1100, height = 950, data = fixture()) {
 async function openCharacter(page) { await page.getByRole("button", { name: "编辑 旅行助理", exact: true }).click(); }
 
 /** Verifies original Material structure and draft preservation across all role tabs. */
-test("character editor reproduces basic/content/binding and contains memory", async () => {
+test("character editor reproduces exactly basic/content/binding; memory is an independent page", async () => {
   const ui = await page();
   const errors = [];
   ui.page.on("pageerror", error => errors.push(error.message));
   await openCharacter(ui.page);
   const dialog = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-  assert.equal(await dialog.getByRole("tab").count(), 4);
+  assert.equal(await dialog.getByRole("tab").count(), 3);
   assert.equal(await dialog.getByLabel("角色名称 *").inputValue(), "旅行助理");
   await dialog.getByLabel("角色名称 *").fill("我的旅行助手");
   await dialog.getByRole("tab", { name: "内容", exact: true }).click();
@@ -99,11 +100,17 @@ test("character editor reproduces basic/content/binding and contains memory", as
   await ui.context.close();
 });
 
+/** Opens the separate memory settings page and the exact bound role-library row. */
+async function openCharacterMemory(page, name = "旅行助理") {
+  if (await page.getByRole("heading", { name: "记忆", exact: true }).count() === 0) await page.goto(origin + "/memory");
+  await page.getByRole("heading", { name: "角色记忆库", exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog", { name: "编辑角色卡", exact: true }).count(), 0);
+  return page.locator("[data-memory-card]").filter({ has: page.locator(".entity-title", { hasText: name }) });
+}
+
 /** Opens the real SVG graph using the selected character's stored memory binding. */
 async function openCharacterGraph(page) {
-  await openCharacter(page);
-  const editor = page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-  await editor.getByRole("tab", { name: "记忆", exact: true }).click();
+  const editor = await openCharacterMemory(page);
   await editor.getByRole("button", { name: "记忆图谱", exact: true }).click();
   const graph = page.getByRole("dialog", { name: "旅行助理 的记忆图谱", exact: true });
   await graph.locator(".graph-node").first().waitFor();
@@ -111,11 +118,9 @@ async function openCharacterGraph(page) {
 }
 
 /** Verifies shared-bound memory operations retain the card's actual owner identity. */
-test("USER.md and graph are nested under the selected character and use its shared binding", async () => {
+test("independent memory page USER.md and graph use the selected character shared binding", async () => {
   const ui = await page();
-  await openCharacter(ui.page);
-  const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-  await editor.getByRole("tab", { name: "记忆", exact: true }).click();
+  const editor = await openCharacterMemory(ui.page);
   await ui.page.screenshot({ path: output + "character-memory-tab.png" });
   await editor.getByRole("button", { name: "用户资料 · USER.md", exact: true }).click();
   const profile = ui.page.getByRole("dialog", { name: "旅行助理 的用户资料", exact: true });
@@ -139,10 +144,8 @@ test("USER.md and graph are nested under the selected character and use its shar
 /** Ensures profile read failures cannot turn into an enabled blank overwrite form. */
 test("failed USER.md read stays visible and disables save", async () => {
   const ui = await page();
+  const editor = await openCharacterMemory(ui.page);
   await ui.page.evaluate(() => { window.testFailure = "readUser"; });
-  await openCharacter(ui.page);
-  const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-  await editor.getByRole("tab", { name: "记忆", exact: true }).click();
   await editor.getByRole("button", { name: "用户资料 · USER.md", exact: true }).click();
   const profile = ui.page.getByRole("dialog", { name: "旅行助理 的用户资料", exact: true });
   await profile.getByRole("alert").waitFor();
@@ -167,7 +170,8 @@ test("mobile layout and dark host theme preserve draft and fit the viewport", as
   assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390);
   assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 844);
   await ui.page.screenshot({ path: output + "character-editor-mobile-dark.png" });
-  await editor.getByRole("tab", { name: "记忆", exact: true }).click();
+  await editor.getByRole("button", { name: "取消", exact: true }).click();
+  await openCharacterMemory(ui.page);
   await ui.page.screenshot({ path: output + "character-memory-mobile-dark.png" });
   await ui.context.close();
 });
@@ -247,9 +251,7 @@ test("native JSON export preserves original saved record fields", async () => {
 
 /** Verifies memory edits preserve every field provided by the original native editor. */
 test("isolated memory editor forwards type source credibility and importance to its bound-owner request", async () => {
-  const ui = await page(); await openCharacter(ui.page);
-  const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-  await editor.getByRole("tab", { name: "记忆", exact: true }).click();
+  const ui = await page(); const editor = await openCharacterMemory(ui.page);
   await editor.getByRole("button", { name: "记忆图谱", exact: true }).click();
   const graph = ui.page.getByRole("dialog", { name: "旅行助理 的记忆图谱", exact: true });
   await graph.getByRole("button", { name: "喜欢安静的旅行", exact: true }).click();
@@ -278,9 +280,7 @@ test("isolated memory editor forwards type source credibility and importance to 
 
 /** Verifies native backend search results expand to one-hop neighbors and folder subtrees. */
 test("isolated graph search forwards the plugin query and expands only direct neighbors", async () => {
-  const ui = await page(); await openCharacter(ui.page);
-  const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-  await editor.getByRole("tab", { name: "记忆", exact: true }).click();
+  const ui = await page(); const editor = await openCharacterMemory(ui.page);
   await editor.getByRole("button", { name: "记忆图谱", exact: true }).click();
   const graph = ui.page.getByRole("dialog", { name: "旅行助理 的记忆图谱", exact: true });
   await graph.getByLabel("搜索记忆", { exact: true }).fill("不需要子串命中");
@@ -463,13 +463,8 @@ test("isolated UI import delegates untouched input and renders the declared snap
 /** Verifies graph read failures never expose a guessed empty library or write controls. */
 test("failed graph read reports the host failure and prevents memory writes", async () => {
   const ui = await page();
-  await ui.page.evaluate(
-    /** Rejects the graph operation in the explicit test host. */
-    () => { window.testFailure = "graph"; },
-  );
-  await openCharacter(ui.page);
-  const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-  await editor.getByRole("tab", { name: "记忆", exact: true }).click();
+  const editor = await openCharacterMemory(ui.page);
+  await ui.page.evaluate(() => { window.testFailure = "graph"; });
   await editor.getByRole("button", { name: "记忆图谱", exact: true }).click();
   const graph = ui.page.getByRole("dialog", { name: "旅行助理 的记忆图谱", exact: true });
   assert.match(await graph.getByRole("alert").innerText(), /TEST_HOST_REJECTED/);
@@ -481,7 +476,7 @@ test("failed graph read reports the host failure and prevents memory writes", as
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 
 /** Runs the current main bundle with native file IO and explicit readonly directory fixtures, never fixture storage. */
-async function fileBackedPlugin(t, bundle) {
+async function fileBackedPlugin(t, bundle, uiScripts = undefined) {
   const disk = await createDiskHarness(t), readonly = fixture(), native = createNativeChatHost(new Map([["chat-dom", { extension: null }]])), hostCalls = native.calls, records = native.records;
   const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], toolLifecycleHooks = [], toolPromptHooks = [];
   const tools = { Files: disk.files, SoftwareSettings: {
@@ -536,7 +531,9 @@ async function fileBackedPlugin(t, bundle) {
       assert.equal(path.basename(matches[0].path), name);
       const file = fileURLToPath(new URL("../" + matches[0].path, import.meta.url));
       assert.ok((await readFile(file)).length > 0, "Declared resource must exist on disk: " + matches[0].path);
-      return file;
+      const destination = disk.directory + "/" + name;
+      await writeFile(destination, await readFile(file));
+      return destination;
     },
     ipc: {
       /** Retains actual service handlers and rejects duplicate main-runtime channels. */
@@ -545,8 +542,8 @@ async function fileBackedPlugin(t, bundle) {
       async call(name, input, options) { assert.equal(options.targetRuntime, "main"); assert.equal(channels.has(name), true, name); return channels.get(name)(input); },
     },
   };
-  const module = { exports: {} };
-  vm.runInNewContext(Buffer.from(bundle).toString("utf8"), { module, exports: module.exports, Tools: tools, ToolPkg: registry, console, TextEncoder, TextDecoder, setTimeout, clearTimeout });
+  const runtime = packageRuntime({ "dist/main.js": bundle, ...(uiScripts ?? await buildUiScreenScripts()) }, { Tools: tools, ToolPkg: registry });
+  const module = { exports: runtime.load("dist/main.js") };
   assert.equal(module.exports.registerToolPkg(), true);
   assert.equal(disk.calls.length, 0, "Registration must not read directories or initialize business storage");
   assert.equal(messageHooks.length, 1); assert.equal(messageHooks[0].id, "memory-candidate-enqueue");
@@ -686,6 +683,8 @@ async function registeredPage(t, plugin, routeId, presentation, documentUrl) {
       cancelScreen: () => window.invokeActualCharacterBridge("cancelScreen", []),
       /** Delegates requested export IO to the actual existing host method. */
       exportFile: (file, content) => window.invokeActualCharacterBridge("exportFile", [file, content]),
+      avatarImage: uri => window.invokeActualCharacterBridge("avatarImage", [uri]),
+      chooseAvatar: () => window.invokeActualCharacterBridge("chooseAvatar", []),
     }; },
   );
   const page = await context.newPage();
@@ -693,7 +692,7 @@ async function registeredPage(t, plugin, routeId, presentation, documentUrl) {
     /** Captures real browser exceptions for terminal assertions. */
     error => errors.push(error.message),
   );
-  await page.goto(documentUrl); await page.locator("#app h1, #app [role=alert], dialog").first().waitFor();
+  await page.goto(documentUrl); await page.locator("#app h1, #app h2, #app [role=alert], dialog").first().waitFor();
   assert.equal(await page.locator("#app [role=alert]").count(), 0, (await page.locator("#app [role=alert]").allTextContents()).join("\n"));
   return { page, context, bridge, completed, calls, errors };
 }
@@ -797,6 +796,58 @@ test("theme picker directory rejection stays in the same editor and performs zer
   );
   assert.equal(calls.filter(value => value.action === "listThemeChoices").length, 1);
   assert.equal(calls.filter(value => value.action === "saveCharacter" || value.action === "activate" || value.action === "writeChatBinding").length, 0);
+  await ui.context.close();
+});
+
+/** Keeps the plugin settings entry within the pre-migration character/group surface. */
+test("character settings remove the whole page title and retain theme binding", async () => {
+  const data = fixture(); data.snapshot.cards[1].themeConfigId = "saved-independent-theme";
+  const ui = await page(1100, 950, data);
+  assert.equal(await ui.page.locator('#app [data-action="refresh"], #app [data-action="preview-group"]').count(), 0);
+  assert.equal(await ui.page.locator("#app .appbar, #app h1").count(), 0);
+  assert.equal((await ui.page.locator("#app .scroll").boundingBox()).y, 0);
+  await ui.page.screenshot({ path: output + "character-settings-no-title.png" });
+  assert.equal(await ui.page.getByRole("button", { name: "编辑群组", exact: true }).count(), 0);
+  await openCharacter(ui.page);
+  const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
+  await editor.getByRole("tab", { name: "绑定", exact: true }).click();
+  assert.equal(await editor.locator(".binding").count(), 5);
+  assert.deepEqual(await editor.getByRole("switch").evaluateAll(nodes => nodes.map(node => node.getAttribute("aria-label"))), ["聊天模型", "TTS 配置", "记忆绑定", "工具访问"]);
+  assert.equal(await editor.getByRole("button", { name: "选择主题配置", exact: true }).count(), 1);
+  await editor.getByRole("tab", { name: "基础", exact: true }).click();
+  await editor.getByLabel("角色名称 *", { exact: true }).fill("原有角色编辑");
+  await editor.getByRole("button", { name: "保存", exact: true }).click();
+  await ui.page.getByRole("button", { name: "编辑 原有角色编辑", exact: true }).waitFor();
+  const calls = await ui.page.evaluate(() => window.testCalls);
+  assert.equal(calls.filter(call => call.action === "listThemeChoices").length, 0);
+  assert.equal(calls.find(call => call.action === "saveCharacter").card.themeConfigId, "saved-independent-theme");
+  await ui.context.close();
+});
+
+/** Removes the added group UI without deleting data already stored on that group. */
+test("group settings retain theme picker, fields and members without duplicate row actions", async () => {
+  const data = fixture(); data.snapshot.groups[0].themeConfigId = "saved-group-theme";
+  data.groupSaveSnapshot = plain(data.snapshot);
+  const ui = await page(1100, 950, data);
+  const tile = ui.page.locator(".entity").filter({ has: ui.page.getByRole("button", { name: "编辑群组 日常讨论", exact: true }) });
+  assert.equal(await tile.locator(".entity-subtitle").textContent(), "Operit、旅行助理");
+  assert.equal(await tile.locator(".badge").count(), 1);
+  assert.equal(await tile.locator(".entity-actions button").count(), 1);
+  await tile.getByRole("button", { name: "编辑群组 日常讨论", exact: true }).click();
+  const editor = ui.page.getByRole("dialog", { name: "编辑群组", exact: true });
+  assert.equal(await editor.locator(".field").count(), 2);
+  assert.equal(await editor.getByRole("checkbox").count(), data.snapshot.cards.length);
+  assert.equal(await editor.getByRole("button", { name: "选择主题配置", exact: true }).count(), 1);
+  assert.equal(await editor.locator(".notice").count(), 0);
+  assert.equal(await editor.locator(".binding").count(), 1);
+  assert.equal(await editor.getByRole("button", { name: "导出 JSON", exact: true }).count(), 1);
+  await editor.getByRole("button", { name: "保存", exact: true }).click();
+  await editor.waitFor({ state: "detached" });
+  const calls = await ui.page.evaluate(() => window.testCalls);
+  const saved = calls.find(call => call.action === "saveGroup");
+  assert.equal(saved.group.themeConfigId, "saved-group-theme");
+  assert.deepEqual(saved.group.members, data.snapshot.groups[0].members);
+  assert.equal(calls.filter(call => call.action === "listThemeChoices").length, 0);
   await ui.context.close();
 });
 
@@ -999,10 +1050,8 @@ test("current plugin routes connect selector preview and memory attachment to th
   });
   /** Performs real SVG gestures and confirms the relationship in the authoritative file-backed graph. */
   await t.test("native SVG click drag and link submission use genuine persisted memory records", async s => {
-    const ui = await registeredPage(s, plugin, "main", null, origin);
-    await ui.page.getByRole("button", { name: "编辑 真实选择角色", exact: true }).click();
-    const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-    await editor.getByRole("tab", { name: "记忆", exact: true }).click(); await editor.getByRole("button", { name: "记忆图谱", exact: true }).click();
+    const ui = await registeredPage(s, plugin, "memory", null, origin);
+    const editor = await openCharacterMemory(ui.page, "真实选择角色"); await editor.getByRole("button", { name: "记忆图谱", exact: true }).click();
     const graph = ui.page.getByRole("dialog", { name: "真实选择角色 的记忆图谱", exact: true });
     const node = graph.locator(`.graph-node[data-id="${first.item.uuid}"]`); await node.waitFor();
     const box = await node.locator("rect").boundingBox(); assert.notEqual(box, null);
@@ -1029,7 +1078,9 @@ test("installed plugin artifacts launch management and the independent V1 text a
   const installedMain = await readFile(new URL("../dist/main.js", import.meta.url));
   assert.equal(createHash("sha256").update(installedMain).digest("hex"), createHash("sha256").update(mainScript).digest("hex"), "Installed main bytes must match current-source SHA256; rebuild the single plugin after source freeze");
   assert.equal(createHash("sha256").update(installedHtml).digest("hex"), createHash("sha256").update(html).digest("hex"), "Installed HTML must match current-source SHA256; stale resources are not UI acceptance");
-  const plugin = await fileBackedPlugin(t, installedMain);
+  const installedScreens = {};
+  for (const file of Object.keys(await buildUiScreenScripts())) installedScreens[file] = await readFile(new URL("../" + file, import.meta.url));
+  const plugin = await fileBackedPlugin(t, installedMain, installedScreens);
   const card = await plugin.api("character.create", { values: { name: "产物角色", description: "Installed artifact native record" } });
   const ownerKey = "character:" + card.id;
   await plugin.api("memory.create", { ownerKey, values: { title: "产物记忆", content: "生成 HTML 读取到的完整文件内容", folderPath: "产物目录" } });
@@ -1039,7 +1090,7 @@ test("installed plugin artifacts launch management and the independent V1 text a
     assert.deepEqual(plain(ui.bridge.currentScreen([])), { requestId: null, input: { mode: "manage" } });
     await ui.page.getByRole("button", { name: "编辑 产物角色", exact: true }).click();
     const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
-    assert.equal(await editor.getByRole("tab").count(), 4);
+    assert.equal(await editor.getByRole("tab").count(), 3);
     await editor.getByRole("tab", { name: "绑定", exact: true }).click();
     assert.equal(await editor.getByRole("switch", { name: "TTS 配置", exact: true }).isEnabled(), true);
     await assert.rejects(async () => ui.bridge.completeScreen([{ mode: "preview", entity: "card", id: card.id }]), /Management has no presentation completion channel/);
@@ -1060,4 +1111,49 @@ test("installed plugin artifacts launch management and the independent V1 text a
     assert.deepEqual(ui.completed, [{ type: "toolpkg.presentation.complete", requestId: "installed-attachment", value: { type: "text", name: "记忆附件", content, mediaType: "text/plain" } }]);
     assert.deepEqual(ui.errors, []);
   });
+});
+
+/** The character page has no inner title; the independent memory header remains stationary. */
+test("character scroll uses the full viewport without a title while memory keeps its fixed header", async () => {
+  const data = fixture();
+  for (let i = 0; i < 24; i++) data.snapshot.cards.push({ ...data.snapshot.cards[1], id: "scroll-" + i, name: "滚动角色 " + i, isDefault: false });
+  const ui = await page(800, 500, data);
+  for (const document of [origin, origin + "/memory"]) {
+    await ui.page.goto(document);
+    await ui.page.locator(".entity").first().waitFor();
+    assert.equal(await ui.page.locator('[data-action="memory-settings"], [data-action="characters-settings"]').count(), 0);
+    const memory = document.endsWith("/memory");
+    assert.equal(await ui.page.locator(".appbar").count(), memory ? 1 : 0);
+    const before = memory ? await ui.page.locator(".appbar").boundingBox() : null;
+    const metrics = await ui.page.locator(".scroll").evaluate(el => ({ client: el.clientHeight, content: el.scrollHeight }));
+    assert.ok(metrics.content > metrics.client);
+    if (memory) assert.ok(metrics.client < 500);
+    else assert.equal(metrics.client, 500);
+    await ui.page.locator(".scroll").hover(); await ui.page.mouse.wheel(0, 700);
+    await ui.page.waitForFunction(() => document.querySelector(".scroll").scrollTop > 0);
+    if (memory) assert.deepEqual(await ui.page.locator(".appbar").boundingBox(), before);
+    else assert.equal(await ui.page.locator(".appbar, h1").count(), 0);
+  }
+  await ui.context.close();
+});
+
+/** Checks the original flexible avatar row, explicit picker transport and the authored persistent URI. */
+test("avatar editor keeps old 44px preview and right-aligned choose/clear controls", async () => {
+  const ui = await page(); await openCharacter(ui.page);
+  const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
+  const row = editor.locator(".avatar-editor");
+  const image = await row.locator(".avatar").boundingBox(), bounds = await row.boundingBox();
+  assert.equal(image.width, 44); assert.equal(image.height, 44);
+  const choose = await row.getByRole("button", { name: "选择", exact: true }).boundingBox();
+  assert.ok(bounds.x + bounds.width - choose.x - choose.width <= 14);
+  await ui.page.evaluate(() => {
+    window.CharacterMemoryHost.chooseAvatar = async () => ({ uri: "/app/data/plugin/avatars/selected.png", source: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=" });
+  });
+  await row.getByRole("button", { name: "选择", exact: true }).click();
+  await row.getByRole("button", { name: "清除", exact: true }).waitFor();
+  assert.ok(await row.locator("img").getAttribute("src"));
+  await editor.getByRole("button", { name: "保存", exact: true }).click();
+  const saved = await ui.page.evaluate(() => window.testCalls.find(call => call.action === "saveCharacter"));
+  assert.equal(saved.card.avatarUri, "/app/data/plugin/avatars/selected.png");
+  await ui.context.close();
 });

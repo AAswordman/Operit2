@@ -365,6 +365,14 @@ pub trait ChatHost: Send + Sync {
     ///Update chat title
     ///
     fn updateTitle(&self, chatId: String, title: String) -> JsFuture<ChatTitleUpdateResultData>;
+    /// Updates only the pinned state of an existing canonical chat.
+    /// Assigns existing conversations to a native folder; null removes folder membership.
+    fn updateGroup(&self, chatIds: Vec<String>, groupName: JsNullable<String>) -> JsFuture<String>;
+    fn updatePinned(&self, chatId: String, pinned: bool) -> JsFuture<String>;
+    /// Updates only the deletion lock of an existing canonical chat.
+    fn updateLocked(&self, chatId: String, locked: bool) -> JsFuture<String>;
+    /// Persists the supplied unique existing chat identifiers in display order.
+    fn reorder(&self, chatIds: Vec<String>) -> JsFuture<String>;
     ///
     ///Delete a chat conversation by id
     ///

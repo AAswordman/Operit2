@@ -323,7 +323,12 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     'background', 'onBackground', 'surface', 'onSurface',
                     'surfaceVariant', 'onSurfaceVariant', 'outline', 'outlineVariant',
                     'inverseSurface', 'inverseOnSurface', 'inversePrimary',
-                    'surfaceTint', 'scrim'
+                    'surfaceTint', 'scrim', 'shadow',
+                    'surfaceDim', 'surfaceBright', 'surfaceContainerLowest',
+                    'surfaceContainerLow', 'surfaceContainer', 'surfaceContainerHigh', 'surfaceContainerHighest',
+                    'primaryFixed', 'primaryFixedDim', 'onPrimaryFixed', 'onPrimaryFixedVariant',
+                    'secondaryFixed', 'secondaryFixedDim', 'onSecondaryFixed', 'onSecondaryFixedVariant',
+                    'tertiaryFixed', 'tertiaryFixedDim', 'onTertiaryFixed', 'onTertiaryFixedVariant'
                 ];
                 var colorScheme = {};
                 for (var c = 0; c < colorSchemeNames.length; c += 1) {
@@ -649,6 +654,16 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     UI: ui
                 };
 
+                /** Changes host inputs without replacing live refs, actions, or pending async work. */
+                runtime.updateRuntimeOptions = function(next) {
+                    if (!next || typeof next !== 'object') return;
+                    if (next.__operit_update_inputs === true) {
+                        var input = cloneObject(next.__operit_input_state);
+                        Object.keys(input).forEach(function(key) { runtime.stateStore[key] = input[key]; });
+                    }
+                    if (next.theme !== undefined) themeSnapshot = readThemeSnapshot(next.theme);
+                    if (next.__operit_call_runtime) runtime.callRuntime = next.__operit_call_runtime;
+                };
                 runtime.ctx = ctx;
                 /// Transfers each navigation request to exactly one render response.
                 runtime.takeNavigationCommands = function() {

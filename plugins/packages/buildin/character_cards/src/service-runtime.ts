@@ -31,7 +31,8 @@ export function connectDirectorySources(sources: CharacterDirectories): void {
   directorySources = sources;
 }
 
-const runtime = createServiceRuntime(
+/** Creating the lazy owner has no side effects; UI-only bundles can omit the entire backend. */
+const runtime = /* @__PURE__ */ createServiceRuntime(
   /** Opens only this plugin's real directory on first use, never during registration. */
   async (): Promise<CharacterCardsService> => {
     opening = true;

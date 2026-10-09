@@ -15,6 +15,82 @@ import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 
 /// Verifies independent previews preserve conversation context and workspace isolation.
 void main() {
+  testWidgets(
+    'workspace retains the legacy compact create bar and scrolling brand header',
+    (tester) async {
+      await _pumpDrawer(tester, _DrawerBridge(), _histories('A', 6));
+      final create = find.byKey(const ValueKey('workspace-create-chat'));
+      expect(tester.getSize(create).height, 34);
+      expect(
+        find.descendant(of: create, matching: find.byIcon(Icons.add_rounded)),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(of: create, matching: find.byType(FilledButton)),
+        findsNothing,
+      );
+      final scroll = find.byKey(
+        const PageStorageKey<String>('drawer-history-scroll'),
+      );
+      expect(
+        find.descendant(of: scroll, matching: find.byType(SidebarInfoCard)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: scroll,
+          matching: find.byKey(const ValueKey('chat-sidebar-segmented-switch')),
+        ),
+        findsOneWidget,
+      );
+      expect(find.ancestor(of: create, matching: scroll), findsOneWidget);
+      final material = tester.widget<Material>(
+        find.ancestor(of: create, matching: find.byType(Material)).first,
+      );
+      expect(material.shape, isA<StadiumBorder>());
+      expect(
+        material.color,
+        Theme.of(tester.element(create)).colorScheme.primaryContainer,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'workspace headers restore the legacy accent marker and row style',
+    (tester) async {
+      await _pumpDrawer(tester, _DrawerBridge(), _histories('A', 2));
+      final header = find.byKey(const ValueKey('workspace-header:workspace:A'));
+      final containers = tester.widgetList<Container>(
+        find.descendant(of: header, matching: find.byType(Container)),
+      );
+      expect(
+        containers.where(
+          (container) =>
+              container.constraints?.maxWidth == 3 &&
+              container.constraints?.maxHeight == 17,
+        ),
+        hasLength(1),
+      );
+      for (final item in tester.widgetList<ConversationDrawerItem>(
+        find.byType(ConversationDrawerItem),
+      )) {
+        expect(item.workspaceStyle, isTrue);
+        expect(item.nested, isTrue);
+      }
+      await tester.tap(find.byTooltip('搜索对话'));
+      await _pumpSidebar(tester);
+      expect(
+        find.ancestor(
+          of: find.byType(ConversationSearchField),
+          matching: find.byType(AnimatedSize),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('each group has an independent and reversible preview', (
     tester,
   ) async {
@@ -197,13 +273,15 @@ void main() {
     expect(find.text('展开更多 2'), findsNWidgets(2));
   });
 
-  testWidgets('workspace headers expose no plugin group mutation controls', (
+  testWidgets('workspace group controls are native and folding performs no backend mutations', (
     tester,
   ) async {
     final bridge = _DrawerBridge();
     await _pumpDrawer(tester, bridge, _histories('A', 6));
     expect(find.text('A'), findsOneWidget);
-    expect(find.byTooltip('分组操作'), findsNothing);
+    expect(find.byTooltip('分组操作'), findsOneWidget);
+    expect(find.text('未分组'), findsOneWidget);
+    expect(find.byKey(const ValueKey('workspace-create-group')), findsOneWidget);
     await tester.tap(find.text('A'));
     await _pumpSidebar(tester);
     expect(find.text('A-0'), findsNothing);
@@ -325,6 +403,7 @@ core.ChatHistoryListItem _history(
   int index, {
   bool pinned = false,
 }) => core.ChatHistoryListItem(
+  group: null,
   id: '$group-$index',
   title: '$group-$index',
   updatedAt: '2026-10-06T00:00:00Z',

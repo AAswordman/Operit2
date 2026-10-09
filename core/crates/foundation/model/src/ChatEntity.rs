@@ -10,6 +10,9 @@ use super::ChatMessage::ChatMessage;
 pub struct ChatEntity {
     pub id: String,
     pub title: String,
+    /// Native conversation folder; independent of plugin-owned role bindings.
+    #[serde(default)]
+    pub group: Option<String>,
     pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub createdAt: i64,
     pub updatedAt: i64,
@@ -29,6 +32,7 @@ impl ChatEntity {
         Self {
             id,
             title,
+            group: None,
             pluginExtensions: BTreeMap::new(),
             createdAt: timestamp,
             updatedAt: timestamp,
@@ -54,6 +58,7 @@ impl ChatEntity {
         ChatHistory {
             id: self.id.clone(),
             title: self.title.clone(),
+            group: self.group.clone(),
             pluginExtensions: self.pluginExtensions.clone(),
             messages,
             createdAt: self.createdAt.to_string(),
@@ -76,6 +81,7 @@ impl ChatEntity {
         Self {
             id: chatHistory.id.clone(),
             title: chatHistory.title.clone(),
+            group: chatHistory.group.clone(),
             pluginExtensions: chatHistory.pluginExtensions.clone(),
             createdAt: chatHistory
                 .createdAt

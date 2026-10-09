@@ -1,21 +1,20 @@
-import type { SnapshotRecord, ConversationGroupRecord } from "./api";
+import type { SnapshotRecord } from "./api";
 import { record } from "./domain";
-import { decodeSelection, encodeSelection, parseDomainMessage } from "./ui-contributions";
+import { decodeSelection, encodeSelection } from "./ui-contributions";
 import { decodeChatMarker } from "./chat-markers";
 import { requireChatSelection } from "./chat-bindings";
 import { getService } from "./service-runtime";
-import type { ComposeDslContext, ComposeNode, ComposeThemeSnapshot } from "../../../../types/compose-dsl";
 
 /** Selects one plugin-owned embedded sidebar view without creating a modal presentation. */
 export interface SidebarInput { view: "characters" | "groups" }
 /** Contains only the neutral chat metadata supplied by the existing native history source. */
 export interface SidebarChatSummary {
   id: string; title: string; updatedAt: string; displayOrder: number;
-  workspaceId: string | null; workspaceName: string | null; locked: boolean; pinned: boolean;
+  workspaceId: string | null; workspaceName: string | null; locked: boolean; pinned: boolean; group: string | null;
 }
 /** Describes the exact live host context of an embedded chat sidebar. */
 export interface ChatSidebarContext { chats: SidebarChatSummary[]; currentChatId: string | null; activeStreamingChatIds: string[] }
-/** Carries opaque plugin route input separately from generic host history state. */
+/** Carries role route input separately from canonical native history state. */
 export interface CurrentSidebar { input: SidebarInput; chatSidebar: ChatSidebarContext }
 /** Requests actual host navigation without exposing plugin selections or group membership. */
 export interface ChatActivateAction { type: "toolpkg.chat.activate"; chatId: string }
@@ -23,16 +22,17 @@ export interface ChatActivateAction { type: "toolpkg.chat.activate"; chatId: str
 export interface CharacterSidebarSection {
   id: string; title: string; avatarUri: string | null; kind: "card" | "group" | "unbound";
   selection: string | null; chats: SidebarChatSummary[];
+  conversationGroups?: ConversationSidebarGroup[]; ungroupedChats?: SidebarChatSummary[];
 }
 /** Supplies explicit plugin selection state to a pure view without defining a storage or namespace protocol. */
 export interface SidebarChatSelection { chatId: string; selection: string | null }
 /** Supplies real directory records and one explicit selection state for each host chat to the category projection. */
 export interface CharacterSidebarData { directory: SnapshotRecord; selections: SidebarChatSelection[] }
 
-/** Projects an actual file-owned conversation group without exposing it to the generic native sidebar. */
+/** Projects canonical native folder membership for role presentation only. */
 export interface ConversationSidebarGroup { id: string; name: string; pinned: boolean; displayOrder: number; chats: SidebarChatSummary[] }
-/** Describes one explicit plugin-owned group scope independently of native role or group fields. */
-export interface ConversationSidebarScope { id: string; title: string; ownerSelection: string | null; groups: ConversationSidebarGroup[]; ungrouped: SidebarChatSummary[] }
+/** Describes a role category containing native folders; no folder storage belongs to the plugin. */
+export interface ConversationSidebarScope { id: string; title: string; ownerSelection: string | null; avatarUri?: string | null; kind?: CharacterSidebarSection["kind"]; groups: ConversationSidebarGroup[]; ungrouped: SidebarChatSummary[] }
 /** Returns only the actual catalog of the explicitly registered sidebar tab. */
 export type SidebarCatalog = { view: "characters"; sections: CharacterSidebarSection[] } | { view: "groups"; scopes: ConversationSidebarScope[] };
 
@@ -56,16 +56,17 @@ export function parseSidebarInput(value: unknown): SidebarInput {
   if (input.view !== "characters" && input.view !== "groups") throw new Error("sidebar input.view must be characters or groups");
   return { view: input.view };
 }
-/** Validates a neutral host history summary and explicitly rejects old character or conversation-group fields. */
+/** Validates a neutral host history summary and rejects plugin role-binding fields. */
 export function parseSidebarChat(value: unknown): SidebarChatSummary {
-  const chat = exactFields(value, ["id", "title", "updatedAt", "displayOrder", "workspaceId", "workspaceName", "locked", "pinned"], "sidebar chat");
+  const chat = exactFields(value, ["id", "title", "updatedAt", "displayOrder", "workspaceId", "workspaceName", "locked", "pinned", "group"], "sidebar chat");
+  if (chat.group !== null && typeof chat.group !== "string") throw new Error("sidebar chat.group must be a string or null");
   const id = sidebarIdentity(chat.id, "sidebar chat.id");
   if (typeof chat.title !== "string" || typeof chat.updatedAt !== "string") throw new Error("sidebar chat title and updatedAt must be strings");
   if (typeof chat.displayOrder !== "number" || !Number.isSafeInteger(chat.displayOrder)) throw new Error("sidebar chat.displayOrder must be a safe integer");
   if (chat.workspaceId !== null && typeof chat.workspaceId !== "string") throw new Error("sidebar chat.workspaceId must be a string or null");
   if (chat.workspaceName !== null && typeof chat.workspaceName !== "string") throw new Error("sidebar chat.workspaceName must be a string or null");
   if (typeof chat.locked !== "boolean" || typeof chat.pinned !== "boolean") throw new Error("sidebar chat locked and pinned must be booleans");
-  return { id, title: chat.title, updatedAt: chat.updatedAt, displayOrder: chat.displayOrder, workspaceId: chat.workspaceId, workspaceName: chat.workspaceName, locked: chat.locked, pinned: chat.pinned };
+  return { id, title: chat.title, updatedAt: chat.updatedAt, displayOrder: chat.displayOrder, workspaceId: chat.workspaceId, workspaceName: chat.workspaceName, locked: chat.locked, pinned: chat.pinned, group: chat.group };
 }
 /** Validates the live generic host state without defaulting missing state to a management screen. */
 export function parseChatSidebarContext(value: unknown): ChatSidebarContext {
@@ -103,7 +104,7 @@ export function compareSidebarChats(left: SidebarChatSummary, right: SidebarChat
   return Number(right.pinned) - Number(left.pinned) || left.displayOrder - right.displayOrder || left.id.localeCompare(right.id);
 }
 /** Projects explicit namespace-derived selection state into plugin categories without defining its storage protocol. */
-export function characterSidebarSections(directory: SnapshotRecord, selections: readonly SidebarChatSelection[], chats: readonly SidebarChatSummary[]): CharacterSidebarSection[] {
+export function characterSidebarSections(directory: Pick<SnapshotRecord, "cards" | "groups">, selections: readonly SidebarChatSelection[], chats: readonly SidebarChatSummary[]): CharacterSidebarSection[] {
   const sections: CharacterSidebarSection[] = [], bySelection = new Map<string, CharacterSidebarSection>();
   for (const card of directory.cards) {
     const selection = encodeSelection({ CharacterCard: { id: card.id } });
@@ -138,50 +139,58 @@ export function characterSidebarSections(directory: SnapshotRecord, selections: 
 }
 
 /** Projects only the actual members of one explicit role or unbound scope and preserves persisted empty groups. */
-export function conversationSidebarScope(section: CharacterSidebarSection, records: readonly ConversationGroupRecord[]): ConversationSidebarScope {
-  const chats = new Map(section.chats.map(
-    /** Associates the full actual host summary with its exact identity. */
-    chat => [chat.id, chat] as const,
-  ));
-  const membership = new Set<string>(), ids = new Set<string>();
-  const groups: ConversationSidebarScope["groups"] = [];
-  for (const record of records) {
-    if (record.ownerSelection !== section.selection) throw new Error("Conversation group belongs to another explicit scope: " + record.id);
-    if (ids.has(record.id)) throw new Error("Duplicate persisted conversation group: " + record.id);
-    ids.add(record.id);
-    const members = [];
-    for (const chatId of record.chatIds) {
-      if (membership.has(chatId)) throw new Error("Chat belongs to multiple groups in this scope: " + chatId);
-      const chat = chats.get(chatId);
-      if (chat === undefined) throw new Error("Persisted group member has no chat in its declared scope: " + chatId);
-      membership.add(chatId); members.push(chat);
-    }
-    members.sort(compareSidebarChats);
-    groups.push({ id: record.id, name: record.name, pinned: record.pinned, displayOrder: record.displayOrder, chats: members });
+export function conversationSidebarScope(section: CharacterSidebarSection): ConversationSidebarScope {
+  const byName = new Map<string, SidebarChatSummary[]>(), ungrouped: SidebarChatSummary[] = [];
+  for (const chat of section.chats) {
+    const name = chat.group?.trim();
+    if (!name) { ungrouped.push(chat); continue; }
+    const members = byName.get(name) ?? []; members.push(chat); byName.set(name, members);
   }
-  groups.sort(
-    /** Preserves pin priority and genuine persisted group order without updating metadata while reading. */
-    (left, right) => Number(right.pinned) - Number(left.pinned) || left.displayOrder - right.displayOrder || left.id.localeCompare(right.id),
-  );
-  return { id: section.id, title: section.title, ownerSelection: section.selection, groups, ungrouped: section.chats.filter(
-    /** Classifies explicitly absent membership only after inspecting the complete real scope catalog. */
-    chat => !membership.has(chat.id),
-  ) };
+  const groups: ConversationSidebarGroup[] = [...byName].map(([name, chats]) => ({
+    id: section.id + ":folder:" + JSON.stringify(name), name,
+    pinned: chats.length > 0 && chats.every(chat => chat.pinned),
+    displayOrder: Math.min(...chats.map(chat => chat.displayOrder)), chats: chats.sort(compareSidebarChats),
+  }));
+  groups.sort((a,b) => Number(b.pinned)-Number(a.pinned) || a.displayOrder-b.displayOrder || a.name.localeCompare(b.name));
+  return { id: section.id, title: section.title, ownerSelection: section.selection, avatarUri: section.avatarUri,
+    kind: section.kind, groups, ungrouped: ungrouped.sort(compareSidebarChats) };
+}
+
+/** Reuses known role identities while applying live native metadata; unknown chats await authoritative classification. */
+export function reconcileSidebarCatalog(catalog: SidebarCatalog, current: CurrentSidebar): SidebarCatalog {
+  const live = new Map(current.chatSidebar.chats.map(chat => [chat.id, chat] as const));
+  const sections: CharacterSidebarSection[] = catalog.view === "characters" ? catalog.sections : catalog.scopes.map(scope => ({
+    id: scope.id, title: scope.title, kind: scope.kind ?? "unbound", selection: scope.ownerSelection, avatarUri: scope.avatarUri ?? null,
+    chats: [...scope.ungrouped, ...scope.groups.flatMap(group => group.chats)], conversationGroups: scope.groups,
+  }));
+  const projected = sections.map(section => {
+    const chats = section.chats.flatMap(chat => { const updated = live.get(chat.id); return updated === undefined ? [] : [updated]; }).sort(compareSidebarChats);
+    const scope = conversationSidebarScope({...section, chats});
+    for (const group of scope.groups) group.id = section.conversationGroups?.find(previous => previous.name === group.name)?.id ?? group.id;
+    return {section: {...section, chats, conversationGroups: scope.groups, ungroupedChats: scope.ungrouped}, scope};
+  });
+  return catalog.view === "characters" ? {view: "characters", sections: projected.map(value => value.section)}
+    : {view: "groups", scopes: projected.map(value => value.scope)};
 }
 
 /** Reads the actual sidebar catalog from namespace extensions and the same file-backed service used by every other plugin surface. */
 export async function readSidebarCatalog(value: CurrentSidebar): Promise<SidebarCatalog> {
-  const current = parseCurrentSidebar(value), service = await getService(), directory = await service.snapshot();
+  const current = parseCurrentSidebar(value), service = await getService();
+  const directory = await service.sidebarDirectory();
   const selections: SidebarChatSelection[] = [];
-  for (const chat of current.chatSidebar.chats) {
-    const extension = await Tools.Chat.readExtension({ kind: "chat", chatId: chat.id });
-    if (extension === null) { selections.push({ chatId: chat.id, selection: null }); continue; }
-    const marker = decodeChatMarker(extension);
-    requireChatSelection(marker.selection, directory.cards, directory.groups);
-    selections.push({ chatId: chat.id, selection: marker.selection });
+  // Bound outstanding bridge requests instead of paying one round trip per chat in series.
+  // Read every extension afresh so rebinding the same IDs cannot leave a stale classification.
+  const chats = current.chatSidebar.chats;
+  for (let offset = 0; offset < chats.length; offset += 8) {
+    selections.push(...await Promise.all(chats.slice(offset, offset + 8).map(async chat => {
+      const extension = await Tools.Chat.readExtension({ kind: "chat", chatId: chat.id });
+      if (extension === null) return { chatId: chat.id, selection: null };
+      const marker = decodeChatMarker(extension);
+      requireChatSelection(marker.selection, directory.cards, directory.groups);
+      return { chatId: chat.id, selection: marker.selection };
+    })));
   }
   const sections = characterSidebarSections(directory, selections, current.chatSidebar.chats);
-  if (current.input.view === "characters") return { view: "characters", sections };
   if (!sections.some(
     /** Ensures an explicit unbound grouping scope remains available for real empty group creation. */
     section => section.selection === null,
@@ -189,8 +198,16 @@ export async function readSidebarCatalog(value: CurrentSidebar): Promise<Sidebar
     const unbound: CharacterSidebarSection = { id: "unbound", title: "未绑定角色", avatarUri: null, kind: "unbound", selection: null, chats: [] };
     sections.push(unbound);
   }
+  if (current.input.view === "characters") {
+    for (const section of sections) {
+      const scope = conversationSidebarScope(section);
+      section.conversationGroups = scope.groups;
+      section.ungroupedChats = scope.ungrouped;
+    }
+    return { view: "characters", sections };
+  }
   const scopes = [];
-  for (const section of sections) scopes.push(conversationSidebarScope(section, await service.dispatchDomain("conversation-group.list", { ownerSelection: section.selection })));
+  for (const section of sections) scopes.push(conversationSidebarScope(section));
   return { view: "groups", scopes };
 }
 /** Registers the one actual sidebar catalog handler without reading native chats or opening the file repository. */
@@ -198,72 +215,5 @@ export function registerSidebarChannel(): void {
   ToolPkg.ipc.on<CurrentSidebar, SidebarCatalog>("character-sidebar.catalog", readSidebarCatalog);
 }
 
-/** Decodes only the existing nested WebView argument-array ABI. */
-function argumentsFor(value: readonly unknown[], expected: number): unknown[] {
-  if (value.length !== 1 || !Array.isArray(value[0]) || value[0].length !== expected) throw new Error("CharacterSidebarHost expects " + expected + " arguments");
-  return value[0];
-}
-/** Renders the independently embedded sidebar using exact opaque input and live generic host context, never a modal session. */
-export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
-  const controller = ctx.createWebViewController("character-sidebar-web");
-  const [input] = ctx.useState<SidebarInput | null>("input", null), [chatSidebar] = ctx.useState<ChatSidebarContext | null>("chatSidebar", null);
-  const [path, setPath] = ctx.useState("character-sidebar-html", ""), [error, setError] = ctx.useState("character-sidebar-error", "");
-  const current = ctx.useRef<CurrentSidebar>("character-sidebar-current", parseCurrentSidebar({ input, chatSidebar }));
-  current.current = parseCurrentSidebar({ input, chatSidebar });
-  const ready = ctx.useRef("character-sidebar-ready", false), published = ctx.useRef("character-sidebar-published", "");
-  const unsubscribe = ctx.useRef<(() => void) | null>("character-sidebar-theme-subscription", null);
-  const origin = "https://character-sidebar.operit.local/";
-  /** Applies the current real Material palette without manufacturing local theme values. */
-  async function applyTheme(theme: ComposeThemeSnapshot): Promise<void> {
-    if (ready.current) await controller.evaluateJavascript("window.applyCharacterSidebarTheme(" + JSON.stringify(theme) + ");");
-  }
-  /** Publishes validated native context updates to the same real sidebar document. */
-  async function publishContext(): Promise<void> {
-    const serialized = JSON.stringify(current.current);
-    if (!ready.current || published.current === serialized) return;
-    try {
-      await controller.evaluateJavascript("window.updateCharacterSidebar(" + serialized + ");");
-      published.current = serialized;
-    } catch (failure) { setError(String(failure)); ctx.reportError(failure); }
-  }
-  if (ready.current && published.current !== JSON.stringify(current.current)) void publishContext();
-  /** Installs only the real package IPC and existing generic host actions before loading the sidebar asset. */
-  async function initialize(): Promise<void> {
-    try {
-      controller.addJavascriptInterface("CharacterSidebarHost", {
-        /** Returns the actual host palette for the independent embedded document. */
-        currentTheme: () => ctx.Theme.getCurrent(),
-        /** Reads exactly the validated route input and current native history context. */
-        currentSidebar: (...args: unknown[]) => { argumentsFor(args, 0); ready.current = true; published.current = JSON.stringify(current.current); return current.current; },
-        /** Reads the actual plugin-projected catalog through the one main runtime. */
-        catalog: (...args: unknown[]) => { argumentsFor(args, 0); return ToolPkg.ipc.call<CurrentSidebar, SidebarCatalog>("character-sidebar.catalog", current.current, { targetRuntime: "main" }); },
-        /** Delegates finite domain mutations to the same authoritative service, without a Compose-runtime repository. */
-        domain: (...args: unknown[]) => { const [value] = argumentsFor(args, 1), message = parseDomainMessage(value); return ToolPkg.ipc.call("character-memory.domain", message, { targetRuntime: "main" }); },
-        /** Returns the exact existing generic activation action after verifying the target in the supplied host context. */
-        activateChat: (...args: unknown[]) => {
-          const [value] = argumentsFor(args, 1), chatId = sidebarIdentity(value, "activate chatId");
-          if (!current.current.chatSidebar.chats.some(
-            /** Requires an exact supplied native identity, not another role's guessed conversation. */
-            chat => chat.id === chatId,
-          )) throw new Error("Chat activation target is absent from the actual sidebar context: " + chatId);
-          return { type: "toolpkg.chat.activate", chatId };
-        },
-        /** Calls the actual generic native deletion chain; backend callbacks own extension and membership cleanup. */
-        deleteChat: (...args: unknown[]) => { const [value] = argumentsFor(args, 1); return Tools.Chat.deleteChat(sidebarIdentity(value, "delete chatId")); },
-      });
-      unsubscribe.current = ctx.Theme.subscribe(applyTheme);
-      setPath(await ToolPkg.readResource("character_sidebar_html", "character-sidebar.html"));
-    } catch (failure) { setError(String(failure)); }
-  }
-  /** Releases only the actual theme subscription owned by this embedded surface. */
-  function dispose(): void { ready.current = false; if (unsubscribe.current !== null) { unsubscribe.current(); unsubscribe.current = null; } }
-  return ctx.UI.Box({ fillMaxSize: true, onLoad: initialize }, error !== "" ? ctx.UI.Text({ text: error }) : path === "" ? ctx.UI.Text({ text: "正在加载插件侧边栏…" }) : ctx.UI.WebView({
-    key: "character-sidebar-web", controller, fillMaxSize: true, url: origin, javaScriptEnabled: true, domStorageEnabled: true, supportZoom: false, useWideViewPort: true,
-    /** Restricts top-level navigation to this exact offline sidebar document. */
-    onShouldOverrideUrlLoading: request => request.url === origin ? { action: "allow" } : { action: "cancel" },
-    /** Serves the real registered plugin resource through the existing cross-platform WebView host. */
-    onInterceptRequest: request => request.url === origin ? { action: "respond", response: { mimeType: "text/html", encoding: "utf-8", statusCode: 200, reasonPhrase: "OK", filePath: path } } : { action: "block" },
-    /** Disposes references when the embedded sidebar instance is actually released. */
-    onLifecycleEvent: event => { if (event.type === "Disposed") dispose(); },
-  }));
-}
+/** Sidebar content is native Compose DSL; only the separate management editor uses a WebView. */
+export { renderSidebarScreen } from "./ui-sidebar-native";

@@ -1,11 +1,21 @@
 import type { CharacterState, MemorySpace, Card } from "../model";
+import { operitDefaultContent } from "../default-character";
 import { createCharacterDraft } from "../drafts";
 import { assertEmbedding } from "../memory-jobs/embeddings";
 import { assertCard, assertConversationGroups, assertGroup, assertInteger, assertMemory, assertMemoryChatMessage, assertMemorySettings, assertNumber, assertObject, assertSearchConfig, assertString, assertTag, requireDecimal, requireId } from "../validation";
 
 /** Creates the actual product default on first installation or explicit reset only. */
 export function createDefaultCharacter(now: number): Card {
-  return { ...createCharacterDraft(), id: "default", name: "默认角色", description: "通用助手", characterSetting: "你是一个乐于助人、诚实且严谨的助手。", isDefault: true, createdAt: now, updatedAt: now };
+  return { ...createCharacterDraft(), ...operitDefaultContent, id: "default", isDefault: true, createdAt: now, updatedAt: now };
+}
+/** Recognizes only the complete untouched placeholder from the pre-alignment built-in seed. */
+export function upgradeUntouchedDefault(state: CharacterState): boolean {
+  const card = state.cards.find(item => item.id === "default" && item.isDefault);
+  if (card === undefined || card.createdAt !== card.updatedAt) return false;
+  const placeholder = { ...createCharacterDraft(), id: "default", name: "默认角色", description: "通用助手", characterSetting: "你是一个乐于助人、诚实且严谨的助手。", isDefault: true, createdAt: card.createdAt, updatedAt: card.updatedAt };
+  for (const key of Object.keys(placeholder) as (keyof Card)[]) if (JSON.stringify(card[key]) !== JSON.stringify(placeholder[key])) return false;
+  Object.assign(card, operitDefaultContent);
+  return true;
 }
 /** Resolves this plugin's real owner document path without permitting identity traversal. */
 export function userDocumentPath(ownerKey: string): string { return "owners/" + encodeURIComponent(ownerKey) + "/USER.md"; }

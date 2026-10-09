@@ -111,7 +111,7 @@ export function requireUiCaller(caller: string): void {
 }
 
 /** Resolves the plugin's deliberately opaque selection token using its exact declared grammar. */
-export function decodeSelection(selection: string, directory: Snapshot): { entity: EntityKind; id: string; prompt: ActivePrompt; title: string; avatarUri: string | null } {
+export function decodeSelection(selection: string, directory: Pick<Snapshot, "cards" | "groups">): { entity: EntityKind; id: string; prompt: ActivePrompt; title: string; avatarUri: string | null } {
   const parsed = parseChatSelection(selection), id = parsed.id;
   switch (parsed.kind) {
     case "card": {

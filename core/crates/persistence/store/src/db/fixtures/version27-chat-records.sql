@@ -275,7 +275,7 @@ VALUES ('v27-chat','ai',42,7,'Legacy speaker',2,'provider-kept','model-kept',11,
 INSERT INTO message_variants (chatId,messageTimestamp,variantIndex,roleName,provider,modelName,inputTokens,outputTokens,cachedInputTokens,sentAt,outputDurationMs,waitDurationMs,completedAt)
 VALUES ('v27-chat',42,1,'Variant one','provider-1','model-1',31,37,41,51,43,47,91), ('v27-chat',42,2,'Variant two','provider-2','model-2',53,59,61,52,67,71,92);
 INSERT INTO message_parts (chatId,messageTimestamp,variantIndex,partId,sequence,kind,content,toolCallId,toolName,attributesJson)
-VALUES ('v27-chat',42,0,'part-0',0,'markdown','base-kept',NULL,NULL,'{"base":true}'),('v27-chat',42,1,'part-0',0,'markdown','variant-one-kept','call-kept','tool-kept','{"variant":1}'),('v27-chat',42,2,'part-0',0,'markdown','variant-two-kept',NULL,NULL,'{"variant":2}');
+VALUES ('v27-chat',42,0,'part-0',0,'markdown','base-kept',NULL,NULL,'{"base":"true"}'),('v27-chat',42,1,'part-0',0,'markdown','variant-one-kept','call-kept','tool-kept','{"variant":"1"}'),('v27-chat',42,2,'part-0',0,'markdown','variant-two-kept',NULL,NULL,'{"variant":"2"}');
 INSERT INTO sync_sql_operations (opId,originDeviceId,sequence,domain,entityType,entityId,operation,semantics,createdAt,schemaVersion)
 VALUES ('v27:1','v27',1,'chat','chat','v27-chat','upsert','transaction',100,6), ('v27:2','v27',2,'usage','request','usage-kept','upsert','transaction',101,6);
 INSERT INTO sync_sql_clocks (originDeviceId,sequence) VALUES ('v27',2);

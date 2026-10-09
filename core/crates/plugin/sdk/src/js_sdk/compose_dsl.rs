@@ -21,6 +21,9 @@ pub enum ComposeModifierCombinedClickableOptionsOnClickOutput {
     Variant1(()),
     /// The handler continues asynchronously.
     Variant2(JsFuture<()>),
+    /// Optional generic result delivered through the host's existing action boundary.
+    Variant3(ToolPkgJsonValue),
+    Variant4(JsFuture<ToolPkgJsonValue>),
 }
 /// Completion mode returned by the long-click handler.
 pub enum ComposeModifierCombinedClickableOptionsOnLongClickOutput {
@@ -418,6 +421,10 @@ pub enum ButtonPropsOnClickOutput {
     Variant1(()),
     /// The click handler continues asynchronously.
     Variant2(JsFuture<()>),
+    /// Returns arbitrary JSON through the existing action response.
+    Variant3(ToolPkgJsonValue),
+    /// Resolves arbitrary JSON through the existing action response.
+    Variant4(JsFuture<ToolPkgJsonValue>),
 }
 /// Completion mode returned by an icon-button click handler.
 pub enum IconButtonPropsOnClickOutput {
@@ -2204,6 +2211,8 @@ pub struct ComposeCommonProps {
     pub key: Option<String>,
     /// Runs after the host has created and loaded the node.
     pub onLoad: Option<Arc<dyn Fn() -> ComposeCommonPropsOnLoadOutput + Send + Sync>>,
+    /// Runs after host inputs update in the same live execution context.
+    pub onInputsChanged: Option<Arc<dyn Fn() -> ComposeCommonPropsOnLoadOutput + Send + Sync>>,
     /// Content presented as the host screen's top-bar title.
     pub topBarTitle: Option<ComposeChildren>,
     /// Ordered modifier operations applied to layout, drawing, and input.
@@ -2384,6 +2393,67 @@ pub struct TextFieldProps {
     pub isPassword: Option<bool>,
     /// Typography and foreground overrides for the entered value.
     pub style: Option<ComposeTextFieldStyle>,
+}
+/// Completion of a generic interaction callback, including asynchronous plugin work.
+pub enum ComposeInteractionOutput {
+    Variant1(()),
+    Variant2(JsFuture<()>),
+}
+/// Final coordinates and acceptance status of an arbitrary drag payload.
+pub struct ComposeDragEndEvent {
+    pub data: ToolPkgJsonValue,
+    pub dragType: String,
+    pub wasAccepted: bool,
+    pub x: f64,
+    pub y: f64,
+    pub velocityX: f64,
+    pub velocityY: f64,
+}
+/// Native dragging of arbitrary JSON data; content and feedback remain composable.
+pub struct DraggableProps {
+    pub base_compose_common_props: ComposeCommonProps,
+    pub data: ToolPkgJsonValue,
+    pub dragType: Option<String>,
+    pub enabled: Option<bool>,
+    pub axis: Option<String>,
+    pub longPress: Option<bool>,
+    pub delayMillis: Option<f64>,
+    pub maxSimultaneousDrags: Option<f64>,
+    pub feedback: Option<ComposeChildren>,
+    pub childWhenDragging: Option<ComposeChildren>,
+    pub content: Option<ComposeChildren>,
+    pub onDragStarted: Option<Arc<dyn Fn(ToolPkgJsonValue) -> ComposeInteractionOutput + Send + Sync>>,
+    pub onDragEnd: Option<Arc<dyn Fn(ComposeDragEndEvent) -> ComposeInteractionOutput + Send + Sync>>,
+}
+/// Native drop acceptance with optional declarative type/data filters, not business rules.
+pub struct DragTargetProps {
+    pub base_compose_common_props: ComposeCommonProps,
+    pub enabled: Option<bool>,
+    pub acceptedTypes: Option<Vec<String>>,
+    pub acceptedData: Option<Vec<ToolPkgJsonValue>>,
+    pub hoverBackground: Option<ComposeColor>,
+    pub hoverBorderColor: Option<ComposeColor>,
+    pub shape: Option<ComposeShape>,
+    pub content: Option<ComposeChildren>,
+    pub onDrop: Option<Arc<dyn Fn(ToolPkgJsonValue) -> ComposeInteractionOutput + Send + Sync>>,
+    pub onLeave: Option<Arc<dyn Fn(ToolPkgJsonValue) -> ComposeInteractionOutput + Send + Sync>>,
+}
+/// Bounded horizontal swipe actions with arbitrary background slots and callbacks.
+pub struct SwipeActionsProps {
+    pub base_compose_common_props: ComposeCommonProps,
+    pub enabled: Option<bool>,
+    pub actionThreshold: Option<f64>,
+    pub startBackground: Option<ComposeChildren>,
+    pub endBackground: Option<ComposeChildren>,
+    pub content: Option<ComposeChildren>,
+    pub onStartAction: Option<Arc<dyn Fn() -> ComposeInteractionOutput + Send + Sync>>,
+    pub onEndAction: Option<Arc<dyn Fn() -> ComposeInteractionOutput + Send + Sync>>,
+}
+/// Application Material 3 morphing polygon indicator, independent of business state.
+pub struct LoadingIndicatorProps {
+    pub base_compose_common_props: ComposeCommonProps,
+    pub size: Option<f64>,
+    pub color: Option<ComposeColor>,
 }
 /// Controlled state and colors for a binary sliding switch.
 pub struct SwitchProps {
@@ -2879,6 +2949,12 @@ pub struct ComposeUiFactoryRegistry {
     pub FlowRow: ComposeNodeFactory<FlowRowProps>,
     /// Creates a stacking layout container.
     pub Box: ComposeNodeFactory<BoxProps>,
+    /// Drags arbitrary serializable data using native gesture arbitration.
+    pub Draggable: ComposeNodeFactory<DraggableProps>,
+    /// Accepts arbitrary drag payloads without host business-model knowledge.
+    pub DragTarget: ComposeNodeFactory<DragTargetProps>,
+    /// Composes independent start/end swipe callbacks and background content.
+    pub SwipeActions: ComposeNodeFactory<SwipeActionsProps>,
     /// Creates an empty element that reserves layout space.
     pub Spacer: ComposeNodeFactory<SpacerProps>,
     /// Creates a plain text element.
@@ -2907,6 +2983,7 @@ pub struct ComposeUiFactoryRegistry {
     pub LinearProgressIndicator: ComposeNodeFactory<LinearProgressIndicatorProps>,
     /// Creates a circular progress indicator.
     pub CircularProgressIndicator: ComposeNodeFactory<CircularProgressIndicatorProps>,
+    pub LoadingIndicator: ComposeNodeFactory<LoadingIndicatorProps>,
     /// Creates the presentation slot for queued snackbars.
     pub SnackbarHost: ComposeNodeFactory<SnackbarHostProps>,
     /// Embeds the host AI chat content without the workspace panel.

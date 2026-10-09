@@ -526,7 +526,10 @@ impl RuntimePackageManager {
             .get("__operit_keep_compose_event_stream")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let engine = self.getToolPkgExecutionEngine(&contextKey, &containerPackageName);
+        // Proxy watch dispatch holds the package-manager lock. Resolve the
+        // existing engine only after returning the stream, on the scheduled task;
+        // creating an engine here can re-enter that lock during authentication.
+        let manager = self.toolPkgManager().clone();
         let scheduler = self
             .context
             .hostRuntimeTaskSchedulerHost
@@ -537,6 +540,14 @@ impl RuntimePackageManager {
                 "operit-compose-dsl-action",
                 Box::new(move || {
                     Box::pin(async move {
+                        let Some(engine) = manager.findToolPkgExecutionEngine(&contextKey, &containerPackageName) else {
+                            eventStreamForTask.emit(buildComposeDslActionEvent(
+                                "error", Some("Compose execution context has been released"), None,
+                            ));
+                            eventStreamForTask.emit(buildComposeDslActionEvent("complete", None, None));
+                            eventStreamForTask.close();
+                            return;
+                        };
                         let intermediateStream = eventStreamForTask.clone();
                         let finalEvent = engine
                             .dispatch_compose_dsl_action_result_async(

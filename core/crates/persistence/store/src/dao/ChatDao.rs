@@ -151,8 +151,8 @@ impl ChatDao {
         self.store.transaction(|transaction| {
             for chat in chats {
                 transaction.execute(
-                    "UPDATE chats SET title = ?2, createdAt = ?3, updatedAt = ?4, inputTokens = ?5, outputTokens = ?6, currentWindowSize = ?7, displayOrder = ?8, workspaceId = ?9, parentChatId = ?10, locked = ?11, pinned = ?12 WHERE id = ?1",
-                    sqliteParams![chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned],
+                    "UPDATE chats SET title = ?2, createdAt = ?3, updatedAt = ?4, inputTokens = ?5, outputTokens = ?6, currentWindowSize = ?7, displayOrder = ?8, workspaceId = ?9, parentChatId = ?10, locked = ?11, pinned = ?12, \"group\" = ?13 WHERE id = ?1",
+                    sqliteParams![chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, chat.group],
                 )?;
             }
             Ok(())
@@ -276,6 +276,7 @@ pub fn mapChatEntity(row: &SqliteRow) -> Result<ChatEntity, SqliteStoreError> {
     Ok(ChatEntity {
         id: row.get("id")?,
         title: row.get("title")?,
+        group: row.get("group")?,
         pluginExtensions: decodePluginExtensions(&row.get::<_, String>("pluginExtensions")?)?,
         createdAt: row.get("createdAt")?,
         updatedAt: row.get("updatedAt")?,
@@ -292,7 +293,7 @@ pub fn mapChatEntity(row: &SqliteRow) -> Result<ChatEntity, SqliteStoreError> {
 
 /// Returns the insert statement shared by the DAO and atomic chat draft commit.
 pub(crate) fn chatInsertSql() -> &'static str {
-    "INSERT INTO chats (id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
+    "INSERT INTO chats (id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions, \"group\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
 }
 
 /// Serializes a complete chat draft without interpreting extension values.
@@ -310,6 +311,7 @@ pub(crate) fn chatInsertParams(chat: &ChatEntity) -> Result<Vec<SqliteValue>, Sq
         chat.parentChatId,
         chat.locked,
         chat.pinned,
-        encodePluginExtensions(&chat.pluginExtensions)?
+        encodePluginExtensions(&chat.pluginExtensions)?,
+        chat.group
     ])
 }

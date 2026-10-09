@@ -832,6 +832,16 @@ macro_rules! impl_rejecting_js_tools_host {
             fn updateTitle(&self, _chatId: String, _title: String) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::ChatTitleUpdateResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.updateTitle is not part of this test")
             }
+            fn updatePinned(&self, _chatId: String, _pinned: bool) -> operit_plugin_sdk::js_sdk::JsFuture<String> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.updatePinned is not part of this test")
+            }
+            fn updateLocked(&self, _chatId: String, _locked: bool) -> operit_plugin_sdk::js_sdk::JsFuture<String> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.updateLocked is not part of this test")
+            }
+            fn reorder(&self, _chatIds: Vec<String>) -> operit_plugin_sdk::js_sdk::JsFuture<String> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.reorder is not part of this test")
+            }
+
 
             /// Rejects chat deletion in this test host.
             fn deleteChat(&self, _chatId: String) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::ChatDeleteResultData> {

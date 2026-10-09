@@ -63,3 +63,14 @@ test('execution engine acquisition releases the proxy manager lock before worker
   assert.match(handler, /registry\.packageRegistryReadiness\(\)\.require_ready\(\)\?/);
   assert.match(handler, /registry\.isPackageEnabled\(&context\.container_package_name\)/);
 });
+
+
+test('Compose action watch resolves only an existing engine after scheduling, never under the proxy manager lock', () => {
+  const sourceText = source('core/crates/tool/services/src/tools/packTool/RuntimePackageManager.rs');
+  const start = sourceText.indexOf('pub fn dispatchToolPkgComposeDslActionEvents(');
+  const end = sourceText.indexOf('pub fn findToolPkgExecutionEngine(', start);
+  const dispatch = sourceText.slice(start, end);
+  assert.doesNotMatch(dispatch, /self\.getToolPkgExecutionEngine/);
+  assert.ok(dispatch.indexOf('scheduleHostRuntimeAsyncTask') < dispatch.indexOf('manager.findToolPkgExecutionEngine'));
+  assert.match(dispatch, /Compose execution context has been released/);
+});

@@ -27,11 +27,6 @@
       "mime": "text/html"
     },
     {
-      "key": "character_sidebar_html",
-      "path": "resources/character-sidebar.html",
-      "mime": "text/html"
-    },
-    {
       "key": "character_default_avatar",
       "path": "resources/operit-avatar.png",
       "mime": "image/png"

@@ -3,33 +3,35 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-/// Requires an intentional, in-bounds swipe before invoking a conversation action.
-class ConversationSwipeActions extends StatefulWidget {
-  /// Creates a conversation swipe surface without velocity-based actions.
-  const ConversationSwipeActions({
+/// Requires an intentional, in-bounds swipe before invoking an action.
+class SwipeActions extends StatefulWidget {
+  /// Creates a horizontal swipe surface without velocity-based actions.
+  const SwipeActions({
     super.key,
-    required this.onRename,
-    required this.onDelete,
+    this.onStartAction,
+    this.onEndAction,
+    this.enabled = true,
+    this.actionThreshold = 0.40,
     required this.background,
     required this.secondaryBackground,
     required this.child,
   });
 
-  final VoidCallback onRename;
-  final VoidCallback onDelete;
+  final VoidCallback? onStartAction;
+  final VoidCallback? onEndAction;
+  final bool enabled;
+  final double actionThreshold;
   final Widget background;
   final Widget secondaryBackground;
   final Widget child;
 
   /// Creates the swipe animation and gesture state.
   @override
-  State<ConversationSwipeActions> createState() =>
-      _ConversationSwipeActionsState();
+  State<SwipeActions> createState() => _SwipeActionsState();
 }
 
-class _ConversationSwipeActionsState extends State<ConversationSwipeActions>
+class _SwipeActionsState extends State<SwipeActions>
     with SingleTickerProviderStateMixin {
-  static const double _actionThreshold = 0.40;
   late final AnimationController _offset;
   late Offset _origin;
   late double _width;
@@ -82,21 +84,21 @@ class _ConversationSwipeActionsState extends State<ConversationSwipeActions>
   void _onEnd(DragEndDetails details) {
     final distance = _offset.value;
     final invokeAction =
-        !_cancelled && distance.abs() >= _width * _actionThreshold;
+        !_cancelled && distance.abs() >= _width * widget.actionThreshold;
     _settle();
     if (invokeAction) {
       final renameSide = Directionality.of(context) == TextDirection.ltr
           ? distance > 0
           : distance < 0;
       if (renameSide) {
-        widget.onRename();
+        widget.onStartAction?.call();
       } else {
-        widget.onDelete();
+        widget.onEndAction?.call();
       }
     }
   }
 
-  /// Animates the conversation content to its resting position.
+  /// Animates the content to its resting position.
   void _settle() {
     _offset.animateTo(
       0,
@@ -108,13 +110,14 @@ class _ConversationSwipeActionsState extends State<ConversationSwipeActions>
   /// Builds a stationary hit region around the translated conversation row.
   @override
   Widget build(BuildContext context) {
+    if (!widget.enabled) return widget.child;
     final textDirection = Directionality.of(context);
     return RawGestureDetector(
       behavior: HitTestBehavior.opaque,
       gestures: <Type, GestureRecognizerFactory>{
-        _ConversationSwipeRecognizer:
-            GestureRecognizerFactoryWithHandlers<_ConversationSwipeRecognizer>(
-              () => _ConversationSwipeRecognizer(
+        _SwipeRecognizer:
+            GestureRecognizerFactoryWithHandlers<_SwipeRecognizer>(
+              () => _SwipeRecognizer(
                 debugOwner: this,
                 getBounds: _getBounds,
                 onLeaveBounds: _onCancel,
@@ -161,9 +164,9 @@ class _ConversationSwipeActionsState extends State<ConversationSwipeActions>
 }
 
 /// Arbitrates deliberate horizontal pointer drags within the original row.
-class _ConversationSwipeRecognizer extends HorizontalDragGestureRecognizer {
+class _SwipeRecognizer extends HorizontalDragGestureRecognizer {
   /// Creates a bounded recognizer using Flutter's shared gesture arena.
-  _ConversationSwipeRecognizer({
+  _SwipeRecognizer({
     super.debugOwner,
     required this.getBounds,
     required this.onLeaveBounds,

@@ -1,12 +1,12 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:operit2/ui/main/components/ConversationSwipeActions.dart';
+import 'package:operit2/ui/common/components/SwipeActions.dart';
 
 /// Builds a fixed-width row with observable action and tap callbacks.
 Widget _buildRow({
-  required VoidCallback onRename,
-  required VoidCallback onDelete,
+  required VoidCallback onStartAction,
+  required VoidCallback onEndAction,
   VoidCallback? onTap,
   VoidCallback? onLongPress,
   TextDirection textDirection = TextDirection.ltr,
@@ -18,9 +18,9 @@ Widget _buildRow({
         child: SizedBox(
           width: 240,
           height: 34,
-          child: ConversationSwipeActions(
-            onRename: onRename,
-            onDelete: onDelete,
+          child: SwipeActions(
+            onStartAction: onStartAction,
+            onEndAction: onEndAction,
             background: const ColoredBox(color: Colors.blue),
             secondaryBackground: const ColoredBox(color: Colors.red),
             child: Material(
@@ -45,9 +45,9 @@ void main() {
     var renames = 0;
     var deletes = 0;
     await tester.pumpWidget(
-      _buildRow(onRename: () => renames++, onDelete: () => deletes++),
+      _buildRow(onStartAction: () => renames++, onEndAction: () => deletes++),
     );
-    final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+    final bounds = tester.getRect(find.byType(SwipeActions));
     await tester.dragFrom(bounds.center, const Offset(110, 0));
     await tester.pumpAndSettle();
     expect(renames, 1);
@@ -63,9 +63,9 @@ void main() {
   ) async {
     var actions = 0;
     await tester.pumpWidget(
-      _buildRow(onRename: () => actions++, onDelete: () => actions++),
+      _buildRow(onStartAction: () => actions++, onEndAction: () => actions++),
     );
-    final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+    final bounds = tester.getRect(find.byType(SwipeActions));
     final gesture = await tester.startGesture(bounds.center);
     await gesture.moveBy(const Offset(110, 0));
     await tester.pump();
@@ -82,8 +82,8 @@ void main() {
     var actions = 0;
     await tester.pumpWidget(
       _buildRow(
-        onRename: () => actions++,
-        onDelete: () => actions++,
+        onStartAction: () => actions++,
+        onEndAction: () => actions++,
         onLongPress: () => longPresses++,
       ),
     );
@@ -99,9 +99,9 @@ void main() {
     var renames = 0;
     var deletes = 0;
     await tester.pumpWidget(
-      _buildRow(onRename: () => renames++, onDelete: () => deletes++),
+      _buildRow(onStartAction: () => renames++, onEndAction: () => deletes++),
     );
-    final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+    final bounds = tester.getRect(find.byType(SwipeActions));
     await tester.dragFrom(
       Offset(bounds.left + 40, bounds.center.dy),
       const Offset(150, 0),
@@ -124,9 +124,9 @@ void main() {
   ) async {
     var actions = 0;
     await tester.pumpWidget(
-      _buildRow(onRename: () => actions++, onDelete: () => actions++),
+      _buildRow(onStartAction: () => actions++, onEndAction: () => actions++),
     );
-    final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+    final bounds = tester.getRect(find.byType(SwipeActions));
     for (final distance in <double>[70, -70]) {
       await tester.flingFrom(bounds.center, Offset(distance, 0), 2000);
       await tester.pumpAndSettle();
@@ -140,9 +140,9 @@ void main() {
     (tester) async {
       var actions = 0;
       await tester.pumpWidget(
-        _buildRow(onRename: () => actions++, onDelete: () => actions++),
+        _buildRow(onStartAction: () => actions++, onEndAction: () => actions++),
       );
-      final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+      final bounds = tester.getRect(find.byType(SwipeActions));
       final gesture = await tester.startGesture(bounds.center);
       await gesture.moveBy(const Offset(24, 0));
       await tester.pump();
@@ -158,9 +158,9 @@ void main() {
     (tester) async {
       var actions = 0;
       await tester.pumpWidget(
-        _buildRow(onRename: () => actions++, onDelete: () => actions++),
+        _buildRow(onStartAction: () => actions++, onEndAction: () => actions++),
       );
-      final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+      final bounds = tester.getRect(find.byType(SwipeActions));
       for (final outside in <Offset>[
         Offset(bounds.left + 190, bounds.bottom + 30),
         Offset(bounds.right + 30, bounds.center.dy),
@@ -185,9 +185,9 @@ void main() {
   testWidgets('pointer cancellation does not invoke an action', (tester) async {
     var actions = 0;
     await tester.pumpWidget(
-      _buildRow(onRename: () => actions++, onDelete: () => actions++),
+      _buildRow(onStartAction: () => actions++, onEndAction: () => actions++),
     );
-    final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+    final bounds = tester.getRect(find.byType(SwipeActions));
     final gesture = await tester.startGesture(
       Offset(bounds.left + 40, bounds.center.dy),
     );
@@ -204,8 +204,8 @@ void main() {
     var actions = 0;
     await tester.pumpWidget(
       _buildRow(
-        onRename: () => actions++,
-        onDelete: () => actions++,
+        onStartAction: () => actions++,
+        onEndAction: () => actions++,
         onTap: () => taps++,
       ),
     );
@@ -222,12 +222,12 @@ void main() {
     var deletes = 0;
     await tester.pumpWidget(
       _buildRow(
-        onRename: () => renames++,
-        onDelete: () => deletes++,
+        onStartAction: () => renames++,
+        onEndAction: () => deletes++,
         textDirection: TextDirection.rtl,
       ),
     );
-    final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+    final bounds = tester.getRect(find.byType(SwipeActions));
     await tester.dragFrom(
       Offset(bounds.right - 40, bounds.center.dy),
       const Offset(-150, 0),
@@ -260,9 +260,9 @@ void main() {
                   controller: scrollController,
                   itemCount: 30,
                   itemExtent: 34,
-                  itemBuilder: (context, index) => ConversationSwipeActions(
-                    onRename: () => actions++,
-                    onDelete: () => actions++,
+                  itemBuilder: (context, index) => SwipeActions(
+                    onStartAction: () => actions++,
+                    onEndAction: () => actions++,
                     background: const ColoredBox(color: Colors.blue),
                     secondaryBackground: const ColoredBox(color: Colors.red),
                     child: Text('Conversation $index'),
@@ -279,7 +279,7 @@ void main() {
       ]) {
         scrollController.jumpTo(0);
         await tester.pump();
-        await tester.drag(find.byType(ConversationSwipeActions).at(3), drag);
+        await tester.drag(find.byType(SwipeActions).at(3), drag);
         await tester.pumpAndSettle();
         expect(scrollController.offset, greaterThan(0));
         expect(actions, 0);
@@ -292,9 +292,9 @@ void main() {
   testWidgets('mouse drags use the same bounded gesture rules', (tester) async {
     var actions = 0;
     await tester.pumpWidget(
-      _buildRow(onRename: () => actions++, onDelete: () => actions++),
+      _buildRow(onStartAction: () => actions++, onEndAction: () => actions++),
     );
-    final bounds = tester.getRect(find.byType(ConversationSwipeActions));
+    final bounds = tester.getRect(find.byType(SwipeActions));
     final gesture = await tester.startGesture(
       Offset(bounds.left + 40, bounds.center.dy),
       kind: PointerDeviceKind.mouse,

@@ -185,6 +185,15 @@ class _ComposeDslRenderResult {
 
 /// Canonical node names indexed by the Kotlin-compatible normalized token.
 const _composeNodeTypes = <String, String>{
+  'gradientrule': 'GradientRule',
+  'loadingindicator': 'LoadingIndicator',
+  'activitydots': 'ActivityDots',
+  'draggable': 'Draggable',
+  'dragtarget': 'DragTarget',
+  'swipeactions': 'SwipeActions',
+  'hoverregion': 'HoverRegion',
+  'hoveronly': 'HoverOnly',
+  'popupmenu': 'PopupMenu',
   'outlinedtextfield': 'OutlinedTextField',
   'asyncimage': 'AsyncImage',
   'navigationbaritem': 'NavigationBarItem',

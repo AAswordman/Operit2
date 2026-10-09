@@ -56,6 +56,11 @@ export async function createDiskHarness(testContext) {
       await mkdir(target, { recursive: createParents }); return operationResult("mkdir", file);
     },
     /** Reads complete UTF-8 file bytes without parsing, repairing, or replacing plugin data. */
+    async readBinary(file) {
+      const target = confined(file); attempted("readBinary", [file]);
+      const content = await readFile(target);
+      return { path: file, contentBase64: content.toString("base64"), size: content.length };
+    },
     async read(file) {
       const target = confined(file); attempted("read", [file]);
       const bytes = await readFile(target);

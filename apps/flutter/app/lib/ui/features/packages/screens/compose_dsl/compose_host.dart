@@ -25,6 +25,7 @@ class _ComposeHost extends StatefulWidget {
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+
   /// Dispatches text edits through the page-wide ordered text queue.
   final Future<Object?> Function(String actionId, String text) onTextInput;
   final ComposeDslWebViewHostContext webViewHostContext;

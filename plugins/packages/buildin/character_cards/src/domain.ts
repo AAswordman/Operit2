@@ -140,12 +140,6 @@ const ownerOnly = shape({ ownerKey: required(owner) });
 const contentOnly = shape({ content: required(text) });
 const format = enumeration("operit", "tavern");
 const validators: Record<DomainOperation, Validator> = {
-  "conversation-group.list": shape({ ownerSelection: required(nullable(nonblank)) }),
-  "conversation-group.create": shape({ ownerSelection: required(nullable(nonblank)), name: required(nonblank), pinned: required(boolean) }),
-  "conversation-group.update": shape({ id: required(memoryIdentifier), changes: required(shape({ name: optional(nonblank), pinned: optional(boolean) }, true)) }),
-  "conversation-group.delete": shape({ id: required(memoryIdentifier) }),
-  "conversation-group.moveChat": shape({ chatId: required(nonblank), groupId: required(nullable(memoryIdentifier)), ownerSelection: required(nullable(nonblank)) }),
-  "conversation-group.reorder": shape({ ownerSelection: required(nullable(nonblank)), ids: required(array(memoryIdentifier)) }),
   "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
   "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),

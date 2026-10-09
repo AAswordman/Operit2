@@ -42,6 +42,10 @@ pub enum ChatManagerToolOperation {
     AgentStatus,
     SwitchChat,
     UpdateChatTitle,
+    UpdateChatGroup,
+    UpdateChatPinned,
+    UpdateChatLocked,
+    ReorderChats,
     DeleteChat,
     SendMessageToAi,
     SendMessageToAiStreaming,
@@ -314,6 +318,81 @@ impl StandardChatManagerTool {
                 }),
             ),
             Err(error) => toolError(tool, format!("Error updating chat title: {error}")),
+        }
+    }
+
+    /// Mutates only neutral chat metadata through the existing store operations.
+    #[allow(non_snake_case)]
+    pub fn updateChatFlag(&self, tool: &AITool, pinned: bool) -> ToolResult {
+        let flag = if pinned { "pinned" } else { "locked" };
+        if let Err(error) = validateChatParameterNames(tool, &["chat_id", flag]) {
+            return toolError(tool, error);
+        }
+        let chatId = parameterValue(tool, "chat_id");
+        if chatId.trim().is_empty() { return toolError(tool, "chat_id is required".to_string()); }
+        let value = match parameterValue(tool, flag).as_str() {
+            "true" => true, "false" => false,
+            _ => return toolError(tool, format!("{flag} must be a boolean")),
+        };
+        let manager = match ChatHistoryManager::default() {
+            Ok(manager) => manager,
+            Err(error) => return toolError(tool, error.to_string()),
+        };
+        match manager.chatExists(chatId.clone()) {
+            Ok(true) => {},
+            Ok(false) => return toolError(tool, format!("Chat does not exist: {chatId}")),
+            Err(error) => return toolError(tool, error.to_string()),
+        }
+        let result = if pinned { manager.updateChatPinned(chatId, value) }
+                     else { manager.updateChatLocked(chatId, value) };
+        match result {
+            Ok(()) => successData(tool, stringResultData("")),
+            Err(error) => toolError(tool, error.to_string()),
+        }
+    }
+
+    /// Mutates native folder membership, never character-card repository data.
+    #[allow(non_snake_case)]
+    pub fn updateChatGroup(&self, tool: &AITool) -> ToolResult {
+        if let Err(error) = validateChatParameterNames(tool, &["chat_ids", "group_name"]) {
+            return toolError(tool, error);
+        }
+        let ids = match serde_json::from_str::<Vec<String>>(&parameterValue(tool, "chat_ids")) {
+            Ok(ids) if !ids.is_empty() && ids.iter().all(|id| !id.trim().is_empty()) => ids,
+            _ => return toolError(tool, "chat_ids must be a nonempty array of chat IDs".to_string()),
+        };
+        let name = match optionalParameterValue(tool, "group_name") {
+            None => return toolError(tool, "group_name is required (string or null)".to_string()),
+            Some(value) if value == "null" => None,
+            Some(value) => Some(value),
+        };
+        let manager = match ChatHistoryManager::default() {
+            Ok(manager) => manager,
+            Err(error) => return toolError(tool, error.to_string()),
+        };
+        match manager.updateChatGroups(ids, name) {
+            Ok(()) => successData(tool, stringResultData("")),
+            Err(error) => toolError(tool, error.to_string()),
+        }
+    }
+
+    /// Persists the same canonical ordering used by the native drawer, with no group fields.
+    #[allow(non_snake_case)]
+    pub fn reorderChats(&self, tool: &AITool) -> ToolResult {
+        if let Err(error) = validateChatParameterNames(tool, &["chat_ids"]) {
+            return toolError(tool, error);
+        }
+        let ids = match serde_json::from_str::<Vec<String>>(&parameterValue(tool, "chat_ids")) {
+            Ok(ids) if !ids.is_empty() && ids.iter().all(|id| !id.trim().is_empty()) => ids,
+            _ => return toolError(tool, "chat_ids must be a nonempty array of chat IDs".to_string()),
+        };
+        let manager = match ChatHistoryManager::default() {
+            Ok(manager) => manager,
+            Err(error) => return toolError(tool, error.to_string()),
+        };
+        match manager.updateChatOrder(ids) {
+            Ok(()) => successData(tool, stringResultData("")),
+            Err(error) => toolError(tool, error.to_string()),
         }
     }
 
@@ -656,6 +735,10 @@ impl AsyncToolExecutor for ChatManagerToolExecutor {
             | ChatManagerToolOperation::CreateNewChat
             | ChatManagerToolOperation::SwitchChat
             | ChatManagerToolOperation::UpdateChatTitle
+            | ChatManagerToolOperation::UpdateChatGroup
+            | ChatManagerToolOperation::UpdateChatPinned
+            | ChatManagerToolOperation::UpdateChatLocked
+            | ChatManagerToolOperation::ReorderChats
             | ChatManagerToolOperation::DeleteChat
             | ChatManagerToolOperation::SendMessageToAi
             | ChatManagerToolOperation::SendMessageToAiStreaming => ToolEffect::WRITE,
@@ -688,6 +771,10 @@ impl AsyncToolExecutor for ChatManagerToolExecutor {
                             ChatManagerToolOperation::AgentStatus => tools.agentStatus(&tool),
                             ChatManagerToolOperation::SwitchChat => tools.switchChat(&tool).await,
                             ChatManagerToolOperation::UpdateChatTitle => tools.updateChatTitle(&tool),
+                            ChatManagerToolOperation::UpdateChatGroup => tools.updateChatGroup(&tool),
+                            ChatManagerToolOperation::UpdateChatPinned => tools.updateChatFlag(&tool, true),
+                            ChatManagerToolOperation::UpdateChatLocked => tools.updateChatFlag(&tool, false),
+                            ChatManagerToolOperation::ReorderChats => tools.reorderChats(&tool),
                             ChatManagerToolOperation::DeleteChat => tools.deleteChat(&tool),
                             ChatManagerToolOperation::SendMessageToAi => tools.sendMessageToAi(&tool).await,
                             ChatManagerToolOperation::SendMessageToAiStreaming => {
@@ -736,10 +823,17 @@ fn validateChatTool(operation: ChatManagerToolOperation, tool: &AITool) -> ToolV
         ChatManagerToolOperation::AgentStatus
         | ChatManagerToolOperation::SwitchChat
         | ChatManagerToolOperation::UpdateChatTitle
+        | ChatManagerToolOperation::UpdateChatPinned
+        | ChatManagerToolOperation::UpdateChatLocked
         | ChatManagerToolOperation::DeleteChat
         | ChatManagerToolOperation::GetChatMessages => {
             if parameterValue(tool, "chat_id").trim().is_empty() {
                 return invalid("chat_id is required.");
+            }
+        }
+        ChatManagerToolOperation::UpdateChatGroup | ChatManagerToolOperation::ReorderChats => {
+            if parameterValue(tool, "chat_ids").trim().is_empty() {
+                return invalid("chat_ids is required.");
             }
         }
         ChatManagerToolOperation::GetChatMessagesRange => {
@@ -1330,5 +1424,37 @@ fn toolError(tool: &AITool, message: String) -> ToolResult {
         success: false,
         result: stringResultData(""),
         error: Some(message),
+    }
+}
+
+#[cfg(test)]
+mod sidebar_chat_tool_contract_tests {
+    use super::*;
+    use crate::ToolExecutionManager::ToolParameter;
+
+    fn request(parameters: &[(&str, &str)]) -> AITool {
+        AITool {
+            name: "contract-test".to_string(),
+            parameters: parameters.iter().map(|(name, value)| ToolParameter {
+                name: (*name).to_string(), value: (*value).to_string(),
+            }).collect(),
+        }
+    }
+
+    #[test]
+    fn generic_metadata_tools_require_an_existing_chat_identity() {
+        for operation in [ChatManagerToolOperation::UpdateChatPinned, ChatManagerToolOperation::UpdateChatLocked] {
+            assert!(!validateChatTool(operation, &request(&[])).valid);
+            assert!(!validateChatTool(operation, &request(&[("chat_id", " ")])).valid);
+            assert!(validateChatTool(operation, &request(&[("chat_id", "explicit-chat")])).valid);
+        }
+    }
+
+    #[test]
+    fn canonical_order_tool_requires_an_explicit_id_list() {
+        assert!(!validateChatTool(ChatManagerToolOperation::ReorderChats, &request(&[])).valid);
+        assert!(validateChatTool(ChatManagerToolOperation::ReorderChats,
+            &request(&[("chat_ids", "[\"first\",\"second\"]")])).valid);
+        assert!(validateChatParameterNames(&request(&[("chat_ids", "[]"), ("group_id", "plugin-business")]), &["chat_ids"]).is_err());
     }
 }

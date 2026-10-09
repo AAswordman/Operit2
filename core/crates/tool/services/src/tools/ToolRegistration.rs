@@ -468,6 +468,19 @@ fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManager
         BuiltinToolName::UpdateChatTitle,
         ChatManagerToolOperation::UpdateChatTitle,
     );
+    registerChatTool(handler, &chatTools, BuiltinToolName::UpdateChatGroup, ChatManagerToolOperation::UpdateChatGroup);
+    registerChatTool(
+        handler, &chatTools, BuiltinToolName::UpdateChatPinned,
+        ChatManagerToolOperation::UpdateChatPinned,
+    );
+    registerChatTool(
+        handler, &chatTools, BuiltinToolName::UpdateChatLocked,
+        ChatManagerToolOperation::UpdateChatLocked,
+    );
+    registerChatTool(
+        handler, &chatTools, BuiltinToolName::ReorderChats,
+        ChatManagerToolOperation::ReorderChats,
+    );
     registerChatTool(
         handler,
         &chatTools,

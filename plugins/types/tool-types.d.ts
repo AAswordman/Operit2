@@ -122,6 +122,10 @@ export interface ToolResultMap {
   agent_status: AgentStatusResultData;
   switch_chat: ChatSwitchResultData;
   update_chat_title: ChatTitleUpdateResultData;
+  update_chat_group: string;
+  update_chat_pinned: string;
+  update_chat_locked: string;
+  reorder_chats: string;
   delete_chat: ChatDeleteResultData;
   send_message_to_ai: MessageSendResultData;
   send_message_to_ai_streaming: MessageSendResultData;

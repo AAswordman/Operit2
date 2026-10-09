@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import vm from "node:vm";
-import { buildMainScript, buildRuntimeToolsScript, createHtmlDocument, createSidebarHtmlDocument, createPackageArchive } from "../scripts/build.mjs";
+import { buildMainScript, buildUiScreenScripts, buildRuntimeToolsScript, createHtmlDocument, createPackageArchive } from "../scripts/build.mjs";
 
 const require = createRequire(new URL("../../workflow/package.json", import.meta.url));
 const { unzipSync } = require("fflate");
@@ -19,10 +19,10 @@ const executeFile = promisify(execFile);
 /** Builds every esbuild output in an isolated read-only child without changing the parent's working directory. */
 async function buildFromWorkingDirectory(cwd) {
   const code = [
-    `import { buildBrowserScript, buildGraphModule, buildMainScript, buildRuntimeToolsScript, createHtmlDocument } from ${JSON.stringify(new URL("../scripts/build.mjs", import.meta.url).href)};`,
+    `import { buildBrowserScript, buildGraphModule, buildMainScript, buildUiScreenScripts, buildRuntimeToolsScript, createHtmlDocument } from ${JSON.stringify(new URL("../scripts/build.mjs", import.meta.url).href)};`,
     "/** Encodes exact artifact bytes for lossless transport from the isolated build process. */",
     "function encode(value) { return Buffer.from(value).toString('base64'); }",
-    "const outputs = { main: encode(await buildMainScript()), tools: encode(await buildRuntimeToolsScript()), browser: encode(await buildBrowserScript()), graph: encode(await buildGraphModule()), html: encode(await createHtmlDocument()) };",
+    "const outputs = { main: encode(await buildMainScript()), tools: encode(await buildRuntimeToolsScript()), browser: encode(await buildBrowserScript()), graph: encode(await buildGraphModule()), html: encode(await createHtmlDocument()), ...Object.fromEntries(Object.entries(await buildUiScreenScripts()).map(([file, bytes]) => [file, encode(bytes)])) };",
     "process.stdout.write(JSON.stringify(outputs));",
   ].join("\n");
   const { stdout, stderr } = await executeFile(process.execPath, ["--input-type=module", "--eval", code], { cwd, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
@@ -34,7 +34,7 @@ async function buildFromWorkingDirectory(cwd) {
 test("all esbuild outputs are byte-identical from repository and plugin working directories", async () => {
   const originalDirectory = process.cwd();
   const [repositoryOutputs, pluginOutputs] = await Promise.all([buildFromWorkingDirectory(repositoryRoot), buildFromWorkingDirectory(root)]);
-  const names = ["main", "tools", "browser", "graph", "html"];
+  const names = ["main", "tools", "browser", "graph", "html", ...Object.keys(await buildUiScreenScripts())];
   assert.deepEqual(Object.keys(repositoryOutputs), names);
   assert.deepEqual(Object.keys(pluginOutputs), names);
   for (const name of names) {
@@ -89,6 +89,10 @@ test("archive includes all current nested source modules with their exact bytes"
     assert.ok(Object.hasOwn(entries, file), "Package archive omitted current source module: " + file);
     assert.equal(digest(entries[file]), digest(await readFile(path.join(root, file))), "Package archive has wrong source bytes: " + file);
   }
+  for (const [file, bytes] of Object.entries(await buildUiScreenScripts())) {
+    assert.ok(Object.hasOwn(entries, file), "Package archive omitted executable screen: " + file);
+    assert.equal(digest(entries[file]), digest(bytes), "Stale archived screen: " + file);
+  }
   assert.equal(digest(entries["dist/main.js"]), digest(main));
   assert.equal(digest(entries["dist/tools.js"]), digest(tools));
   assert.equal(digest(entries["resources/character-memory.html"]), digest(Buffer.from(html, "utf8")));
@@ -126,6 +130,10 @@ test("single Core production archive exactly matches the packaged plugin and its
   const production = await readFile(productionPath);
   assert.equal(digest(production), digest(packaged), "Core still loads a different or stale character_cards.toolpkg asset");
   const entries = unzipSync(production), main = await buildMainScript(), tools = await buildRuntimeToolsScript(), html = await createHtmlDocument();
+  for (const [file, bytes] of Object.entries(await buildUiScreenScripts())) {
+    assert.ok(Object.hasOwn(entries, file), "Package archive omitted executable screen: " + file);
+    assert.equal(digest(entries[file]), digest(bytes), "Stale archived screen: " + file);
+  }
   assert.equal(digest(entries["dist/main.js"]), digest(main));
   assert.equal(digest(entries["dist/tools.js"]), digest(tools));
   assert.equal(digest(entries["resources/character-memory.html"]), digest(Buffer.from(html, "utf8")));
@@ -146,7 +154,7 @@ test("single Core production archive exactly matches the packaged plugin and its
 });
 
 /** Guards the complete manifest contract exercised eagerly by the native JS runtime at startup. */
-test("all declared resources are packaged and the installed sidebar matches its actual typed entry", async () => {
+test("all declared resources are packaged and the obsolete sidebar browser chain is absent", async () => {
   const entries = unzipSync(await readFile(path.join(root, "dist/character_cards.toolpkg")));
   const manifest = JSON.parse(Buffer.from(entries["manifest.json"]).toString("utf8"));
   for (const resource of manifest.resources) {
@@ -155,24 +163,26 @@ test("all declared resources are packaged and the installed sidebar matches its 
     assert.ok(installed.length > 0);
     assert.equal(digest(entries[resource.path]), digest(installed), "Wrong resource bytes: " + resource.path);
   }
-  const sidebar = await createSidebarHtmlDocument();
-  assert.equal(digest(entries["resources/character-sidebar.html"]), digest(Buffer.from(sidebar, "utf8")));
-  assert.match(sidebar, /CharacterSidebarHost/);
-  assert.match(sidebar, /sidebar-view/);
+  assert.equal(Object.hasOwn(entries, "resources/character-sidebar.html"), false);
+  assert.equal(Object.keys(entries).some(path => path === "web/sidebar.ts" || path.startsWith("web/features/sidebar/")), false);
+  assert.equal(manifest.resources.some(resource => resource.key === "character_sidebar_html"), false);
 });
 
-/** The installed provider must lower native awaits so shared initialization uses call-scoped continuations. */
-test("main provider lowers every async function while retaining the ES2020 runtime features", async () => {
+/** Main and standalone screens must lower native awaits to retain call-scoped Promise continuations. */
+test("main and Compose screen providers lower every async function while retaining ES2020 features", async () => {
   const ts = require("typescript");
-  const text = Buffer.from(await buildMainScript()).toString("utf8");
-  const tree = ts.createSourceFile("main.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-  let nativeAsyncFunctions = 0;
-  /** Inspects syntax nodes, not comments or strings containing the word async. */
-  function visit(node) {
-    if (ts.isFunctionLike(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)) nativeAsyncFunctions++;
-    ts.forEachChild(node, visit);
+  const scripts = { "dist/main.js": await buildMainScript(), ...await buildUiScreenScripts() };
+  for (const [file, bytes] of Object.entries(scripts)) {
+    const text = Buffer.from(bytes).toString("utf8");
+    const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    let nativeAsyncFunctions = 0;
+    /** Inspects syntax nodes, not comments or strings containing the word async. */
+    function visit(node) {
+      if (ts.isFunctionLike(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)) nativeAsyncFunctions++;
+      ts.forEachChild(node, visit);
+    }
+    visit(tree);
+    assert.equal(nativeAsyncFunctions, 0, "Native await bypasses call-scoped Promise.then: " + file);
   }
-  visit(tree);
-  assert.equal(nativeAsyncFunctions, 0, "Native await bypasses call-scoped Promise.then in the host runtime");
-  assert.match(text, /1n/u, "Lowering async must not remove supported BigInt identifiers");
+  assert.match(Buffer.from(scripts["dist/main.js"]).toString("utf8"), /1n/u, "Lowering async must not remove supported BigInt identifiers");
 });

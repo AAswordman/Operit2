@@ -41,6 +41,7 @@ class _ComposeDslRenderer extends StatelessWidget {
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+
   /// Dispatches text edits through the page-wide ordered text queue.
   final Future<Object?> Function(String actionId, String text) onTextInput;
   final ComposeDslWebViewHostContext webViewHostContext;
@@ -86,6 +87,137 @@ class _ComposeDslRenderer extends StatelessWidget {
   Widget _buildNode(BuildContext context) {
     final type = node.type;
     switch (type) {
+      case 'GradientRule':
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                _color(context, node.props['startColor']) ?? Colors.transparent,
+                _color(context, node.props['endColor']) ?? Colors.transparent,
+              ],
+            ),
+          ),
+          child: const SizedBox.expand(),
+        );
+      case 'ActivityDots':
+        return _ComposeActivityDots(props: node.props);
+      case 'Draggable':
+        return _ComposeDraggable(
+          props: node.props,
+          onAction: onAction,
+          feedback: _optionalSlot('feedback'),
+          childWhenDragging: _optionalSlot('childWhenDragging'),
+          child: _decoratorChild(),
+        );
+      case 'DragTarget':
+        return _ComposeDragTarget(
+          props: node.props,
+          onAction: onAction,
+          child: _decoratorChild(),
+        );
+      case 'SwipeActions':
+        final startId = _actionId(node.props['onStartAction']);
+        final endId = _actionId(node.props['onEndAction']);
+        return SwipeActions(
+          actionThreshold: (_number(node.props['actionThreshold']) ?? 0.4)
+              .clamp(0.05, 1),
+          enabled: _enabled(),
+          onStartAction: startId == null
+              ? null
+              : () => unawaited(onAction(startId)),
+          onEndAction: endId == null ? null : () => unawaited(onAction(endId)),
+          background:
+              _optionalSlot('startBackground') ?? const SizedBox.shrink(),
+          secondaryBackground:
+              _optionalSlot('endBackground') ?? const SizedBox.shrink(),
+          child: _decoratorChild(),
+        );
+      case 'PopupMenu':
+        final scheme = Theme.of(context).colorScheme;
+        final items = (node.props['items'] as List<Object?>? ?? [])
+            .map(_stringMap)
+            .toList();
+        return PopupMenuButton<int>(
+          tooltip: _string(node.props['tooltip']),
+          enabled: node.props['enabled'] != false,
+          padding: EdgeInsets.zero,
+          borderRadius: BorderRadius.circular(6),
+          color: Color.alphaBlend(
+            scheme.surfaceContainerHighest.withValues(alpha: 0.75),
+            scheme.surface,
+          ),
+          elevation: 6,
+          shadowColor: Colors.black.withValues(alpha: 0.45),
+          offset: const Offset(0, 4),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: 0.4),
+            ),
+          ),
+          constraints: BoxConstraints(
+            minWidth: _number(node.props['menuMinWidth']) ?? 118,
+            maxWidth: _number(node.props['menuMaxWidth']) ?? 150,
+          ),
+          menuPadding: const EdgeInsets.all(4),
+          onOpened: () => _ComposeHoverScope.menuOpenChanged(context, true),
+          onCanceled: () => _ComposeHoverScope.menuOpenChanged(context, false),
+          onSelected: (index) {
+            _ComposeHoverScope.menuOpenChanged(context, false);
+            final id = _actionId(node.props['onSelected']);
+            if (id != null) unawaited(onAction(id, index));
+          },
+          itemBuilder: (context) => [
+            for (var index = 0; index < items.length; index++) ...[
+              if (items[index]['dividerBefore'] == true)
+                const PopupMenuDivider(height: 8),
+              PopupMenuItem<int>(
+                value: index,
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _iconData(_string(items[index]['icon'])),
+                      size: 14.5,
+                      color: items[index]['danger'] == true
+                          ? scheme.error.withValues(alpha: 0.9)
+                          : scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                    ),
+                    const SizedBox(width: 9),
+                    Flexible(
+                      child: Text(
+                        _string(items[index]['label']),
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: -0.1,
+                          color: items[index]['danger'] == true
+                              ? scheme.error.withValues(alpha: 0.9)
+                              : scheme.onSurface.withValues(alpha: 0.92),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+          child: Center(child: _decoratorChild()),
+        );
+      case 'HoverRegion':
+        return _ComposeHoverRegion(
+          color: _color(context, node.props['hoverBackground']),
+          radius: _borderRadius(node.props['shape']) ?? BorderRadius.zero,
+          child: _decoratorChild(),
+        );
+      case 'HoverOnly':
+        return _ComposeHoverOnly(
+          alwaysVisible: _bool(node.props['alwaysVisible']),
+          child: _decoratorChild(),
+        );
       case 'Column':
         return _ComposeFlex(
           direction: Axis.vertical,
@@ -239,6 +371,11 @@ class _ComposeDslRenderer extends StatelessWidget {
           value: progress?.clamp(0, 1).toDouble(),
           color: _color(context, node.props['color']),
           backgroundColor: _color(context, node.props['trackColor']),
+        );
+      case 'LoadingIndicator':
+        return M3LoadingIndicator(
+          size: _number(node.props['size']) ?? 36,
+          color: _color(context, node.props['color']),
         );
       case 'CircularProgressIndicator':
         return CircularProgressIndicator(

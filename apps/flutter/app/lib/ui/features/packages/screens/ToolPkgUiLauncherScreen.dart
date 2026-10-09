@@ -3,6 +3,7 @@
 import 'dart:async';
 import '../../../../core/application/PluginHotReload.dart';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -26,6 +27,7 @@ import 'ToolPkgComposeDslWebView.dart';
 import 'compose_dsl/fill_layout.dart';
 import 'compose_dsl/lazy_viewport.dart';
 import 'compose_dsl/action_scheduler.dart';
+import '../../../common/components/SwipeActions.dart';
 
 part 'compose_dsl/compose_host.dart';
 part 'compose_dsl/dialog_host.dart';
@@ -38,6 +40,8 @@ part 'compose_dsl/render_models.dart';
 part 'compose_dsl/modifiers.dart';
 part 'compose_dsl/value_parsers.dart';
 part 'compose_dsl/renderer.dart';
+part 'compose_dsl/hover_region.dart';
+part 'compose_dsl/drag_drop.dart';
 part 'compose_dsl/box_layout.dart';
 part 'compose_dsl/flex_layout.dart';
 part 'compose_dsl/desktop_widget.dart';
@@ -45,6 +49,7 @@ part 'compose_dsl/material_controls.dart';
 part 'compose_dsl/navigation_nodes.dart';
 part 'compose_dsl/interactive_nodes.dart';
 part 'compose_dsl/renderer_slots.dart';
+part 'compose_dsl/image.dart';
 
 class ToolPkgUiLauncherScreen extends StatefulWidget {
   /// Creates a routable or embedded screen using the existing Compose host.
@@ -87,6 +92,31 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
       _ToolPkgUiLauncherScreenState();
 }
 
+/// Opt-in stage timings distinguish bridge/engine startup from asynchronous plugin IO.
+/// Enable with --dart-define=OPERIT_PROFILE_PLUGIN_UI=true; disabled builds allocate no timer.
+class _ToolPkgUiLoadTiming {
+  _ToolPkgUiLoadTiming(this.label)
+    : _watch = const bool.fromEnvironment('OPERIT_PROFILE_PLUGIN_UI')
+          ? (Stopwatch()..start())
+          : null;
+
+  final String label;
+  final Stopwatch? _watch;
+  int _previousMicros = 0;
+
+  void mark(String stage) {
+    final watch = _watch;
+    if (watch == null) return;
+    final elapsed = watch.elapsedMicroseconds;
+    debugPrint(
+      '[ToolPkg UI timing] $label stage=$stage '
+      'stepMs=${((elapsed - _previousMicros) / 1000).toStringAsFixed(1)} '
+      'totalMs=${(elapsed / 1000).toStringAsFixed(1)}',
+    );
+    _previousMicros = elapsed;
+  }
+}
+
 class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   static int _nextExecutionOwnerId = 0;
   static const String _logTag = 'ToolPkgUiLauncher';
@@ -99,6 +129,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   bool _loading = true;
   bool _loadedInitialRoute = false;
   int _routeLoadGeneration = 0;
+  int _actionOwnerGeneration = 0;
   String _currentLanguageTag = 'en';
   ColorScheme? _themeScheme;
   String? _error;
@@ -231,6 +262,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
 
   /// Serializes renders and invalidates superseded XML updates.
   Future<void> _loadRoute({bool updateInputs = false}) async {
+    if (!updateInputs) _actionOwnerGeneration++;
     final generation = ++_routeLoadGeneration;
     final pending = _renderTail.then((_) async {
       await _loadRouteCore(generation, updateInputs: updateInputs);
@@ -257,6 +289,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       contextKey: executionContextKey,
       containerPackageName: widget.plugin.packageName,
     );
+    final timing = _ToolPkgUiLoadTiming(
+      '${widget.plugin.packageName} route=$uiModuleId updateInputs=$updateInputs',
+    );
     setState(() {
       // Streaming input is an update, not a new page initialization.
       _loading = !updateInputs || _renderResult == null;
@@ -282,6 +317,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           return;
         }
       }
+      timing.mark('acquire-engine');
       final embeddedScreenPath = _embeddedScreenPath();
       final String? script;
       final String? screenPath;
@@ -317,6 +353,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           'package=${widget.plugin.packageName}, module=$uiModuleId',
         );
       }
+      timing.mark('read-script');
       _scriptScreenPath = screenPath;
       final renderedTheme = _themeScheme;
       final raw = await _packageManager.executeToolPkgComposeDslScript(
@@ -334,7 +371,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
+      timing.mark('execute-js');
       final result = _ComposeDslRenderResult.parse(raw);
+      timing.mark('parse-tree');
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
@@ -344,6 +383,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       });
       if (_themeScheme != renderedTheme) {
         _scheduleThemeDispatchAfterRouteRender(routeLoadGeneration);
+      }
+      if (updateInputs) {
+        final changedId = _actionId(result.tree.props['onInputsChanged']);
+        if (changedId != null) unawaited(_dispatchAction(changedId));
       }
       _navigateCommands(_ComposeDslRenderResult.navigationCommandsOf(raw));
     } catch (error, stackTrace) {
@@ -417,9 +460,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
 
   /// Waits for text synchronization without serializing ordinary UI actions.
   Future<Object?> _dispatchAction(String actionId, [Object? payload]) {
-    final routeGeneration = _routeLoadGeneration;
+    final routeGeneration = _actionOwnerGeneration;
     return _actionScheduler.dispatchAction(() {
-      if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
+      if (!_isCurrentActionOwner(routeGeneration)) return Future.value(null);
       return _dispatchActionCore(
         actionId,
         payload,
@@ -431,9 +474,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
 
   /// Preserves keystroke order across all text fields in this page.
   Future<Object?> _dispatchTextInput(String actionId, String text) {
-    final routeGeneration = _routeLoadGeneration;
+    final routeGeneration = _actionOwnerGeneration;
     return _actionScheduler.dispatchTextInput(() {
-      if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
+      if (!_isCurrentActionOwner(routeGeneration)) return Future.value(null);
       return _dispatchActionCore(
         actionId,
         text,
@@ -445,9 +488,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
 
   /// Gives WebView actions the same text barrier while preserving error delivery.
   Future<Object?> _dispatchWebViewAction(String actionId, [Object? payload]) {
-    final routeGeneration = _routeLoadGeneration;
+    final routeGeneration = _actionOwnerGeneration;
     return _actionScheduler.dispatchAction(() {
-      if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
+      if (!_isCurrentActionOwner(routeGeneration)) return Future.value(null);
       return _dispatchActionCore(
         actionId,
         payload,
@@ -464,13 +507,17 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     required bool reportAndSuppressErrors,
     required bool notifyActionResult,
   }) async {
-    final routeGeneration = _routeLoadGeneration;
+    final routeGeneration = _actionOwnerGeneration;
     final uiModuleId = _selectedUiModuleId();
     final routeInstanceId = _selectedRouteInstanceId();
     final executionContextKey = _executionContextKey(
       uiModuleId: uiModuleId,
       routeInstanceId: routeInstanceId,
     );
+    final timing = _ToolPkgUiLoadTiming(
+      '${widget.plugin.packageName} action=$actionId',
+    );
+    var timedFirstRender = false;
     Object? latestActionResult;
     final navigationCommands =
         <({String routeId, Map<String, Object?> args})>[];
@@ -496,14 +543,24 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       late final StreamSubscription<String> subscription;
       subscription = eventStream.listen(
         (event) {
-          if (!mounted) {
+          if (!_isCurrentActionOwner(routeGeneration)) {
             if (!completion.isCompleted) {
               completion.complete();
             }
             unawaited(subscription.cancel());
             return;
           }
-          final parsedEvent = _ParsedComposeDslActionEvent.parse(event);
+          final _ParsedComposeDslActionEvent parsedEvent;
+          try {
+            parsedEvent = _ParsedComposeDslActionEvent.parse(event);
+          } catch (error, stackTrace) {
+            if (mounted) setState(() => _error = error.toString());
+            if (!completion.isCompleted) {
+              completion.completeError(error, stackTrace);
+            }
+            unawaited(subscription.cancel());
+            return;
+          }
           final phase = parsedEvent.phase;
           if (phase == 'intermediate' || phase == 'final') {
             latestActionResult = parsedEvent.actionResult;
@@ -514,6 +571,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             }
             if (!mounted) {
               return;
+            }
+            if (!timedFirstRender) {
+              timing.mark('first-action-render');
+              timedFirstRender = true;
             }
             setState(() {
               _renderResult = result;
@@ -564,7 +625,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         _detachedComposeEventSubscriptions.add(subscription);
       }
       await completion.future;
-      _navigateCommands(navigationCommands);
+      timing.mark('action-complete');
+      if (_isCurrentActionOwner(routeGeneration)) {
+        _navigateCommands(navigationCommands);
+      }
       if (notifyActionResult) {
         _notifyActionResult(
           latestActionResult,
@@ -587,9 +651,13 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     }
   }
 
+  /// Host input refreshes do not change the owner of actions already running.
+  bool _isCurrentActionOwner(int generation) =>
+      mounted && generation == _actionOwnerGeneration;
+
   /// Delivers results only to the presentation that still owns this route load.
   void _notifyActionResult(Object? result, {required int routeGeneration}) {
-    if (_isCurrentRouteLoad(routeGeneration)) {
+    if (_isCurrentActionOwner(routeGeneration)) {
       widget.onActionResult?.call(result);
     }
   }
@@ -601,6 +669,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     bool updateInputs = false,
   }) {
     return <String, Object?>{
+      if (updateInputs) '__operit_update_inputs': true,
+      if (updateInputs) '__operit_input_state': widget.initialState,
       'packageName': widget.plugin.packageName,
       'theme': pluginThemeSnapshot(_themeScheme!),
       'containerPackageName': widget.plugin.packageName,
@@ -771,7 +841,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       uiModuleId: uiModuleId,
       routeInstanceId: routeInstanceId,
     );
-    final routeGeneration = _routeLoadGeneration;
+    final routeGeneration = _actionOwnerGeneration;
     final webViewHostContext = ComposeDslWebViewHostContext(
       packageName: widget.plugin.packageName,
       routeInstanceId: routeInstanceId,

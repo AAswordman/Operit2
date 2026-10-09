@@ -36,7 +36,10 @@ Map<String, Object?> _worldbookForm() => {
           'type': 'Column',
           'props': {'fillMaxWidth': true, 'spacing': 12, 'padding': 16},
           'children': [
-            {'type': 'Text', 'props': {'text': '基础信息'}},
+            {
+              'type': 'Text',
+              'props': {'text': '基础信息'},
+            },
             {
               'type': 'TextField',
               'props': {'value': '', 'singleLine': true, 'fillMaxWidth': true},
@@ -62,7 +65,10 @@ Map<String, Object?> _worldbookForm() => {
           'type': 'Column',
           'props': {'fillMaxWidth': true, 'padding': 16},
           'children': [
-            {'type': 'Text', 'props': {'text': '匹配与启用'}},
+            {
+              'type': 'Text',
+              'props': {'text': '匹配与启用'},
+            },
             {
               'type': 'TextField',
               'props': {'value': '', 'singleLine': true, 'fillMaxWidth': true},
@@ -79,7 +85,10 @@ Map<String, Object?> _worldbookForm() => {
           'type': 'Column',
           'props': {'fillMaxWidth': true, 'padding': 16},
           'children': [
-            {'type': 'Text', 'props': {'text': '注入策略'}},
+            {
+              'type': 'Text',
+              'props': {'text': '注入策略'},
+            },
             {
               'type': 'LazyRow',
               'props': {'fillMaxWidth': true, 'spacing': 8},

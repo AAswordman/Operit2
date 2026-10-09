@@ -48,7 +48,7 @@ void main() {
     );
   });
 
-  test('summary exposes exactly the eight generic chat metadata fields', () {
+  test('summary exposes native folder metadata but no plugin role fields', () {
     final summary = chatSidebarSummary(_chat('chat-a'));
     expect(summary, {
       'id': 'chat-a',
@@ -59,6 +59,7 @@ void main() {
       'workspaceName': 'Workspace A',
       'locked': true,
       'pinned': true,
+      'group': 'legacy-native-folder',
     });
     expect(summary.keys.toSet(), {
       'id',
@@ -69,6 +70,7 @@ void main() {
       'workspaceName',
       'locked',
       'pinned',
+      'group',
     });
   });
 
@@ -142,6 +144,37 @@ void main() {
     );
   });
 
+  testWidgets(
+    'host input updates preserve pending action ownership and deliver its completed activation',
+    (tester) async {
+      final bridge = _registry(), activated = <String>[];
+      final clients = GeneratedCoreProxyClients(bridge);
+      await tester.pumpWidget(
+        _host(bridge, clients: clients, onActivate: activated.add),
+      );
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final gate = Completer<void>();
+      bridge.nextActionRead = gate.future;
+      await tester.tap(find.text('Activate current'));
+      await tester.pump();
+      await tester.pumpWidget(
+        _host(
+          bridge,
+          clients: clients,
+          currentChatId: null,
+          onActivate: activated.add,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(activated, isEmpty);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(activated, ['chat-a']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('workspace and arbitrary owners share no hardcoded role tab', (
     tester,
   ) async {
@@ -160,6 +193,72 @@ void main() {
     expect(find.byType(ToolPkgUiLauncherScreen), findsNothing);
     expect(bridge.preferences.containsKey(_tabPreference), isFalse);
   });
+
+  testWidgets(
+    'native workspace remains usable while the plugin catalog is pending',
+    (tester) async {
+      final bridge = _registry();
+      final pending = Completer<void>();
+      bridge.nextCatalogRead = pending.future;
+      await tester.pumpWidget(_host(bridge));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_workspaceKey), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(bridge.catalogReads, 1);
+      pending.complete();
+      await tester.pumpAndSettle();
+      expect(find.byKey(_tabKey('owner.first')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a broken plugin catalog cannot replace the native workspace with an error',
+    (tester) async {
+      final bridge = _registry();
+      bridge.routes.clear();
+      await tester.pumpWidget(_host(bridge));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_workspaceKey), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-sidebar-tab-error')),
+        findsNothing,
+      );
+      expect(find.byType(ToolPkgUiLauncherScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'the built-in workspace can scroll its own brand and capsule header',
+    (tester) async {
+      final bridge = _registry();
+      bridge.routes.clear();
+      await tester.pumpWidget(
+        _host(
+          bridge,
+          workspaceWithTabsBuilder: (context, tabs) => CustomScrollView(
+            key: _workspaceKey,
+            slivers: [
+              SliverToBoxAdapter(child: tabs),
+              const SliverToBoxAdapter(child: Text('Built-in history')),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Built-in history'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(_workspaceKey),
+          matching: find.byKey(const ValueKey('chat-sidebar-segmented-switch')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-sidebar-tab-error')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets(
     'tab embeds its owning route and forwards opaque input untouched',
@@ -197,6 +296,59 @@ void main() {
     },
   );
 
+  testWidgets(
+    'switching visited tabs preserves execution leases and loaded trees',
+    (tester) async {
+      final bridge = _registry();
+      await tester.pumpWidget(_host(bridge));
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final mounted = tester.state(find.byType(ToolPkgUiLauncherScreen));
+      final initialRenders = bridge.calls
+          .where((call) => call.methodName == 'executeToolPkgComposeDslScript')
+          .length;
+      final acquisitions = bridge.calls
+          .where((call) => call.methodName == 'acquireToolPkgExecutionEngine')
+          .length;
+      for (var i = 0; i < 3; i++) {
+        await tester.tap(
+          find.byKey(const ValueKey('chat-sidebar-workspace-tab')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(_workspaceKey), findsOneWidget);
+        await _openFirstTab(tester);
+        expect(
+          identical(
+            tester.state(find.byType(ToolPkgUiLauncherScreen)),
+            mounted,
+          ),
+          isTrue,
+        );
+      }
+      expect(
+        bridge.calls
+            .where(
+              (call) => call.methodName == 'executeToolPkgComposeDslScript',
+            )
+            .length,
+        initialRenders,
+      );
+      expect(
+        bridge.calls
+            .where((call) => call.methodName == 'acquireToolPkgExecutionEngine')
+            .length,
+        acquisitions,
+      );
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'releaseToolPkgExecutionEngine',
+        ),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('ordinary Compose results do not activate a chat', (
     tester,
   ) async {
@@ -225,7 +377,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(activated, ['chat-created']);
       expect(bridge.historyReads, 1);
-      expect(bridge.catalogReads, greaterThanOrEqualTo(3));
+      expect(bridge.catalogReads, 2);
     },
   );
 
@@ -418,7 +570,7 @@ void main() {
   );
 
   testWidgets(
-    'peer preference changes validate the newly selected owning route',
+    'peer preference changes select registered routes without rebuilding the catalog',
     (tester) async {
       final bridge = _registry();
       await tester.pumpWidget(_host(bridge));
@@ -429,7 +581,7 @@ void main() {
       });
       await tester.pumpAndSettle();
       expect(_launcher(tester).plugin.packageName, 'owner.second');
-      expect(bridge.catalogReads, greaterThan(initialReads));
+      expect(bridge.catalogReads, initialReads);
     },
   );
 
@@ -437,6 +589,10 @@ void main() {
     'cross-owner and duplicate routes are not rendered as valid tabs',
     (tester) async {
       final bridge = _registry();
+      bridge.preferences[_tabPreference] = chatSidebarTabIdentity(
+        'owner.first',
+        'history',
+      );
       bridge.routes.removeWhere(
         (route) => route.containerPackageName == 'owner.first',
       );
@@ -654,6 +810,7 @@ Widget _host(
   Set<String> streamingChatIds = const {'chat-a'},
   void Function(String)? onActivate,
   Future<void> Function(String)? onActivateAsync,
+  Widget Function(BuildContext, Widget)? workspaceWithTabsBuilder,
 }) => MaterialApp(
   localizationsDelegates: AppLocalizations.localizationsDelegates,
   supportedLocales: AppLocalizations.supportedLocales,
@@ -665,6 +822,7 @@ Widget _host(
         chats: chats ?? [_chat('chat-a')],
         currentChatId: currentChatId,
         activeStreamingChatIds: streamingChatIds,
+        workspaceWithTabsBuilder: workspaceWithTabsBuilder,
         workspaceBuilder: (_) =>
             const Text('Native workspace', key: _workspaceKey),
         onActivateChat: (chatId) async {
@@ -755,7 +913,7 @@ core.ChatHistoryListItem _chat(String id) => core.ChatHistoryListItem.fromJson({
   'workspaceName': 'Workspace A',
   'locked': true,
   'pinned': true,
-  'group': 'legacy-group-not-forwarded',
+  'group': 'legacy-native-folder',
   'characterCardName': 'legacy-card-not-forwarded',
   'characterGroupId': 'legacy-subject-not-forwarded',
 });
@@ -779,6 +937,8 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
   final Map<CoreWatchRequest, StreamController<CoreEvent>> _preferenceWatches =
       {};
   Future<void>? nextHistoryRead;
+  Future<void>? nextActionRead;
+  Future<void>? nextCatalogRead;
   Object? createError;
   int catalogReads = 0;
   int historyReads = 0;
@@ -815,6 +975,10 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
         value = null;
       case 'getToolPkgNavigationEntries':
         catalogReads += 1;
+        if (nextCatalogRead case final Future<void> pending) {
+          nextCatalogRead = null;
+          await pending;
+        }
         value = entries.map((entry) => entry.toJson()).toList();
       case 'getToolPkgUiRoutes':
         expect(args['runtime'], 'compose_dsl');
@@ -885,6 +1049,9 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
   /// Delivers action results through the actual launcher dispatch/render callback path.
   Stream<CoreEvent> _actionEvents(CoreWatchRequest request) async* {
     final args = request.args as Map<String, Object?>;
+    final gate = nextActionRead;
+    nextActionRead = null;
+    await gate;
     final state =
         (args['runtimeOptions'] as Map)['state'] as Map<String, Object?>;
     final Object result = switch (args['actionId']) {

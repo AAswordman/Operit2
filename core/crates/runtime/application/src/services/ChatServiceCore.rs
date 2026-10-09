@@ -1389,6 +1389,11 @@ impl ChatServiceCore {
     }
 
     /// Updates whether a chat is pinned in chat history ordering.
+    /// Updates native folder membership independently of plugin role bindings.
+    pub fn updateChatGroups(&mut self, chatIds: Vec<String>, groupName: Option<String>) -> Result<(), String> {
+        self.chatHistoryDelegate.updateChatGroups(chatIds, groupName)
+    }
+
     pub fn updateChatPinned(&mut self, chatId: String, pinned: bool) {
         self.chatHistoryDelegate.updateChatPinned(chatId, pinned);
     }

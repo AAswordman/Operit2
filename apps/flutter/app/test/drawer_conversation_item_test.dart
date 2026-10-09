@@ -14,6 +14,7 @@ void main() {
         home: Scaffold(
           body: ConversationDrawerItem(
             history: const ChatHistoryListItem(
+              group: null,
               id: 'chat-1',
               title: 'Running chat',
               updatedAt: '2026-09-02T00:00:00Z',
@@ -68,6 +69,7 @@ void main() {
         home: Scaffold(
           body: ConversationDrawerItem(
             history: const ChatHistoryListItem(
+              group: null,
               id: 'chat-2',
               title: 'Idle chat',
               updatedAt: '2026-09-02T00:00:00Z',

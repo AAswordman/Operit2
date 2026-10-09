@@ -71,6 +71,7 @@ where
         chats.push(OperitArchivedChat {
             id: chat.id,
             title: chat.title,
+            group: chat.group,
             pluginExtensions: std::collections::BTreeMap::new(),
             messages,
             createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,
@@ -139,6 +140,7 @@ where
         chats.push(OperitArchivedChat {
             id: chat.id,
             title: chat.title,
+            group: chat.group,
             pluginExtensions: std::collections::BTreeMap::new(),
             messages,
             createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,

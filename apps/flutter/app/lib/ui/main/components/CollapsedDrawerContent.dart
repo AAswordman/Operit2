@@ -14,7 +14,7 @@ import '../navigation/AppNavigationModels.dart';
 import '../layout/SidebarDockController.dart';
 import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
-import 'ConversationSwipeActions.dart';
+import '../../common/components/SwipeActions.dart';
 import 'NavigationDrawerAppearance.dart';
 
 class CollapsedDrawerContent extends StatelessWidget {
@@ -514,10 +514,10 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
                                 )
                               : null,
                         ),
-                        child: ConversationSwipeActions(
+                        child: SwipeActions(
                           key: ValueKey<String>('conversation-${history.id}'),
-                          onRename: widget.onRename,
-                          onDelete: widget.onDelete,
+                          onStartAction: widget.onRename,
+                          onEndAction: widget.onDelete,
                           background: _SwipeActionBackground(
                             alignment: AlignmentDirectional.centerStart,
                             color: Theme.of(context).colorScheme.primary,

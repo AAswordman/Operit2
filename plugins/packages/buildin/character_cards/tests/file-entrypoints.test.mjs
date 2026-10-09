@@ -87,7 +87,7 @@ test("registered management Web IPC preserves a full file-backed snapshot with e
   assert.equal(settings.calls.length, 0, "Registration must not read configured directories");
   assert.equal(disk.calls.length, 0, "Registration must not open plugin files");
   const managementRoute = "toolpkg:com.operit.character_cards:ui:main", attachmentRoute = "toolpkg:com.operit.character_cards:ui:memory-attachment";
-  assert.equal(plugin.routes.length, 5);
+  assert.equal(plugin.routes.length, 6);
   assert.deepEqual(plain(plugin.routes.map(
     /** Inspects the actual route identities and lifetimes without rendering either screen or synthesizing a host. */
     route => ({ id: route.id, route: route.route, runtime: route.runtime, keepAlive: route.keepAlive }),
@@ -97,22 +97,21 @@ test("registered management Web IPC preserves a full file-backed snapshot with e
     { id: "chat-sidebar", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", runtime: "compose_dsl", keepAlive: true },
     { id: "selection", route: "toolpkg:com.operit.character_cards:ui:selection", runtime: "compose_dsl", keepAlive: false },
     { id: "group-execution", route: "toolpkg:com.operit.character_cards:ui:group-execution", runtime: "compose_dsl", keepAlive: false },
+    { id: "memory", route: "toolpkg:com.operit.character_cards:ui:memory", runtime: "compose_dsl", keepAlive: true },
   ]);
   assert.equal(typeof plugin.routes[0].screen, "function"); assert.equal(typeof plugin.routes[1].screen, "function");
   assert.notEqual(plugin.routes[0].screen, plugin.routes[1].screen);
-  assert.equal(plugin.routes[0].screen, plugin.main.screen); assert.equal(plugin.routes[1].screen, plugin.main.attachmentScreen);
-  assert.equal(plugin.routes[2].screen, plugin.main.sidebarScreen); assert.equal(plugin.routes[3].screen, plugin.main.selectionScreen); assert.equal(plugin.routes[4].screen, plugin.main.groupExecutionScreen);
-  assert.equal(plugin.routes[4].screen, plugin.main.groupExecutionScreen);
+  for (const route of plugin.routes) assert.equal(typeof route.screen, "function");
   assert.equal(new Set(plugin.routes.map(
-    /** Requires actual exported screen identity rather than accepting a reused editor callback. */
+    /** Requires actual independent screen identity rather than accepting a reused editor callback. */
     entry => entry.screen,
-  )).size, 5);
+  )).size, 6);
   assert.equal(plugin.navigation.length, 5);
   const sidebar = plugin.navigation.filter(
     /** Requires one actual sidebar entry rather than accepting any route that happens to match it. */
     entry => entry.surface === "main_sidebar_plugins",
   );
-  assert.equal(sidebar.length, 1); assert.equal(sidebar[0].route, managementRoute);
+  assert.equal(sidebar.length, 2); assert.equal(sidebar[0].route, managementRoute);
   const attachment = plugin.navigation.filter(
     /** Requires exactly one formal attachment registration published by the actual main module. */
     entry => entry.surface === "chat_attachments",

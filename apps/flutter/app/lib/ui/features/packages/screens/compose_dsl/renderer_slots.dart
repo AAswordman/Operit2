@@ -16,6 +16,20 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     modifierScope: modifierScope,
   );
 
+  /// A native decorator must not reinterpret its child's row weight as column flex.
+  Widget _decoratorChild() =>
+      node.children.length == 1 ? _children().single : _childrenColumn();
+
+  /// Renders a single decorator slot without imposing a Row/Column flex scope.
+  Widget? _optionalSlot(String name) {
+    final nodes = node.slots[name];
+    if (nodes == null || nodes.isEmpty) return null;
+    final widgets = _buildNodeWidgets(nodes, pathPrefix: '$nodePath:$name');
+    return widgets.length == 1
+        ? widgets.single
+        : Column(mainAxisSize: MainAxisSize.min, children: widgets);
+  }
+
   /// Keeps Compose content start-aligned without forcing a cross-axis size.
   Widget _childrenColumn() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -320,7 +334,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     Widget child;
     final source = _imageSource().trim();
     if (source.isNotEmpty) {
-      child = Image.network(source, fit: fit);
+      child = _ComposeStableImage(source: source, fit: fit);
     } else {
       final iconName = _string(
         node.props['name'] ?? node.props['icon'] ?? 'info',

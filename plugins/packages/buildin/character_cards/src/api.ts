@@ -1,7 +1,7 @@
 import type { ToolPkg as ToolPkgTypes } from "../../../../types/index";
-import type { ConversationGroupChanges, ConversationGroupCreate, ConversationGroupDeletion, ConversationGroupMoveResult, ConversationGroupRecord, MemoryChat, MemoryExtractionResult, MemoryRebuild, MemoryRebuildProgress, MemorySearchOptions } from "./model";
+import type { MemoryChat, MemoryExtractionResult, MemoryRebuild, MemoryRebuildProgress, MemorySearchOptions } from "./model";
 
-export type { ConversationGroupChanges, ConversationGroupCreate, ConversationGroupDeletion, ConversationGroupMoveResult, ConversationGroupRecord } from "./model";
+export type { ConversationGroupRecord } from "./model";
 
 /** Carries explicit application defaults to the plugin's chat configuration resolver. */
 export interface ChatModelBinding { providerId: string; modelId: string }
@@ -155,12 +155,6 @@ export interface IdParams { id: string }
 export type EmptyParams = Record<string, never>;
 /** Maps every published domain method to its exact input and output contract. */
 export interface DomainOperations {
-  "conversation-group.list": { input: { ownerSelection: string | null }; output: ConversationGroupRecord[] };
-  "conversation-group.create": { input: ConversationGroupCreate; output: ConversationGroupRecord };
-  "conversation-group.update": { input: { id: string; changes: ConversationGroupChanges }; output: ConversationGroupRecord };
-  "conversation-group.delete": { input: IdParams; output: ConversationGroupDeletion };
-  "conversation-group.moveChat": { input: { chatId: string; groupId: string | null; ownerSelection: string | null }; output: ConversationGroupMoveResult };
-  "conversation-group.reorder": { input: { ownerSelection: string | null; ids: string[] }; output: ConversationGroupRecord[] };
   "memory.searchWithOptions": { input: MemorySearchOptions; output: { ownerKey: string; items: MemoryRecord[] } };
   "memory.chat.list": { input: { ownerKey: string }; output: MemoryChat[] };
   "memory.chat.update": { input: { ownerKey: string; chatId: string }; output: MemoryExtractionResult };
@@ -249,20 +243,7 @@ function call<K extends DomainOperation>(operation: K, payload: DomainInput<K>):
 }
 /** Exposes typed domain methods to packages declaring a dependency on character cards. */
 export const characterCards = {
-  conversationGroups: {
-    /** Lists the complete ordered manual groups in one explicit scope. */
-    list: (payload: DomainInput<"conversation-group.list">): Promise<ConversationGroupRecord[]> => call("conversation-group.list", payload),
-    /** Creates a new empty manual group with an explicit pin state. */
-    create: (payload: ConversationGroupCreate): Promise<ConversationGroupRecord> => call("conversation-group.create", payload),
-    /** Writes a scoped group's editable metadata through the sole service. */
-    update: (payload: DomainInput<"conversation-group.update">): Promise<ConversationGroupRecord> => call("conversation-group.update", payload),
-    /** Releases manual memberships without deleting their chats. */
-    delete: (payload: IdParams): Promise<ConversationGroupDeletion> => call("conversation-group.delete", payload),
-    /** Transfers one actual chat or explicitly makes it ungrouped. */
-    moveChat: (payload: DomainInput<"conversation-group.moveChat">): Promise<ConversationGroupMoveResult> => call("conversation-group.moveChat", payload),
-    /** Commits all IDs in the requested scope's explicit order. */
-    reorder: (payload: DomainInput<"conversation-group.reorder">): Promise<ConversationGroupRecord[]> => call("conversation-group.reorder", payload),
-  },
+
   chat: {
     configuration: {
       /** Resolves this chat's stored configuration without changing its selection. */

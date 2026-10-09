@@ -17,29 +17,15 @@ export async function buildBrowserScript() {
   return result.outputFiles[0].text;
 }
 
-/** Bundles the real sidebar entry, including its native bridge startup. */
-export async function buildSidebarScript() {
-  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "web/sidebar.ts")], tsconfig: path.join(root, "tsconfig.web.json"), bundle: true, format: "iife", platform: "browser", target: "es2020", write: false, legalComments: "none" });
-  if (result.outputFiles.length !== 1) throw new Error("The offline sidebar must have exactly one browser script");
-  return result.outputFiles[0].text;
-}
-
-/** Produces the installed sidebar document from the same typed source as the actual bridge. */
-export async function createSidebarHtmlDocument() {
-  const script = await buildSidebarScript(), sections = [];
-  for (const file of ["web/style.css", "web/shared/ui/presentation.css", "web/features/sidebar/style.css"]) sections.push(await readFile(path.join(root, file), "utf8"));
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'none'"><title>角色侧栏</title><style>${sections.join("\n")}</style></head><body><main id="app" aria-label="角色侧栏"><div role="status">正在加载侧栏…</div></main><script>${script.replaceAll("</script", "<\\/script")}</script></body></html>`;
-}
-
 /** Includes every declared static resource in both build integrity checks and the archive. */
 async function staticResourcePaths() {
   const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
-  const generated = new Set(["resources/character-memory.html", "resources/character-sidebar.html"]);
+  const generated = new Set(["resources/character-memory.html"]);
   return manifest.resources.map(
     /** Uses the manifest's exact resource path; missing files must fail the build. */
     resource => resource.path,
   ).filter(
-    /** Only the two documents generated from typed browser entries are excluded from static inputs. */
+    /** Only the editor document generated from its typed browser entry are excluded from static inputs. */
     file => !generated.has(file),
   );
 }
@@ -53,9 +39,22 @@ export async function buildGraphModule() {
 
 /** Lowers async/await to scoped Promise continuations so shared services retain each execution owner. */
 export async function buildMainScript() {
-  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "src/main.ts")], bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, write: false });
+  const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, "src/main.ts")], bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, external: ["./ui/*/index.ui.js"], write: false });
   if (result.outputFiles.length !== 1) throw new Error("The package must have exactly one main provider script");
   return result.outputFiles[0].contents;
+}
+
+/** Keeps each screen's module identity intact for the path-only native registration bridge. */
+export async function buildUiScreenScripts() {
+  const entries = (await sourceFiles("src/ui")).filter(file => file.endsWith(".ui.ts"));
+  if (entries.length !== 6) throw new Error("Character cards must build its six independently registered Compose screens");
+  const scripts = {};
+  for (const entry of entries) {
+    const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, entry)], bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, write: false });
+    if (result.outputFiles.length !== 1) throw new Error("A Compose screen must produce exactly one module: " + entry);
+    scripts[entry.replace(/^src\//, "dist/").replace(/\.ts$/, ".js")] = result.outputFiles[0].contents;
+  }
+  return scripts;
 }
 
 /** Requires the transferred memory tools and exact metadata-to-TypeScript exports, including newly implemented tools. */
@@ -131,13 +130,12 @@ export async function assertBuildInputsUnchanged(inputs) {
 }
 
 /** Creates an archive from real current bundles and all host/browser source modules. */
-export async function createPackageArchive(mainScript, toolsScript, htmlDocument, sidebarDocument = undefined) {
+export async function createPackageArchive(mainScript, toolsScript, htmlDocument, uiScripts = undefined) {
   if (!(mainScript instanceof Uint8Array) || mainScript.length === 0) throw new Error("The archive requires the actual main bundle bytes");
   if (!(toolsScript instanceof Uint8Array) || toolsScript.length === 0) throw new Error("The archive requires the actual memory-tools bundle bytes");
   if (typeof htmlDocument !== "string" || !htmlDocument.startsWith("<!doctype html>")) throw new Error("The archive requires the actual offline HTML document");
-  const sidebar = sidebarDocument ?? await createSidebarHtmlDocument();
-  if (typeof sidebar !== "string" || !sidebar.startsWith("<!doctype html>")) throw new Error("The archive requires the actual offline sidebar document");
-  const entries = { "dist/main.js": new Uint8Array(mainScript), "dist/tools.js": new Uint8Array(toolsScript), "resources/character-memory.html": new TextEncoder().encode(htmlDocument), "resources/character-sidebar.html": new TextEncoder().encode(sidebar) };
+  const entries = { "dist/main.js": new Uint8Array(mainScript), "dist/tools.js": new Uint8Array(toolsScript), "resources/character-memory.html": new TextEncoder().encode(htmlDocument) };
+  Object.assign(entries, uiScripts ?? await buildUiScreenScripts());
   const files = ["manifest.json", "README.md", "tsconfig.json", "tsconfig.web.json", ...await sourceFiles("scripts"), ...await sourceFiles("src"), ...await sourceFiles("web"), ...await staticResourcePaths()];
   for (const file of files) entries[file] = new Uint8Array(await readFile(path.join(root, file)));
   const manifest = JSON.parse(new TextDecoder().decode(entries["manifest.json"]));
@@ -157,17 +155,20 @@ export async function buildPackage() {
   if (manifest.public_api !== "src/api.ts") throw new Error("Character cards public_api must identify the real src/api.ts contract");
   if (!Array.isArray(manifest.subpackages) || manifest.subpackages.length !== 1 || manifest.subpackages[0].id !== "character_memory" || manifest.subpackages[0].entry !== "dist/tools.js") throw new Error("Character memory must declare its actual executable subpackage");
   const mainScript = await buildMainScript();
+  const uiScripts = await buildUiScreenScripts();
   const toolsScript = await buildRuntimeToolsScript();
   const htmlDocument = await createHtmlDocument();
-  const sidebarDocument = await createSidebarHtmlDocument();
-  const archive = await createPackageArchive(mainScript, toolsScript, htmlDocument, sidebarDocument);
+  const archive = await createPackageArchive(mainScript, toolsScript, htmlDocument, uiScripts);
   await assertBuildInputsUnchanged(inputs);
   await mkdir(path.join(root, "dist"), { recursive: true });
   await writeFile(path.join(root, "dist/main.js"), mainScript);
   await writeFile(path.join(root, "dist/tools.js"), toolsScript);
+  for (const [file, bytes] of Object.entries(uiScripts)) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), bytes);
+  }
   await mkdir(path.join(root, "resources"), { recursive: true });
   await writeFile(path.join(root, "resources/character-memory.html"), htmlDocument);
-  await writeFile(path.join(root, "resources/character-sidebar.html"), sidebarDocument);
   await writeFile(path.join(root, "dist/character_cards.toolpkg"), archive);
   console.log("PACKED: character_cards.toolpkg (typed browser IIFE, exact executable tools metadata, public_api, all source modules included)");
 }
