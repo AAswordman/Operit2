@@ -2512,6 +2512,7 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "rquickjs",
+ "serde_json",
  "tokio",
 ]
 

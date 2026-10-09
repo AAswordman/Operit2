@@ -46,16 +46,27 @@ fn parseToolCall(
 
     let value =
         serde_json::from_str::<serde_json::Value>(paramsJson).map_err(|error| error.to_string())?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| "Tool params must be a JSON object".to_string())?;
+    parseToolCallValue(toolType, toolName, value)
+}
+
+/// Consumes structured parameters instead of cloning the parsed object tree.
+#[allow(non_snake_case)]
+pub fn parseToolCallValue(
+    toolType: &str,
+    toolName: &str,
+    value: serde_json::Value,
+) -> Result<JsToolCallRequest, String> {
+    let normalizedToolName = toolName.trim();
+    if normalizedToolName.is_empty() {
+        return Err("Tool name cannot be empty".to_string());
+    }
+    let serde_json::Value::Object(object) = value else {
+        return Err("Tool params must be a JSON object".to_string());
+    };
     Ok(JsToolCallRequest {
         tool_type: toolType.trim().to_string(),
         tool_name: normalizedToolName.to_string(),
-        parameters: object
-            .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect(),
+        parameters: object.into_iter().collect(),
     })
 }
 
@@ -348,8 +359,15 @@ fn jsonIntArg(args: &[serde_json::Value], index: usize) -> Result<u32, String> {
 
 /// Serializes one SDK tool result into the fixed JavaScript result envelope.
 #[allow(non_snake_case)]
+#[cfg(test)]
 fn serializeToolExecutionResult(result: &JsToolCallResult) -> String {
-    let serializedData = serializeToolResultData(&result.data);
+    toolExecutionResultValue(result.clone()).to_string()
+}
+
+/// Builds the existing tool envelope without producing JSON text or cloning data.
+#[allow(non_snake_case)]
+pub fn toolExecutionResultValue(result: JsToolCallResult) -> serde_json::Value {
+    let serializedData = serializeToolResultData(result.data);
     let mut object = serde_json::Map::new();
     object.insert(
         "success".to_string(),
@@ -358,7 +376,7 @@ fn serializeToolExecutionResult(result: &JsToolCallResult) -> String {
     if !result.success {
         object.insert(
             "message".to_string(),
-            serde_json::Value::String(result.error.clone().unwrap_or_default()),
+            serde_json::Value::String(result.error.unwrap_or_default()),
         );
     }
     object.insert("data".to_string(), serializedData.data);
@@ -368,12 +386,12 @@ fn serializeToolExecutionResult(result: &JsToolCallResult) -> String {
             serde_json::Value::String(dataType.to_string()),
         );
     }
-    serde_json::Value::Object(object).to_string()
+    serde_json::Value::Object(object)
 }
 
 /// Encodes generic SDK result data for JavaScript consumption.
 #[allow(non_snake_case)]
-fn serializeToolResultData(result: &JsToolCallResultData) -> SerializedToolResultData {
+fn serializeToolResultData(result: JsToolCallResultData) -> SerializedToolResultData {
     match result {
         JsToolCallResultData::Binary(data) => {
             let encodedData = if data.len() > BINARY_DATA_THRESHOLD {
@@ -381,10 +399,10 @@ fn serializeToolResultData(result: &JsToolCallResultData) -> SerializedToolResul
                 binaryDataRegistry()
                     .lock()
                     .expect("binary data registry mutex poisoned")
-                    .insert(handle.clone(), data.clone());
+                    .insert(handle.clone(), data);
                 format!("{BINARY_HANDLE_PREFIX}{handle}")
             } else {
-                base64::engine::general_purpose::STANDARD.encode(data)
+                base64::engine::general_purpose::STANDARD.encode(&data)
             };
             SerializedToolResultData {
                 data: serde_json::Value::String(encodedData),
@@ -392,7 +410,7 @@ fn serializeToolResultData(result: &JsToolCallResultData) -> SerializedToolResul
             }
         }
         JsToolCallResultData::Value(data) => SerializedToolResultData {
-            data: data.clone(),
+            data,
             dataType: None,
         },
     }
@@ -416,7 +434,7 @@ pub async fn callToolSerialized(
     };
     let result = toolRuntime.execute_tool_call(parsed).await;
     let isError = !result.success;
-    (serializeToolExecutionResult(&result), isError)
+    (toolExecutionResultValue(result).to_string(), isError)
 }
 
 #[cfg(test)]

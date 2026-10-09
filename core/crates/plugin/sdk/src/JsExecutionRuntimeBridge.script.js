@@ -30,7 +30,10 @@
         var copy = {};
         var keys = Object.keys(value);
         for (var i = 0; i < keys.length; i += 1) {
-            copy[keys[i]] = value[keys[i]];
+            // Match JSON data properties; never invoke __proto__'s setter.
+            Object.defineProperty(copy, keys[i], {
+                value: value[keys[i]], enumerable: true, writable: true, configurable: true
+            });
         }
         return copy;
     }
@@ -128,11 +131,46 @@
         return new Promise(function(resolve, reject) {
             try {
                 var parsed = parseToolCallArguments(rawArgs);
-                var callbackId = nextToolCallbackId();
                 var ownerCallId = String(root.__operitCurrentCallId || '');
                 if (typeof root.__operitRetainCallReference === 'function') {
                     root.__operitRetainCallReference(ownerCallId);
                 }
+                // Keep the public Promise wrapper to preserve retain/release and
+                // microtask ordering. The native Promise stores its completion
+                // functions internally; no global callback name or JSON text.
+                if (typeof root.__operitNativeCallToolStructured === 'function' &&
+                    !(parsed.options && parsed.options.onIntermediateResult)) {
+                    var releaseStructuredReference = function() {
+                        Promise.resolve().then(function() {
+                            if (typeof root.__operitReleaseCallReference === 'function') {
+                                root.__operitReleaseCallReference(ownerCallId);
+                            }
+                        });
+                    };
+                    try {
+                        root.__operitNativeCallToolStructured(
+                            ownerCallId, parsed.type || 'default', parsed.name, parsed.params || {}
+                        ).then(function(result) {
+                            if (typeof root.__operitActivateCall === 'function') {
+                                root.__operitActivateCall(ownerCallId);
+                            }
+                            try { resolve(parseToolResult(result, false)); }
+                            catch (error) { reject(error); }
+                            releaseStructuredReference();
+                        }, function(error) {
+                            if (typeof root.__operitActivateCall === 'function') {
+                                root.__operitActivateCall(ownerCallId);
+                            }
+                            reject(error);
+                            releaseStructuredReference();
+                        });
+                    } catch (error) {
+                        reject(error);
+                        releaseStructuredReference();
+                    }
+                    return;
+                }
+                var callbackId = nextToolCallbackId();
                 var intermediateCallbackId =
                     parsed.options && parsed.options.onIntermediateResult
                         ? nextToolCallbackId()

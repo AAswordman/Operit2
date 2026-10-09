@@ -147,6 +147,22 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         let gatedToolCalls = self.gatedToolCalls.clone();
         let gatedToolStarted = self.gatedToolStarted.clone();
         Box::pin(async move {
+            if request.tool_name == "echo" {
+                return JsToolCallResult {
+                    success: true,
+                    data: JsToolCallResultData::Value(
+                        serde_json::to_value(request.parameters).unwrap(),
+                    ),
+                    error: None,
+                };
+            }
+            if request.tool_name == "binary" {
+                return JsToolCallResult {
+                    success: true,
+                    data: JsToolCallResultData::Binary(vec![1, 2, 3]),
+                    error: None,
+                };
+            }
             if request.tool_name == "gate" {
                 let (sender, receiver) = tokio::sync::oneshot::channel();
                 gatedToolCalls.lock().unwrap().push(sender);
@@ -3108,4 +3124,271 @@ async fn promise_jobs_restore_execution_host_for_native_calls() {
         Some("workflow")
     );
     engine.destroy();
+}
+
+/// Both protocols retain the public tool result and JSON-compatible parameter
+/// behavior; the native path must not invoke JSON.parse/stringify for the call.
+#[tokio::test(flavor = "current_thread")]
+async fn structured_tool_calls_preserve_legacy_values_and_avoid_json_text() {
+    for legacy in [false, true] {
+        let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+        let result = engine.execute_script_function(
+            r#"exports.main = async function(params) {
+                if (params.legacy) globalThis.__operitNativeCallToolStructured = undefined;
+                var savedStringify = JSON.stringify, savedParse = JSON.parse;
+                var parameters = {
+                    text: '\"\n\u2028中'.repeat(16384),
+                    integer: 7, large: 1e16, date: new Date('2020-01-01T00:00:00Z'),
+                    nested: {x:true, omit:undefined}, array: [undefined, , NaN, 2],
+                    boxed: new Boolean(false), ['__proto__']: {polluted:true},
+                    custom: {toJSON:function(key){return {key:key};}}
+                };
+                if (!params.legacy) {
+                    JSON.stringify = function(value) {
+                        if(value && value.text===parameters.text) throw new Error('Tool request serialized as text');
+                        return savedStringify.apply(this,arguments);
+                    };
+                    JSON.parse = function(text) {
+                        if(typeof text==='string' && text.indexOf('"text":')>=0) throw new Error('Tool result parsed from text');
+                        return savedParse.apply(this,arguments);
+                    };
+                }
+                var output;
+                try { output = await toolCall('echo', parameters); }
+                finally { JSON.stringify=savedStringify; JSON.parse=savedParse; }
+                return {
+                    textMatches:output.text===parameters.text,
+                    integer:output.integer, large:output.large,
+                    date:output.date, nested:output.nested, array:output.array,
+                    boxed:output.boxed, custom:output.custom,
+                    ownProto:Object.prototype.hasOwnProperty.call(output,'__proto__'),
+                    noPollution:output.polluted===undefined
+                };
+            };"#,
+            "main", &BTreeMap::from([("legacy".to_string(), Value::Bool(legacy))]),
+            &BTreeMap::new(), None, true, 5, None,
+        ).await;
+        let output: Value =
+            serde_json::from_str(&expect_js_output(result, "structured echo")).unwrap();
+        assert_eq!(
+            output,
+            serde_json::json!({
+                "textMatches":true, "integer":7, "large":10000000000000000u64,
+                "date":"2020-01-01T00:00:00.000Z", "nested":{"x":true},
+                "array":[null,null,null,2], "boxed":false, "custom":{"key":"custom"},
+                "ownProto":true,"noPollution":true
+            })
+        );
+        engine.destroy();
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn structured_tool_calls_recover_from_invalid_parameters_and_preserve_binary_results() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let result = engine
+        .execute_script_function(
+            r#"exports.main = async function() {
+            var failures=[]; var cycle={};cycle.self=cycle;
+            for (var p of [cycle,{big:1n},[],{get x(){throw new Error('getter');}}]) {
+                try {await toolCall('echo',p);failures.push(false);}catch(e){failures.push(true);}
+            }
+            return {failures:failures, good:(await toolCall('echo',{x:42})).x,
+                binary:await toolCall('binary',{})};
+        };"#,
+            "main",
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            true,
+            5,
+            None,
+        )
+        .await;
+    let output: Value =
+        serde_json::from_str(&expect_js_output(result, "invalid parameters recovery")).unwrap();
+    assert_eq!(
+        output,
+        serde_json::json!({"failures":[true,true,false,true],"good":42,"binary":"AQID"})
+    );
+    engine.destroy();
+}
+
+/// Serial round trips through the real engine worker, Promise jobs and echo
+/// host. Timings are observational; never turn them into flaky test assertions.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "manual release bridge benchmark"]
+async fn bridge_roundtrip_benchmark() {
+    for size in [64usize, 4096, 65536] {
+        for mode in [
+            "baseline-json-eval",
+            "legacy-json-direct-callback",
+            "structured",
+        ] {
+            let legacy = mode != "structured";
+            testJavaScriptRuntimeHost();
+            register_test_runtime_storage("js-engine-tests");
+            if mode == "baseline-json-eval" {
+                setDefaultHostRuntimeTaskSchedulerHost(Arc::new(BenchmarkDedicatedScheduler));
+            }
+            let engine = super::JsEngine::new(Arc::new(TestPluginConfigExecutionHost::default()));
+            if mode == "baseline-json-eval" {
+                installBenchmarkEvalRuntime(&engine).await;
+            }
+            let params = BTreeMap::from([
+                ("legacy".to_string(), Value::Bool(legacy)),
+                ("size".to_string(), serde_json::json!(size)),
+                ("iterations".to_string(), serde_json::json!(500)),
+            ]);
+            let script = r#"exports.main=async function(params){
+                if(params.legacy)globalThis.__operitNativeCallToolStructured=undefined;
+                var data={text:'x'.repeat(params.size)}, result;
+                for(var i=0;i<params.iterations;i++)result=await toolCall('echo',data);
+                return result.text.length;
+            };"#;
+            // Warm up startup/bootstrap; only hot execution is measured.
+            expect_js_output(
+                engine
+                    .execute_script_function(
+                        script,
+                        "main",
+                        &params,
+                        &BTreeMap::new(),
+                        None,
+                        true,
+                        30,
+                        None,
+                    )
+                    .await,
+                "warmup",
+            );
+            let mut times = Vec::new();
+            for _ in 0..5 {
+                let start = Instant::now();
+                let output = expect_js_output(
+                    engine
+                        .execute_script_function(
+                            script,
+                            "main",
+                            &params,
+                            &BTreeMap::new(),
+                            None,
+                            true,
+                            30,
+                            None,
+                        )
+                        .await,
+                    "benchmark",
+                );
+                assert_eq!(output, size.to_string());
+                times.push(start.elapsed().as_secs_f64() * 1e6 / 500.0);
+            }
+            times.sort_by(|a, b| a.total_cmp(b));
+            eprintln!(
+                "BRIDGE_BENCH payload={size}B mode={} median_us_per_roundtrip={:.3}",
+                mode, times[2]
+            );
+            engine.destroy();
+        }
+    }
+}
+
+/// Test-only recreation of main's callback delivery and per-wake scheduling.
+/// It uses the same result semantics and real engine/task/thread round trip.
+struct BenchmarkEvalRuntime(Box<dyn operit_host_api::HostJavaScriptRuntime>);
+impl operit_host_api::HostJavaScriptRuntime for BenchmarkEvalRuntime {
+    fn evaluateHostJavaScriptVoid(&mut self, n: &str, s: &str) -> HostResult<()> {
+        self.0.evaluateHostJavaScriptVoid(n, s)
+    }
+    fn evaluateHostJavaScriptString(&mut self, n: &str, s: &str) -> HostResult<String> {
+        self.0.evaluateHostJavaScriptString(n, s)
+    }
+    fn executePendingHostJavaScriptJobs(&mut self) -> HostResult<()> {
+        self.0.executePendingHostJavaScriptJobs()
+    }
+    fn setHostJavaScriptInterruptHandler(
+        &mut self,
+        h: Option<operit_host_api::HostJavaScriptInterruptHandler>,
+    ) -> HostResult<()> {
+        self.0.setHostJavaScriptInterruptHandler(h)
+    }
+    fn registerHostJavaScriptStringFunction(
+        &mut self,
+        n: &str,
+        c: operit_host_api::HostJavaScriptStringCallback,
+    ) -> HostResult<()> {
+        self.0.registerHostJavaScriptStringFunction(n, c)
+    }
+    fn registerHostJavaScriptVoidFunction(
+        &mut self,
+        n: &str,
+        c: operit_host_api::HostJavaScriptVoidCallback,
+    ) -> HostResult<()> {
+        self.0.registerHostJavaScriptVoidFunction(n, c)
+    }
+    fn callHostJavaScriptFunction(&mut self, name: &str, args: &[Value]) -> HostResult<()> {
+        let name = serde_json::to_string(name).unwrap();
+        let result = serde_json::to_string(&args[0]).unwrap();
+        self.0.evaluateHostJavaScriptVoid("benchmark-main-callback", &format!(
+            "(function() {{ var callback = globalThis[{name}]; if (typeof callback === 'function') {{ callback({result}, {}); }} }})();",args[1]
+        ))
+    }
+}
+
+#[allow(non_snake_case)]
+async fn installBenchmarkEvalRuntime(engine: &super::JsEngine) {
+    engine
+        .worker
+        .runtimeHost
+        .executeHostJavaScriptRuntimeStateAsyncTask(
+            engine.worker.stateHandle,
+            1000,
+            Box::new(|state, _| {
+                Box::pin(async move {
+                    let state = state.downcast_mut::<JsEngineState>().unwrap();
+                    let temporary =
+                        NativeHostJavaScriptRuntimeHost::new().createHostJavaScriptRuntime()?;
+                    let inner = std::mem::replace(&mut state.runtime, temporary);
+                    state.runtime = Box::new(BenchmarkEvalRuntime(inner));
+                    Ok(Box::new(()) as operit_host_api::HostJavaScriptRuntimeStateOutput)
+                })
+            }),
+        )
+        .await
+        .unwrap();
+}
+
+struct BenchmarkDedicatedScheduler;
+impl operit_host_api::HostRuntimeTaskSchedulerHost for BenchmarkDedicatedScheduler {
+    fn monotonicTimeMillis(&self) -> HostResult<u64> {
+        NativeHostRuntimeTaskSchedulerHost.monotonicTimeMillis()
+    }
+    fn scheduleHostRuntimeTask(
+        &self,
+        n: &str,
+        t: operit_host_api::HostRuntimeTask,
+    ) -> HostResult<()> {
+        NativeHostRuntimeTaskSchedulerHost.scheduleHostRuntimeTask(n, t)
+    }
+    fn scheduleHostRuntimeAsyncTask(
+        &self,
+        n: &str,
+        t: operit_host_api::HostRuntimeAsyncTask,
+    ) -> HostResult<()> {
+        NativeHostRuntimeTaskSchedulerHost.scheduleHostRuntimeAsyncTask(n, t)
+    }
+    fn scheduleDelayedHostRuntimeTask(
+        &self,
+        n: &str,
+        d: u64,
+        t: operit_host_api::HostRuntimeTask,
+    ) -> HostResult<()> {
+        NativeHostRuntimeTaskSchedulerHost.scheduleDelayedHostRuntimeTask(n, d, t)
+    }
+    fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+        NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeTaskTurn()
+    }
+    fn waitForHostRuntimeDelay(&self, d: u64) -> operit_host_api::HostRuntimeTurnFuture {
+        NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeDelay(d)
+    }
 }
