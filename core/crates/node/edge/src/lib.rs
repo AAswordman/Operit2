@@ -17,10 +17,11 @@ use operit_link::{
     toCoreValue, CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream,
     CoreLinkError, CoreLinkSharedClient, CoreValue, CoreWatchRequest,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 pub mod service;
 pub mod plugin;
+pub mod scene;
 
 pub use plugin::EdgePlugin;
 pub use operit_edge_contract::{EdgePluginManifest, EdgeScreenSnapshot, EdgeScreenInputRequest, EdgeScreenInputState};

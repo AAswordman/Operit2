@@ -1,3 +1,5 @@
+import type {DeviceState} from './device-state.js';
+import {ScenePreview} from './scene-renderer.js';
 import {request} from './transport.js';
 import {performDeviceAction} from './device-actions.js';
 import {point, pixel} from './model.js';
@@ -42,16 +44,7 @@ let lastFrame = 0;
 let pressed = false;
 let sourceHash = '';
 let miniStaticBytes = 0;
-interface DeviceState {
-  plugins?: {category?: string; details?: {id?: string; description?: string; tools?: string[]; toolOffset?: number; toolTotal?: number; loading?: boolean; error?: string}; items?: {id: string; name: string; status?: string; latencyMs?: number; toolStatus?: string; toolLatencyMs?: number; testError?: string}[]; offset?: number; total?: number; loading?: boolean; testing?: boolean; error?: string | null};
-  running?: boolean; connected?: boolean; paired?: boolean; pairingCode?: string; spaceState?: string;
-  spaceJoinPrompt?: string; spaceJoinBusy?: boolean;
-  spaceJoinRequestId?: string; spaceJoinAssignmentVersion?: number;
-  chatPreview?: string; chatScreen?: string; chatTask?: string;
-  chat?: {chatId?: string; messages?: {sender: string; text: string}[];
-    conversations?: {id: string; title: string; characterCardName?: string}[]; error?: string};
-  chatSendResult?: {ok: boolean; error?: string} | null;
-}
+const scenePreview = new ScenePreview();
 let deviceRunning = false;
 let latestDeviceState: DeviceState | null = null;
 const composer = document.createElement('form');
@@ -161,6 +154,7 @@ function applyControls(): void {
 
 function setDeviceState(state: DeviceState): void {
   if (!runtime) return;
+  scenePreview.update(runtime, state.scene);
   if (state.paired !== undefined) runtime._operit_ui_set_paired(state.paired);
   runtime.ccall('operit_ui_set_pairing_code', null, ['string'], [state.pairingCode ?? '']);
   runtime.ccall('operit_ui_set_space_state', null, ['string'], [state.spaceState ?? '等待连接 Operit']);
@@ -217,6 +211,7 @@ function renderFrame(now: number): void {
   if (currentRuntime && now - lastFrame >= interval) {
     lastFrame = now;
     const started = performance.now();
+    scenePreview.tick();
     currentRuntime._operit_ui_pump(0);
     const nextGeneration = currentRuntime._simulator_generation();
     if (nextGeneration !== generation) {

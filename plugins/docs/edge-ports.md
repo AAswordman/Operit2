@@ -66,3 +66,10 @@ Core 树注入的节点 Router。`io/read` 声明 READ，`io/write` 声明 WRITE
 `{port:"serial",operation:"read"}` 当前**明确拒绝**，不返回空数据假装接通。
 后续可保留 `nodeId + interfaceInfo + args` 入口并增补新的、经过板级注册与权限校验的
 端口能力；开发普通插件不需要另学一套远端 JS 插件 API。
+
+## 原生场景显示
+
+`display.scene` v1 通过同一 `tools.edge.execute` 入口提供租约、素材分块校验缓存、
+图层叠加、本地动画和触摸事件。完整协议见同目录 `edge-scene.md`。
+该插件的业务协议错误使用 `data.ok:false` 信封；调用方必须检查，不能只看外层传输成功。
+授权、离线、未声明 action 等入口错误仍拒绝 Promise。

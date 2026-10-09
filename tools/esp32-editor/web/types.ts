@@ -65,6 +65,8 @@ export type Log = (message: string) => void;
 
 export interface RuntimeModule {
   HEAPU8: Uint8Array<ArrayBufferLike>;
+  addFunction(callback: (...args: number[]) => void, signature: string): number;
+  removeFunction(pointer: number): void;
   _operit_ui_pump(milliseconds: number): void;
   _operit_ui_layout_clear(color: number): void;
   _operit_ui_layout_geometry(index: number, x: number, y: number, w: number, h: number): void;

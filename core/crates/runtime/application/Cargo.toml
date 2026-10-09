@@ -10,6 +10,7 @@ default = ["javascript"]
 javascript = ["dep:operit-js-bridge", "operit-tools/javascript"]
 
 [dependencies]
+operit-edge-contract = { path = "../../node/edge-contract" }
 async-trait.workspace = true
 aes = "0.8"
 base64.workspace = true

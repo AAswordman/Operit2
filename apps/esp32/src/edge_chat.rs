@@ -1,5 +1,9 @@
 //! Volatile UI state; all chat execution and persistence belongs to Space.
 #![allow(non_snake_case)]
+#[path = "scene_events.rs"]
+mod scene_events;
+pub use scene_events::startSceneEvents;
+
 use operit_link::CoreLinkSharedClient;
 use operit_link::{
     CoreCallRequest, CoreEventKind, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
@@ -155,6 +159,7 @@ impl UiValue {
 struct PageCursor { timestamp: i64, offset: u32 }
 
 struct ChatSession {
+    spaceIdentity: Option<operit_node_runtime::NodeServices::SpaceClientIdentity>,
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     services: NodeServices,
     histories: Mutex<UiValue>,
@@ -716,6 +721,7 @@ fn installSession(
     clear();
     let (window, _) = tokio::sync::watch::channel(None);
     let session = Arc::new(ChatSession {
+        spaceIdentity: services.peers().spaceConnection().map(|c| c.identity),
         client,
         services,
         chatId,

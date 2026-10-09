@@ -158,6 +158,8 @@ fn runFirmware(
     // optional diagnostic framebuffer so pairing and chat retain heap headroom.
     board.screenMirror().disablePixelMirror();
     let mut ui = Esp32Ui::new(&board)?;
+    let scenePlugin = Arc::new(operit_node_edge::scene::ScenePlugin::new(320, 240, true));
+    ui.attachScene(Arc::clone(&scenePlugin));
     let scheduler =
         Arc::new(operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost::new()?);
     operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(scheduler.clone());
@@ -312,12 +314,20 @@ fn runFirmware(
             &status,
         ))))
         .map_err(|error| HostError::new(error.message))?;
+    edgeNode = edgeNode
+        .withPlugin(scenePlugin.clone())
+        .map_err(|error| HostError::new(error.message))?;
     edgeNode = edgeNode.withPlugin(Arc::new(edge_plugin::DeviceUiPlugin)).map_err(|error| HostError::new(error.message))?;
     edgeNode = edgeNode.withNodeServices(NodeServices::new(peerService.clone()));
     let edgeNode = Arc::new(edgeNode);
     edgeRouter
         .install(edgeNode.clone())
         .map_err(HostError::new)?;
+    let _sceneEvents = crate::edge_chat::startSceneEvents(
+        NodeServices::new(peerService.clone()),
+        scenePlugin.clone(),
+        identity.nodeId.clone(),
+    );
     let mut peerChanges = peerService.subscribePeerChanges();
     let mut pairingCodeSelection = crate::status::PairingCodeSelection::default();
     let mut pairingState = || -> Result<(bool, String), String> {
@@ -402,6 +412,18 @@ fn runFirmware(
         crate::edge_plugin::pumpUi(&mut ui);
         for action in ui.drainActions() {
             if spaceJoinUi.action(&action, &mut ui) {
+                continue;
+            }
+            if action == "edge_scene_exit" {
+                scenePlugin.system_exit();
+                continue;
+            }
+            if let Some(point) = action.strip_prefix("edge_scene_touch:") {
+                if let Some((x, y)) = point.split_once(':').and_then(|(x, y)| {
+                    Some((x.parse::<u16>().ok()?, y.parse::<u16>().ok()?))
+                }) {
+                    scenePlugin.touch(x, y);
+                }
                 continue;
             }
             match action.as_str() {

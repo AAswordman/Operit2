@@ -1127,12 +1127,16 @@ name = "operit-node-edge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "operit-edge-contract",
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
+ "ring",
  "serde",
+ "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
