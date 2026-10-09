@@ -103,6 +103,7 @@ interface RuntimeBridge {
   restartApplication(): Promise<void>;
   call(request: Uint8Array): Promise<Uint8Array>;
   controlCall(request: Uint8Array): Promise<Uint8Array>;
+  emitRuntimeEvent(eventJson: string): Promise<string>;
   pushOpen(request: Uint8Array): Promise<Uint8Array>;
   pushItem(item: Uint8Array): Promise<Uint8Array>;
   pushClose(pushId: string): Promise<Uint8Array>;
@@ -562,7 +563,7 @@ interface RuntimeWorkerArchiveStagingBridge {
 interface RuntimeWorkerCoreRequest {
   type: "coreRequest";
   id: number;
-  operation: "call" | "controlCall" | "pushOpen" | "pushItem" | "pushClose" | "watchSnapshot" | "watchStream" | "closeWatchStream";
+  operation: "call" | "controlCall" | "emitRuntimeEvent" | "pushOpen" | "pushItem" | "pushClose" | "watchSnapshot" | "watchStream" | "closeWatchStream";
   payload: Uint8Array | string;
 }
 
@@ -5603,6 +5604,10 @@ self.onmessage = (event) => {
       async controlCall(requestBytes: Uint8Array): Promise<Uint8Array> {
         return (await request("controlCall", requestBytes)).response;
       },
+      /** Sends owner events through the active runtime worker, not a second Core tree. */
+      async emitRuntimeEvent(eventJson: string): Promise<string> {
+        return new TextDecoder().decode((await request("emitRuntimeEvent", eventJson)).response);
+      },
       async pushOpen(requestBytes: Uint8Array): Promise<Uint8Array> {
         return (await request("pushOpen", requestBytes)).response;
       },
@@ -5731,6 +5736,10 @@ self.onmessage = (event) => {
     },
     async controlCall(request: Uint8Array): Promise<Uint8Array> {
       return (await bridge()).call(request);
+    },
+    /** Uses the browser ABI's asynchronous application event ingress. */
+    async emitRuntimeEvent(eventJson: string): Promise<string> {
+      return (await bridge()).emitRuntimeEvent(eventJson);
     },
     async pushOpen(request: Uint8Array): Promise<Uint8Array> {
       return (await bridge()).pushOpen(request);

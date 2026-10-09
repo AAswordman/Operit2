@@ -75,34 +75,64 @@ pub(crate) fn release_host() {
     platform::release_host();
 }
 
-/// Dispatches one external runtime event into the generated application target.
-impl OperitFlutterBridge {
-    /// Dispatches one encoded owner event into the generated application target.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn emitRuntimeEvent(&self, encoded: &str) -> String {
-        let result = (|| -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {
-            let event: serde_json::Value = serde_json::from_str(encoded).map_err(|error| {
-                operit_link::CoreLinkError::internal(format!(
-                    "Runtime event is invalid JSON: {error}"
-                ))
-            })?;
-            let target =
-                LocalCoreProxy::generatedTargetForSchema("application").ok_or_else(|| {
-                    operit_link::CoreLinkError::internal("Generated application target is missing")
-                })?;
-            let args = operit_link::toCoreValue(serde_json::json!({ "event": event }))
-                .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;
-            self.call(operit_link::CoreCallRequest::new(
-                format!("runtime-event-{}", current_time_millis_u64()),
-                target,
-                "ingestRuntimeEvent",
-                args,
-            ))
-            .result
-        })();
-        match result {
-            Ok(value) => serde_json::json!({ "ok": true, "result": value }).to_string(),
-            Err(error) => serde_json::json!({ "ok": false, "error": error.message }).to_string(),
-        }
+/// Builds one event request shared by blocking and Promise ABI adapters.
+pub(crate) fn runtimeEventRequest(
+    encoded: &str,
+) -> Result<operit_link::CoreCallRequest, operit_link::CoreLinkError> {
+    let event: serde_json::Value = serde_json::from_str(encoded).map_err(|error| {
+        operit_link::CoreLinkError::internal(format!("Runtime event is invalid JSON: {error}"))
+    })?;
+    let target = LocalCoreProxy::generatedTargetForSchema("application").ok_or_else(|| {
+        operit_link::CoreLinkError::internal("Generated application target is missing")
+    })?;
+    let args = operit_link::toCoreValue(serde_json::json!({ "event": event }))
+        .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;
+    Ok(operit_link::CoreCallRequest::new(
+        format!("runtime-event-{}", current_time_millis_u64()),
+        target,
+        "ingestRuntimeEvent",
+        args,
+    ))
+}
+
+/// Encodes the same owner event response for every platform ABI.
+pub(crate) fn runtimeEventResponse(
+    result: Result<operit_link::CoreValue, operit_link::CoreLinkError>,
+) -> String {
+    match result {
+        Ok(value) => serde_json::json!({ "ok": true, "result": value }).to_string(),
+        Err(error) => serde_json::json!({ "ok": false, "error": error.message }).to_string(),
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+
+    #[test]
+    fn ownerEventsUseTheGeneratedApplicationIngress() {
+        let request = runtimeEventRequest(r#"{"type":"lifecycle","state":"resumed"}"#).unwrap();
+        assert_eq!(request.methodName, "ingestRuntimeEvent");
+        assert_eq!(
+            request.target,
+            LocalCoreProxy::generatedTargetForSchema("application").unwrap()
+        );
+        let args = operit_link::toCoreValue(
+            serde_json::json!({"event": {"type":"lifecycle", "state":"resumed"}}),
+        )
+        .unwrap();
+        assert_eq!(request.args, args);
+    }
+
+    #[test]
+    fn invalidOwnerEventHasTheSameErrorEnvelope() {
+        let result = runtimeEventRequest("not json").map(|_| operit_link::CoreValue::Null);
+        let response: serde_json::Value =
+            serde_json::from_str(&runtimeEventResponse(result)).unwrap();
+        assert_eq!(response["ok"], false);
+        assert!(response["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("Runtime event is invalid JSON:"));
     }
 }

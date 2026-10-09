@@ -1446,7 +1446,21 @@ pub enum HttpImageDelivery {
     DisplayUrl,
 }
 
+/// Describes response delivery available to synchronous HTTP consumers.
+/// Buffered delivery supports finite bodies only, not long-lived SSE sessions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpResponseDelivery {
+    Incremental,
+    Buffered,
+}
+
 pub trait HttpHost: HttpStreamHost + Send + Sync {
+    /// Selects transport by Host capability, never by the caller's compilation target.
+    /// The default requires streaming and must fail explicitly if it is unsupported.
+    fn responseDelivery(&self) -> HttpResponseDelivery {
+        HttpResponseDelivery::Incremental
+    }
+
     /// Selects image delivery before any request is started.
     fn imageDelivery(&self) -> HttpImageDelivery;
 

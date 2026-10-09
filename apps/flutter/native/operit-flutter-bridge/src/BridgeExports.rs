@@ -811,6 +811,12 @@ impl OperitFlutterBridgeWasm {
             .map_err(|error| JsValue::from_str(&error))
     }
 
+    /// Delivers owner events through the same application ingress as native hosts.
+    #[allow(non_snake_case)]
+    pub async fn emitRuntimeEvent(&self, eventJson: &str) -> String {
+        self.inner.emitRuntimeEvent(eventJson).await
+    }
+
     pub async fn call(&self, request: &[u8]) -> Vec<u8> {
         bridge_native_call_async(&self.inner, request).await
     }

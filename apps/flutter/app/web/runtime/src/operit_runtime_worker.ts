@@ -21,6 +21,7 @@ function createRandomUuid(): string {
 type WorkerCoreOperation =
   | "call"
   | "controlCall"
+  | "emitRuntimeEvent"
   | "pushOpen"
   | "pushItem"
   | "pushClose"
@@ -31,6 +32,7 @@ type WorkerCoreOperation =
 interface WorkerRuntimeBridge {
   call(request: Uint8Array): Promise<Uint8Array>;
   controlCall(request: Uint8Array): Promise<Uint8Array>;
+  emitRuntimeEvent(eventJson: string): Promise<string>;
   pushOpen(request: Uint8Array): Promise<Uint8Array>;
   pushItem(item: Uint8Array): Promise<Uint8Array>;
   pushClose(pushId: string): Promise<Uint8Array>;
@@ -404,6 +406,8 @@ function invokeRuntimeOperation(
 
 const workerCoreOperationRegistrations = new Map<WorkerCoreOperation, WorkerCoreOperationRegistration>([
   ["call", { execution: "serialized", invoke: (runtime, message) => runtime.call(requireBytesPayload(message)) }],
+  ["emitRuntimeEvent", { execution: "serialized", invoke: async (runtime, message) =>
+    new TextEncoder().encode(await runtime.emitRuntimeEvent(requireStringPayload(message))) }],
   ["controlCall", { execution: "parallel", invoke: (runtime, message) => runtime.controlCall(requireBytesPayload(message)) }],
   ["pushOpen", { execution: "serialized", invoke: (runtime, message) => runtime.pushOpen(requireBytesPayload(message)) }],
   ["pushItem", { execution: "serialized", invoke: (runtime, message) => runtime.pushItem(requireBytesPayload(message)) }],

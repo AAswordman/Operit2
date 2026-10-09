@@ -57,3 +57,4 @@ operit-plugin-sdk-codegen = { version = "=2.0.0-preview.14", path = "../../plugi
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
+operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler" }

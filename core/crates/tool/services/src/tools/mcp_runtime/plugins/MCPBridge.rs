@@ -4,20 +4,16 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-use operit_host_api::TimeUtils::monotonicTimeMillis;
 
 use operit_host_api::{
-    HttpHost, HttpRequestData, HttpResponseData, ManagedRuntimeHost, ManagedRuntimeProcess,
-    ManagedRuntimeProgram, RuntimeProcessRequest,
+    HostRuntimeTaskSchedulerHost, HttpHost, HttpRequestData, HttpResponseData, ManagedRuntimeHost,
+    ManagedRuntimeProcess, ManagedRuntimeProgram, RuntimeProcessRequest,
 };
 use serde_json::{json, Value};
 use url::Url;
 
 use operit_host_api::HostManager::HostManager;
 
-#[cfg(not(target_arch = "wasm32"))]
 #[path = "MCPStreamableHttp.rs"]
 mod streamable_http;
 
@@ -25,30 +21,43 @@ const REQUEST_TIMEOUT_MS: u64 = 180_000;
 const SPAWN_TIMEOUT_MS: u64 = 180_000;
 
 /// Shares one deadline across process launch and every initialization request.
+#[derive(Clone)]
 struct StartupDeadline {
-    expiresAt: u128,
+    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+    expiresAt: u64,
 }
 
 impl StartupDeadline {
-    /// Starts a deadline using the host-compatible clock.
-    fn new(timeoutMs: u64) -> Self {
-        Self {
-            expiresAt: monotonicTimeMillis() + u128::from(timeoutMs),
-        }
+    /// Binds every phase to the owning runtime's clock, never to a target/global clock.
+    fn new(
+        scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+        timeoutMs: u64,
+    ) -> Result<Self, String> {
+        let now = scheduler
+            .monotonicTimeMillis()
+            .map_err(|error| error.to_string())?;
+        let expiresAt = now
+            .checked_add(timeoutMs)
+            .ok_or_else(|| "MCP deadline exceeds the Host clock range".to_string())?;
+        Ok(Self {
+            scheduler,
+            expiresAt,
+        })
     }
 
-    /// Returns the remaining startup budget without renewing it between requests.
     fn remainingMs(&self) -> Result<u64, String> {
-        self.remainingAt(monotonicTimeMillis())
+        self.remainingAt(
+            self.scheduler
+                .monotonicTimeMillis()
+                .map_err(|error| error.to_string())?,
+        )
     }
 
-    /// Computes the remaining budget at an explicit time for deterministic tests.
-    fn remainingAt(&self, now: u128) -> Result<u64, String> {
-        if now >= self.expiresAt {
-            return Err("MCP startup deadline exceeded".to_string());
-        }
-        u64::try_from(self.expiresAt - now)
-            .map_err(|error| format!("Invalid MCP startup budget: {error}"))
+    fn remainingAt(&self, now: u64) -> Result<u64, String> {
+        self.expiresAt
+            .checked_sub(now)
+            .filter(|remaining| *remaining > 0)
+            .ok_or_else(|| "MCP deadline exceeded".to_string())
     }
 }
 
@@ -80,6 +89,7 @@ struct RegisteredService {
 }
 
 struct ActiveService {
+    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     process: Option<Box<dyn ManagedRuntimeProcess>>,
     remote: Option<RemoteMcpSession>,
     requestId: u64,
@@ -89,6 +99,7 @@ struct ActiveService {
 }
 
 struct RemoteMcpSession {
+    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     httpHost: Arc<dyn HttpHost>,
     endpoint: String,
     connectionType: String,
@@ -110,7 +121,7 @@ struct RemoteSseReader {
     messages: Receiver<RemoteSseMessage>,
     pending: Vec<u8>,
     offset: usize,
-    deadline: u128,
+    deadline: StartupDeadline,
 }
 
 impl Read for RemoteSseReader {
@@ -119,13 +130,11 @@ impl Read for RemoteSseReader {
             return Ok(0);
         }
         loop {
-            let remaining = self.deadline
-                .checked_sub(monotonicTimeMillis())
-                .filter(|remaining| *remaining > 0)
-                .map(|remaining| Duration::from_millis(remaining.min(u128::from(u64::MAX)) as u64))
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::TimedOut, "Remote MCP SSE request timed out")
-                })?;
+            let remaining = Duration::from_millis(
+                self.deadline
+                    .remainingMs()
+                    .map_err(|error| io::Error::new(io::ErrorKind::TimedOut, error))?,
+            );
             if self.offset < self.pending.len() {
                 let count = output.len().min(self.pending.len() - self.offset);
                 output[..count].copy_from_slice(&self.pending[self.offset..self.offset + count]);
@@ -356,7 +365,18 @@ impl MCPBridge {
             }
         };
 
-        let deadline = StartupDeadline::new(timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS));
+        let Some(scheduler) = context.hostRuntimeTaskSchedulerHost.clone() else {
+            return errorResponse(
+                "spawn",
+                -32603,
+                "Runtime task scheduler host is not configured",
+            );
+        };
+        let deadline =
+            match StartupDeadline::new(scheduler.clone(), timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS)) {
+                Ok(deadline) => deadline,
+                Err(message) => return errorResponse("spawn", -32603, &message),
+            };
         if let Err(message) = deadline.remainingMs() {
             return errorResponse("spawn", -32603, &message);
         }
@@ -369,7 +389,7 @@ impl MCPBridge {
             let Some(host) = context.managedRuntimeHost.as_ref() else {
                 return errorResponse("spawn", -32603, "Managed runtime host is not configured");
             };
-            startLocalServiceProcess(host.as_ref(), &registered)
+            startLocalServiceProcess(host.as_ref(), &registered, scheduler)
         };
         let mut active = match startResult {
             Ok(value) => value,
@@ -507,6 +527,7 @@ fn bridgeState() -> &'static Mutex<MCPBridgeState> {
 fn startLocalServiceProcess(
     host: &dyn ManagedRuntimeHost,
     service: &RegisteredService,
+    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
 ) -> Result<ActiveService, String> {
     let runtime = resolveMcpRuntimeCommand(&service.command, &service.args)?;
     let process = host
@@ -519,6 +540,7 @@ fn startLocalServiceProcess(
         })
         .map_err(|error| error.to_string())?;
     Ok(ActiveService {
+        scheduler,
         process: Some(process),
         remote: None,
         requestId: 0,
@@ -672,8 +694,10 @@ fn startRemoteServiceSession(
         headers.insert("Authorization".to_string(), format!("Bearer {token}"));
     }
     let mut active = ActiveService {
+        scheduler: deadline.scheduler.clone(),
         process: None,
         remote: Some(RemoteMcpSession {
+            scheduler: deadline.scheduler.clone(),
             httpHost,
             endpoint,
             connectionType: connectionType.to_string(),
@@ -705,7 +729,13 @@ fn startRemoteServiceSession(
 
 #[allow(non_snake_case)]
 fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<(), String> {
-    let deadline = monotonicTimeMillis() + u128::from(timeoutMs);
+    if session.httpHost.responseDelivery() == operit_host_api::HttpResponseDelivery::Buffered {
+        return Err(
+            "HTTP Host only supports finite responses, not live MCP SSE sessions".to_string(),
+        );
+    }
+
+    let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
     let streamId = format!("mcp-sse-{}", uuid::Uuid::new_v4());
     let (sender, messages) = mpsc::channel();
     let chunkSender = sender.clone();
@@ -739,12 +769,12 @@ fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<()
         messages,
         pending: Vec::new(),
         offset: 0,
-        deadline,
+        deadline: deadline.clone(),
     });
     loop {
-        if monotonicTimeMillis() >= deadline {
-            return Err("Remote MCP SSE endpoint event timed out".to_string());
-        }
+        deadline
+            .remainingMs()
+            .map_err(|error| format!("Remote MCP SSE endpoint event timed out: {error}"))?;
         let Some((eventName, data)) = readSseEvent(&mut reader)? else {
             continue;
         };
@@ -1010,19 +1040,16 @@ fn sendRemoteJsonRpc(
     if session.connectionType.eq_ignore_ascii_case("sse") {
         return sendRemoteSseJsonRpc(session, payload, expectedId, _timeoutMs);
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        streamable_http::sendJsonRpc(session, payload, expectedId, _timeoutMs)
-    }
-    // The synchronous browser bridge cannot wait on native callback channels.
-    // Preserve its existing finite-response behavior until its async MCP API exists.
-    #[cfg(target_arch = "wasm32")]
-    {
-        sendRemoteBufferedJsonRpc(session, payload, expectedId, _timeoutMs)
+    match session.httpHost.responseDelivery() {
+        operit_host_api::HttpResponseDelivery::Incremental => {
+            streamable_http::sendJsonRpc(session, payload, expectedId, _timeoutMs)
+        }
+        operit_host_api::HttpResponseDelivery::Buffered => {
+            sendRemoteBufferedJsonRpc(session, payload, expectedId, _timeoutMs)
+        }
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 #[allow(non_snake_case)]
 fn sendRemoteBufferedJsonRpc(
     session: &mut RemoteMcpSession,
@@ -1030,6 +1057,7 @@ fn sendRemoteBufferedJsonRpc(
     expectedId: Option<u64>,
     _timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
+    let deadline = StartupDeadline::new(session.scheduler.clone(), _timeoutMs)?;
     let body = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
     let response = executeRemoteHttp(
         session,
@@ -1039,6 +1067,9 @@ fn sendRemoteBufferedJsonRpc(
         body,
         _timeoutMs,
     )?;
+    deadline
+        .remainingMs()
+        .map_err(|error| format!("Remote MCP HTTP request timed out: {error}"))?;
     rememberRemoteSessionId(session, &response.headers)?;
     let contentType = response
         .headers
@@ -1055,17 +1086,27 @@ fn sendRemoteBufferedJsonRpc(
             text.trim()
         ));
     }
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
+    let Some(expectedId) = expectedId else {
         return Ok(None);
-    }
-    if contentType.contains("text/event-stream")
+    };
+    let trimmed = text.trim();
+    let parsed = if contentType.contains("text/event-stream")
         || trimmed.lines().any(|line| line.starts_with("data:"))
     {
-        return parseSseJsonResponse(trimmed, expectedId);
+        parseSseJsonResponse(trimmed, Some(expectedId))?
+    } else if trimmed.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_str::<Value>(trimmed).map_err(|error| error.to_string())?)
+    };
+    match parsed {
+        Some(value) if value.get("id").and_then(Value::as_u64) == Some(expectedId) => {
+            Ok(Some(value))
+        }
+        _ => Err(format!(
+            "Remote MCP HTTP response did not contain JSON-RPC response {expectedId}"
+        )),
     }
-    let parsed = serde_json::from_str::<Value>(trimmed).map_err(|error| error.to_string())?;
-    Ok(Some(parsed))
 }
 
 #[allow(non_snake_case)]
@@ -1075,7 +1116,7 @@ fn sendRemoteSseJsonRpc(
     expectedId: Option<u64>,
     timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
-    let deadline = monotonicTimeMillis() + u128::from(timeoutMs);
+    let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
     let endpoint = session
         .sseEndpoint
         .clone()
@@ -1104,11 +1145,11 @@ fn sendRemoteSseJsonRpc(
         .sseReader
         .as_mut()
         .ok_or_else(|| "Remote MCP SSE reader is not connected".to_string())?;
-    reader.get_mut().deadline = deadline;
+    reader.get_mut().deadline = deadline.clone();
     loop {
-        if monotonicTimeMillis() >= deadline {
-            return Err(format!("Remote MCP SSE request {expectedId} timed out"));
-        }
+        deadline
+            .remainingMs()
+            .map_err(|error| format!("Remote MCP SSE request {expectedId} timed out: {error}"))?;
         let Some((eventName, data)) = readSseEvent(reader)? else {
             continue;
         };
@@ -1245,7 +1286,6 @@ fn readSseEvent<R: BufRead>(reader: &mut R) -> Result<Option<(String, String)>, 
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 #[allow(non_snake_case)]
 fn parseSseJsonResponse(text: &str, expectedId: Option<u64>) -> Result<Option<Value>, String> {
     let mut eventPayloads = Vec::new();
@@ -1298,12 +1338,11 @@ fn readJsonResponse(
     targetId: u64,
     timeoutMs: u64,
 ) -> Result<Value, String> {
-    let deadlineMillis =
-        monotonicTimeMillis() + u128::from(timeoutMs);
+    let deadline = StartupDeadline::new(active.scheduler.clone(), timeoutMs)?;
     let mut seenIds = BTreeSet::new();
     loop {
-        let nowMillis = monotonicTimeMillis();
-        if nowMillis >= deadlineMillis {
+        let remaining = deadline.remainingMs();
+        if remaining.is_err() {
             let stderr = active
                 .process
                 .as_ref()
@@ -1311,9 +1350,12 @@ fn readJsonResponse(
                 .drainStderr()
                 .unwrap_or_default();
             active.logs.push_str(&stderr);
-            return Err(format!("MCP request {targetId} timed out. {stderr}"));
+            return Err(format!(
+                "MCP request {targetId} timed out: {}. {stderr}",
+                remaining.unwrap_err()
+            ));
         }
-        let waitMs = (deadlineMillis - nowMillis).min(250) as u64;
+        let waitMs = remaining?.min(250);
         let line = active
             .process
             .as_ref()
@@ -1437,6 +1479,7 @@ mod startup_tests {
     /// Wraps a scripted process with isolated MCP protocol state.
     fn activeProcess(process: ScriptedProcess) -> ActiveService {
         ActiveService {
+            scheduler: testScheduler(),
             process: Some(Box::new(process)),
             remote: None,
             requestId: 0,
@@ -1446,10 +1489,114 @@ mod startup_tests {
         }
     }
 
+    struct ScriptedClock {
+        readings: Mutex<VecDeque<HostResult<u64>>>,
+    }
+
+    impl HostRuntimeTaskSchedulerHost for ScriptedClock {
+        fn monotonicTimeMillis(&self) -> HostResult<u64> {
+            self.readings
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected clock read")
+        }
+        fn scheduleHostRuntimeTask(
+            &self,
+            _: &str,
+            _: operit_host_api::HostRuntimeTask,
+        ) -> HostResult<()> {
+            unreachable!()
+        }
+        fn scheduleHostRuntimeAsyncTask(
+            &self,
+            _: &str,
+            _: operit_host_api::HostRuntimeAsyncTask,
+        ) -> HostResult<()> {
+            unreachable!()
+        }
+        fn scheduleDelayedHostRuntimeTask(
+            &self,
+            _: &str,
+            _: u64,
+            _: operit_host_api::HostRuntimeTask,
+        ) -> HostResult<()> {
+            unreachable!()
+        }
+        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+            unreachable!()
+        }
+        fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
+            unreachable!()
+        }
+    }
+
+    fn scriptedClock(readings: Vec<HostResult<u64>>) -> Arc<dyn HostRuntimeTaskSchedulerHost> {
+        Arc::new(ScriptedClock {
+            readings: Mutex::new(readings.into()),
+        })
+    }
+
+    /// Proves that no process/global/target clock replaces the supplied Host clock.
+    #[test]
+    fn startupDeadlineUsesItsOwningHostClock() {
+        let deadline = StartupDeadline::new(
+            scriptedClock(vec![Ok(4000), Ok(4200), Ok(4999), Ok(5000)]),
+            1000,
+        )
+        .unwrap();
+        assert_eq!(deadline.remainingMs().unwrap(), 800);
+        assert_eq!(deadline.remainingMs().unwrap(), 1);
+        assert!(deadline.remainingMs().is_err());
+    }
+
+    #[test]
+    fn clockFailuresAndOverflowAreNotReplacedByFallbacks() {
+        assert!(StartupDeadline::new(
+            scriptedClock(vec![Err(HostError::new("clock unavailable"))]),
+            1000
+        )
+        .err()
+        .unwrap()
+        .contains("clock unavailable"));
+        let deadline = StartupDeadline::new(
+            scriptedClock(vec![Ok(10), Err(HostError::new("clock lost"))]),
+            1000,
+        )
+        .unwrap();
+        assert!(deadline.remainingMs().unwrap_err().contains("clock lost"));
+        assert!(StartupDeadline::new(scriptedClock(vec![Ok(u64::MAX)]), 1).is_err());
+    }
+
+    #[test]
+    fn spawnWithoutSchedulerFailsBeforeLaunchingAProcess() {
+        let context = HostManager::default();
+        let bridge = MCPBridge::getInstance(&context);
+        let name = format!("test-no-clock-{}", uuid::Uuid::new_v4());
+        bridge.registerMcpService(
+            name.clone(),
+            "node".into(),
+            Vec::new(),
+            None,
+            BTreeMap::new(),
+            None,
+        );
+        let response = bridge.spawnMcpService(&context, &name, Some(1000));
+        bridge.unregisterMcpService(&name);
+        assert_eq!(response["success"], false);
+        assert_eq!(
+            response["error"]["message"],
+            "Runtime task scheduler host is not configured"
+        );
+    }
+
     /// Deducts elapsed time from one shared budget across handshake phases.
     #[test]
     fn startupBudgetIsNotRenewed() {
-        let deadline = StartupDeadline { expiresAt: 1100 };
+        let deadline = StartupDeadline {
+            scheduler: testScheduler(),
+            expiresAt: 1100,
+        };
         assert_eq!(deadline.remainingAt(100).unwrap(), 1000);
         assert_eq!(deadline.remainingAt(800).unwrap(), 300);
         assert_eq!(deadline.remainingAt(1099).unwrap(), 1);
@@ -1466,7 +1613,14 @@ mod startup_tests {
             writes: writes.clone(),
             running: true,
         });
-        assert!(initializeService(&mut active, &StartupDeadline { expiresAt: 0 }).is_err());
+        assert!(initializeService(
+            &mut active,
+            &StartupDeadline {
+                scheduler: testScheduler(),
+                expiresAt: 0
+            }
+        )
+        .is_err());
         assert!(writes.lock().unwrap().is_empty());
         assert!(!active.ready);
     }
@@ -1504,7 +1658,7 @@ mod startup_tests {
             running: true,
         });
         active.ready = true;
-        let context = HostManager::default();
+        let context = HostManager::default().withHostRuntimeTaskSchedulerHost(testScheduler());
         let bridge = MCPBridge::getInstance(&context);
         let name = format!("test-no-replay-{}", uuid::Uuid::new_v4());
         bridge.registerMcpService(
@@ -1532,3 +1686,8 @@ mod startup_tests {
 #[cfg(test)]
 #[path = "MCPBridgeRemoteTests.rs"]
 mod remote_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn testScheduler() -> Arc<dyn HostRuntimeTaskSchedulerHost> {
+    Arc::new(operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new())
+}

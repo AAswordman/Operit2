@@ -10,17 +10,24 @@ use operit_tools::tools::mcp_runtime::plugins::{
 use serde_json::{json, Value};
 
 #[cfg(target_os = "linux")]
-use operit_host_linux_native::LinuxHttpHost as NativeHttpHost;
+use operit_host_linux_native::{
+    LinuxHostRuntimeTaskSchedulerHost as NativeTaskScheduler, LinuxHttpHost as NativeHttpHost,
+};
 #[cfg(target_os = "macos")]
-use operit_host_macos_native::MacosHttpHost as NativeHttpHost;
+use operit_host_macos_native::{
+    MacosHostRuntimeTaskSchedulerHost as NativeTaskScheduler, MacosHttpHost as NativeHttpHost,
+};
 #[cfg(target_os = "windows")]
-use operit_host_windows_native::WindowsHttpHost as NativeHttpHost;
+use operit_host_windows_native::{
+    WindowsHostRuntimeTaskSchedulerHost as NativeTaskScheduler, WindowsHttpHost as NativeHttpHost,
+};
 
 #[test]
 #[ignore = "requires public MCP services and network access"]
 fn public_remote_mcp_services() {
     let context = HostManager {
         httpHost: Some(Arc::new(NativeHttpHost::new())),
+        hostRuntimeTaskSchedulerHost: Some(Arc::new(NativeTaskScheduler::new())),
         ..HostManager::default()
     };
     let bridge = MCPBridge::getInstance(&context);

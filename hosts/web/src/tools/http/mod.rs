@@ -38,6 +38,11 @@ impl WebHttpHost {
 }
 
 impl HttpHost for WebHttpHost {
+    /// The synchronous worker XHR bridge supports finite responses, not live streams.
+    fn responseDelivery(&self) -> operit_host_api::HttpResponseDelivery {
+        operit_host_api::HttpResponseDelivery::Buffered
+    }
+
     /// Uses image elements so display does not require a CORS-readable Fetch response.
     fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
         operit_host_api::HttpImageDelivery::DisplayUrl
