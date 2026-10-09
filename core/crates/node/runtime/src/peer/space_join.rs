@@ -356,7 +356,7 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
             || input.sourceSpaceId.is_empty() || input.profile.displayName.len() > 512 {
             return Err("Join request identity/Space mismatch".into());
         }
-        let records = store(service).records::<Record>(INBOUND)?;
+        let mut records = store(service).records::<Record>(INBOUND)?;
         if let Some(old) = records.get(&input.requestId) {
             if old.request.applicantDeviceId != peer || old.targetSpaceId != input.targetSpaceId
                 || old.sourceSpaceId != input.sourceSpaceId || old.sourceRevision != input.sourceRevision {
@@ -364,6 +364,20 @@ pub(crate) fn receive(service: &dyn NodeSpaceContext, peer: &str, request: CoreC
             }
             old.clone()
         } else {
+            // A submission from a different source Space means the applicant
+            // left and forked a new one; its previous application or admission
+            // no longer describes this device. Retire it so the fresh
+            // submission starts a real review instead of being blocked
+            // forever. Resubmissions from the same source Space stay rejected.
+            if !cancellation {
+                for (id, record) in records.iter_mut() {
+                    if record.request.applicantDeviceId == peer && record.targetSpaceId == current.spaceId
+                        && active(&record.request.status) && record.sourceSpaceId != input.sourceSpaceId {
+                        record.request.status = SpaceJoinStatus::Cancelled;
+                        saveRecord(service, INBOUND, id, record)?;
+                    }
+                }
+            }
             if !cancellation && records.values().filter(|r| active(&r.request.status) && r.request.expiresAt > now).count() >= 64 {
                 return Err("Too many pending join requests".into());
             }
