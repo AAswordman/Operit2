@@ -13,6 +13,7 @@ pub type JsAny = serde_json::Value;
 pub type JsObject = serde_json::Value;
 
 pub mod chat;
+pub mod edge;
 pub mod compose_dsl;
 pub mod compose_dsl_material3_generated;
 pub mod core;
@@ -277,6 +278,8 @@ pub trait JsToolsHost:
     + software_settings::SoftwareSettingsHost
     + chat::ChatHost
     + memory::MemoryHost
+    + edge::EdgeHost
+    + edge::IoHost
     + Send
     + Sync
 {
@@ -294,6 +297,8 @@ impl<T> JsToolsHost for T where
         + software_settings::SoftwareSettingsHost
         + chat::ChatHost
         + memory::MemoryHost
+        + edge::EdgeHost
+        + edge::IoHost
         + Send
         + Sync
 {

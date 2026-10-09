@@ -222,8 +222,25 @@ pub trait CoreNodeToolRuntime: Send + Sync {
     fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String>;
 }
 
+/// Authenticated explicit-node port capability injected by the owning Core tree.
+/// Implementations must drain dispatched Link calls even if the plugin stops awaiting.
+pub trait EdgeToolRuntime: Send + Sync {
+    fn execute(&self, nodeId: String, request: operit_link::CoreCallRequest)
+        -> operit_plugin_sdk::javascript::JsExecutionCompletion<Result<serde_json::Value, String>>;
+}
+
 /// Provides runtime-owned services that the tools crate must not own.
 pub trait ToolRuntimeSupport: Send + Sync {
+    /// Installs the Core-owned Edge port router, never a process-global client.
+    fn bindEdgeToolRuntime(&self, _runtime: Arc<dyn EdgeToolRuntime>) -> Result<(), String> {
+        Err("Edge tool routing is not supported by this runtime".into())
+    }
+    /// Dispatches an already validated port call through that router.
+    fn executeEdgeTool(&self, _nodeId: String, _request: operit_link::CoreCallRequest)
+        -> operit_plugin_sdk::javascript::JsExecutionCompletion<Result<serde_json::Value, String>> {
+        Box::pin(async { Err("Edge tool routing is not initialized".into()) })
+    }
+
     /// Installs the live Core routing capability owned by the outer proxy.
     #[allow(non_snake_case)]
     fn bindCoreNodeToolRuntime(&self, runtime: Arc<dyn CoreNodeToolRuntime>) -> Result<(), String>;

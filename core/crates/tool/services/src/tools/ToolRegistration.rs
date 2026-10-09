@@ -955,6 +955,18 @@ fn registerBluetoothTool(
 
 #[allow(non_snake_case)]
 fn registerInternalTools(handler: &mut AIToolHandler, context: &HostManager) {
+    handler.registerBuiltinTool(
+        BuiltinToolName::EdgeExecute,
+        crate::ToolExecutionManager::RegisteredToolExecutor::Asynchronous(Box::new(
+            crate::tools::EdgePortTool::EdgePortToolExecutor { io: false, runtime: handler.runtimeSupport() })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::IoExecute,
+        crate::ToolExecutionManager::RegisteredToolExecutor::Asynchronous(Box::new(
+            crate::tools::EdgePortTool::EdgePortToolExecutor { io: true, runtime: handler.runtimeSupport() })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
     let readEnvironmentRuntimeSupport = handler.runtimeSupport();
     registerHttpTools(handler, ToolGetter::getHttpTools(context));
     if let Some(browserTools) = ToolGetter::getBrowserAutomationTools(context) {

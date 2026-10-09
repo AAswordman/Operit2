@@ -26,6 +26,7 @@ struct ModuleSpec {
 }
 
 const MODULES: &[ModuleSpec] = &[
+    ModuleSpec { rust_file: "js_sdk/edge.rs", additional_rust_file: None, ts_file: "edge.d.ts" },
     ModuleSpec {
         rust_file: "js_sdk/results.rs",
         additional_rust_file: None,
@@ -1412,6 +1413,8 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
     if let ItemRef::Trait(_) = item {
         let namespace = match rust_name.as_str() {
             "FilesHost" => Some(vec!["Files".to_string()]),
+            "EdgeHost" => Some(vec!["edge".to_string()]),
+            "IoHost" => Some(vec!["io".to_string()]),
             "NetHost" => Some(vec!["Net".to_string()]),
             "NetFutureHost" => Some(vec!["Net".to_string()]),
             "SystemHost" => Some(vec!["System".to_string()]),

@@ -14,7 +14,7 @@ use operit_providers::chat::llmprovider::AIService::SendMessageRequest;
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
-    CachedMcpToolInfo, CoreNodeToolRuntime, CoreRouteChangeHandler, CoreRouteResumeContext,
+    CachedMcpToolInfo, EdgeToolRuntime, CoreNodeToolRuntime, CoreRouteChangeHandler, CoreRouteResumeContext,
     ResolvedCharacterCardToolAccess, RuntimeBundledExternalSkillAsset, RuntimeCharacterCardInfo,
     RuntimeCharacterMemoryBinding, RuntimeChatCallRequest, RuntimeChatSendRequest, RuntimeChatSlot,
     RuntimeCoreNodeRouteState, RuntimePluginAsset, RuntimeSkillCatalogEntry,
@@ -53,6 +53,7 @@ impl ToolRuntimeSupportService {
             chatRuntimeHolder,
             runtimeBindings: OnceLock::new(),
             coreNodeToolRuntime: RwLock::new(None),
+            edgeToolRuntime: OnceLock::new(),
             coreRouteChangeHandler: RwLock::new(None),
         })
     }
@@ -70,6 +71,7 @@ pub struct RuntimeToolSupport {
     chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
     runtimeBindings: OnceLock<RuntimeToolBindings>,
     coreNodeToolRuntime: RwLock<Option<Arc<dyn CoreNodeToolRuntime>>>,
+    edgeToolRuntime: OnceLock<Arc<dyn EdgeToolRuntime>>,
     coreRouteChangeHandler: RwLock<Option<CoreRouteChangeHandler>>,
 }
 
@@ -97,6 +99,17 @@ impl RuntimeToolSupport {
 }
 
 impl ToolRuntimeSupport for RuntimeToolSupport {
+    fn bindEdgeToolRuntime(&self, runtime: Arc<dyn EdgeToolRuntime>) -> Result<(), String> {
+        self.edgeToolRuntime.set(runtime).map_err(|_| "Edge tool routing is already initialized".into())
+    }
+    fn executeEdgeTool(&self, nodeId: String, request: operit_link::CoreCallRequest)
+        -> operit_plugin_sdk::javascript::JsExecutionCompletion<Result<serde_json::Value, String>> {
+        match self.edgeToolRuntime.get() {
+            Some(runtime) => runtime.execute(nodeId, request),
+            None => Box::pin(async {Err("Edge tool routing is not initialized".into())}),
+        }
+    }
+
     /// Installs the live routing capability provided by the outer Core proxy.
     #[allow(non_snake_case)]
     fn bindCoreNodeToolRuntime(&self, runtime: Arc<dyn CoreNodeToolRuntime>) -> Result<(), String> {
