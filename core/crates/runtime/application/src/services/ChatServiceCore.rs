@@ -2077,7 +2077,7 @@ impl ChatServiceCore {
         })?;
         Ok(VisualFileSystem::new(
             self.fileSystemHost.clone(),
-            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot),
+            PathMapper::new(runtimeStoreRoot, workspaceCollectionRoot).withMountStorage(runtimeStorageHost.clone()),
         ))
     }
 

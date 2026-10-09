@@ -1,5 +1,6 @@
 //! Deterministic tests for live legacy SSE transport, independent of public servers.
 use super::*;
+use std::time::Instant;
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
     HttpDownloadResult, HttpImageDelivery, HttpStreamChunkCallback, HttpStreamClosedCallback,
@@ -246,7 +247,7 @@ fn readerReportsCleanClosureAndDisconnectWithoutBusyLoop() {
             messages,
             pending: Vec::new(),
             offset: 0,
-            deadline: Instant::now() + Duration::from_secs(1),
+            deadline: monotonicTimeMillis() + 1000,
         };
         let error = reader.read(&mut [0; 1]).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);

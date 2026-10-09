@@ -2183,8 +2183,7 @@ impl ChatHistoryDelegate {
         let (folderPath, mountedName) = match source {
             Some(source) => {
                 let host = operit_store::RuntimeStorageHost::defaultRuntimeStorageHost();
-                let root = host.runtimeRootDir().ok_or("Runtime storage root is not configured for document mounts")?;
-                let mount = operit_tools::files::MountRegistry::MountRegistry::new(&root).register(
+                let mount = operit_tools::files::MountRegistry::MountRegistry::withStorage(host).register(
                     &source.namespace, &source.backend, &source.root, &source.name,
                 )?;
                 (mount.vfsPath(), Some(mount.name))

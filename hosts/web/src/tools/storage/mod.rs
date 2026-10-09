@@ -78,6 +78,11 @@ impl RuntimeStorageHost for WebRuntimeStorageHost {
         Ok(())
     }
 
+    /// The worker flushes the new OPFS record before publishing its index entry.
+    fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        self.writeBytes(path, content)
+    }
+
     /// Appends bytes to worker-owned OPFS runtime storage.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
         call_storage(

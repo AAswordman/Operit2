@@ -82,7 +82,7 @@ impl StandardFileSystemTools {
             PathMapper::new(
                 self.runtimeStoreRoot.clone(),
                 self.workspaceCollectionRoot.clone(),
-            ),
+            ).withMountStorage(self.runtimeStorageHost.clone()),
         )
     }
 

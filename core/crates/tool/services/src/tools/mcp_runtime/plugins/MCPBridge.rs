@@ -3,7 +3,10 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+use operit_host_api::TimeUtils::monotonicTimeMillis;
 
 use operit_host_api::{
     HttpHost, HttpRequestData, HttpResponseData, ManagedRuntimeHost, ManagedRuntimeProcess,
@@ -30,13 +33,13 @@ impl StartupDeadline {
     /// Starts a deadline using the host-compatible clock.
     fn new(timeoutMs: u64) -> Self {
         Self {
-            expiresAt: operit_host_api::TimeUtils::currentTimeMillisU128() + u128::from(timeoutMs),
+            expiresAt: monotonicTimeMillis() + u128::from(timeoutMs),
         }
     }
 
     /// Returns the remaining startup budget without renewing it between requests.
     fn remainingMs(&self) -> Result<u64, String> {
-        self.remainingAt(operit_host_api::TimeUtils::currentTimeMillisU128())
+        self.remainingAt(monotonicTimeMillis())
     }
 
     /// Computes the remaining budget at an explicit time for deterministic tests.
@@ -107,7 +110,7 @@ struct RemoteSseReader {
     messages: Receiver<RemoteSseMessage>,
     pending: Vec<u8>,
     offset: usize,
-    deadline: Instant,
+    deadline: u128,
 }
 
 impl Read for RemoteSseReader {
@@ -116,10 +119,10 @@ impl Read for RemoteSseReader {
             return Ok(0);
         }
         loop {
-            let remaining = self
-                .deadline
-                .checked_duration_since(Instant::now())
-                .filter(|remaining| !remaining.is_zero())
+            let remaining = self.deadline
+                .checked_sub(monotonicTimeMillis())
+                .filter(|remaining| *remaining > 0)
+                .map(|remaining| Duration::from_millis(remaining.min(u128::from(u64::MAX)) as u64))
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::TimedOut, "Remote MCP SSE request timed out")
                 })?;
@@ -702,7 +705,7 @@ fn startRemoteServiceSession(
 
 #[allow(non_snake_case)]
 fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadline = monotonicTimeMillis() + u128::from(timeoutMs);
     let streamId = format!("mcp-sse-{}", uuid::Uuid::new_v4());
     let (sender, messages) = mpsc::channel();
     let chunkSender = sender.clone();
@@ -739,7 +742,7 @@ fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<()
         deadline,
     });
     loop {
-        if Instant::now() >= deadline {
+        if monotonicTimeMillis() >= deadline {
             return Err("Remote MCP SSE endpoint event timed out".to_string());
         }
         let Some((eventName, data)) = readSseEvent(&mut reader)? else {
@@ -1072,7 +1075,7 @@ fn sendRemoteSseJsonRpc(
     expectedId: Option<u64>,
     timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
-    let deadline = Instant::now() + Duration::from_millis(timeoutMs);
+    let deadline = monotonicTimeMillis() + u128::from(timeoutMs);
     let endpoint = session
         .sseEndpoint
         .clone()
@@ -1103,7 +1106,7 @@ fn sendRemoteSseJsonRpc(
         .ok_or_else(|| "Remote MCP SSE reader is not connected".to_string())?;
     reader.get_mut().deadline = deadline;
     loop {
-        if Instant::now() >= deadline {
+        if monotonicTimeMillis() >= deadline {
             return Err(format!("Remote MCP SSE request {expectedId} timed out"));
         }
         let Some((eventName, data)) = readSseEvent(reader)? else {
@@ -1296,10 +1299,10 @@ fn readJsonResponse(
     timeoutMs: u64,
 ) -> Result<Value, String> {
     let deadlineMillis =
-        operit_host_api::TimeUtils::currentTimeMillisU128() + u128::from(timeoutMs);
+        monotonicTimeMillis() + u128::from(timeoutMs);
     let mut seenIds = BTreeSet::new();
     loop {
-        let nowMillis = operit_host_api::TimeUtils::currentTimeMillisU128();
+        let nowMillis = monotonicTimeMillis();
         if nowMillis >= deadlineMillis {
             let stderr = active
                 .process

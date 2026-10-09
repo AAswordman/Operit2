@@ -2361,6 +2361,7 @@ dependencies = [
  "json5",
  "md-5",
  "operit-host-api",
+ "operit-host-native-storage",
  "operit-link",
  "operit-model",
  "operit-plugin-sdk",

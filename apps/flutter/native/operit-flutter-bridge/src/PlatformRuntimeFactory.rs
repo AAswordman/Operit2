@@ -78,6 +78,7 @@ pub(crate) fn release_host() {
 /// Dispatches one external runtime event into the generated application target.
 impl OperitFlutterBridge {
     /// Dispatches one encoded owner event into the generated application target.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn emitRuntimeEvent(&self, encoded: &str) -> String {
         let result = (|| -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {
             let event: serde_json::Value = serde_json::from_str(encoded).map_err(|error| {
