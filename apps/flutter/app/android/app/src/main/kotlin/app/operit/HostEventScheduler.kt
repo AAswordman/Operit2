@@ -243,34 +243,42 @@ class HostEventScheduleReceiver : BroadcastReceiver() {
     /** Restores the persistent Core and forwards one system schedule firing. */
     override fun onReceive(context: Context, intent: Intent) {
         val pendingResult = goAsync()
-        val scheduleId = requireNotNull(intent.getStringExtra("scheduleId")) {
-            "host event scheduleId is required"
-        }
-        val schedule = AndroidHostEventScheduler.consumeFire(context, scheduleId)
-        if (schedule == null) {
-            pendingResult.finish()
-            return
-        }
-        val firedAtMillis = System.currentTimeMillis()
-        OperitCoreService.start(context)
-        val runtimeHost = AndroidCoreRuntime.get(context)
-        runtimeHost.runBackground {
-            try {
-                val handle = runtimeHost.ensureRuntimeHandle()
-                val response = JSONObject(OperitRuntimeNative.emitHostRuntimeEventSchedule(
-                    handle,
-                    schedule.scheduleId,
-                    schedule.nextFireAtMillis,
-                    firedAtMillis,
-                ))
-                check(response.getBoolean("ok")) {
-                    response.optString("error", "Core rejected Android host event schedule")
-                }
-            } catch (error: Throwable) {
-                Log.e(LOG_TAG, "Host event schedule delivery failed", error)
-            } finally {
+        try {
+            val scheduleId = intent.getStringExtra("scheduleId")
+            if (scheduleId == null) {
+                Log.w(LOG_TAG, "Host event broadcast without scheduleId; dropping")
                 pendingResult.finish()
+                return
             }
+            val schedule = AndroidHostEventScheduler.consumeFire(context, scheduleId)
+            if (schedule == null) {
+                pendingResult.finish()
+                return
+            }
+            val firedAtMillis = System.currentTimeMillis()
+            OperitCoreService.start(context)
+            val runtimeHost = AndroidCoreRuntime.get(context)
+            runtimeHost.runBackground {
+                try {
+                    val handle = runtimeHost.ensureRuntimeHandle()
+                    val response = JSONObject(OperitRuntimeNative.emitHostRuntimeEventSchedule(
+                        handle,
+                        schedule.scheduleId,
+                        schedule.nextFireAtMillis,
+                        firedAtMillis,
+                    ))
+                    check(response.getBoolean("ok")) {
+                        response.optString("error", "Core rejected Android host event schedule")
+                    }
+                } catch (error: Throwable) {
+                    Log.e(LOG_TAG, "Host event schedule delivery failed", error)
+                } finally {
+                    pendingResult.finish()
+                }
+            }
+        } catch (error: Throwable) {
+            Log.e(LOG_TAG, "Host event schedule dispatch failed; dropping broadcast", error)
+            pendingResult.finish()
         }
     }
 }
