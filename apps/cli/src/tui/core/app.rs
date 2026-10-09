@@ -3139,7 +3139,19 @@ impl OperitTui {
             KeyCode::Enter | KeyCode::Char('j') | KeyCode::Char('J') => {
                 match selected_row {
                     Some(NetworkHubRow::Member(device)) if key.code == KeyCode::Enter => {
-                        self.open_device_manager_for(&device.deviceId).await;
+                        // The local device never offers management actions, so
+                        // opening the manager on it would be a dead window.
+                        let is_self = self
+                            .network_hub
+                            .as_ref()
+                            .is_some_and(|hub| hub.topology.currentDeviceId == device.deviceId);
+                        if is_self {
+                            self.set_transient_status_message(
+                                self.text().network_hub_self_no_actions().to_string(),
+                            );
+                        } else {
+                            self.open_device_manager_for(&device.deviceId).await;
+                        }
                     }
                     Some(NetworkHubRow::Peer { deviceId, label, .. }) => {
                         self.status_message = self.network_join_target(&deviceId, &label).await?;
