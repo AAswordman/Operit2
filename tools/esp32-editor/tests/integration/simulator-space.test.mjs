@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {decodePacks, paintScene} from '../../web/scene-renderer.ts';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
@@ -258,6 +259,7 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
         [(plugins.items??[]).length,plugins.offset??0,plugins.total??0,plugins.loading?1:0,plugins.error??'']);
       call('set_chat_screen', ['string'], [device.chatScreen]);
       call('set_chat_task', ['string'], [device.chatTask]);
+      call('set_scene', ['number','number','number'], [device.scene?.active ? 1 : 0, device.scene?.revision ?? 0, 0]);
       call('set_paired', ['number'], [device.paired ? 1 : 0]);
       call('set_pairing_code', ['string'], [device.pairingCode]);
       call('set_space_join_prompt', ['string', 'number'], [device.spaceJoinPrompt, 0]);
@@ -350,6 +352,71 @@ ${JSON.stringify(fixtureMetadata)}
       await core.command(['core','package','delete','edge_ports_fixture']);
     }
     t.diagnostic('Real Core JS package -> tools.edge/tools.io -> existing tool runtime -> authenticated Edge action passed');
+
+    // The same market-compatible ToolPkg ships as an opt-in "More packages"
+    // asset, not an auto-installed built-in or an ESP JavaScript runtime.
+    const more = await core.command(['core','package','more']);
+    const candidate = more.find(item => item.name === 'com.operit.edge_pixel_pet');
+    assert(candidate, 'pixel pet must ship in the Core More packages catalog');
+    assert.equal(candidate.type, 'toolpkg'); assert.equal(candidate.loaded, false);
+    assert(!(await core.command(['core','package','list'])).some(item => item.name === 'com.operit.edge_pixel_pet'),
+      'bundled pet must not be automatically installed');
+    const loaded = await core.command(['core','package','load','com.operit.edge_pixel_pet']);
+    assert.match(loaded.message, /Successfully imported/);
+    const installed = (await core.command(['core','package','list'])).find(item => item.name === 'com.operit.edge_pixel_pet');
+    assert(installed); assert.equal(installed.enabled, false); assert.equal(installed.enabledByDefault, false);
+    await core.command(['core','plugin','enable','com.operit.edge_pixel_pet']);
+    const pet = async tool => {
+      const reply=await core.command(['core','package','exec',`edge_pixel_pet:${tool}`,JSON.stringify({node_id:node})]);
+      assert.equal(reply.success,true);
+      const value=reply.result?.value ?? reply.result;
+      return typeof value==='string' ? JSON.parse(value) : value;
+    };
+    const nativeScene = async(action,args) => {
+      assert(Buffer.byteLength(JSON.stringify({v:1,...args}))<=1024);
+      const reply=await core.command(['core','tool','exec','edge_execute',JSON.stringify({node_id:node,interface_info:{pluginId:'display.scene',action},args:{v:1,...args}})]);
+      const data=reply.result.data;assert(Buffer.byteLength(JSON.stringify(data))<=4096);return data;
+    };
+    try {
+      const caps=(await nativeScene('capabilities',{})).result;
+      assert.equal(caps.cache.persistent,false);assert.equal(caps.screen.width,320);
+      const started=await pet('start_pet');assert.equal(started.taps,0);await update();assert.equal(screen().page,'edge_scene');
+      const view=await (await fetch(base+'/api/simulator/scene-view')).json();
+      assert(view.active);assert.equal(view.layers.length,3);assert.equal(view.packs.length,1);
+      assert(!JSON.stringify(view).includes('lease'),'browser view must not leak lease handles');
+      const assets=decodePacks(view.packs);let paintedStrips=0;
+      const painter=ui.addFunction((p,len,y,rows,tick)=>{paintScene(view,assets,ui.HEAPU8.subarray(p,p+len),y,rows,tick);paintedStrips++;},'viiiiii');
+      call('scene_painter',['number'],[painter]);call('set_scene',['number','number','number'],[1,view.revision,view.elapsed]);
+      for(let i=0;i<20;i++)ui._operit_ui_pump(0);assert(paintedStrips>0);
+      // Bottom-centre pet anchor: opaque body at region-local (144,122).
+      ui._simulator_touch(144,146,1);ui._simulator_touch(144,146,0);await Promise.all(actions.splice(0));
+      const waitPet = async(predicate) => {
+        const deadline=Date.now()+20000;
+        while(Date.now()<deadline) {
+          const state=await pet('pet_status'); // Core state only, never Edge input polling
+          if(predicate(state)) return state;
+          await new Promise(resolve=>setTimeout(resolve,100));
+        }
+        throw new Error('Edge-initiated scene callback did not persist on Core');
+      };
+      const notified=await waitPet(state=>state.taps===1);assert.equal(notified.closed,false);
+      const again=await pet('pet_status');assert.equal(again.taps,1);
+      const renew=await pet('renew_pet');assert.equal(renew.closed,false);
+      // Burst + exit must drain bounded push batches, not a Core polling loop.
+      for(let i=0;i<15;i++) {ui._simulator_touch(144,146,1);ui._simulator_touch(144,146,0);await Promise.all(actions.splice(0));}
+      await tap('scene_exit');await update();assert.notEqual(screen().page,'edge_scene');
+      const exited=await waitPet(state=>state.closed==='system.exit');assert.equal(exited.taps,16);assert.equal(exited.lostEvents,false);
+      assert.equal((await pet('renew_pet')).closed,'system.exit','keepalive never reopens an exited scene');
+      const restarted=await pet('start_pet');assert.equal(restarted.taps,16,'business data remains on Core across display leases');
+      await pet('close_pet');await waitPet(state=>state.closed==='lease.closed');await update();assert.equal(screen().page,'Chat');
+      assert.equal((await nativeScene('capabilities',{})).result.cache.packs.length,1,'cached original assets reused');
+      call('scene_painter',['number'],[0]);ui.removeFunction(painter);
+    } finally {
+      await core.command(['core','plugin','disable','com.operit.edge_pixel_pet']);
+      await core.command(['core','package','delete','edge_pixel_pet']);
+    }
+    t.diagnostic('Bundled More-package ToolPkg -> real Core tools.edge -> shared native display.scene: chunked SHA-verified assets, local strip rendering, Edge-initiated touch/exit events without Core event polling, Core-owned deduplication, protected exit and cache reuse passed');
+
 
     const provider = await core.command(['core', 'model', 'provider-create', 'Simulator deterministic provider',
       'OPENAI_GENERIC', base + '/v1/chat/completions']);
