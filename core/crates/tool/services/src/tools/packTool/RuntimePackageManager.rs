@@ -470,8 +470,10 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
-    /// Acquires one explicit owner lease for a ToolPkg execution engine.
-    pub fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
+    /// Acquires a lease outside the proxy's package-manager lock. Worker startup
+    /// authenticates against that same manager, so synchronous proxy dispatch
+    /// would deadlock while waiting for the worker to finish initialization.
+    pub async fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
         self.toolPkgManager()
             .acquireToolPkgExecutionEngine(contextKey, containerPackageName);
     }

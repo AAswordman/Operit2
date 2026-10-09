@@ -21,7 +21,7 @@ export { toolCallPolicy, toolPromptPolicy } from "./runtime-tools/policy";
 export { beforeChatCreate } from "./chat-lifecycle";
 export { onGroupInputSubmit } from "./group-execution/hooks";
 export { chatContextActionsApi, chatListSectionsApi } from "./ui-contributions";
-const definition = { id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 };
+import { definition } from "./definition";
 /** Connects lazy directory readers for every evaluated runtime, not just the registration-only module. */
 connectDirectorySources({
   /** Reads the actual configured model directory only when the shared service requests it. */
@@ -55,6 +55,6 @@ export function registerToolPkg(): boolean {
   registerToolPolicies();
   registerChatInitialization();
   registerGroupExecutionHooks();
-  registerUiContributionApis({ editor: `toolpkg:${definition.id}:ui:main`, selection: `toolpkg:${definition.id}:ui:selection`, execution: `toolpkg:${definition.id}:ui:group-execution` });
+  registerUiContributionApis();
   return register(definition, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen);
 }

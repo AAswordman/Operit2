@@ -78,3 +78,21 @@ and memory generation) to that endpoint:
 ```bash
 python3 tools/tests/character_cards_cli_smoke.py --mock-ai
 ```
+
+## Local Flutter macOS signing
+
+Flutter's direct `build macos` and `run -d macos` commands can use an existing
+stable certificate through the optional, Git-ignored file
+`apps/flutter/app/macos/Runner/Configs/Signing.local.xcconfig`:
+
+```xcconfig
+CODE_SIGN_IDENTITY = <existing certificate SHA-1 or certificate name>
+OPERIT_CODE_SIGN_STYLE = Manual
+DEVELOPMENT_TEAM = <team ID associated with that certificate>
+```
+
+This keeps the app's own bundle identifier, sandbox and encryption entitlements.
+It does not export private keys or alter Keychain ACLs. Without this local file,
+the project's existing ad-hoc signing behavior is retained. A previously
+unauthorized certificate may still require the user to approve its first
+Keychain access; this configuration cannot bypass that permission.

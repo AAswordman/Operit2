@@ -124,40 +124,18 @@ function matchesCharacterCard(entry, callerCardId) {
     }
     return !!callerCardId && callerCardId === targetCardId;
 }
+/** Uses the actual selected execution participant, never an inferred active role or chat title. */
 async function resolveCurrentCharacterCardId(event) {
-    try {
-        const directCardId = typeof getCallerCardId === "function" ? getCallerCardId() : undefined;
-        if (directCardId && String(directCardId).trim()) {
-            return String(directCardId).trim();
-        }
-    }
-    catch (_error) {
-        // Ignore direct getter failure and fall back to chat lookup.
-    }
-    try {
-        const chatId = event?.eventPayload?.chatId;
-        if (!chatId) {
-            return "";
-        }
-        const chatResult = await Tools.Chat.findChat({
-            query: String(chatId),
-            match: "exact",
-            index: 0
-        });
-        const cardName = String(chatResult?.chat?.characterCardName || "").trim();
-        if (!cardName) {
-            return "";
-        }
-        const cardResult = await Tools.Chat.listCharacterCards();
-        const cards = Array.isArray(cardResult?.cards)
-            ? cardResult.cards
-            : [];
-        const matchedCard = cards.find((card) => String(card?.name || "").trim() === cardName);
-        return matchedCard?.id ? String(matchedCard.id).trim() : "";
-    }
-    catch (_error) {
+    const context = event.eventPayload.metadata?.executionContext;
+    if (context === undefined || context.participantId === null)
         return "";
+    if (context.chatId !== (event.eventPayload.chatId ?? null)) {
+        throw new Error("Worldbook execution context does not match the prompt chat");
     }
+    if (typeof context.participantId !== "string" || context.participantId.trim() === "") {
+        throw new Error("Worldbook execution participant must be nonblank");
+    }
+    return context.participantId;
 }
 async function readEnabledEntries() {
     try {

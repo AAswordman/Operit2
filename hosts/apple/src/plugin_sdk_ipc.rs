@@ -45,7 +45,33 @@ impl UnixPluginSdkIpcHost {
     /// Maps the logical endpoint name to the Unix socket path.
     #[allow(non_snake_case)]
     fn socketPathForEndpoint(endpoint: &PluginSdkIpcEndpoint) -> PathBuf {
-        std::env::temp_dir().join(format!("{}.sock", endpoint.name.replace('.', "_")))
+        Self::socketPathInDirectory(std::env::temp_dir(), endpoint)
+    }
+
+    /// Keeps the carrier inside its permitted temp directory and macOS SUN_LEN.
+    #[allow(non_snake_case)]
+    fn socketPathInDirectory(directory: PathBuf, endpoint: &PluginSdkIpcEndpoint) -> PathBuf {
+        use std::os::unix::ffi::OsStrExt;
+        let legacy = directory.join(format!("{}.sock", endpoint.name.replace('.', "_")));
+        // sockaddr_un.sun_path has 104 bytes on Apple platforms, including NUL.
+        if legacy.as_os_str().as_bytes().len() < 104 {
+            return legacy;
+        }
+        // Sandbox temp roots include the bundle identifier. Shorten only the
+        // endpoint filename; do not move IPC outside the sandbox or change cwd.
+        let filename = if endpoint.name == operit_host_api::PLUGIN_SDK_IPC_ENDPOINT_NAME {
+            "sdk".to_string()
+        } else {
+            // Stable FNV-1a, unlike DefaultHasher's unspecified implementation.
+            let hash = endpoint
+                .name
+                .bytes()
+                .fold(0xcbf29ce484222325u64, |hash, byte| {
+                    (hash ^ byte as u64).wrapping_mul(0x100000001b3)
+                });
+            format!("{hash:016x}")
+        };
+        directory.join(filename)
     }
 
     /// Allocates the next session identifier.
@@ -257,5 +283,62 @@ impl PluginSdkIpcHost for UnixPluginSdkIpcHost {
             let _ = std::fs::remove_file(socketPath);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn short_temp_directories_preserve_existing_sdk_endpoint() {
+        let path = UnixPluginSdkIpcHost::socketPathInDirectory(
+            PathBuf::from("/tmp"),
+            &PluginSdkIpcEndpoint::standard(),
+        );
+        assert_eq!(path, PathBuf::from("/tmp/operit_plugin_sdk.sock"));
+    }
+
+    #[test]
+    fn long_sandbox_directory_can_bind_sdk_socket() {
+        let root = std::env::temp_dir().join(format!("ipc-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let count = 90usize
+            .checked_sub(root.as_os_str().as_bytes().len() + 1)
+            .unwrap();
+        let directory = root.join("a".repeat(count));
+        std::fs::create_dir_all(&directory).unwrap();
+        let endpoint = PluginSdkIpcEndpoint::standard();
+        let path = UnixPluginSdkIpcHost::socketPathInDirectory(directory.clone(), &endpoint);
+        assert_eq!(path.parent(), Some(directory.as_path()));
+        assert!(path.as_os_str().as_bytes().len() < 104);
+        let listener = UnixListener::bind(&path).unwrap();
+        let client = UnixStream::connect(&path).unwrap();
+        let _accepted = listener.accept().unwrap();
+        drop(client);
+        drop(listener);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compact_custom_endpoints_are_stable_and_distinct() {
+        let directory = PathBuf::from(format!("/{}", "a".repeat(85)));
+        let first = PluginSdkIpcEndpoint {
+            name: "operit.custom.first".into(),
+        };
+        let second = PluginSdkIpcEndpoint {
+            name: "operit.custom.second".into(),
+        };
+        let path = UnixPluginSdkIpcHost::socketPathInDirectory(directory.clone(), &first);
+        assert_eq!(
+            path,
+            UnixPluginSdkIpcHost::socketPathInDirectory(directory.clone(), &first)
+        );
+        assert_ne!(
+            path,
+            UnixPluginSdkIpcHost::socketPathInDirectory(directory, &second)
+        );
+        assert!(path.as_os_str().as_bytes().len() < 104);
     }
 }

@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';

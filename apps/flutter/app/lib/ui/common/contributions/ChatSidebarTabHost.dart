@@ -88,7 +88,9 @@ class ChatSidebarTabHost extends StatefulWidget {
 }
 
 class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
-  Future<List<_SidebarTab>>? _tabsFuture;
+  List<_SidebarTab> _tabs = const [];
+  Object? _catalogError;
+  bool _catalogLoading = true;
   StreamSubscription<String>? _preferenceSubscription;
   StreamSubscription<void>? _catalogSubscription;
   String? _selectedId;
@@ -223,11 +225,32 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
   /// Stops rendering cached plugin routes until fresh catalog validation completes.
   void _reloadCatalog() {
     if (!mounted || _language == null) return;
+    final generation = ++_catalogGeneration;
     setState(() {
-      _catalogGeneration += 1;
-      _tabsFuture = _readCatalog();
+      _tabs = const [];
+      _catalogError = null;
+      _catalogLoading = true;
       _actionError = null;
     });
+    unawaited(_loadCatalog(generation));
+  }
+
+  /// Handles every request immediately and ignores stale asynchronous results.
+  Future<void> _loadCatalog(int generation) async {
+    try {
+      final tabs = await _readCatalog();
+      if (!mounted || generation != _catalogGeneration) return;
+      setState(() {
+        _tabs = tabs;
+        _catalogLoading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _catalogGeneration) return;
+      setState(() {
+        _catalogError = error;
+        _catalogLoading = false;
+      });
+    }
   }
 
   /// Persists an explicit user choice and revalidates its registration before rendering.
@@ -354,66 +377,58 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
     if (_selectedId == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    return FutureBuilder<List<_SidebarTab>>(
-      future: _tabsFuture,
-      builder: (context, snapshot) {
-        final ready = snapshot.connectionState == ConnectionState.done;
-        final tabs = ready && !snapshot.hasError
-            ? snapshot.data!
-            : const <_SidebarTab>[];
-        return Column(
-          children: <Widget>[
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: <Widget>[
-                  Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: ChoiceChip(
-                      key: const ValueKey('chat-sidebar-workspace-tab'),
-                      label: const Text('工作区'),
-                      selected:
-                          _selectedId ==
-                          UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB,
-                      onSelected: (_) => unawaited(
-                        _selectTab(
-                          UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB,
-                        ),
+    return Material(
+      type: MaterialType.transparency,
+      child: Column(
+        children: <Widget>[
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: ChoiceChip(
+                    key: const ValueKey('chat-sidebar-workspace-tab'),
+                    label: const Text('工作区'),
+                    selected:
+                        _selectedId ==
+                        UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB,
+                    onSelected: (_) => unawaited(
+                      _selectTab(
+                        UserPreferencesManager.CHAT_SIDEBAR_WORKSPACE_TAB,
                       ),
                     ),
                   ),
-                  for (final tab in tabs)
-                    Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: ChoiceChip(
-                        key: ValueKey('chat-sidebar-tab:${tab.id}'),
-                        label: Text(tab.entry.title),
-                        avatar: tab.entry.icon == null
-                            ? null
-                            : Icon(
-                                MaterialIconNameResolver.resolve(
-                                  tab.entry.icon!,
-                                ),
-                                size: 16,
-                              ),
-                        selected: _selectedId == tab.id,
-                        onSelected: (_) => unawaited(_selectTab(tab.id)),
-                      ),
+                ),
+                for (final tab in _tabs)
+                  Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: ChoiceChip(
+                      key: ValueKey('chat-sidebar-tab:${tab.id}'),
+                      label: Text(tab.entry.title),
+                      avatar: tab.entry.icon == null
+                          ? null
+                          : Icon(
+                              MaterialIconNameResolver.resolve(tab.entry.icon!),
+                              size: 16,
+                            ),
+                      selected: _selectedId == tab.id,
+                      onSelected: (_) => unawaited(_selectTab(tab.id)),
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
-            if (_actionError != null) _error(_actionError!),
-            Expanded(
-              child: snapshot.hasError
-                  ? _error(snapshot.error!)
-                  : !ready
-                  ? const Center(child: CircularProgressIndicator())
-                  : _content(tabs),
-            ),
-          ],
-        );
-      },
+          ),
+          if (_actionError != null) _error(_actionError!),
+          Expanded(
+            child: _catalogError != null
+                ? _error(_catalogError!)
+                : _catalogLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _content(_tabs),
+          ),
+        ],
+      ),
     );
   }
 }

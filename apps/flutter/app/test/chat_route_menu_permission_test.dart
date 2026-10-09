@@ -12,7 +12,6 @@ import 'package:operit2/ui/features/chat/components/style/input/agent/AgentInput
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
 const _settings = ChatInputMenuSettings(
-  enableMemoryAutoUpdate: false,
   permissionMode: AiPermissionMode.full,
   disableStreamOutput: true,
   disableUserPreferenceDescription: true,
@@ -90,7 +89,7 @@ void main() {
     final args = save.args as Map<String, Object?>;
     expect(args['chatId'], 'computer-chat');
     expect(args['permissionMode'], AiPermissionMode.readOnly.toJson());
-    expect(args['enableMemoryAutoUpdate'], isNull);
+    expect(args.containsKey('enableMemoryAutoUpdate'), isFalse);
     expect(args['disableStreamOutput'], isNull);
     for (final call in bridge.calls.where(
       (call) => call.target == 'core/chatRuntimeHolderMain',

@@ -181,3 +181,18 @@ test("sidebar static checker keeps unmounted migration reference files outside t
   const sources = sourceFixture(); sources.set(base + "reference/LegacyDrawer.dart", "CreateGroupDialog(); preferencesCharacterCardManager.getAllCharacterCards();");
   assert.deepEqual(inspect(sources), []);
 });
+
+
+test("sidebar checker follows the async catalog loader but rejects a disconnected loader", () => {
+  const sources = sourceFixture();
+  sources.set(paths.host, sources.get(paths.host).replace(
+    "void _reloadCatalog() { _tabsFuture = _readCatalog(); }",
+    "void _reloadCatalog() { unawaited(_loadCatalog(generation)); } " +
+    "Future<void> _loadCatalog(int generation) async { final tabs = await _readCatalog(); }",
+  ));
+  assert.deepEqual(inspect(sources), []);
+  sources.set(paths.host, sources.get(paths.host).replace(
+    "final tabs = await _readCatalog();", "final tabs = unrelatedCatalog();",
+  ));
+  assert.ok(inspect(sources).some(value => value.includes("actual host rendering path")));
+});

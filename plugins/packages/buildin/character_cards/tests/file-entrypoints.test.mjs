@@ -317,3 +317,23 @@ test("independently evaluated main API connects lazy directory readers without c
   );
   assert.deepEqual(calls, ["listModelSummaries", "listTtsConfigs", "readToolSourceCatalog"]);
 });
+
+
+/** Public API invocation evaluates a fresh module, not the old registration runtime's globals. */
+test("fresh exported chat UI APIs retain package routes without replaying registration", async t => {
+  const disk = await createDiskHarness(t);
+  const settings = createSoftwareSettingsFixture(disk, directoryInput);
+  const registered = openPlugin(settings.harness);
+  await registered.api("character.list", {});
+  const fresh = loadModule("src/main.ts", {
+    ...settings.harness.globals,
+    ToolPkg: { ...settings.harness.globals.ToolPkg, ipc: { on() {} } },
+  });
+  const event = { callerPackage: "host", payload: { chatId: null } };
+  const menu = plain(await fresh.chatContextActionsApi(event));
+  const registeredRouteIds = registered.routes.map(route => "toolpkg:com.operit.character_cards:ui:" + route.id);
+  assert.ok(menu.selectors.length > 0);
+  for (const selector of menu.selectors) assert.ok(registeredRouteIds.includes(selector.routeId), selector.routeId);
+  const sections = plain(await fresh.chatListSectionsApi({ callerPackage: "host", payload: { chats: [] } }));
+  assert.ok(Array.isArray(sections.sections));
+});

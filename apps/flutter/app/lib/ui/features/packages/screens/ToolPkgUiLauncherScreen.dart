@@ -552,6 +552,13 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             completion.completeError(error, stackTrace);
           }
         },
+        onDone: () {
+          if (!completion.isCompleted) {
+            completion.completeError(
+              StateError('compose_dsl action stream closed before completion'),
+            );
+          }
+        },
       );
       if (keepDetachedEvents) {
         _detachedComposeEventSubscriptions.add(subscription);

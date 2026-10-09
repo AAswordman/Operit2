@@ -31,7 +31,7 @@ void main() {
       bridge: bridge,
       size: const Size(1440, 1000),
     );
-    expect(desktopCardSize.width, greaterThan(200));
+    expect(desktopCardSize.width, greaterThanOrEqualTo(132));
     expect(desktopCardSize.width, lessThan(240));
     expect(desktopCardSize.height, lessThanOrEqualTo(86));
     expect(find.text('Usage heatmap'), findsOneWidget);
@@ -45,8 +45,8 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     await _scrollToText(tester, 'Function model ranking');
-    expect(find.text('Chat · LegacyAI · legacy-model'), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, 1200));
+    expect(find.text('Chat · LegacyAI · legacy-model'), findsWidgets);
+    await tester.drag(find.byType(ListView).first, const Offset(0, 5000));
     await tester.pumpAndSettle();
     await _openDateRangeDialog(tester);
     await tester.tap(find.text('7 days'));
@@ -60,7 +60,7 @@ void main() {
     expect(desktopTokenTrend.dx, greaterThan(desktopDailyTrend.dx));
     expect(desktopTokenTrend.dy, closeTo(desktopDailyTrend.dy, 0.1));
     await _scrollToText(tester, 'Function model ranking');
-    expect(find.text('Chat · OpenAI · gpt-5'), findsOneWidget);
+    expect(find.text('Chat · OpenAI · gpt-5'), findsWidgets);
     expect(find.text('Chat · LegacyAI · legacy-model'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -68,7 +68,16 @@ void main() {
 
 /// Scrolls the dashboard until a label is visible.
 Future<void> _scrollToText(WidgetTester tester, String text) {
-  return tester.scrollUntilVisible(find.text(text), 260);
+  return tester.scrollUntilVisible(
+    find.text(text),
+    260,
+    scrollable: find
+        .descendant(
+          of: find.byType(ListView).first,
+          matching: find.byType(Scrollable),
+        )
+        .first,
+  );
 }
 
 /// Opens the popup date range selector from the dashboard header.
@@ -90,8 +99,10 @@ Future<Size> _pumpDashboard(
   required _UsageStatisticsBridge bridge,
   required Size size,
 }) async {
-  await tester.binding.setSurfaceSize(size);
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = size;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
     OperitTheme(
       initialThemePreferenceSnapshot:

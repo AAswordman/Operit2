@@ -1105,7 +1105,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         XTypeGroup(label: 'ToolPkg', extensions: <String>['toolpkg']),
       ],
     );
-    if (file == null) {
+    if (!mounted || file == null) {
       return;
     }
     final scope = await chooseExtensionScope(context);
@@ -1131,7 +1131,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
         ),
       ],
     );
-    if (file == null) {
+    if (!mounted || file == null) {
       return;
     }
     final scope = await chooseExtensionScope(context);

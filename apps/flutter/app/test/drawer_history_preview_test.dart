@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
@@ -8,14 +7,13 @@ import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
-import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/main/components/CollapsedDrawerContent.dart';
 import 'package:operit2/ui/main/components/DrawerContent.dart';
 import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 
-/// Verifies independent previews preserve conversation context and group actions.
+/// Verifies independent previews preserve conversation context and workspace isolation.
 void main() {
   testWidgets('each group has an independent and reversible preview', (
     tester,
@@ -186,7 +184,7 @@ void main() {
       <core.ChatHistoryListItem>[..._histories('A', 6), ..._histories('B', 6)],
     );
     final button = find.byKey(
-      const ValueKey<String>('history-limit:group::workspace:unbound::A'),
+      const ValueKey<String>('history-limit:workspace:A'),
     );
     expect(find.text('展开更多 2'), findsNWidgets(2));
     await tester.tap(button);
@@ -199,93 +197,51 @@ void main() {
     expect(find.text('展开更多 2'), findsNWidgets(2));
   });
 
-  testWidgets('renaming a previewed group updates every hidden conversation', (
+  testWidgets('workspace headers expose no plugin group mutation controls', (
     tester,
   ) async {
     final bridge = _DrawerBridge();
     await _pumpDrawer(tester, bridge, _histories('A', 6));
-    await _openGroupMenu(tester, 'A');
-    await tester.tap(find.text('编辑名称'));
+    expect(find.text('A'), findsOneWidget);
+    expect(find.byTooltip('分组操作'), findsNothing);
+    await tester.tap(find.text('A'));
     await _pumpSidebar(tester);
-    await tester.enterText(find.byType(TextField), 'Renamed');
-    final l10n = AppLocalizations.of(tester.element(find.byType(AlertDialog)))!;
-    await tester.tap(find.widgetWithText(FilledButton, l10n.save));
-    await _pumpSidebar(tester);
-    final calls = bridge.calls
-        .where((call) => call.methodName == 'updateChatOrderAndGroup')
-        .toList();
-    expect(calls, hasLength(6));
+    expect(find.text('A-0'), findsNothing);
     expect(
-      ((calls.last.args as Map)['reorderedHistories'] as List).map(
-        (item) => (item as Map)['group'],
+      bridge.calls.where(
+        (call) =>
+            call.methodName == 'updateChatOrderAndGroup' ||
+            call.methodName == 'deleteChatHistory' ||
+            call.methodName == 'updateChatPinned',
       ),
-      everyElement('Renamed'),
+      isEmpty,
     );
-    expect(find.text('Renamed'), findsOneWidget);
-    expect(find.text('A-5'), findsNothing);
-    expect(find.text('展开更多 2'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('A'));
+    await _pumpSidebar(tester);
   });
 
-  testWidgets('renaming an expanded group preserves its expansion', (
+  testWidgets('renamed workspace metadata keeps preview keyed by identity', (
     tester,
   ) async {
     final bridge = _DrawerBridge();
     await _pumpDrawer(tester, bridge, _histories('A', 6));
     await tester.tap(_limitButton('A'));
     await _pumpSidebar(tester);
-    await _openGroupMenu(tester, 'A');
-    await tester.tap(find.text('编辑名称'));
-    await _pumpSidebar(tester);
-    await tester.enterText(find.byType(TextField), 'Expanded');
-    final l10n = AppLocalizations.of(tester.element(find.byType(AlertDialog)))!;
-    await tester.tap(find.widgetWithText(FilledButton, l10n.save));
-    await _pumpSidebar(tester);
+    final renamed = _histories('A', 6)
+        .map(
+          (history) => core.ChatHistoryListItem.fromJson({
+            ...history.toJson(),
+            'workspaceName': 'Renamed workspace',
+          }),
+        )
+        .toList();
+    await _pumpDrawer(tester, bridge, renamed);
+    expect(find.text('Renamed workspace'), findsOneWidget);
     expect(find.text('A-5'), findsOneWidget);
-    expect(find.text('收起'), findsOneWidget);
-    await tester.tap(_limitButton('Expanded'));
+    await tester.tap(_limitButton('A'));
     await _pumpSidebar(tester);
     expect(find.text('A-5'), findsNothing);
   });
-  testWidgets('group pinning updates hidden conversations too', (tester) async {
-    final bridge = _DrawerBridge();
-    await _pumpDrawer(tester, bridge, _histories('A', 6));
-    expect(find.text('A-5'), findsNothing);
-    await _openGroupMenu(tester, 'A');
-    await tester.tap(find.text('置顶'));
-    await _pumpSidebar(tester);
-    expect(
-      bridge.calls
-          .where((call) => call.methodName == 'updateChatPinned')
-          .map((call) => (call.args as Map)['chatId']),
-      <String>['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5'],
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets(
-    'group deletion uses the complete group rather than its preview',
-    (tester) async {
-      final bridge = _DrawerBridge();
-      await _pumpDrawer(tester, bridge, _histories('A', 6));
-      await _openGroupMenu(tester, 'A');
-      await tester.tap(find.text('删除'));
-      await _pumpSidebar(tester);
-      expect(find.text('确定要删除分组“A”及其中的 6 条对话吗？'), findsOneWidget);
-      final l10n = AppLocalizations.of(
-        tester.element(find.byType(AlertDialog)),
-      )!;
-      await tester.tap(find.widgetWithText(TextButton, l10n.delete));
-      await _pumpSidebar(tester);
-      expect(
-        bridge.calls
-            .where((call) => call.methodName == 'deleteChatHistory')
-            .map((call) => (call.args as Map)['chatId']),
-        <String>['A-0', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5'],
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
 }
 
 /// Mounts a tall drawer so all preview rows are materialized in the test viewport.
@@ -327,8 +283,7 @@ Future<void> _pumpDrawer(
           ),
           histories: histories,
           activeStreamingChatIds: streamingIds,
-          characterGroupNamesById: const {},
-          characterCardAvatarUrisByName: const {},
+
           currentChatId: currentChatId,
           errorMessage: null,
           loading: false,
@@ -348,26 +303,15 @@ Future<void> _pumpSidebar(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 300));
 }
 
-/// Finds the inline preview control for a named unbound conversation group.
-Finder _limitButton(String group) => find.byKey(
-  ValueKey<String>('history-limit:group::character:unbound::$group'),
-);
+/// Finds the inline preview control for a named workspace.
+Finder _limitButton(String group) =>
+    find.byKey(ValueKey<String>('history-limit:workspace:$group'));
 
 /// Reads rendered conversation IDs in their original sidebar order.
 List<String> _visibleIds(WidgetTester tester) => tester
     .widgetList<ConversationDrawerItem>(find.byType(ConversationDrawerItem))
     .map((item) => item.history.id)
     .toList();
-
-/// Reveals a group toolbar using the same hover gesture as a desktop user.
-Future<void> _openGroupMenu(WidgetTester tester, String group) async {
-  final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-  await mouse.addPointer(location: tester.getCenter(find.text(group)));
-  addTearDown(mouse.removePointer);
-  await _pumpSidebar(tester);
-  await tester.tap(find.byTooltip('分组操作'));
-  await _pumpSidebar(tester);
-}
 
 /// Creates ordered conversations for one named group.
 List<core.ChatHistoryListItem> _histories(String group, int count) =>
@@ -384,12 +328,11 @@ core.ChatHistoryListItem _history(
   id: '$group-$index',
   title: '$group-$index',
   updatedAt: '2026-10-06T00:00:00Z',
-  group: group,
+
   displayOrder: index,
-  workspaceId: null,
-  workspaceName: null,
-  characterCardName: null,
-  characterGroupId: null,
+  workspaceId: group,
+  workspaceName: group,
+
   locked: false,
   pinned: pinned,
 );
@@ -412,6 +355,7 @@ class _DrawerBridge extends OperitRuntimeBridge {
     calls.add(request);
     final value = switch (request.methodName) {
       'getPreferences' => preferences,
+      'getToolPkgNavigationEntries' || 'getToolPkgUiRoutes' => <Object?>[],
       'updateChatOrderAndGroup' || 'updateChatPinned' => null,
       'deleteChatHistory' => true,
       _ => throw StateError('Unexpected Core call: ${request.methodName}'),

@@ -12,3 +12,9 @@ PRODUCT_BUNDLE_IDENTIFIER = com.ai.assistance.operit2
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 app.operit. All rights reserved.
+
+OPERIT_CODE_SIGN_STYLE = Automatic
+
+// Optional developer-local identity; keep certificate references out of source control.
+// Without this file, retain Flutter's existing ad-hoc signing behavior.
+#include? "Signing.local.xcconfig"

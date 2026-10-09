@@ -313,46 +313,6 @@ class ChatScreenContent extends StatelessWidget {
                                       selectedMessageTimestamps.length
                               ? onClearMessageSelection
                               : onSelectAllMessages,
-                          onQueueMemory:
-                              currentChatId == null ||
-                                  selectedMessageTimestamps.isEmpty
-                              ? null
-                              : () async {
-                                  final selected = _selectedVisibleMessages
-                                      .where((m) => m.sender == 'user')
-                                      .map((m) => m.timestamp)
-                                      .toList();
-                                  if (selected.isEmpty) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('请选择用户消息')),
-                                    );
-                                    return;
-                                  }
-                                  try {
-                                    await viewModel
-                                        .enqueueSelectedMessagesForMemory(
-                                          currentChatId!,
-                                          selected,
-                                        );
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('已加入所属记忆库队列'),
-                                        ),
-                                      );
-                                    }
-                                  } catch (error) {
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(content: Text('入队失败：$error')),
-                                      );
-                                    }
-                                  }
-                                },
                           onCopy: selectedMessageTimestamps.isEmpty
                               ? null
                               : () => _copySelectedMessages(context),

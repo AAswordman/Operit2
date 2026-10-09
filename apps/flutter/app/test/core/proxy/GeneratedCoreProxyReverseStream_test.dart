@@ -439,6 +439,7 @@ Map<String, Object?> _chatMessageValue({required Object? contentStream}) {
     'displayMode': 'NORMAL',
     'isFavorite': false,
     'contentStream': contentStream,
+    'pluginExtensions': <String, Object?>{},
   };
 }
 

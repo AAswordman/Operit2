@@ -140,7 +140,6 @@ Map<String, Object?> chatUiHistorySummary(
   'id': chat.id,
   'title': chat.title,
   'updatedAt': chat.updatedAt,
-  'group': chat.group,
   'displayOrder': chat.displayOrder,
   'workspaceId': chat.workspaceId,
   'workspaceName': chat.workspaceName,

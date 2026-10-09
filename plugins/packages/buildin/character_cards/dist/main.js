@@ -1114,13 +1114,13 @@ function chatParticipant(card, request, directory, service) {
       default:
         throw new Error("Invalid memory binding mode: " + card.memoryBindingMode);
     }
-    const routes2 = /* @__PURE__ */ new Map();
-    routes2.set(primary, { key: primary, readable: true, writable: true });
+    const routes = /* @__PURE__ */ new Map();
+    routes.set(primary, { key: primary, readable: true, writable: true });
     for (const mount2 of card.sharedMemoryMounts) {
       chatRecord(directory.stores, mount2.sharedMemoryId, "mounted shared memory");
       const key = "shared:" + mount2.sharedMemoryId;
-      const existing = routes2.get(key);
-      routes2.set(key, { key, readable: mount2.readable || existing?.readable === true, writable: mount2.writable || existing?.writable === true });
+      const existing = routes.get(key);
+      routes.set(key, { key, readable: mount2.readable || existing?.readable === true, writable: mount2.writable || existing?.writable === true });
     }
     const prompt = yield service.dispatchDomain("character.combine", { id: card.id, promptFunctionType: request.promptFunctionType, additionalTagIds: [] });
     const document = yield service.dispatchDomain("memory.user.read", { ownerKey: primary });
@@ -1140,7 +1140,7 @@ function chatParticipant(card, request, directory, service) {
         allowedSkills: [...card.toolAccessConfig.allowedSkills],
         allowedMcpServers: [...card.toolAccessConfig.allowedMcpServers]
       },
-      resources: [...routes2.values()]
+      resources: [...routes.values()]
     };
   });
 }
@@ -5426,6 +5426,14 @@ function runMemoryJobs() {
   });
 }
 
+// src/definition.ts
+var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+var chatUiRoutes = {
+  editor: `toolpkg:${definition.id}:ui:main`,
+  selection: `toolpkg:${definition.id}:ui:selection`,
+  execution: `toolpkg:${definition.id}:ui:group-execution`
+};
+
 // src/ui-contributions.ts
 function parseDomainMessage(value) {
   const envelope = record(value, "character-memory.domain"), keys = Object.keys(envelope);
@@ -5510,17 +5518,17 @@ function decodeSelection(selection2, directory) {
 function encodeSelection(selection2) {
   return selectionForActive(selection2);
 }
-function contextActions(routes2, target, directory) {
+function contextActions(routes, target, directory) {
   const selected = target.selection === null ? null : decodeSelection(target.selection, directory);
-  const routeId = routes2.selection;
+  const routeId = routes.selection;
   const input = { mode: "select", chatId: target.chatId };
   return {
     selectors: [
       { id: "characters", title: "\u5207\u6362\u89D2\u8272\u5361", icon: "Badge", routeId, input: { ...input, kind: "card", selected: selected !== null && selected.entity === "card" ? selected.prompt : null } },
       { id: "groups", title: "\u5207\u6362\u7FA4\u7EC4", icon: "Groups", routeId, input: { ...input, kind: "group", selected: selected !== null && selected.entity === "group" ? selected.prompt : null } },
-      ...target.chatId !== null && selected !== null && selected.entity === "group" ? [{ id: "group-execution", title: "\u7FA4\u7EC4\u6267\u884C", icon: "Groups", routeId: routes2.execution, input: { mode: "group-execution", chatId: target.chatId } }] : []
+      ...target.chatId !== null && selected !== null && selected.entity === "group" ? [{ id: "group-execution", title: "\u7FA4\u7EC4\u6267\u884C", icon: "Groups", routeId: routes.execution, input: { mode: "group-execution", chatId: target.chatId } }] : []
     ],
-    identity: selected === null ? null : { title: selected.title, avatarUri: selected.avatarUri, action: previewAction(routes2.editor, selected.entity, selected.id) },
+    identity: selected === null ? null : { title: selected.title, avatarUri: selected.avatarUri, action: previewAction(routes.editor, selected.entity, selected.id) },
     backgroundUri: null
   };
 }
@@ -5550,11 +5558,6 @@ function listSections(routeId, directory, bindings, chatIds) {
   }
   return { sections };
 }
-var registeredRoutes = null;
-function routes() {
-  if (registeredRoutes === null) throw new Error("Chat UI contribution routes have not been registered");
-  return registeredRoutes;
-}
 function chatContextActionsApi(event) {
   return __async(this, null, function* () {
     requireUiCaller(event.callerPackage);
@@ -5562,11 +5565,11 @@ function chatContextActionsApi(event) {
     const directory = yield service.snapshot();
     if (input.chatId === null) {
       const active = yield service.dispatchDomain("activePrompt.get", {});
-      return contextActions(routes(), { chatId: null, selection: encodeSelection(active) }, directory);
+      return contextActions(chatUiRoutes, { chatId: null, selection: encodeSelection(active) }, directory);
     }
     const extension = yield Tools.Chat.readExtension({ kind: "chat", chatId: input.chatId });
     const selection2 = extension === null ? null : decodeChatMarker(extension).selection;
-    return contextActions(routes(), { chatId: input.chatId, selection: selection2 }, directory);
+    return contextActions(chatUiRoutes, { chatId: input.chatId, selection: selection2 }, directory);
   });
 }
 function chatListSectionsApi(event) {
@@ -5578,15 +5581,13 @@ function chatListSectionsApi(event) {
       const extension = yield Tools.Chat.readExtension({ kind: "chat", chatId: chat.id });
       if (extension !== null) bindings.push({ chatId: chat.id, selection: decodeChatMarker(extension).selection });
     }
-    return listSections(routes().editor, directory, bindings, input.chats.map(
+    return listSections(chatUiRoutes.editor, directory, bindings, input.chats.map(
       /** Preserves the host's actual chat ordering in each section. */
       (chat) => chat.id
     ));
   });
 }
-function registerUiContributionApis(input) {
-  if (registeredRoutes !== null) throw new Error("Chat UI contribution APIs have already been registered");
-  registeredRoutes = { ...input };
+function registerUiContributionApis() {
   ToolPkg.registerApi({ name: "chat.context.actions", function: chatContextActionsApi });
   ToolPkg.registerApi({ name: "chat.list.sections", function: chatListSectionsApi });
 }
@@ -8623,7 +8624,6 @@ function renderSelectionScreen(ctx) {
 }
 
 // src/main.ts
-var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
 connectDirectorySources({
   /** Reads the actual configured model directory only when the shared service requests it. */
   listModels: () => Tools.SoftwareSettings.listModelSummaries(),
@@ -8658,6 +8658,6 @@ function registerToolPkg() {
   registerToolPolicies();
   registerChatInitialization();
   registerGroupExecutionHooks();
-  registerUiContributionApis({ editor: `toolpkg:${definition.id}:ui:main`, selection: `toolpkg:${definition.id}:ui:selection`, execution: `toolpkg:${definition.id}:ui:group-execution` });
+  registerUiContributionApis();
   return register(definition, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen);
 }

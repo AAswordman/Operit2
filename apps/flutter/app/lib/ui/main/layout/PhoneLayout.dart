@@ -8,6 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart';
 
+import '../../../core/bridge/OperitRuntimeBridge.dart';
+import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+
 import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
@@ -20,6 +23,7 @@ class PhoneLayout extends StatefulWidget {
   /// Creates the retained phone content and its animated navigation drawer.
   const PhoneLayout({
     super.key,
+    this.bridge = const ProxyCoreRuntimeBridge(),
     required this.content,
     required this.navigationEntries,
     required this.pluginSidebarEntries,
@@ -34,6 +38,7 @@ class PhoneLayout extends StatefulWidget {
     required this.onConversationActivated,
   });
 
+  final OperitRuntimeBridge bridge;
   final Widget content;
   final List<NavigationEntrySpec> navigationEntries;
   final List<NavigationEntrySpec> pluginSidebarEntries;
@@ -189,6 +194,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
             valueListenable: widget.drawerConversationState,
             builder: (context, drawerState, _) {
               return DrawerContent(
+                bridge: widget.bridge,
                 key: const ValueKey<String>('phoneDrawerContent'),
                 navigationEntries: widget.navigationEntries,
                 pluginEntries: widget.pluginSidebarEntries,

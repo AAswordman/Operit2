@@ -139,7 +139,10 @@ class _ChatAreaState extends State<ChatArea>
     0,
   );
   double _scrollViewportDimension = 0;
-  final Stopwatch _bottomFollowClock = Stopwatch();
+
+  /// Uses the scheduler timeline shared by layout, animation and test frames.
+  int get _bottomFollowNowMicroseconds =>
+      SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds;
   final Queue<_BottomGrowthSample> _bottomGrowthSamples =
       Queue<_BottomGrowthSample>();
   late final Ticker _bottomFollowTicker;
@@ -162,7 +165,6 @@ class _ChatAreaState extends State<ChatArea>
       shouldAlignBottom: _shouldAlignBottomDuringLayout,
       shouldInitiallyAlignBottom: _ownsBottomScroll,
     );
-    _bottomFollowClock.start();
     _bottomFollowTicker = createTicker(_tickBottomFollow);
   }
 
@@ -501,8 +503,7 @@ class _ChatAreaState extends State<ChatArea>
     _clearPendingMessageJump();
     _activeUserScrollPointers.add(event.pointer);
     if (_bottomFollowTicker.isActive) {
-      _bottomFollowLastFrameMicroseconds =
-          _bottomFollowClock.elapsedMicroseconds;
+      _bottomFollowLastFrameMicroseconds = _bottomFollowNowMicroseconds;
     }
   }
 
@@ -511,14 +512,12 @@ class _ChatAreaState extends State<ChatArea>
     _activeUserScrollPointers.remove(event.pointer);
     if (_activeUserScrollPointers.isNotEmpty) {
       if (_bottomFollowTicker.isActive) {
-        _bottomFollowLastFrameMicroseconds =
-            _bottomFollowClock.elapsedMicroseconds;
+        _bottomFollowLastFrameMicroseconds = _bottomFollowNowMicroseconds;
       }
       return;
     }
     if (_bottomFollowTicker.isActive) {
-      _bottomFollowLastFrameMicroseconds =
-          _bottomFollowClock.elapsedMicroseconds;
+      _bottomFollowLastFrameMicroseconds = _bottomFollowNowMicroseconds;
       return;
     }
     if (!widget.autoScrollToBottomListenable.value) {
@@ -591,7 +590,7 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Records measured live growth and starts the frame-driven bottom follower.
   void _scheduleBottomFollow(double heightDelta) {
-    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    final nowMicroseconds = _bottomFollowNowMicroseconds;
     if (!mounted ||
         !_shouldRunBottomFollow() ||
         !widget.autoScrollToBottomListenable.value ||
@@ -617,7 +616,7 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Advances the scroll position from recent output growth and baseline error.
   void _tickBottomFollow(Duration elapsed) {
-    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    final nowMicroseconds = _bottomFollowNowMicroseconds;
     if (!mounted ||
         !_shouldRunBottomFollow() ||
         !widget.autoScrollToBottomListenable.value ||
@@ -713,7 +712,7 @@ class _ChatAreaState extends State<ChatArea>
         !widget.scrollController.hasClients) {
       return;
     }
-    final nowMicroseconds = _bottomFollowClock.elapsedMicroseconds;
+    final nowMicroseconds = _bottomFollowNowMicroseconds;
     _bottomFollowCompleting = true;
     if (!_bottomFollowTicker.isActive) {
       _bottomFollowLastFrameMicroseconds = nowMicroseconds;
@@ -956,7 +955,6 @@ class _ChatAreaState extends State<ChatArea>
     _viewportResizeTimer?.cancel();
     _layoutScrollController.dispose();
     _bottomFollowTicker.dispose();
-    _bottomFollowClock.stop();
     _bottomGrowthSamples.clear();
     _messageAnchorsNotifier.dispose();
     _viewportHeightNotifier.dispose();

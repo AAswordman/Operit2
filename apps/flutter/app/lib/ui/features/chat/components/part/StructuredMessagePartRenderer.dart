@@ -111,6 +111,11 @@ class _StreamingStructuredMessageRendererState
 
   /// Retains the physical stream so completed nodes survive parts publication.
   Stream<Object>? get _activeContentStream {
+    if (_retainedContentStreamDone &&
+        widget.contentStream == null &&
+        widget.parts.isNotEmpty) {
+      return null;
+    }
     return _retainedContentStream;
   }
 

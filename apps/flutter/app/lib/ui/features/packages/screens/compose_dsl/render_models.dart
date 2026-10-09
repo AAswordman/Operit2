@@ -335,7 +335,9 @@ bool _composeInputEquals(Object? left, Object? right) {
     if (left.length != right.length) return false;
     for (final entry in left.entries) {
       if (!right.containsKey(entry.key) ||
-          !_composeInputEquals(entry.value, right[entry.key])) return false;
+          !_composeInputEquals(entry.value, right[entry.key])) {
+        return false;
+      }
     }
     return true;
   }

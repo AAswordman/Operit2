@@ -5,6 +5,7 @@ import { parseChatSelection, selectionForActive } from "./chat-bindings";
 import { type EntityKind, type PresentationCancel, type PresentationComplete, type ScreenSession, type ScreenPresentation, type PresentedScreen, type SelectScreen, type ScreenResult, createScreenSession, parseScreenResult } from "./presentation";
 import { getService } from "./service-runtime";
 import { decodeChatMarker } from "./chat-markers";
+import { chatUiRoutes } from "./definition";
 
 /** Separates the actual native selector from the large Web editor route without exposing either mode to the host. */
 export interface ChatUiRoutes { readonly editor: string; readonly selection: string; readonly execution: string }
@@ -185,15 +186,6 @@ export function listSections(routeId: string, directory: Snapshot, bindings: rea
   return { sections };
 }
 
-/** Retains the registered route identity in this plugin without adding domain fields to the host. */
-let registeredRoutes: ChatUiRoutes | null = null;
-
-/** Requires the actual route registration before exposing any popup action. */
-function routes(): ChatUiRoutes {
-  if (registeredRoutes === null) throw new Error("Chat UI contribution routes have not been registered");
-  return registeredRoutes;
-}
-
 /** Reads the real chat binding and persisted records through the one main-runtime service. */
 export async function chatContextActionsApi(event: ToolPkg.PublicApiEvent<{ chatId: string | null }>): Promise<ContextActions> {
   requireUiCaller(event.callerPackage);
@@ -201,11 +193,11 @@ export async function chatContextActionsApi(event: ToolPkg.PublicApiEvent<{ chat
   const directory = await service.snapshot();
   if (input.chatId === null) {
     const active = await service.dispatchDomain("activePrompt.get", {});
-    return contextActions(routes(), { chatId: null, selection: encodeSelection(active) }, directory);
+    return contextActions(chatUiRoutes, { chatId: null, selection: encodeSelection(active) }, directory);
   }
   const extension = await Tools.Chat.readExtension({ kind: "chat", chatId: input.chatId });
   const selection = extension === null ? null : decodeChatMarker(extension).selection;
-  return contextActions(routes(), { chatId: input.chatId, selection }, directory);
+  return contextActions(chatUiRoutes, { chatId: input.chatId, selection }, directory);
 }
 
 /** Projects actual chat bindings into owner-defined sections instead of reading old Flutter character fields. */
@@ -217,16 +209,14 @@ export async function chatListSectionsApi(event: ToolPkg.PublicApiEvent<{ chats:
     const extension = await Tools.Chat.readExtension({ kind: "chat", chatId: chat.id });
     if (extension !== null) bindings.push({ chatId: chat.id, selection: decodeChatMarker(extension).selection });
   }
-  return listSections(routes().editor, directory, bindings, input.chats.map(
+  return listSections(chatUiRoutes.editor, directory, bindings, input.chats.map(
     /** Preserves the host's actual chat ordering in each section. */
     chat => chat.id,
   ));
 }
 
 /** Registers the context and sidebar presentation contracts without opening storage or reading directories. */
-export function registerUiContributionApis(input: ChatUiRoutes): void {
-  if (registeredRoutes !== null) throw new Error("Chat UI contribution APIs have already been registered");
-  registeredRoutes = { ...input };
+export function registerUiContributionApis(): void {
   ToolPkg.registerApi({ name: "chat.context.actions", function: chatContextActionsApi });
   ToolPkg.registerApi({ name: "chat.list.sections", function: chatListSectionsApi });
 }

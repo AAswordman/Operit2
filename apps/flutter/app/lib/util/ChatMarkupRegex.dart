@@ -22,11 +22,6 @@ class ChatMarkupRegex {
     dotAll: true,
   );
 
-  static final memoryTag = RegExp(
-    r'<memory>.*?</memory>',
-    caseSensitive: false,
-    dotAll: true,
-  );
   static final proxySenderTag = RegExp(
     r'<proxy_sender\s+name="([^"]+)"\s*/>',
     caseSensitive: false,

@@ -101,6 +101,7 @@ ChatUiMessage _message({
   required List<MessagePart> parts,
 }) {
   return ChatMessage(
+    pluginExtensions: const {},
     sender: sender,
     parts: parts,
     timestamp: 1,

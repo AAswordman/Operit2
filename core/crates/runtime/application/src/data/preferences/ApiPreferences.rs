@@ -23,7 +23,6 @@ impl ApiPreferences {
     pub const DEFAULT_ENABLE_THINKING_MODE: bool = false;
     pub const DEFAULT_THINKING_QUALITY_LEVEL: i32 = 2;
     pub const DEFAULT_FEATURE_TOGGLE_STATE: bool = false;
-    pub const DEFAULT_ENABLE_MEMORY_AUTO_UPDATE: bool = true;
     pub const DEFAULT_ENABLE_TOOLS: bool = true;
     pub const DEFAULT_DISABLE_STREAM_OUTPUT: bool = false;
     pub const DEFAULT_DISABLE_USER_PREFERENCE_DESCRIPTION: bool = false;
@@ -402,16 +401,6 @@ impl ApiPreferences {
         })
     }
 
-    /// Observes whether memory auto-update is enabled.
-    pub fn enableMemoryAutoUpdateFlow(&self) -> Flow<bool> {
-        self.apiDataStore.dataFlow().map(|preferences| {
-            preferences
-                .get(&stringPreferencesKey("enable_memory_auto_update"))
-                .and_then(|value| value.parse::<bool>().ok())
-                .unwrap_or(Self::DEFAULT_ENABLE_MEMORY_AUTO_UPDATE)
-        })
-    }
-
     /// Observes whether AI tools are enabled.
     pub fn enableToolsFlow(&self) -> Flow<bool> {
         self.apiDataStore.dataFlow().map(|preferences| {
@@ -550,19 +539,6 @@ impl ApiPreferences {
             preferences.set(
                 &stringPreferencesKey("thinking_quality_level"),
                 level.clamp(1, 4).to_string(),
-            );
-        })
-    }
-
-    /// Saves the memory auto-update toggle.
-    pub fn saveEnableMemoryAutoUpdate(
-        &self,
-        isEnabled: bool,
-    ) -> Result<(), PreferencesDataStoreError> {
-        self.apiDataStore.edit(|preferences| {
-            preferences.set(
-                &stringPreferencesKey("enable_memory_auto_update"),
-                isEnabled.to_string(),
             );
         })
     }

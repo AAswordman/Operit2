@@ -211,10 +211,12 @@ class ComposeDslWebViewResourceLoader {
   ) async {
     // Native interception APIs do not consistently supply request bodies. Never
     // silently forward a POST/PUT without its body or perform it twice.
-    if (request.method != 'GET' && request.method != 'HEAD')
+    if (request.method != 'GET' && request.method != 'HEAD') {
       return _empty(405, 'Method Not Allowed');
-    if (uri.scheme != 'http' && uri.scheme != 'https')
+    }
+    if (uri.scheme != 'http' && uri.scheme != 'https') {
       return _empty(404, 'Not Found');
+    }
     if (uri.host.endsWith('.operit.invalid')) return _empty(403, 'Forbidden');
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
@@ -237,8 +239,9 @@ class ComposeDslWebViewResourceLoader {
       final incoming = await outgoing.close().timeout(
         const Duration(seconds: 20),
       );
-      if (incoming.statusCode >= 300 && incoming.statusCode < 400)
+      if (incoming.statusCode >= 300 && incoming.statusCode < 400) {
         return _empty(502, 'Unsupported Resource Redirect');
+      }
       final bytes = BytesBuilder(copy: false);
       await for (final chunk in incoming.timeout(const Duration(seconds: 20))) {
         bytes.add(chunk);
@@ -251,8 +254,9 @@ class ComposeDslWebViewResourceLoader {
           'content-encoding',
           'content-length',
           'set-cookie',
-        }.contains(name))
+        }.contains(name)) {
           headers[name] = values.join(', ');
+        }
       });
       return WebViewLocalResourceResponse(
         body: bytes.takeBytes(),

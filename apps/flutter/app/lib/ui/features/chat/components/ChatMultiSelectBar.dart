@@ -12,7 +12,6 @@ class ChatMultiSelectBar extends StatelessWidget {
     required this.onCopy,
     required this.onShareImage,
     required this.onDelete,
-    this.onQueueMemory,
   });
 
   final int selectedCount;
@@ -22,7 +21,6 @@ class ChatMultiSelectBar extends StatelessWidget {
   final VoidCallback? onCopy;
   final VoidCallback? onShareImage;
   final VoidCallback? onDelete;
-  final VoidCallback? onQueueMemory;
 
   @override
   Widget build(BuildContext context) {
@@ -68,12 +66,6 @@ class ChatMultiSelectBar extends StatelessWidget {
                     onPressed: onCopy,
                     icon: const Icon(Icons.content_copy),
                     tooltip: '复制所选',
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  IconButton(
-                    onPressed: onQueueMemory,
-                    icon: const Icon(Icons.psychology_outlined),
-                    tooltip: '将所选用户消息加入记忆队列',
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton.filledTonal(

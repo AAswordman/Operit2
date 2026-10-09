@@ -48,8 +48,7 @@ void main() {
                   inputState: InputProcessingState.idle(),
                   viewModel: ChatViewModel(bridge: _PendingModelBridge()),
                   currentChatId: 'empty-chat',
-                  currentCharacterCardName: null,
-                  currentCharacterCardAvatarUri: null,
+
                   onSendMessage: () {},
                   onQueueMessage: () {},
                   onCancelMessage: () {},

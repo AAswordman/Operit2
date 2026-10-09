@@ -229,7 +229,13 @@ export function sidebarViolationsFromSources(readSource) {
     violations.push(host.file + ": activation must validate the protocol, current catalog and chat existence before awaiting the host callback");
   }
   try {
-    if (invocation(semanticCode(methodBody(host.raw, "_reloadCatalog")), "_readCatalog") === null || invocation(semanticCode(methodBody(classBody(host.raw, "_ChatSidebarTabHostState"), "build")), "_content") === null) {
+    const reload = semanticCode(methodBody(host.raw, "_reloadCatalog"));
+    let catalogIsLoaded = invocation(reload, "_readCatalog") !== null;
+    if (!catalogIsLoaded && invocation(reload, "_loadCatalog") !== null) {
+      const loader = semanticCode(methodBody(host.raw, "_loadCatalog"));
+      catalogIsLoaded = invocation(loader, "_readCatalog") !== null;
+    }
+    if (!catalogIsLoaded || invocation(semanticCode(methodBody(classBody(host.raw, "_ChatSidebarTabHostState"), "build")), "_content") === null) {
       violations.push(host.file + ": catalog and embedded route helpers must be called by the actual host rendering path");
     }
   } catch (error) { violations.push(host.file + ": " + error.message); }

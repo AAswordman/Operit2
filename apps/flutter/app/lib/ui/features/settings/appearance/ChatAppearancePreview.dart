@@ -121,6 +121,7 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
       isUser ? 19 : 20,
     ).millisecondsSinceEpoch;
     return ChatUiMessage(
+      pluginExtensions: const {},
       sender: isUser ? 'user' : 'ai',
       parts: <core_proxy.MessagePart>[
         core_proxy.MessagePart(

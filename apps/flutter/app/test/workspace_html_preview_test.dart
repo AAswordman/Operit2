@@ -1,3 +1,5 @@
+import 'support/native_sidebar_bridge.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -51,6 +53,7 @@ void main() {
             unconfiguredChildEnabled: true,
             hostInteractionHostsEnabled: false,
             child: PhoneLayout(
+              bridge: NativeSidebarBridge(),
               drawerWidth: 280,
               drawerOpenState: drawerOpen,
               drawerConversationState: conversations,

@@ -186,11 +186,12 @@ void main() {
     var loop = false;
     final loader = create(
       dispatch: (r) async {
-        if (!loop && (r['url'] as String).endsWith('/target'))
+        if (!loop && (r['url'] as String).endsWith('/target')) {
           return {
             'action': 'respond',
             'response': {'text': 'rewritten'},
           };
+        }
         return {'action': 'rewrite', 'url': '/target'};
       },
     );

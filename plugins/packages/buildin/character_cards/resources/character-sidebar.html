@@ -4734,6 +4734,14 @@ ${data.creator_notes}
     }
   );
 
+  // src/definition.ts
+  var definition = { id: "com.operit.character_cards", title: "\u89D2\u8272\u5361", icon: "Badge", order: 150 };
+  var chatUiRoutes = {
+    editor: `toolpkg:${definition.id}:ui:main`,
+    selection: `toolpkg:${definition.id}:ui:selection`,
+    execution: `toolpkg:${definition.id}:ui:group-execution`
+  };
+
   // src/ui-sidebar.ts
   function exactFields(value, expected, label) {
     const object = record(value, label), keys = Object.keys(object);

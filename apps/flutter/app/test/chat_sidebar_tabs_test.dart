@@ -167,6 +167,7 @@ void main() {
       final bridge = _registry();
       await tester.pumpWidget(_host(bridge));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(_tabKey('owner.second')));
       await tester.tap(find.byKey(_tabKey('owner.second')));
       await tester.pumpAndSettle();
       final launcher = _launcher(tester);
@@ -599,11 +600,25 @@ Widget _nativeDrawer(
           : CollapsedDrawerContent(
               navigationEntries: const [
                 NavigationEntrySpec(
-                  entryId: 'native.chat',
+                  entryId: 'main.ai_chat',
                   routeId: 'native-chat',
                   surface: NavigationSurface.mainSidebarAi,
                   title: 'Chat',
                   icon: Icons.chat,
+                ),
+                NavigationEntrySpec(
+                  entryId: 'main.package_manager',
+                  routeId: 'native-packages',
+                  surface: NavigationSurface.mainSidebarAi,
+                  title: 'Packages',
+                  icon: Icons.extension,
+                ),
+                NavigationEntrySpec(
+                  entryId: 'main.settings',
+                  routeId: 'native-settings',
+                  surface: NavigationSurface.mainSidebarAi,
+                  title: 'Settings',
+                  icon: Icons.settings,
                 ),
               ],
               pluginEntries: const [],
@@ -941,6 +956,7 @@ String _render(Map<String, Object?> state, {Object? result}) => jsonEncode({
 /// Supplies complete real runtime metadata for the registered embedded Compose route.
 core.ToolPkgContainerRuntime _runtime(String owner) =>
     core.ToolPkgContainerRuntime(
+      chatLifecycleHooks: const [],
       packageName: owner,
       displayName: const core.LocalizedText(
         values: {'default': 'Sidebar test package'},

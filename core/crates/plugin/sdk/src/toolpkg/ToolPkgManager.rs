@@ -1230,11 +1230,23 @@ mod tests {
     /// Creates one manager and its recording engine factory.
     fn recordingManager() -> (ToolPkgManager, Arc<RecordingExecutionEngineFactory>) {
         let factory = Arc::new(RecordingExecutionEngineFactory::default());
-        let manager = ToolPkgManager::new(
+        let mut manager = ToolPkgManager::new(
             factory.clone(),
             Arc::new(EmptyAssetSource),
             Arc::new(RejectingFileSystemHost),
         );
+        // Engine ownership checks require genuine registered containers, not
+        // fabricated engines for undeclared package IDs.
+        for name in ["package_a", "package_b"] {
+            manager.registerToolPkg(ToolPkgLoadResult {
+                containerPackage: ToolPackage { name: name.to_string(), ..ToolPackage::default() },
+                containerRuntime: ToolPkgContainerRuntime {
+                    packageName: name.to_string(), mainEntry: "dist/main.js".to_string(),
+                    ..ToolPkgContainerRuntime::default()
+                },
+                ..ToolPkgLoadResult::default()
+            });
+        }
         (manager, factory)
     }
 

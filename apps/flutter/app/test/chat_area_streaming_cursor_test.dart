@@ -1,3 +1,5 @@
+import 'support/markdown_event_fixture.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -897,6 +899,7 @@ void main() {
 
     streamController.add(_markdownBlockChunk(' after snapshot'));
     await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(const Duration(milliseconds: 250));
 
     expect(find.textContaining('before snapshot after snapshot'), findsWidgets);
   });
@@ -1122,7 +1125,12 @@ void main() {
     );
     expect(
       (listView.slivers.last as SliverPadding).padding,
-      const EdgeInsets.fromLTRB(16, 16, 16, 48),
+      const EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        16 + inputProcessingStatusLaneHeight,
+      ),
     );
   });
 
@@ -2066,7 +2074,7 @@ Widget _chatArea({
     errorMessage: null,
     scrollController: scrollController,
     currentChatId: currentChatId,
-    currentCharacterCardAvatarUri: null,
+    identityAvatarUri: null,
     clients: clients,
     packageManager: clients.application.packageManager(),
     autoScrollToBottomListenable: autoScrollToBottom,
@@ -2162,6 +2170,7 @@ Map<String, Object?> _chatMessageLinkValue({
     'displayMode': 'NORMAL',
     'isFavorite': false,
     'contentStream': contentStream,
+    'pluginExtensions': <String, Object?>{},
   };
 }
 
@@ -2211,13 +2220,8 @@ void _appendRenderedMarkdownNodeText(
 }
 
 /// Produces the same event boundary used by Core for one static Markdown block.
-Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) async {
-  return <MarkdownStreamEvent>[
-    _markdownBlockStart(),
-    _markdownBlockChunk(content),
-    _markdownCompleted(),
-  ];
-}
+Future<List<MarkdownStreamEvent>> _splitMarkdownContent(String content) =>
+    splitMarkdownEventFixture(content);
 
 /// Creates a completed row with distinct content for height-cache regressions.
 ChatUiMessage _heightTestMessage(int index, {int lines = 1}) {
@@ -2254,6 +2258,7 @@ ChatUiMessage _aiMessage({
   int completedAt = 0,
 }) {
   return ChatMessage(
+    pluginExtensions: const {},
     sender: 'ai',
     parts: parts,
     timestamp: timestamp,

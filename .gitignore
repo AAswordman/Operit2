@@ -218,3 +218,5 @@ tools/ios-runtime/native/sources
 apps/esp32/.edge-token
 artifacts/*
 apps/flutter/app/web/runtime/generated/*
+# Developer-local Flutter macOS signing identity (never includes a private key).
+apps/flutter/app/macos/Runner/Configs/Signing.local.xcconfig
