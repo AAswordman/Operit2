@@ -3709,6 +3709,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeControlNoAudit => '暂无控制命令记录';
 
   @override
+  String settingsRuntimeControlAuditCount(int count) {
+    return '共 $count 条记录';
+  }
+
+  @override
   String get settingsRuntimeControlNoBindings => '暂无设备绑定';
 
   @override
@@ -3761,6 +3766,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsRuntimeControlIdentityDefinitions => '身份定义';
+
+  @override
+  String settingsRuntimeControlIdentityCount(int count) {
+    return '共 $count 个身份';
+  }
 
   @override
   String get settingsRuntimeControlIdentityAssignment => '身份分配';

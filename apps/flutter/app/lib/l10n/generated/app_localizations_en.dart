@@ -3863,6 +3863,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsRuntimeControlNoAudit => 'No control commands recorded';
 
   @override
+  String settingsRuntimeControlAuditCount(int count) {
+    return '$count records';
+  }
+
+  @override
   String get settingsRuntimeControlNoBindings => 'No device bindings';
 
   @override
@@ -3919,6 +3924,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsRuntimeControlIdentityDefinitions =>
       'Identity definitions';
+
+  @override
+  String settingsRuntimeControlIdentityCount(int count) {
+    return '$count identities';
+  }
 
   @override
   String get settingsRuntimeControlIdentityAssignment => 'Identity assignment';

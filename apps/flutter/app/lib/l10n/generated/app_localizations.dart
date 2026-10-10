@@ -6915,6 +6915,12 @@ abstract class AppLocalizations {
   /// **'No control commands recorded'**
   String get settingsRuntimeControlNoAudit;
 
+  /// No description provided for @settingsRuntimeControlAuditCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} records'**
+  String settingsRuntimeControlAuditCount(int count);
+
   /// No description provided for @settingsRuntimeControlNoBindings.
   ///
   /// In en, this message translates to:
@@ -7022,6 +7028,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Identity definitions'**
   String get settingsRuntimeControlIdentityDefinitions;
+
+  /// No description provided for @settingsRuntimeControlIdentityCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} identities'**
+  String settingsRuntimeControlIdentityCount(int count);
 
   /// No description provided for @settingsRuntimeControlIdentityAssignment.
   ///

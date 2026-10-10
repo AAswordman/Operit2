@@ -148,7 +148,6 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     final canReadAudit = _hasCapability(topology, 'network.audit.read');
     return <Widget>[
       _selfIdentity(l10n, topology),
-      if (canManageIdentities) ..._identityDefinitions(context, l10n, state),
       if (canAssignIdentities) ...<Widget>[
         const SizedBox(height: 12),
         Align(
@@ -160,7 +159,30 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
           ),
         ),
       ],
-      if (canReadAudit) ..._auditSection(context, l10n),
+      if (canManageIdentities)
+        _CollapsibleSection(
+          title: l10n.settingsRuntimeControlIdentityDefinitions,
+          summary: l10n.settingsRuntimeControlIdentityCount(
+            state.roles.length,
+          ),
+          action: FilledButton.tonalIcon(
+            onPressed: () => _defineIdentity(l10n),
+            icon: const Icon(Icons.add_outlined, size: 18),
+            label: Text(l10n.settingsRuntimeControlAddRole),
+          ),
+          children: <Widget>[
+            for (final role in state.roles.values)
+              _identityCard(context, role, l10n),
+          ],
+        ),
+      if (canReadAudit)
+        _CollapsibleSection(
+          title: l10n.settingsRuntimeControlAudit,
+          summary: l10n.settingsRuntimeControlAuditCount(
+            _audit?.length ?? 0,
+          ),
+          children: _auditRecords(context, l10n),
+        ),
     ];
   }
 
@@ -200,36 +222,6 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     );
   }
 
-  /// Builds the identity definitions owned by administrators.
-  List<Widget> _identityDefinitions(
-    BuildContext context,
-    AppLocalizations l10n,
-    generated.NetworkControlState state,
-  ) {
-    return <Widget>[
-      const SizedBox(height: 14),
-      Row(
-        children: <Widget>[
-          Expanded(
-            child: Text(
-              l10n.settingsRuntimeControlIdentityDefinitions,
-              style: Theme.of(
-                context,
-              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-            ),
-          ),
-          FilledButton.tonalIcon(
-            onPressed: () => _defineIdentity(l10n),
-            icon: const Icon(Icons.add_outlined, size: 18),
-            label: Text(l10n.settingsRuntimeControlAddRole),
-          ),
-        ],
-      ),
-      const SizedBox(height: 8),
-      for (final role in state.roles.values) _identityCard(context, role, l10n),
-    ];
-  }
-
   /// Builds one identity definition card.
   Widget _identityCard(
     BuildContext context,
@@ -251,35 +243,32 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     );
   }
 
-  /// Builds the administrator audit view for authorization history.
-  List<Widget> _auditSection(BuildContext context, AppLocalizations l10n) {
+  /// Builds the authorization history shown inside the audit section.
+  List<Widget> _auditRecords(BuildContext context, AppLocalizations l10n) {
     final records = _audit;
-    return <Widget>[
-      const SizedBox(height: 14),
-      Text(
-        l10n.settingsRuntimeControlAudit,
-        style: Theme.of(
-          context,
-        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-      ),
-      const SizedBox(height: 8),
-      if (records == null)
-        const SizedBox(
+    if (records == null) {
+      return const <Widget>[
+        SizedBox(
           height: 24,
           child: Align(
             alignment: Alignment.centerLeft,
             child: M3LoadingIndicator(size: 18),
           ),
-        )
-      else if (records.isEmpty)
+        ),
+      ];
+    }
+    if (records.isEmpty) {
+      return <Widget>[
         Text(
           l10n.settingsRuntimeControlNoAudit,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
-        )
-      else
-        for (final record in records) _auditCard(context, l10n, record),
+        ),
+      ];
+    }
+    return <Widget>[
+      for (final record in records) _auditCard(context, l10n, record),
     ];
   }
 
@@ -412,6 +401,59 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
           style: failed ? TextStyle(color: scheme.onErrorContainer) : null,
         ),
         backgroundColor: failed ? scheme.errorContainer : null,
+      ),
+    );
+  }
+}
+
+/// Keeps one long administrator list collapsed behind a counted header.
+///
+/// The identity definitions and the audit history grow without bound, so the
+/// page only pays for their height once an administrator opens them.
+class _CollapsibleSection extends StatelessWidget {
+  const _CollapsibleSection({
+    required this.title,
+    required this.summary,
+    required this.children,
+    this.action,
+  });
+
+  final String title;
+  final String summary;
+  final List<Widget> children;
+  final Widget? action;
+
+  /// Builds the counted header with the list it opens.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(top: 8),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        title: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                title,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            ?action,
+          ],
+        ),
+        subtitle: Text(
+          summary,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        children: children,
       ),
     );
   }

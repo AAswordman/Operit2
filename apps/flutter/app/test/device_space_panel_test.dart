@@ -419,7 +419,7 @@ void main() {
     await unmount(tester, bridge);
   });
 
-  testWidgets('administrators see identities, assignment, and audit', (
+  testWidgets('administrators see collapsed identity and audit sections', (
     tester,
   ) async {
     final bridge = DeviceSpacePanelBridge(
@@ -432,10 +432,22 @@ void main() {
     await mountNetworkPanel(tester, bridge);
     expect(find.text('当前身份: 管理员'), findsOneWidget);
     expect(find.text('当前能力: 全部权限'), findsWidgets);
-    expect(find.text('身份定义'), findsOneWidget);
-    expect(find.text('添加角色'), findsOneWidget);
     expect(find.text('设置设备身份'), findsOneWidget);
+    // Both long lists start collapsed and only advertise their size.
+    expect(find.text('身份定义'), findsOneWidget);
+    expect(find.text('共 2 个身份'), findsOneWidget);
+    expect(find.text('添加角色'), findsOneWidget);
+    expect(find.text('管理员'), findsNothing);
     expect(find.text('审计'), findsOneWidget);
+    expect(find.text('共 0 条记录'), findsOneWidget);
+    expect(find.text('暂无控制命令记录'), findsNothing);
+    await tester.tap(find.text('身份定义'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('管理员'), findsOneWidget);
+    await tester.tap(find.text('审计'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('暂无控制命令记录'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await unmount(tester, bridge);
