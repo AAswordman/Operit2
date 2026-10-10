@@ -3,6 +3,17 @@
 CLI 与 Flutter 共用 `CoreApplication`、`RuntimeRemoteLinkService` 和同一套权限检查。
 配对只授予设备通信授权，加入 Space 必须另行申请并由分配到的审批人明确批准。
 
+## TUI 启动时的监听
+
+TUI 与 Flutter 一样在启动时应用已保存的监听配置，不需要额外传参：首次运行使用存储迁移写入的默认
+`http,ws`、`0.0.0.0:37195` 与发现开关，之后沿用上次保存的传输集合。
+
+- `--link-listen <transport>[,<transport>...]`：用给定传输替换并保存暴露配置，随后立即启动监听；
+  与 `operit2 cli link listen` 一致默认自动避让端口。显式指定时绑定失败会让启动失败。
+- 不传 `--link-listen`：按已保存配置启动。Host 不支持的传输会被跳过；绑定失败（例如端口被其它
+  实例占用）只写入日志并在 TUI 状态行提示，不阻止终端启动。
+- `--no-listen`：本次启动只出站，不改动已保存的配置。
+
 ## 常驻终端
 
 ```sh
