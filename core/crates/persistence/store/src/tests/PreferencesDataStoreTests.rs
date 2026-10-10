@@ -1278,6 +1278,16 @@ impl operit_host_api::HostRuntimeTaskSchedulerHost for ImmediatePreferenceObserv
         ))
     }
 
+    fn scheduleHostRuntimeCooperativeAsyncTask(
+        &self,
+        _: &str,
+        _: operit_host_api::HostRuntimeAsyncTask,
+    ) -> operit_host_api::HostResult<()> {
+        Err(HostError::new(
+            "cooperative async tasks are not used by preference observer tests",
+        ))
+    }
+
     fn scheduleDelayedHostRuntimeTask(
         &self,
         _: &str,

@@ -25,6 +25,13 @@ impl HostRuntimeTaskSchedulerHost for RecordingScheduler {
         self.tasks.lock().unwrap().push((name.into(), task));
         Ok(())
     }
+    fn scheduleHostRuntimeCooperativeAsyncTask(
+        &self,
+        name: &str,
+        task: HostRuntimeAsyncTask,
+    ) -> HostResult<()> {
+        self.scheduleHostRuntimeAsyncTask(name, task)
+    }
     fn scheduleHostRuntimeTask(&self, _: &str, _: HostRuntimeTask) -> HostResult<()> {
         unreachable!()
     }
