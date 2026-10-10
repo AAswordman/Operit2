@@ -6819,6 +6819,12 @@ abstract class AppLocalizations {
   /// **'Roles, identities, device authority, and audit'**
   String get settingsRuntimeNetworkControlDescription;
 
+  /// No description provided for @settingsRuntimeIdentitiesAndPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'Identities & permissions'**
+  String get settingsRuntimeIdentitiesAndPermissions;
+
   /// No description provided for @settingsRuntimeControlInitialize.
   ///
   /// In en, this message translates to:
@@ -6908,6 +6914,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No control commands recorded'**
   String get settingsRuntimeControlNoAudit;
+
+  /// No description provided for @settingsRuntimeControlAuditCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} records'**
+  String settingsRuntimeControlAuditCount(int count);
 
   /// No description provided for @settingsRuntimeControlNoBindings.
   ///
@@ -7016,6 +7028,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Identity definitions'**
   String get settingsRuntimeControlIdentityDefinitions;
+
+  /// No description provided for @settingsRuntimeControlIdentityCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} identities'**
+  String settingsRuntimeControlIdentityCount(int count);
 
   /// No description provided for @settingsRuntimeControlIdentityAssignment.
   ///
@@ -7729,6 +7747,18 @@ abstract class AppLocalizations {
   /// **'Space member · not paired'**
   String get deviceSpaceMemberNotPaired;
 
+  /// No description provided for @deviceSpaceMemberPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Space member · paired'**
+  String get deviceSpaceMemberPaired;
+
+  /// No description provided for @deviceSpacePairedOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired'**
+  String get deviceSpacePairedOnly;
+
   /// No description provided for @deviceSpaceDirectLink.
   ///
   /// In en, this message translates to:
@@ -7758,6 +7788,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Manage device'**
   String get deviceSpaceManageDevice;
+
+  /// No description provided for @deviceSpaceUnpair.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpair device'**
+  String get deviceSpaceUnpair;
 
   /// No description provided for @deviceSpaceMore.
   ///

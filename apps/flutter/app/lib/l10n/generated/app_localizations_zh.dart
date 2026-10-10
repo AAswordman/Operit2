@@ -3661,6 +3661,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeNetworkControlDescription => '角色、身份、设备权限与审计';
 
   @override
+  String get settingsRuntimeIdentitiesAndPermissions => '身份与权限';
+
+  @override
   String get settingsRuntimeControlInitialize => '初始化控制';
 
   @override
@@ -3704,6 +3707,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsRuntimeControlNoAudit => '暂无控制命令记录';
+
+  @override
+  String settingsRuntimeControlAuditCount(int count) {
+    return '共 $count 条记录';
+  }
 
   @override
   String get settingsRuntimeControlNoBindings => '暂无设备绑定';
@@ -3758,6 +3766,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsRuntimeControlIdentityDefinitions => '身份定义';
+
+  @override
+  String settingsRuntimeControlIdentityCount(int count) {
+    return '共 $count 个身份';
+  }
 
   @override
   String get settingsRuntimeControlIdentityAssignment => '身份分配';
@@ -4179,6 +4192,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceMemberNotPaired => '空间成员 · 未直连';
 
   @override
+  String get deviceSpaceMemberPaired => '空间成员 · 已直连';
+
+  @override
+  String get deviceSpacePairedOnly => '已配对';
+
+  @override
   String get deviceSpaceDirectLink => '直连';
 
   @override
@@ -4194,6 +4213,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get deviceSpaceManageDevice => '管理设备';
+
+  @override
+  String get deviceSpaceUnpair => '解除配对';
 
   @override
   String get deviceSpaceMore => '更多设备操作';

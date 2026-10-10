@@ -3813,6 +3813,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Roles, identities, device authority, and audit';
 
   @override
+  String get settingsRuntimeIdentitiesAndPermissions =>
+      'Identities & permissions';
+
+  @override
   String get settingsRuntimeControlInitialize => 'Initialize control';
 
   @override
@@ -3857,6 +3861,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsRuntimeControlNoAudit => 'No control commands recorded';
+
+  @override
+  String settingsRuntimeControlAuditCount(int count) {
+    return '$count records';
+  }
 
   @override
   String get settingsRuntimeControlNoBindings => 'No device bindings';
@@ -3915,6 +3924,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsRuntimeControlIdentityDefinitions =>
       'Identity definitions';
+
+  @override
+  String settingsRuntimeControlIdentityCount(int count) {
+    return '$count identities';
+  }
 
   @override
   String get settingsRuntimeControlIdentityAssignment => 'Identity assignment';
@@ -4354,6 +4368,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get deviceSpaceMemberNotPaired => 'Space member · not paired';
 
   @override
+  String get deviceSpaceMemberPaired => 'Space member · paired';
+
+  @override
+  String get deviceSpacePairedOnly => 'Paired';
+
+  @override
   String get deviceSpaceDirectLink => 'Direct';
 
   @override
@@ -4369,6 +4389,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceSpaceManageDevice => 'Manage device';
+
+  @override
+  String get deviceSpaceUnpair => 'Unpair device';
 
   @override
   String get deviceSpaceMore => 'More device actions';
