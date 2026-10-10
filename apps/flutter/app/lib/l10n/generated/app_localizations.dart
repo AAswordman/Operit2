@@ -7789,6 +7789,24 @@ abstract class AppLocalizations {
   /// **'Manage device'**
   String get deviceSpaceManageDevice;
 
+  /// No description provided for @deviceSpaceConnectDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect directly'**
+  String get deviceSpaceConnectDirect;
+
+  /// No description provided for @deviceSpaceConnectDirectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'This device is already a Space member. Pairing it adds a direct link without joining again; pairing shows a six-digit code on the other device for you to enter.'**
+  String get deviceSpaceConnectDirectHint;
+
+  /// No description provided for @deviceSpaceDirectLinkEstablished.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct link established: {device}'**
+  String deviceSpaceDirectLinkEstablished(String device);
+
   /// No description provided for @deviceSpaceUnpair.
   ///
   /// In en, this message translates to:

@@ -1538,7 +1538,16 @@ impl OperitTui {
                 } else {
                     format!("  {transport_label}  ")
                 };
-                let body = Paragraph::new(vec![
+                let mut lines = Vec::new();
+                // A wizard opened from a device row dials one known device;
+                // show which one, so the address cannot be typed by accident.
+                if let Some(label) = wizard.expectedLabel.as_deref() {
+                    lines.push(Line::from(Span::styled(
+                        format!("{} {}", text.network_pair_wizard_target(), label),
+                        Style::default().fg(theme::TEXT_MUTED),
+                    )));
+                }
+                lines.extend([
                     Line::from(vec![
                         Span::styled(
                             format!("{} ", text.network_pair_wizard_address()),
@@ -1579,6 +1588,7 @@ impl OperitTui {
                         Style::default().fg(theme::TEXT_SUBTLE),
                     )),
                 ]);
+                let body = Paragraph::new(lines);
                 frame.render_widget(body, chunks[0]);
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled(
@@ -2001,6 +2011,7 @@ fn device_manager_device_label(
 
 fn device_manager_action_label(text: super::i18n::TuiText, action: DeviceManagerAction) -> &'static str {
     match action {
+        DeviceManagerAction::Pair => text.network_devices_menu_pair(),
         DeviceManagerAction::Admit => text.network_devices_menu_admit(),
         DeviceManagerAction::Disconnect => text.network_devices_menu_disconnect(),
         DeviceManagerAction::AssignIdentity => text.network_devices_menu_assign(),

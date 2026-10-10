@@ -351,6 +351,7 @@ impl DeviceManagerRow {
 /// parallel menu entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeviceManagerAction {
+    Pair,
     Admit,
     Disconnect,
     AssignIdentity,
@@ -376,6 +377,8 @@ pub(super) enum DeviceManagerMode {
 pub(super) struct DeviceManagerModal {
     pub(super) topology: RuntimeDeviceSpaceTopology,
     pub(super) blocked: BTreeSet<String>,
+    /// Devices this node already holds a pairing (edge) for.
+    pub(super) paired: BTreeSet<String>,
     pub(super) requests: Vec<SpaceJoinRequest>,
     pub(super) roles: BTreeMap<String, NetworkControlRole>,
     pub(super) initialized: bool,
@@ -424,12 +427,19 @@ impl DeviceManagerModal {
     /// identity changes would drop the capabilities the local UI itself
     /// depends on, and leaving or demoting this device is managed from
     /// another administrator device.
+    ///
+    /// Pairing leads the menu because it is the only link-layer action: an
+    /// admitted member without a local pairing can gain a direct edge without
+    /// any Space capability and without joining again.
     pub(super) fn menu_actions(&self, device_id: &str) -> Vec<DeviceManagerAction> {
         let is_self = device_id == self.topology.currentDeviceId;
         if is_self {
             return Vec::new();
         }
         let mut actions = Vec::new();
+        if !self.blocked.contains(device_id) && !self.paired.contains(device_id) {
+            actions.push(DeviceManagerAction::Pair);
+        }
         if self.blocked.contains(device_id) {
             actions.push(DeviceManagerAction::Admit);
         } else {
@@ -524,6 +534,11 @@ pub(super) struct PairWizardModal {
     pub(super) address: String,
     pub(super) transportIndex: usize,
     pub(super) token: String,
+    /// Node id the handshake must match, when the wizard targets a known
+    /// device; empty means "accept whatever node answers the address".
+    pub(super) expectedNode: Option<String>,
+    /// Display label of the expected device, shown while dialing.
+    pub(super) expectedLabel: Option<String>,
     pub(super) pairing: Option<PendingPairing>,
     pub(super) code: String,
     /// The peer a finished pairing produced; drives the join offer.
@@ -2670,7 +2685,7 @@ impl OperitTui {
                 peer_transport_label(candidate) == peer_transport_label(&transport)
             })
             .unwrap_or(2);
-        self.open_pair_wizard(address, transport_index, token.unwrap_or_default(), true);
+        self.open_pair_wizard(address, transport_index, token.unwrap_or_default(), true, None);
         self.pair_wizard_start().await;
         Ok(())
     }
@@ -2696,6 +2711,13 @@ impl OperitTui {
             .await?;
         self.pending_pairings
             .retain(|pending| pending.pairingId != pairing_id);
+        // An admitted member needs only the direct link: the join submission
+        // would be rejected as a duplicate membership, so pairing ends here.
+        if self.network_peer_is_member(&peer.nodeId) {
+            return Ok(self
+                .text()
+                .network_direct_link_established(&paired_peer_label(&peer)));
+        }
         // A finished pairing naturally continues into the join offer: the
         // applicant side (this device) is the one holding outbound trust.
         self.pair_wizard = Some(PairWizardModal {
@@ -2704,6 +2726,8 @@ impl OperitTui {
             address: String::new(),
             transportIndex: 2,
             token: String::new(),
+            expectedNode: None,
+            expectedLabel: None,
             pairing: None,
             code: String::new(),
             peer: Some(peer.clone()),
@@ -3292,7 +3316,7 @@ impl OperitTui {
                 }
             }
             KeyCode::Char('p') | KeyCode::Char('P') if key.modifiers.is_empty() => {
-                self.open_pair_wizard(String::new(), 0, String::new(), false);
+                self.open_pair_wizard(String::new(), 0, String::new(), false, None);
             }
             KeyCode::Char('P') => {
                 if let Err(error) = self.network_policy_popup() {
@@ -3338,19 +3362,28 @@ impl OperitTui {
 
     /// Opens the pairing wizard. `autostart` immediately dials the address -
     /// the wizard then lands on code entry, which is the only step left.
+    /// `expected` binds the handshake to a known node id and shows it while
+    /// dialing, which is how the device window pairs one specific member.
     fn open_pair_wizard(
         &mut self,
         address: String,
         transport_index: usize,
         token: String,
         autostart: bool,
+        expected: Option<(String, String)>,
     ) {
+        let (expectedNode, expectedLabel) = match expected {
+            Some((node_id, label)) => (Some(node_id), Some(label)),
+            None => (None, None),
+        };
         self.pair_wizard = Some(PairWizardModal {
             stage: if autostart { PairStage::Code } else { PairStage::Address },
             field: PairField::Address,
             address,
             transportIndex: transport_index.min(PAIR_WIZARD_TRANSPORTS.len() - 1),
             token,
+            expectedNode,
+            expectedLabel,
             pairing: None,
             code: String::new(),
             peer: None,
@@ -3379,9 +3412,10 @@ impl OperitTui {
         } else {
             Some(wizard.token.trim().to_string())
         };
+        let expectedNode = wizard.expectedNode.clone().unwrap_or_default();
         match self
             .networkControl
-            .startPairing(String::new(), address, transport, token)
+            .startPairing(expectedNode, address, transport, token)
             .await
         {
             Ok(pending) => {
@@ -3427,6 +3461,16 @@ impl OperitTui {
             Ok(peer) => {
                 self.pending_pairings
                     .retain(|pending| pending.pairingId != pairing_id);
+                // An admitted member needs only the direct link: the join
+                // submission would be rejected as a duplicate membership.
+                if self.network_peer_is_member(&peer.nodeId) {
+                    self.pair_wizard = None;
+                    self.set_transient_status_message(
+                        self.text()
+                            .network_direct_link_established(&paired_peer_label(&peer)),
+                    );
+                    return;
+                }
                 if let Some(wizard) = self.pair_wizard.as_mut() {
                     wizard.stage = PairStage::JoinOffer;
                     wizard.peer = Some(peer);
@@ -3447,11 +3491,7 @@ impl OperitTui {
         let Some(peer) = self.pair_wizard.as_ref().and_then(|wizard| wizard.peer.clone()) else {
             return;
         };
-        let label = if peer.displayName.is_empty() {
-            peer.nodeId.clone()
-        } else {
-            peer.displayName.clone()
-        };
+        let label = paired_peer_label(&peer);
         let result = self.network_join_target(&peer.nodeId, &label).await;
         self.pair_wizard = None;
         match result {
@@ -3586,7 +3626,14 @@ impl OperitTui {
             .iter()
             .position(|transport| matches!(transport, PeerTransport::Tcp))
             .unwrap_or(2);
-        self.open_pair_wizard(candidate.address.clone(), transport_index, String::new(), false);
+        // The candidate carries its node id, so the handshake binds to it.
+        self.open_pair_wizard(
+            candidate.address.clone(),
+            transport_index,
+            String::new(),
+            false,
+            Some((candidate.nodeId.clone(), candidate.displayName.clone())),
+        );
         self.pair_wizard_start().await;
     }
 
@@ -3634,6 +3681,7 @@ impl OperitTui {
             initialized: state.initialized,
             topology,
             blocked: state.disconnectedNodeIds,
+            paired: self.paired_device_ids(),
             requests: requests
                 .into_iter()
                 .filter(|request| request.canApprove)
@@ -3644,6 +3692,45 @@ impl OperitTui {
             menu_device_id: None,
             menu_index: 0,
         });
+    }
+
+    /// Node ids this device currently holds a pairing (edge) for.
+    fn paired_device_ids(&self) -> BTreeSet<String> {
+        self.networkControl
+            .pairedDevicesSnapshot()
+            .map(|snapshot| snapshot.into_keys().collect())
+            .unwrap_or_default()
+    }
+
+    /// Reports whether one device is already a member of the local Space.
+    ///
+    /// Membership is the join contract's own criterion: a request from an
+    /// admitted device is rejected as a duplicate, so the pairing flows must
+    /// not offer that join step.
+    fn network_peer_is_member(&self, device_id: &str) -> bool {
+        self.networkControl
+            .deviceSpace()
+            .map(|space| space.members.iter().any(|member| member == device_id))
+            .unwrap_or(false)
+    }
+
+    /// Opens the pairing wizard for one device picked in the device window.
+    ///
+    /// Pairing leads the device menu because it is the only link-layer action:
+    /// the expected node id binds the handshake, and an admitted device needs
+    /// no join afterwards.
+    async fn network_pair_device(&mut self, device: &str) -> Result<String, String> {
+        let topology = self.networkControl.deviceSpaceTopology()?;
+        let device_id = network_device_id(&topology, device)?;
+        let device_label = network_device_label_by_id(&topology, &device_id)?;
+        self.open_pair_wizard(
+            String::new(),
+            0,
+            String::new(),
+            false,
+            Some((device_id, device_label.clone())),
+        );
+        Ok(self.text().network_pair_device_hint(&device_label))
     }
 
     /// Re-pulls the control snapshot into an open device window, keeping
@@ -3671,11 +3758,13 @@ impl OperitTui {
         let Ok(topology) = self.networkControl.deviceSpaceTopology() else {
             return;
         };
+        let paired = self.paired_device_ids();
         let Some(modal) = self.device_manager.as_mut() else {
             return;
         };
         modal.initialized = state.initialized;
         modal.blocked = state.disconnectedNodeIds;
+        modal.paired = paired;
         modal.roles = state.roles;
         modal.topology = topology;
         modal.requests = requests
@@ -3975,6 +4064,7 @@ impl OperitTui {
     /// only lifts the policy restriction, the link returns on its own.
     async fn run_device_manager_action(&mut self, device_id: &str, action: DeviceManagerAction) {
         let result = match action {
+            DeviceManagerAction::Pair => self.network_pair_device(device_id).await,
             DeviceManagerAction::Admit => self.network_admit_device(device_id).await,
             DeviceManagerAction::Disconnect => self.network_disconnect_device(device_id).await,
             DeviceManagerAction::Unpair => self.network_unpair(device_id).await,
@@ -5826,6 +5916,15 @@ fn status_error_line(error: &str) -> String {
     error.lines().next().unwrap_or_default().to_string()
 }
 
+/// Display label of a finished pairing, falling back to its node id.
+fn paired_peer_label(peer: &PairedPeer) -> String {
+    if peer.displayName.is_empty() {
+        peer.nodeId.clone()
+    } else {
+        peer.displayName.clone()
+    }
+}
+
 fn paired_device_direction(inbound: bool, outbound: bool) -> &'static str {
     match (inbound, outbound) {
         (true, true) => "inbound+outbound",
@@ -5858,6 +5957,8 @@ mod tests {
                 model: String::new(),
                 coreVersion: None,
                 online,
+                relayHops: None,
+                relayPath: None,
                 currentIdentity: identity.map(|display_name| RuntimeDeviceSpaceIdentity {
                     displayName: display_name.to_string(),
                     capabilities: Vec::new(),
@@ -5875,6 +5976,7 @@ mod tests {
                 connections: Vec::new(),
             },
             blocked: ["tablet".to_string()].into_iter().collect(),
+            paired: BTreeSet::new(),
             requests: vec![SpaceJoinRequest {
                 requestId: "req-1".to_string(),
                 targetDeviceId: "self".to_string(),
@@ -5925,6 +6027,25 @@ mod tests {
         assert!(!actions.contains(&DeviceManagerAction::Admit));
 
         assert!(modal.menu_actions("self").is_empty());
+    }
+
+    /// Direct-link pairing is link-level: it leads the menu for a member
+    /// without a local pairing, and disappears once the edge exists or the
+    /// device is restricted from connections.
+    #[test]
+    fn device_manager_menu_offers_pairing_only_for_unpaired_members() {
+        let modal = device_manager_fixture();
+        let actions = modal.menu_actions("phone");
+        assert_eq!(actions.first(), Some(&DeviceManagerAction::Pair));
+        assert!(!modal
+            .menu_actions("tablet")
+            .contains(&DeviceManagerAction::Pair));
+
+        let mut paired = device_manager_fixture();
+        paired.paired = ["phone".to_string()].into_iter().collect();
+        assert!(!paired
+            .menu_actions("phone")
+            .contains(&DeviceManagerAction::Pair));
     }
 
     /// Identity actions appear only when they can apply, and only for
@@ -6192,6 +6313,8 @@ mod tests {
             model: String::new(),
             coreVersion: None,
             online,
+            relayHops: None,
+            relayPath: None,
             currentIdentity: None,
         };
         RuntimeDeviceSpaceTopology {

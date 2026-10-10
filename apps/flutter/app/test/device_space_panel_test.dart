@@ -142,6 +142,8 @@ class DeviceSpacePanelBridge extends OperitRuntimeBridge {
       case 'outgoingDeviceSpaceJoins':
       case 'incomingDeviceSpaceJoins':
         return encodeCoreLink([0, <Object?>[]]);
+      case 'discoverPeers':
+        return encodeCoreLink([0, <Object?>[]]);
       default:
         throw StateError('Unexpected ${request.methodName}');
     }
@@ -279,7 +281,17 @@ void main() {
       expect(find.textContaining('经中继 1 跳'), findsWidgets);
       expect(find.textContaining('空间成员 · 未直连'), findsWidgets);
       expect(find.textContaining('路径: 本机 → relay-linux'), findsWidgets);
-      expect(find.byIcon(Icons.more_vert_outlined), findsNothing);
+      // Link-layer pairing is not a Space capability: a relayed member offers
+      // the direct-link entry even without any management capability, and
+      // nothing else.
+      final menus = find.byIcon(Icons.more_vert_outlined);
+      expect(menus, findsWidgets);
+      await tester.tap(menus.first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.widgetWithText(MenuItemButton, '建立直连'), findsOneWidget);
+      expect(find.widgetWithText(MenuItemButton, '移除设备'), findsNothing);
+      expect(find.widgetWithText(MenuItemButton, '断开设备'), findsNothing);
       expect(tester.takeException(), isNull);
       await unmount(tester, bridge);
     },
@@ -330,6 +342,31 @@ void main() {
     expect(find.widgetWithText(MenuItemButton, '设置设备身份'), findsOneWidget);
     expect(find.widgetWithText(MenuItemButton, '断开设备'), findsOneWidget);
     expect(find.widgetWithText(MenuItemButton, '移除设备'), findsOneWidget);
+    expect(find.widgetWithText(MenuItemButton, '建立直连'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await unmount(tester, bridge);
+  });
+
+  testWidgets('tapping the direct-link entry opens the focused pairing dialog', (
+    tester,
+  ) async {
+    final bridge = DeviceSpacePanelBridge(
+      topology: _topology(),
+      control: _control(),
+    );
+    await mountPanel(tester, bridge);
+    final menus = find.byIcon(Icons.more_vert_outlined);
+    await tester.tap(menus.first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.widgetWithText(MenuItemButton, '建立直连'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.text('该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。'),
+      findsOneWidget,
+    );
+    expect(find.text('暂未发现附近设备'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await unmount(tester, bridge);
   });
@@ -364,6 +401,8 @@ void main() {
     expect(find.widgetWithText(MenuItemButton, '移除设备'), findsOneWidget);
     expect(find.widgetWithText(MenuItemButton, '重置为默认身份'), findsOneWidget);
     expect(find.widgetWithText(MenuItemButton, '解除配对'), findsOneWidget);
+    // A paired member already has its edge; the pairing entry would be noise.
+    expect(find.widgetWithText(MenuItemButton, '建立直连'), findsNothing);
     expect(tester.takeException(), isNull);
     await unmount(tester, bridge);
   });
