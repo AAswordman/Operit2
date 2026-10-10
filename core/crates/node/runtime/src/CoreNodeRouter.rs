@@ -1875,6 +1875,9 @@ impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
                 &nodeId,
                 &peers,
             )?;
+            // Any resolved plan proves reachability, including the single-hop
+            // plan of a directly paired peer; relay metadata stays multi-hop only.
+            let reachable = nodeId == self.localNodeId || plan.is_some();
             let (relayHops, relayPath) = match plan {
                 Some(plan) if plan.hops() > 1 => {
                     (Some(plan.hops()), Some(plan.path.clone()))
@@ -1886,7 +1889,7 @@ impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
                 userName: profile.userName.clone(),
                 platform: profile.platform.clone(),
                 model: profile.model.clone(),
-                reachable: nodeId == self.localNodeId || relayHops.is_some(),
+                reachable,
                 relayHops,
                 relayPath,
                 nodeId,
@@ -3635,6 +3638,48 @@ mod tests {
             assert!(!router.shouldRouteWatch(method, &args).unwrap());
             assert!(router.shouldUseLocalWatchSource(method, &args).unwrap());
         }
+    }
+
+    #[tokio::test]
+    async fn core_node_route_state_reports_direct_peers_reachable() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let mut router = testCoreNodeRouter("route-state-core", "route-state-peer", "route-state-chat");
+        router.spaceStore.admitRemoteMember(
+            "route-state-ghost".into(), "Ghost".into(), "test".into(), "core".into(), "1".into(),
+        ).unwrap();
+        router.networkControlStore.admitMember("route-state-ghost".into()).unwrap();
+        let peers = TestPeerService::new(
+            "route-state-core".into(),
+            "route-state-peer".into(),
+            Arc::new(TestClientEndpoint),
+        );
+        router.installNodeServices(NodeServices::new(peers)).unwrap();
+        let runtime = CoreNodeToolRouteRuntime {
+            peerServices: router.peerServices.clone(),
+            localNodeId: router.localNodeId(),
+            spaceStore: router.spaceStore.clone(),
+            networkControlStore: router.networkControlStore.clone(),
+        };
+        let state = runtime.coreNodeRouteState().unwrap();
+        assert_eq!(state.currentNodeId, "route-state-core");
+        let status = |nodeId: &str| {
+            state
+                .nodes
+                .iter()
+                .find(|node| node.nodeId == nodeId)
+                .cloned()
+                .expect("every member must appear in the route state")
+        };
+        assert!(status("route-state-core").reachable);
+        // A directly paired peer resolves a single-hop plan; it used to be folded
+        // into the multi-hop-only relay metadata and misreported as unreachable.
+        let direct = status("route-state-peer");
+        assert!(direct.reachable, "a directly paired peer must be reported reachable");
+        assert_eq!(direct.relayHops, None, "a direct peer is not relayed");
+        let ghost = status("route-state-ghost");
+        assert!(!ghost.reachable, "a member without any route must stay unreachable");
+        assert_eq!(ghost.relayHops, None);
     }
 
     #[tokio::test]
