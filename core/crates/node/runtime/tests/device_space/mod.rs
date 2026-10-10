@@ -55,6 +55,12 @@ mod routing_contracts {
         "/tests/device_space/routing_contracts.rs"
     ));
 }
+mod topology_publication {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/topology_publication.rs"
+    ));
+}
 mod policy_contracts {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),

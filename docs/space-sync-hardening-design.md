@@ -48,16 +48,17 @@
 - **日志性判据已有现成实现**：admission 操作的指纹是 `entityId == "control-review-{requestId}-{assignmentVersion}"` 且 issuer 为审批人（restoreClaimedMemberProfiles，space_join.rs:539-548 已在生产代码用同一判定做 profile 恢复）——任何一端 replay 都能确定性判断"这个决定是否已提交"。
 - join 记录是本地墙钟的 preference 文件（INBOUND/OUTBOUND/INBOX/RESULTS，space_join.rs:12-15，PeerStateStore），**不在复制日志里**；控制日志 replay 是时间确定的（replayCommands 只用存储的 createdAt，按 `(createdAt, originDeviceId, sequence)` 全序，NetworkControlStore.rs:702-755、872-874）——给 `Approving` 加超时**不会**破坏 replay 确定性。
 
-### 2.5 RTT 已在算、只进超时；喂路由的入口是死代码 `[已核实]`
+### 2.5 RTT 已在算、只进超时；邻接公告已接线，加权路由仍退化跳数 `[已更新 2026-10-10]`
 
 - EWMA `(7*rtt+sample)/8` 与抖动 `(3*var+|rtt-sample|)/4` 在 heartbeat.rs:45-48，唯一消费方是 `timeoutMs()`（:52-57，clamp 5s–60s）；`rtt` 字段私有、无 getter。
-- `CoreSpaceLinkAdvertisement.smoothedRttMs`（CoreSpaceStore.rs:57）的生产者**只有测试文件**；`setDirectPeers`（:709）、`publishLocalLinkAdvertisement`（:741）全仓库无非测试调用点，也不在 Dart 代理里。
-- `linkCost`（CoreSpaceStore.rs:1362-1367）= `1000 + rtt*10 + loss*25 + congestion*10`，公式与 device-net-routing-distribution.md 逐字吻合，且在生产路径上（CoreNodeRouter.rs:753、1880）；但生产中所有链路都走 `UNMEASURED_DIRECT_PEER_COST = 1e9` fallback（:18、:852）——**加权路由在运行时退化为跳数**。
+- `CoreSpaceLinkAdvertisement` 的生产者已接线：`SpacePersistenceSyncService::synchronizeOnce` 每轮同步先调 `space_topology::publishLocalTopology`（node/runtime/src/peer/space_topology.rs），由 `CoreSpaceStore::publishLocalAdjacency` 写出本机记录——peers = 活跃直连 ∩ Space 成员 ∩ 未断开，每个 peer 一条 `smoothedRttMs = 0` 的 link，TTL 10min / 刷新余量 5min，内容未变不重写。`setDirectPeers`、`publishLocalLinkAdvertisement` 保留给未来测量路径与测试。
+- `linkCost`（CoreSpaceStore.rs:1362-1367）= `1000 + rtt*10 + loss*25 + congestion*10`，公式与 device-net-routing-distribution.md 逐字吻合，且在生产路径上（CoreNodeRouter.rs:753、1880）；公告链路 rtt=0 时代价均匀，**路由等价跳数**（§3.5 两分支仍未决，但成员互访不再依赖该决策）。
 
 ### 2.6 设备状态流只产 Online/Offline `[已核实]`
 
 - flow 判定就是 `activePeerNodeIds.contains ? Online : Offline`（RuntimeRemoteLinkService.rs:1030-1034）；枚举有四态 Online/Offline/Invalid/RemovedFromSpace（:43-48）。
 - **单设备查询 `pairedDeviceStatus` 已经解析 Invalid（:889）和 RemovedFromSpace（:892）**，CLI 在用（apps/cli/src/cli/link.rs:504）——Flutter 侧只差把 flow 接到这套判定上。
+- 连接状态枚举新增 `Announced`：不涉及本机的边此前报 `Unknown`，现在有独立语义与 UI 文案（"已宣告"）；设备投影同时暴露 `relayHops` / `relayPath`（多跳成员的跳数与逐跳路径）。
 
 ### 2.7 文档漂移与死代码清单 `[已核实]`
 
@@ -207,6 +208,8 @@ struct ReconciliationOutcome {
 - **profiles 留在日志外是有意划界**（密钥材料不入日志），在 `docs/core-node-space-binding-architecture.md` 明说，作为残留的双真相应被理解和测试（doctor D2/D6 覆盖）。
 
 #### 3.5 RTT 喂路由，或删掉加权路由（二选一，别悬着）
+
+**现状（2026-10-10）**：邻接公告已接线（见 §2.5）且不携带测量，多跳可达性不再依赖本节决策；两个分支仍未定，注意"两跳实测压过一跳未实测直连"的落点已从"全部 fallback"变为"均匀 1000 代价 + 未实测 seed fallback"。
 
 两个分支的 PR 形态都设计完毕，**决策本身是能力问题（"要不要质量感知多跳"），留给产品拍板**；框内给出建议默认：
 
