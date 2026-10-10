@@ -271,6 +271,9 @@ impl OperitTui {
     fn edit_selected_pending_queue_message(&mut self) {
         let message = self.remove_selected_pending_queue_message();
         let id = message.id;
+        // The box now holds user-authored text again, so arrow keys start a
+        // fresh history browse instead of resuming the previous one.
+        self.input_history.reset();
         self.input = message.text;
         self.input_cursor = self.input.chars().count();
         self.autocomplete_index = 0;

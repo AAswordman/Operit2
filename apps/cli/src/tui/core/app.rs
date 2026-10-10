@@ -52,6 +52,7 @@ use super::commands::{expand_plugin_command, keyword_options_for, TuiPluginComma
 use super::config;
 use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
+use super::input::InputHistory;
 use super::i18n::{TuiLanguage, TuiText, TuiTextKey};
 use super::link_proxy_rs::{TuiContentStreamEventInfo, TuiCore};
 pub(super) use super::outgoing_joins::space_join_is_active;
@@ -112,6 +113,8 @@ pub(super) struct OperitTui {
     pub(super) focus: FocusArea,
     pub(super) input: String,
     pub(super) input_cursor: usize,
+    /// Submitted inputs recalled with the arrow keys in the input box.
+    pub(super) input_history: InputHistory,
     pub(super) autocomplete_index: usize,
     pub(super) plugin_commands: Vec<TuiPluginCommandSpec>,
     pub(super) queued_attachment_paths: Vec<String>,
@@ -818,6 +821,7 @@ impl OperitTui {
             focus: FocusArea::Input,
             input: String::new(),
             input_cursor: 0,
+            input_history: InputHistory::default(),
             autocomplete_index: 0,
             plugin_commands,
             queued_attachment_paths: Vec::new(),
@@ -1731,11 +1735,11 @@ impl OperitTui {
                 self.scroll_transcript_half_page_down();
                 return Ok(());
             }
-            (KeyCode::Up, KeyModifiers::NONE) if self.should_arrow_scroll_transcript() => {
+            (KeyCode::Up, KeyModifiers::CONTROL) => {
                 self.scroll_transcript_up(self.terminal_wheel_step());
                 return Ok(());
             }
-            (KeyCode::Down, KeyModifiers::NONE) if self.should_arrow_scroll_transcript() => {
+            (KeyCode::Down, KeyModifiers::CONTROL) => {
                 self.scroll_transcript_down(self.terminal_wheel_step());
                 return Ok(());
             }
@@ -1842,10 +1846,6 @@ impl OperitTui {
 
     fn terminal_wheel_step(&self) -> u16 {
         (self.transcript_viewport_height / 6).max(3)
-    }
-
-    fn should_arrow_scroll_transcript(&self) -> bool {
-        self.focus == FocusArea::Input && self.command_suggestions().is_empty()
     }
 
     async fn handle_chat_list_key(&mut self, key: KeyEvent) -> Result<(), String> {
@@ -2188,6 +2188,7 @@ impl OperitTui {
     pub(super) async fn submit_input(&mut self) -> Result<(), String> {
         let input = self.input.trim_end().to_string();
         if input.starts_with('/') {
+            self.input_history.record(&input);
             self.input.clear();
             self.input_cursor = 0;
             // Slash-command failures (bad arguments, rejected core calls) are
@@ -2217,6 +2218,7 @@ impl OperitTui {
         let inline_attachments = std::mem::take(&mut self.queued_inline_attachments);
         let attachment_tokens = std::mem::take(&mut self.queued_attachment_tokens);
         let message = strip_attachment_tokens(input, &attachment_tokens);
+        self.input_history.record(&message);
         self.follow_transcript = true;
         self.status_message = self.text().connecting().to_string();
         self.input.clear();
