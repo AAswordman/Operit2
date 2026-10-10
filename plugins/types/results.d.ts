@@ -1464,6 +1464,7 @@ export interface GrepResultData {
    */
   toString(): string;
 }
+
 /**
  * Bounded hardware reply. Transport/authentication failures reject the plugin promise.
  */

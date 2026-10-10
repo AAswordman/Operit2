@@ -490,96 +490,61 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
     return toolCall(toolName, __operitToolsBuildParameters(namespace, method, overloads, args));
 }
 
-/** Reads one declared SoftwareSettings directory through the existing typed host callback bridge. */
+/** Reads one typed directory using the runtime's scoped structured Promise transport. */
 function __operitReadSoftwareSettingsDirectory(method) {
-    var ownerCallId = globalThis.__operitCurrentCallId;
-    return new Promise(function(resolve, reject) {
-        var callbackId = "__operit_directory_" + (++globalThis.__operitSoftwareDirectorySequence);
-        globalThis[callbackId] = function(result, isError) {
-            if (ownerCallId && typeof globalThis.__operitActivateCall === 'function') globalThis.__operitActivateCall(ownerCallId);
-            delete globalThis[callbackId];
-            try {
-                var value = JSON.parse(result);
-                if (isError) reject(new Error(value.message));
-                else resolve(value);
-            } catch (error) { reject(error); }
-        };
-        try { __operitNativeReadSoftwareSettingsDirectoryAsync(callbackId, method); }
-        catch (error) { delete globalThis[callbackId]; reject(error); }
-    });
+    return __operitInvokeHostAsync(__operitNativeReadSoftwareSettingsDirectoryAsync, [method]);
 }
-globalThis.__operitSoftwareDirectorySequence = 0;
 
-/** Applies one declared ordinary configuration ID without an AI tool call or plugin-owner projection. */
+/** Applies an exact configuration ID and preserves the host's original rejection. */
 function __operitApplySoftwareSettingsConfig(method, id) {
-    var ownerCallId = globalThis.__operitCurrentCallId;
     if (typeof id !== 'string' || id.trim() === '' || id.trim() !== id) return Promise.reject(new Error('Configuration ID must be exact nonblank text'));
-    return new Promise(function(resolve, reject) {
-        var callbackId = "__operit_config_" + (++globalThis.__operitSoftwareConfigSequence);
-        /** Delivers the actual single native result and retains its original failure message. */
-        globalThis[callbackId] = function(result, isError) {
-            if (ownerCallId && typeof globalThis.__operitActivateCall === 'function') globalThis.__operitActivateCall(ownerCallId);
-            delete globalThis[callbackId];
-            try {
-                var value = JSON.parse(result);
-                if (isError) {
-                    if (value === null || typeof value !== 'object' || typeof value.message !== 'string') throw new Error('Malformed SoftwareSettings configuration error');
-                    reject(new Error(value.message));
-                } else resolve(value);
-            } catch (error) { reject(error); }
-        };
-        try { __operitNativeApplySoftwareSettingsConfigAsync(callbackId, method, id); }
-        catch (error) { delete globalThis[callbackId]; reject(error); }
-    });
+    return __operitInvokeHostAsync(__operitNativeApplySoftwareSettingsConfigAsync, [method, id]);
 }
-globalThis.__operitSoftwareConfigSequence = 0;
 
-/** Validates complete JSON objects without coercing undefined values or non-finite numbers. */
+/** Validates and snapshots complete JSON objects without text conversion or property getters. */
 function __operitRequireChatJsonObject(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Chat extension value must be a JSON object');
-    /** Rejects every non-JSON property recursively before native serialization. */
-    function validate(entry) {
-        if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') return;
-        if (typeof entry === 'number' && Number.isFinite(entry)) return;
+    var ancestors = [], nodes = 0;
+    /** Copies data now, including requests whose first streaming pull happens later. */
+    function copy(entry, depth) {
+        if (++nodes > 1000000 || depth > 128) throw new Error('Chat extension exceeds structured depth/node limit');
+        if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') return entry;
+        if (typeof entry === 'number' && Number.isFinite(entry)) return entry;
+        if (typeof entry !== 'object' || (!Array.isArray(entry) && Object.getPrototypeOf(entry) !== Object.prototype)) throw new Error('Chat extension contains a non-JSON value');
+        if (ancestors.indexOf(entry) !== -1) throw new Error('Chat extension contains a cyclic value');
+        ancestors.push(entry);
+        var result;
         if (Array.isArray(entry)) {
+            result = [];
             for (var index = 0; index < entry.length; index++) {
-                if (!Object.prototype.hasOwnProperty.call(entry, index)) throw new Error('Chat extension contains a non-JSON array hole');
-                validate(entry[index]);
+                var item = Object.getOwnPropertyDescriptor(entry, String(index));
+                if (!item) throw new Error('Chat extension contains a non-JSON array hole');
+                if (!Object.prototype.hasOwnProperty.call(item, 'value')) throw new Error('Chat extension contains a non-JSON property');
+                Object.defineProperty(result, index, { value: copy(item.value, depth + 1), enumerable: true, writable: true, configurable: true });
             }
-            return;
-        }
-        if (typeof entry === 'object' && Object.getPrototypeOf(entry) === Object.prototype) {
+        } else {
+            result = {};
             Reflect.ownKeys(entry).forEach(function(key) {
                 if (typeof key !== 'string') throw new Error('Chat extension contains a non-JSON key');
                 var descriptor = Object.getOwnPropertyDescriptor(entry, key);
                 if (!descriptor.enumerable || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) throw new Error('Chat extension contains a non-JSON property');
-                validate(descriptor.value);
+                Object.defineProperty(result, key, { value: copy(descriptor.value, depth + 1), enumerable: true, writable: true, configurable: true });
             });
-            return;
         }
-        throw new Error('Chat extension contains a non-JSON value');
+        ancestors.pop();
+        return result;
     }
-    validate(value);
+    return copy(value, 0);
 }
 /** Invokes only the narrow typed native record binding; the engine supplies the authenticated owner. */
 function __operitChatExtension(method, target, value) {
-    var ownerCallId = globalThis.__operitCurrentCallId;
-    return new Promise(function(resolve, reject) {
+    try {
+        __operitRequireChatJsonObject(target);
         if (method === 'writeExtension') __operitRequireChatJsonObject(value);
-        var targetJson = JSON.stringify(target), valueJson = JSON.stringify(value);
-        if (typeof targetJson !== 'string' || typeof valueJson !== 'string') throw new Error('Chat extension arguments require JSON');
-        var callbackId = '__operit_chat_extension_' + (++globalThis.__operitChatExtensionSequence);
-        globalThis[callbackId] = function(result, isError) {
-            if (ownerCallId && typeof globalThis.__operitActivateCall === 'function') globalThis.__operitActivateCall(ownerCallId);
-            delete globalThis[callbackId];
-            try { var parsed = JSON.parse(result); if (isError) reject(new Error(parsed.message)); else resolve(parsed); }
-            catch (error) { reject(error); }
-        };
-        try { __operitNativeChatExtensionAsync(callbackId, method, targetJson, valueJson); }
-        catch (error) { delete globalThis[callbackId]; reject(error); }
-    });
+        else if (value !== null) throw new Error('Chat extension read/delete does not accept a value');
+        return __operitInvokeHostAsync(__operitNativeChatExtensionAsync, [method, target, value]);
+    } catch (error) { return Promise.reject(error); }
 }
-globalThis.__operitChatExtensionSequence = 0;
 
 "#,
     );

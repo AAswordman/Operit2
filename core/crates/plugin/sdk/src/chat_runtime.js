@@ -1,51 +1,33 @@
-// Canonical current Chat send bindings. Internal transport handles never reach plugin authors.
-var __operitChatCallbackSequence = 0;
+// Canonical current Chat bindings use the same scoped host Promise transport as Tools.
 
-/** Invokes the exact typed native Chat method without exposing callbacks in the public contract. */
+/** Calls one typed operation without publishing global callback identities. */
 function __operitChatInvoke(method, payload) {
-    return new Promise(
-        /** Registers one response callback for a single native pull or control operation. */
-        function(resolve, reject) {
-            var callbackId = '__operit_chat_send_' + (++__operitChatCallbackSequence);
-            /** Delivers the actual typed host response and removes its private callback immediately. */
-            globalThis[callbackId] = function(result, isError) {
-                delete globalThis[callbackId];
-                try {
-                    var value = JSON.parse(result);
-                    if (isError) reject(new Error(value.message));
-                    else resolve(value);
-                } catch (error) { reject(error); }
-            };
-            try { __operitNativeChatAsync(callbackId, method, payload); }
-            catch (error) { delete globalThis[callbackId]; reject(error); }
-        }
-    );
+    return __operitInvokeHostAsync(__operitNativeChatAsync, [method, payload]);
 }
 
 /** Captures one complete send request before its caller can mutate it across asynchronous pulls. */
-function __operitChatRequestJson(request) {
+function __operitChatRequestValue(request) {
     if (request === null || typeof request !== 'object' || Array.isArray(request)) throw new Error('Chat requires one send request object');
-    __operitRequireChatJsonObject(request);
-    return JSON.stringify(request);
+    return __operitRequireChatJsonObject(request);
 }
 
 /** Returns one actual finalized receipt through the same native execution pipeline as streaming. */
 function __operitChatSend(request) {
     if (arguments.length !== 1) return Promise.reject(new Error('Chat.sendMessage requires exactly one request'));
-    try { return __operitChatInvoke('send', __operitChatRequestJson(request)); }
+    try { return __operitChatInvoke('send', __operitChatRequestValue(request)); }
     catch (error) { return Promise.reject(error); }
 }
 
 /** Returns one bounded pull-based iterator whose disposal never cancels generation. */
 function __operitChatStream(request) {
     if (arguments.length !== 1) throw new Error('Chat.sendMessageStreaming requires exactly one request');
-    var requestJson = __operitChatRequestJson(request);
+    var requestValue = __operitChatRequestValue(request);
     var opening = null, streamId = null, disposal = null, closed = false, pulling = false;
 
     /** Starts the sole accepted send lazily on its first consumer pull. */
     function open() {
         if (opening === null) {
-            opening = __operitChatInvoke('open', requestJson).then(
+            opening = __operitChatInvoke('open', requestValue).then(
                 /** Retains only the private native observation identity. */
                 function(id) { streamId = id; return id; }
             );
@@ -61,7 +43,7 @@ function __operitChatStream(request) {
             disposal = (async function() {
                 if (opening === null) return;
                 var id = await opening;
-                await __operitChatInvoke('close', JSON.stringify(id));
+                await __operitChatInvoke('close', id);
             })();
         }
         return disposal;
@@ -88,7 +70,7 @@ function __operitChatStream(request) {
         try {
             var id = await open();
             if (closed) { await dispose(); return { done: true, value: undefined }; }
-            var event = await __operitChatInvoke('next', JSON.stringify(id));
+            var event = await __operitChatInvoke('next', id);
             if (closed || event === null) { await dispose(); return { done: true, value: undefined }; }
             if (event.type === 'completed') await dispose();
             return { done: false, value: event };
@@ -116,5 +98,5 @@ function __operitChatStream(request) {
 /** Requests cancellation of only the immutable calling plugin's captured execution in this chat. */
 function __operitChatCancel(chatId) {
     if (arguments.length !== 1 || typeof chatId !== 'string' || chatId.trim() === '') return Promise.reject(new Error('Chat.cancel requires one nonempty chatId'));
-    return __operitChatInvoke('cancel', JSON.stringify(chatId));
+    return __operitChatInvoke('cancel', chatId);
 }

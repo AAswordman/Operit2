@@ -2,24 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
+import { installScopedHostRuntime } from "./fixtures/scoped_host_runtime.mjs";
 
 const source=readFileSync(new URL("../../core/crates/plugin/sdk/src/js_sdk/storage_runtime.js",import.meta.url),"utf8");
 
-/** Runs the production JS facade while recording only the actual structured Host callback traffic. */
+/** Runs production SDK and host Promise registry, with only storage operations supplied by the test. */
 function fixture() {
   const pending=[];
-  const sandbox=vm.createContext({pending,
-    /** Captures exact structured arguments without JSON text serialization. */
-    __operitNativeStorageRequestAsync(callbackId,request) {pending.push({callbackId,request});},
-  });
-  vm.runInContext("globalThis.Tools={Storage:{}}; globalThis.__operitCurrentCallId='owner';globalThis.refs=0;globalThis.__operitRetainCallReference=function(){refs++;};globalThis.__operitReleaseCallReference=function(){refs--;}; globalThis.__operitActivateCall=function(id){globalThis.__operitCurrentCallId=id;};",sandbox);
+  const sandbox=vm.createContext({pending});
+  const registry=installScopedHostRuntime(sandbox);
+  sandbox.__operitNativeStorageRequestAsync=registry.binding((requestId,request)=>pending.push({requestId,request}));
+  vm.runInContext("globalThis.Tools={Storage:{}};",sandbox);
   vm.runInContext(source+"\nTools.Storage.request=__operitStorageRequest;__operitInstallStorageFacade();",sandbox);
   return { sandbox,pending,
-    /** Evaluates the caller's ordinary JS syntax in the real SDK realm. */
     run(code) {return vm.runInContext(code,sandbox);},
-    /** Completes one pending callback with an independent structured return value. */
-    reply(value,isError=false) {const entry=pending.shift(); assert.ok(entry); sandbox[entry.callbackId](value,isError);return entry.request;},
-    /** Produces plain test assertion data without coercing bigint or binary values. */
+    reply(value,isError=false) {const entry=pending.shift(); assert.ok(entry); registry.settle(entry.requestId,value,isError);return entry.request;},
     request() {return structuredClone(pending[0].request);},
   };
 }
@@ -70,8 +67,8 @@ test("record proxies persist only on flush and retain pending edits after a vers
 });
 
 /** Restores the originating execution before the awaiting caller resumes, including errors. */
-test("storage callbacks restore the owning call and remove one-shot callback functions",async()=>{
+test("storage promises restore their owner without publishing callback functions",async()=>{
   const f=fixture();const promise=f.run("Tools.Storage.request({op:'close',handle:'x'}).catch(error=>({message:error.message,owner:__operitCurrentCallId}))");
-  const callback=f.pending[0].callbackId;f.run("__operitCurrentCallId='unrelated'");f.reply("closed on host",true);const value=await promise;
-  assert.equal(value.owner,"owner");assert.equal(value.message,"closed on host");assert.equal(f.sandbox[callback],undefined);assert.equal(f.sandbox.refs,0);
+  const globals=Object.keys(f.sandbox);assert.equal(typeof f.pending[0].requestId,"number");f.run("__operitCurrentCallId='unrelated'");f.reply("closed on host",true);const value=await promise;
+  assert.equal(value.owner,"owner");assert.equal(value.message,"closed on host");assert.deepEqual(Object.keys(f.sandbox),globals);assert.equal(f.sandbox.refs,0);
 });

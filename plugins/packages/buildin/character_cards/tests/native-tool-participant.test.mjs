@@ -76,8 +76,8 @@ test("embedded JS transport: entry-time identity capture retains concurrent part
     native.invoke(script, "inspect", nativeToolParameters("opaque.left")),
     native.invoke(script, "inspect", nativeToolParameters("opaque.right")),
   ]);
-  assert.deepEqual(left, { captured: "opaque.left", injected: "opaque.left", chatId: "fixture.chat", cardGetter: "undefined" });
-  assert.deepEqual(right, { captured: "opaque.right", injected: "opaque.right", chatId: "fixture.chat", cardGetter: "undefined" });
+  assert.deepEqual(structuredClone(left), { captured: "opaque.left", injected: "opaque.left", chatId: "fixture.chat", cardGetter: "undefined" });
+  assert.deepEqual(structuredClone(right), { captured: "opaque.right", injected: "opaque.right", chatId: "fixture.chat", cardGetter: "undefined" });
   assert.equal(native.terminal.length, 2);
 });
 
@@ -124,7 +124,7 @@ test("embedded JS plus disk-backed IPC: character list accepts the full native e
   const actual = await environment(t), script = toolModuleScript("src/runtime-tools/tools.ts");
   const result = await actual.native.invoke(script, "list_character_cards", nativeToolParameters("default"));
   const records = await actual.service.dispatchDomain("character.list", {});
-  assert.deepEqual(result, { totalCount: records.length, cards: plain(records.map(
+  assert.deepEqual(structuredClone(result), { totalCount: records.length, cards: plain(records.map(
     /** Compares the exact historical public projection against the production repository's records. */
     card => ({ id: card.id, name: card.name, description: card.description, isDefault: card.isDefault, createdAt: card.createdAt, updatedAt: card.updatedAt }),
   )) });

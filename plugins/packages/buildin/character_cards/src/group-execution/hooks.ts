@@ -43,7 +43,7 @@ function observe(execution: InputExecution, work: Promise<GroupExecutionOutcome>
     /** Publishes only the controller's validated result and precise native message locators. */
     outcome => { execution.status = "settled"; execution.outcome = outcome; },
     /** Retains the original rejected error and exposes the background failure through the plugin log. */
-    failure => { execution.status = "failed"; execution.failure = failure; NativeInterface.logError("Group input " + execution.input.submissionId + " failed: " + String(failure)); },
+    failure => { execution.status = "failed"; execution.failure = failure; console.error("Group input " + execution.input.submissionId + " failed: " + String(failure)); },
   );
 }
 

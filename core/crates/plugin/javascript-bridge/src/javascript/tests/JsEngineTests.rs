@@ -851,7 +851,7 @@ fn clearing_timer_from_another_call_releases_timer_owner_reference() {
     let result = state
         .evalJavaScriptString(
             r#"(function() {
-                globalThis.__operitNativeScheduleJavaScriptTimer = function() {};
+                globalThis.__operitNativeScheduleJavaScriptTimer = function() { return new Promise(function() {}); };
                 var owner = __operitRegisterCallSession('timer-owner', {});
                 globalThis.__operitCurrentCallId = 'timer-owner';
                 var timerId = setInterval(function() {}, 60000);
@@ -1272,8 +1272,8 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
     );
 
     assert_eq!(
-        expect_js_output(output, "ToolPkg IPC local call"),
-        "{\"value\":42,\"channel\":\"test.local\",\"runtime\":\"main\"}"
+        serde_json::from_str::<Value>(&expect_js_output(output, "ToolPkg IPC local call")).unwrap(),
+        serde_json::json!({"value":42,"channel":"test.local","runtime":"main"})
     );
 }
 
@@ -1536,8 +1536,8 @@ async fn pending_call_releases_state_and_preserves_call_context() {
         None, true, 2, None,
     ).await;
     assert_eq!(
-        expect_js_output(output, "interleaved second call"),
-        r#"{"owner":"second","firstFinished":false}"#
+        serde_json::from_str::<Value>(&expect_js_output(output, "interleaved second call")).unwrap(),
+        serde_json::json!({"owner":"second","firstFinished":false})
     );
     assert_eq!(
         expect_js_output(first.await.unwrap(), "interleaved first call"),
@@ -3702,7 +3702,7 @@ fn storageTestRequest(host: &TestPluginConfigExecutionHost, request: operit_plug
 
 /// Exercises the production JS callback and actual SQLite engine with JSON text codecs disabled.
 #[tokio::test(flavor = "current_thread")]
-async fn storage_structured_callback_roundtrips_real_sqlite_and_record_proxies() {
+async fn storage_structured_promise_roundtrips_real_sqlite_and_record_proxies() {
     let root = std::env::temp_dir().join(format!("operit-js-storage-{}",uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let host=Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(root.join("runtime"),root.join("workspaces")));
@@ -3723,11 +3723,11 @@ async fn storage_structured_callback_roundtrips_real_sqlite_and_record_proxies()
             /** Verifies request conversion remains structured while unrelated engine bookkeeping runs normally. */
             __operitStorageRequest=function(request){return withoutTextCodecs(()=>originalRequest(request));};
             const native=__operitNativeStorageRequestAsync;
-            /** Verifies native replies reach the SDK callback as values without text parsing. */
-            __operitNativeStorageRequestAsync=function(callbackId,request) {
-                const callback=globalThis[callbackId];
-                globalThis[callbackId]=function(result,isError){return withoutTextCodecs(()=>callback(result,isError));};
-                return native(callbackId,request);
+            /** Requires a real host-owned Promise, rather than a JS callback identity. */
+            __operitNativeStorageRequestAsync=function(scope,request) {
+                const promise=withoutTextCodecs(()=>native(scope,request));
+                if (!promise || typeof promise.then !== 'function') throw new Error('Storage requires a host Promise');
+                return promise;
             };
             const objects=await Tools.Storage.objects.open({path:params.config+'/objects.sqlite'});
             const records=objects.collection('cards');
@@ -3908,8 +3908,8 @@ async fn compose_dsl_retained_state_stays_in_native_js_session() {
 async fn compose_dsl_webview_interface_actions_survive_retained_commits() {
     let engine = newTestToolPkgRegistrationEngine();
     let script = r#"
-        NativeInterface.composeWebViewControllerCommand = function(raw) {
-            globalThis.lastWebViewCommand = JSON.parse(raw);
+        __operitNativeComposeWebViewControllerCommand = function(command) {
+            globalThis.lastWebViewCommand = command;
             return {success: true, data: null};
         };
         exports.default = function(ctx) {
@@ -3944,8 +3944,8 @@ async fn compose_dsl_character_card_webview_interface_survives_native_commits() 
     let engine = newTestToolPkgRegistrationEngine();
     let source = std::fs::read_to_string(testRepositoryRoot().join("plugins/packages/buildin/character_cards/dist/ui/main/index.ui.js")).unwrap();
     let script = format!(r#"
-        NativeInterface.composeWebViewControllerCommand = function(raw) {{
-            globalThis.characterWebViewCommand = JSON.parse(raw);
+        __operitNativeComposeWebViewControllerCommand = function(command) {{
+            globalThis.characterWebViewCommand = command;
             return {{success: true, data: null}};
         }};
         ToolPkg.readResource = async function() {{return '/fixture/character-memory.html';}};
@@ -4037,4 +4037,16 @@ fn catalog_initialization_failure_returns_error_without_killing_host_worker() {
     )), "engine after catalog repair");
     assert_eq!(serde_json::from_str::<Value>(&output).unwrap()["alive"], true);
     engine.destroy();
+}
+
+/// A registration's explicit failed result must not be mistaken for a successful capture.
+#[test]
+fn registration_failure_result_survives_the_ordinary_text_adapter() {
+    ensure_test_runtime_root();
+    let mut state = newTestJsEngineState(None);
+    let result = state.execute_toolpkg_main_registration_function_on_current_thread(
+        "exports.registerToolPkg = function() { return {success:false,message:'exact registration failure'}; };",
+        "registerToolPkg", &testParams(), None,
+    );
+    assert_eq!(result.expect_err("failed registration must not publish a capture").message, "exact registration failure");
 }

@@ -237,7 +237,8 @@ test('session cancellation removes interval state and prevents further ticks', a
 /** Guards the required host contract and prevents retired bindings from being reintroduced. */
 test('bridge source exposes only mandatory structured asynchronous transports', () => {
   const host = source('core/crates/foundation/host-api/src/lib.rs');
-  for (const method of ['callHostJavaScriptFunction', 'registerHostJavaScriptAsyncJsonFunction',
+  assert.match(host, /fn callHostJavaScriptFunction\([\s\S]*?\) -> HostResult<Value>;/);
+  for (const method of ['registerHostJavaScriptAsyncJsonFunction',
     'settleHostJavaScriptPromise', 'cancelHostJavaScriptPromises', 'scheduleHostRuntimeCooperativeAsyncTask']) {
     assert.match(host, new RegExp('fn ' + method + '\\([\\s\\S]*?\\) -> HostResult<\\(\\)>;'));
   }
@@ -245,6 +246,10 @@ test('bridge source exposes only mandatory structured asynchronous transports', 
     'core/crates/plugin/javascript-bridge/src/javascript/JsEngine.rs',
     'core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs',
     'core/crates/plugin/sdk/src/JsExecutionRuntimeBridge.script.js',
+    'core/crates/plugin/codegen/src/declarations.rs',
+    'core/crates/plugin/codegen/src/runtime_bindings.rs',
+    'core/crates/plugin/sdk/src/chat_runtime.js',
+    'core/crates/plugin/sdk/src/js_sdk/storage_runtime.js',
     'core/crates/plugin/sdk/src/js_sdk/core.rs',
     'core/crates/plugin/sdk/src/toolpkg/ToolPkgComposeDslBridge.rs',
     'core/crates/plugin/sdk/src/toolpkg/ToolPkgRegistrationBridge.rs',
@@ -255,7 +260,7 @@ test('bridge source exposes only mandatory structured asynchronous transports', 
     'core/crates/plugin/javascript-bridge/src/javascript/pako.script.js',
     'plugins/types/core.d.ts', 'plugins/types/index.d.ts',
   ]) {
-    assert.doesNotMatch(source(path), /callToolAsync|callToolSerialized|JsAsyncCallback::Legacy|__operitNativeInvokeToolPkgIpcAsync|__operitParseToolResult|NativeInterface/);
+    assert.doesNotMatch(source(path), /callToolAsync|callToolSerialized|JsAsyncCallback::Legacy|SdkCallback|JsCallbackDelivery|__operitNativeInvokeToolPkgIpcAsync|__operitParseToolResult|NativeInterface/);
   }
   for (const path of ['hosts/web/src/javascript_runtime.rs',
     'hosts/common/operit-host-native-scheduler/src/javascript_runtime.rs']) {

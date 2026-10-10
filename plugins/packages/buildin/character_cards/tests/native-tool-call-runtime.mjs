@@ -1,3 +1,4 @@
+import { productionBootstrap } from '../../../../../tools/tests/fixtures/production_bootstrap.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -10,25 +11,6 @@ const { buildSync } = require("esbuild");
 
 /** Reads the exact production source used by the native JavaScript execution boundary. */
 export function nativeToolSource(relative) { return readFileSync(new URL(relative, root), "utf8").replaceAll("\r\n", "\n"); }
-
-/** Extracts the sole runtime prelude without generating or editing any SDK artifact. */
-function executionPrelude() {
-  const matches = [...nativeToolSource("core/crates/plugin/sdk/src/JsExecutionScriptBuilder.rs").matchAll(/r#"([\s\S]*?)"#/g)];
-  assert.equal(matches.length, 1, "Expected one official execution prelude");
-  return matches[0][1];
-}
-
-/** Executes the real embedded engine helper after resolving only Rust format-string brace escapes. */
-function executionHelpers() {
-  const text = nativeToolSource("core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs");
-  const start = text.indexOf("        function __operitParseToolResult(result, isError) {{");
-  const end = text.indexOf("\n        {}\n        {}", start);
-  assert.ok(start >= 0 && end > start, "Expected exact engine execution helper boundaries");
-  const script = text.slice(start, end).replaceAll("{{", "{").replaceAll("}}", "}");
-  assert.match(script, /function __operitExecuteScriptFunction\(/);
-  assert.match(nativeToolSource("core/crates/plugin/javascript-bridge/src/javascript/JsEngine.rs"), /__operitExecuteScriptFunction\(\{callIdJson\}/);
-  return script;
-}
 
 /** Bundles the current plugin module for the actual native module factory, not a replacement tool implementation. */
 export function toolModuleScript(relative) {
@@ -63,53 +45,32 @@ export function nativeToolParameters(participantId) {
 export function createNativeToolRuntime(globals, dispatchIpc) {
   const terminal = [], pending = new Map();
   let nextCall = 0;
-  const methods = {
-    /** Delivers only the production terminal result and rejects duplicate or unsolicited completions. */
-    setCallResult(callId, raw) {
-      const request = pending.get(callId);
-      assert.notEqual(request, undefined, "Unexpected native result " + callId);
-      pending.delete(callId);
-      terminal.push({ callId, type: "result", raw });
-      request.resolve(JSON.parse(raw));
-    },
-    /** Preserves the actual production error message rather than manufacturing a successful tool response. */
-    setCallError(callId, raw) {
-      const request = pending.get(callId);
-      assert.notEqual(request, undefined, "Unexpected native failure " + callId);
-      pending.delete(callId);
-      terminal.push({ callId, type: "error", raw });
-      request.reject(new Error(JSON.parse(raw).message));
-    },
-    /** Validates real execution trace traffic independently from terminal completion. */
-    logJsExecutionTrace(callId, message) { assert.equal(typeof callId, "string"); assert.equal(typeof message, "string"); },
-    /** Adapts the real native IPC callback endpoint to the declared production dispatcher, not a business stub. */
-    invokeToolPkgIpcAsync(callbackId, packageTarget, callerContextKey, targetContextKey, targetRuntime, channel, payloadJson) {
-      assert.equal(packageTarget, "com.operit.character_cards");
-      assert.equal(callerContextKey, "toolpkg_main:com.operit.character_cards");
-      assert.equal(targetContextKey, "");
-      assert.equal(targetRuntime, "main");
-      assert.equal(typeof dispatchIpc, "function", "Native IPC requires the explicitly declared transport adapter");
-      dispatchIpc(channel, JSON.parse(payloadJson), { targetRuntime }).then(
-        /** Delivers the exact production callback envelope after the actual domain service resolves. */
-        value => context[callbackId](JSON.stringify({ success: true, value }), false),
-        /** Sends the original rejection message through the actual error callback without a successful substitute. */
-        error => context[callbackId](error.message, true),
-      );
-    },
-  };
-  const context = vm.createContext({
-    ...globals,
-    NativeInterface: new Proxy(methods, {
-      /** Rejects every undeclared native endpoint instead of silently returning an empty capability. */
-      get(target, name) {
-        assert.ok(Object.hasOwn(target, name), "Undeclared native tool endpoint " + String(name));
-        return target[name];
-      },
-    }),
+  const context=vm.createContext({...globals});
+  vm.runInContext(nativeToolSource('hosts/web/src/javascript_promises.js'),context);
+  const registry=context.__operitHostPromiseRegistry;
+  context.__operitNativeSetCallResult=registry.syncBinding((callId,value)=>{
+    const request=pending.get(callId);assert.ok(request,'Unexpected native result '+callId);
+    pending.delete(callId);terminal.push({callId,type:'result',value});request.resolve(value);
   });
-  vm.runInContext(nativeToolSource("core/crates/plugin/javascript-bridge/src/javascript/JsInitRuntime.script.js"), context);
-  context.__operitRuntimePrelude = executionPrelude();
-  vm.runInContext(executionHelpers(), context);
+  context.__operitNativeSetCallError=registry.syncBinding((callId,value)=>{
+    const request=pending.get(callId);assert.ok(request,'Unexpected native failure '+callId);
+    pending.delete(callId);terminal.push({callId,type:'error',value});request.reject(new Error(value.message));
+  });
+  context.__operitNativeLogJsExecutionTrace=(callId,message)=>{assert.equal(typeof callId,'string');assert.equal(typeof message,'string');};
+  context.__operitNativeLog=()=>{};
+  context.__operitNativeCancelJavaScriptPromises=scope=>registry.cancel(scope);
+  context.__operitNativeHashText=text=>{let hash=0;for(let i=0;i<text.length;i++)hash=(Math.imul(hash,31)+text.charCodeAt(i))>>>0;return hash.toString(16);};
+  context.__operitNativeInvokeToolPkgIpc=registry.binding((requestId,packageTarget,callerContextKey,targetContextKey,targetRuntime,channel,payload)=>{
+    assert.equal(packageTarget,'com.operit.character_cards');
+    assert.equal(callerContextKey,'toolpkg_main:com.operit.character_cards');
+    assert.equal(targetContextKey,'');assert.equal(targetRuntime,'main');
+    assert.equal(typeof dispatchIpc,'function');
+    Promise.resolve().then(()=>dispatchIpc(channel,payload,{targetRuntime})).then(
+      value=>registry.settle(requestId,{success:true,value},false),
+      error=>registry.settle(requestId,String(error.message),true),
+    );
+  });
+  vm.runInContext(productionBootstrap(),context);
 
   /** Invokes the production engine entry point with exactly the supplied converted native parameters. */
   function invoke(script, name, params) {

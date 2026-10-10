@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import test from 'node:test';
+import { installScopedHostRuntime } from './fixtures/scoped_host_runtime.mjs';
 import { createDiskHarness } from '../../plugins/packages/buildin/character_cards/tests/disk-files.mjs';
 import { loadModule } from '../../plugins/packages/buildin/character_cards/tests/runtime.mjs';
 
@@ -77,16 +78,6 @@ function engine(version = '1.0.0') {
     async toolCall(name, params) { calls.push({ name, args: [params] }); return context.invokeTool(name, params); },
     /** Rejects unexpected provider requests instead of manufacturing successful empty data. */
     async dependency() { throw new Error('Unexpected dependency invocation'); },
-    /** Delivers the canonical native dependency envelope to the production dispatcher callback. */
-    __operitNativeCallDependencyAsync(callbackId, packageName, method, payload) {
-      calls.push({ name: 'dependency.' + method, packageName, args: [JSON.parse(payload)] });
-      Promise.resolve().then(() => context.dependency(packageName, method, JSON.parse(payload))).then(
-        /** Returns the actual provider result through the native success envelope. */
-        value => context[callbackId](JSON.stringify({ success: true, value }), false),
-        /** Preserves the original provider error text in the native rejection envelope. */
-        error => context[callbackId](error.message, true),
-      );
-    },
     /** Supplies only the actual modeled builtin send result. */
     async invokeTool(name, params) {
       assert.equal(name, 'send_message_to_ai');
@@ -96,6 +87,22 @@ function engine(version = '1.0.0') {
     __operitGetCallState() { return { params: { ...context.params, __operit_toolpkg_api_version: context.version } }; },
     /** Publishes the runtime namespace in this engine. */
     __operitExpose(name, value) { context[name] = value; },
+  });
+  const registry=installScopedHostRuntime(context);
+  context.__operitCurrentCallId='call';
+  context.__operitNativeCallToolStructured=registry.binding((requestId,type,name,params)=>{
+    assert.equal(type,'default');calls.push({name,args:[params]});
+    Promise.resolve().then(()=>context.invokeTool(name,params)).then(
+      data=>registry.settle(requestId,{success:true,data},false),
+      error=>registry.settle(requestId,String(error.message),true),
+    );
+  });
+  context.__operitNativeCallDependency=registry.binding((requestId,packageName,method,payload)=>{
+    calls.push({name:'dependency.'+method,packageName,args:[payload]});
+    Promise.resolve().then(()=>context.dependency(packageName,method,payload)).then(
+      value=>registry.settle(requestId,{success:true,value},false),
+      error=>registry.settle(requestId,String(error.message),true),
+    );
   });
   const rust = source('core/crates/plugin/sdk/src/toolpkg/ToolPkgApiRuntimeScript.rs');
   const start = rust.indexOf('r#"') + 3;
@@ -309,20 +316,15 @@ async function roleProvider(t, version = '1.0.0') {
     assert.equal(typeof exportedTools[match[1]], 'function');
     return JSON.stringify(await exportedTools[match[1]](params));
   };
-  const bridge = source('core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs');
-  const first = bridge.indexOf('        function __operitParseToolResult(');
-  const last = bridge.indexOf('        /** Returns the host-owned executable tool catalog', first);
-  assert.ok(first !== -1 && last > first);
-  runtime.context.NativeInterface = {
-    /** Encodes the actual native StringResultData boundary before the production JS toolCall decodes its envelope. */
-    async callTool(type, name, serialized) {
-      assert.equal(type, 'default');
-      const params = JSON.parse(serialized);
-      runtime.calls.push({ name, args: [params] });
-      return JSON.stringify({ success: true, data: await runtime.context.invokeTool(name, params) });
-    },
-  };
-  vm.runInContext(bridge.slice(first, last).replaceAll('{{', '{').replaceAll('}}', '}'), runtime.context);
+  const registry=runtime.context.__operitHostPromiseRegistry;
+  runtime.context.__operitNativeCallToolStructured=registry.binding((requestId,type,name,params)=>{
+    assert.equal(type,'default');
+    runtime.calls.push({name,args:[params]});
+    Promise.resolve().then(()=>runtime.context.invokeTool(name,params)).then(
+      data=>registry.settle(requestId,{success:true,data},false),
+      error=>registry.settle(requestId,String(error.message),true),
+    );
+  });
   return { ...runtime, disk, domain };
 }
 
@@ -450,7 +452,7 @@ test('legacy adapters reject precision loss and propagate original provider fail
   const runtime = await roleProvider(t);
   const failure = new Error('Exact disk failure');
   runtime.disk.failNext('storage.commit', failure);
-  await assert.rejects(runtime.tools.Memory.create('Failed', 'Must not exist'), caught => caught === failure);
+  await assert.rejects(runtime.tools.Memory.create('Failed', 'Must not exist'), caught => caught.message === failure.message);
   const context = vm.createContext({});
   vm.runInContext(source(adapterRoot + 'memory.js'), context);
   const memory = context.__operitCreateV1Memory(async () => ({ totalCount: 1, links: [{ linkId: '9007199254740993', sourceTitle: 'a', targetTitle: 'b', linkType: 'related', weight: 0.7, description: '' }] }));

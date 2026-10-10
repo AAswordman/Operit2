@@ -12,9 +12,6 @@ pub mod CoreNodeIdentityStore;
 pub mod CoreSpaceStore;
 #[path = "NetworkControlStore.rs"]
 pub mod NetworkControlStore;
-#[cfg(feature = "full")]
-#[path = "ObjectBoxStore.rs"]
-pub mod ObjectBoxStore;
 #[path = "PluginStorage.rs"]
 pub mod PluginStorage;
 #[path = "PreferencesDataStore.rs"]
@@ -37,8 +34,6 @@ pub mod SqliteStore;
 #[path = "SyncOperationStore.rs"]
 pub mod SyncOperationStore;
 
-#[cfg(feature = "full")]
-pub use ObjectBoxStore::*;
 pub use PreferencesDataStore::*;
 #[cfg(feature = "full")]
 pub use RuntimeFileSyncStore::*;

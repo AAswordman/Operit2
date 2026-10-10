@@ -1954,13 +1954,6 @@ pub type HostJavaScriptAsyncJsonCallback =
 pub type HostJavaScriptJsonCallback =
     Arc<dyn Fn(Vec<Value>) -> HostResult<Value> + Send + Sync + 'static>;
 
-/// Owns a structured host value without serializing it to JSON text.
-pub type HostJavaScriptValue = serde_json::Value;
-
-/// Handles a structured JavaScript callback on the runtime's owning executor.
-pub type HostJavaScriptValueCallback =
-    Arc<dyn Fn(Vec<HostJavaScriptValue>) -> HostResult<()> + Send + Sync + 'static>;
-
 /// Supplies one interrupt predicate to a host-owned JavaScript runtime.
 pub type HostJavaScriptInterruptHandler = Arc<dyn Fn() -> bool + Send + Sync + 'static>;
 
@@ -1975,18 +1968,6 @@ pub trait HostJavaScriptRuntime {
         scriptName: &str,
         script: &str,
     ) -> HostResult<String>;
-
-    /// Reuses the bounded structured binding transport for value-only DSL callbacks.
-    fn registerHostJavaScriptValueFunction(
-        &mut self,
-        name: &str,
-        callback: HostJavaScriptValueCallback,
-    ) -> HostResult<()> {
-        self.registerHostJavaScriptJsonFunction(name, Arc::new(move |arguments| {
-            callback(arguments)?;
-            Ok(Value::Null)
-        }))
-    }
 
     /// Executes every JavaScript job currently ready in this runtime.
     fn executePendingHostJavaScriptJobs(&mut self) -> HostResult<()>;

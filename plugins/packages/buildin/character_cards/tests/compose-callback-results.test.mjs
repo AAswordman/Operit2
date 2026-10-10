@@ -1,3 +1,4 @@
+import { productionBootstrap } from '../../../../../tools/tests/fixtures/production_bootstrap.mjs';
 import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -54,71 +55,22 @@ async function dispatch(context, property) {
   return context.__operit_dispatch_compose_dsl_action({ actionId: action.__actionId });
 }
 
-/** Extracts native execution helpers, including Promise completion, from the engine's real bootstrap. */
-function executionHelpers() {
-  const text = source("core/crates/plugin/javascript-bridge/src/javascript/JsLibraries.rs");
-  const start = text.indexOf("        function __operitParseToolResult(result, isError) {{");
-  const end = text.indexOf("\n        {}\n        {}", start);
-  assert.ok(start >= 0 && end > start, "Native execution helper boundaries must remain explicit");
-  const helpers = text.slice(start, end).replaceAll("{{", "{").replaceAll("}}", "}");
-  assert.match(helpers, /function __operitExecuteScriptFunction\(/);
-  assert.match(source("core/crates/plugin/javascript-bridge/src/javascript/JsEngine.rs"), /__operitExecuteScriptFunction\(\{callIdJson\}/);
-  return helpers;
-}
-
 /** Runs real execution/session/DSL JavaScript while replacing only native transport endpoints, not business or callback results. */
 function nativeTransport(callbackBody) {
   const terminal = [], intermediate = [], traces = [], pending = new Map();
   const finalResponses = new Map();
-  const methods = {
-    /** Captures the exact native success payload after the production Promise is awaited. */
-    setCallResult(callId, raw) {
-      assert.equal(typeof raw, "string");
-      const request = pending.get(callId);
-      assert.notEqual(request, undefined, `Unexpected or duplicate native completion ${callId}`);
-      pending.delete(callId);
-      terminal.push({ callId, type: "result", raw });
-      assert.equal(JSON.parse(raw), null);
-      request.resolve(finalResponses.get(callId));
-    },
-    /** Propagates the production failure payload rather than creating a success result. */
-    setCallError(callId, raw) {
-      const request = pending.get(callId);
-      assert.notEqual(request, undefined, `Unexpected or duplicate native error ${callId}`);
-      pending.delete(callId);
-      terminal.push({ callId, type: "error", raw });
-      request.reject(new Error(JSON.parse(raw).message));
-    },
-    /** Records real intermediate render messages separately from terminal action results. */
-    sendCallIntermediateResult(callId, raw) { intermediate.push({ callId, value: JSON.parse(raw) }); },
-    /** Records native execution trace traffic without suppressing unexpected capabilities. */
-    logJsExecutionTrace(callId, message) { traces.push({ callId, message }); },
-  };
-  const context = vm.createContext({
-    NativeInterface: new Proxy(methods, {
-      /** Rejects every undeclared native endpoint used by this isolated transport harness. */
-      get(target, name) {
-        assert.ok(Object.hasOwn(target, name), `Undeclared native test endpoint: ${String(name)}`);
-        return target[name];
-      },
-    }),
+  const context=vm.createContext({});
+  vm.runInContext(source('hosts/web/src/javascript_promises.js'),context);
+  const registry=context.__operitHostPromiseRegistry;
+  context.__operitNativeSetCallError=registry.syncBinding((callId,value)=>{
+    const request=pending.get(callId);assert.ok(request,'Unexpected native error '+callId);
+    pending.delete(callId);terminal.push({callId,type:'error',value});request.reject(new Error(value.message));
   });
-  vm.runInContext(source("core/crates/plugin/javascript-bridge/src/javascript/JsInitRuntime.script.js"), context);
-  context.__operitRuntimePrelude = embedded(sdkRoot + "JsExecutionScriptBuilder.rs");
-  context.__operitNativeHashText =
-    /** Implements the native fingerprint endpoint in this explicitly isolated transport fixture. */
-    function(text) { let hash = 0; for (let index = 0; index < text.length; index++) hash = (Math.imul(hash, 31) + text.charCodeAt(index)) >>> 0; return hash.toString(16); };
-  context.module = { exports: {} };
-  context.exports = context.module.exports;
-  vm.runInContext(source(sdkRoot + "toolpkg/vendor/acorn.js"), context);
-  context.__operitAcorn = context.module.exports;
-  context.module = { exports: {} };
-  vm.runInContext(executionHelpers(), context);
-  for (const file of ["ToolPkgComposeDslCompiler.js", "ToolPkgComposeDslRetained.js", "ToolPkgComposeDslReactive.js"]) {
-    vm.runInContext(source(sdkRoot + "toolpkg/" + file), context);
-  }
-  vm.runInContext(embedded(sdkRoot + "toolpkg/ToolPkgComposeDslBridge.rs"), context);
-  context.__operitComposeRuntimeSource = wrappedScreen("");
+  context.__operitNativeLogJsExecutionTrace=(callId,message)=>traces.push({callId,message});
+  context.__operitNativeCancelJavaScriptPromises=scope=>registry.cancel(scope);
+  context.__operitNativeLog=()=>{};
+  context.__operitNativeHashText=text=>{let hash=0;for(let i=0;i<text.length;i++)hash=(Math.imul(hash,31)+text.charCodeAt(i))>>>0;return hash.toString(16);};
+  vm.runInContext(productionBootstrap(),context);
   const fixture = composeStreamFixture(context, { inspectStorage: false });
   context.__operitNativeSetCallStructuredResult =
     /** Completes the command separately from the final response already published on its stream. */

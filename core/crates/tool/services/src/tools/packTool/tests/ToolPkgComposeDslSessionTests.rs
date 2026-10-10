@@ -96,8 +96,8 @@ async fn native_character_editor_webview_actions_preserve_session_revision_order
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(4).unwrap();
     let source = std::fs::read_to_string(root.join("plugins/packages/buildin/character_cards/dist/ui/main/index.ui.js")).unwrap();
     let script = format!(r#"
-        NativeInterface.composeWebViewControllerCommand = function(raw) {{
-            globalThis.characterControllerCommand = JSON.parse(raw);
+        __operitNativeComposeWebViewControllerCommand = function(command) {{
+            globalThis.characterControllerCommand = command;
             return {{success:true, data:null}};
         }};
         ToolPkg.readResource = async function() {{ await Promise.resolve(); return '/fixture/character-memory.html'; }};

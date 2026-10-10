@@ -100,6 +100,6 @@ test('extension and CLI command futures run on the owning Host rather than neste
   assert.doesNotMatch(command, /block_in_place|block_on/);
   const cli = production('apps/cli/src/bootstrap.rs');
   assert.match(cli, /commandContext\.hostRuntimeTaskSchedulerHost/);
-  assert.match(cli, /scheduleHostRuntimeAsyncTask\("operit-cli-core-command"/);
+  assert.match(cli, /scheduleHostRuntimeAsyncTask\("cli-core-command"/);
   assert.match(cli, /sender\.closed\(\)/);
 });

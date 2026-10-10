@@ -725,7 +725,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
             function emitIntermediate(value) {{
                 if (isActive()) {{
                     if (structuredResult) {{
-                        __operitNativeSendStructuredIntermediate(callId, __operitNormalizeSerializableValue(__operitNormalizeComposeResult(value), []));
+                        __operitNativeSendStructuredIntermediate(callId, __operitNormalizeComposeResult(value));
                     }} else {{
                         __operitSendIntermediateResult(callId, value === undefined ? null : value);
                     }}
@@ -734,7 +734,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
             /** Completes a structured result or reports the original conversion failure. */
             function complete(value) {{
                 try {{
-                    completeCall(value === undefined ? null : __operitNormalizeSerializableValue(__operitNormalizeComposeResult(value), []));
+                    completeCall(value === undefined ? null : __operitNormalizeComposeResult(value));
                 }} catch (error) {{
                     var report = callRuntimeReport(error, 'Result Serialization Failure');
                     var serializationMessage =
@@ -759,7 +759,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                     if (!isActive()) {{ throw new Error('Compose response owner is no longer active'); }}
                     __operitNativeSendStructuredIntermediate(callId, {{
                         phase: phase,
-                        response: __operitNormalizeSerializableValue(__operitNormalizeComposeResult(response), [])
+                        response: __operitNormalizeComposeResult(response)
                     }});
                 }},
                 reportError: emitError,

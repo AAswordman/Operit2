@@ -477,7 +477,8 @@ impl RuntimePackageManager {
         let mut sessions = self.composeDslSessions.lock().expect("Compose session registry mutex poisoned");
         if let Some(session) = sessions.get(&key) { return Ok(session.id()); }
         let session = ToolPkgComposeDslSession::new(
-            self.getToolPkgExecutionEngine(contextKey, containerPackageName),
+            self.findToolPkgExecutionEngine(contextKey, containerPackageName)
+                .ok_or("Compose execution context has not been acquired or has been released")?,
             self.toolPkgTextResources(containerPackageName)?,
         );
         sessions.insert(key, session.clone());

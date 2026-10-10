@@ -8004,7 +8004,7 @@ function observe(execution, work) {
     (failure2) => {
       execution.status = "failed";
       execution.failure = failure2;
-      NativeInterface.logError("Group input " + execution.input.submissionId + " failed: " + String(failure2));
+      console.error("Group input " + execution.input.submissionId + " failed: " + String(failure2));
     }
   );
 }

@@ -53,7 +53,7 @@ impl TuiCommandSuggestion {
     }
 }
 
-const COMMAND_SPECS: [TuiCommandSpec; 75] = [
+const COMMAND_SPECS: &[TuiCommandSpec] = &[
     TuiCommandSpec {
         name: "help",
         usage: "/help",
@@ -566,7 +566,7 @@ pub(super) fn expand_plugin_command(
 }
 
 pub(super) fn command_specs() -> &'static [TuiCommandSpec] {
-    &COMMAND_SPECS
+    COMMAND_SPECS
 }
 
 /// Returns the keyword-value options declared for a command word, if any.

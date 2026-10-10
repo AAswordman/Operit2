@@ -219,9 +219,9 @@ function webViewSession() {
       setReady(true);
     } }, ready ? ctx.UI.WebView({ controller, url: 'https://characters.operit.local/' }) : ctx.UI.Text({text:'loading'}));
   };`);
-  s.context.NativeInterface = {
-    /** Records the real serialized Host controller command without changing its callback IDs. */
-    composeWebViewControllerCommand(raw) { commands.push(JSON.parse(raw)); return {success:true, data:null}; }
+  /** Records the structured Host command without serializing its callback descriptors. */
+  s.context.__operitNativeComposeWebViewControllerCommand = function(command) {
+    commands.push(command); return {success:true, data:null};
   };
   return {s, commands};
 }
@@ -253,9 +253,9 @@ test('actual packaged character-card screen keeps currentTheme callable after HT
   const source = readFileSync(new URL('../../plugins/packages/buildin/character_cards/dist/ui/main/index.ui.js', import.meta.url), 'utf8');
   const commands = [];
   const s = session(source);
-  s.context.NativeInterface = {
-    /** Captures production interface descriptors crossing the Host boundary. */
-    composeWebViewControllerCommand(raw) { commands.push(JSON.parse(raw)); return {success:true, data:null}; }
+  /** Captures production interface descriptors crossing the structured Host boundary. */
+  s.context.__operitNativeComposeWebViewControllerCommand = function(command) {
+    commands.push(command); return {success:true, data:null};
   };
   s.context.ToolPkg = {
     /** Supplies a fixture resource path without reading personal application data. */
@@ -277,7 +277,7 @@ test('actual packaged character-card screen keeps currentTheme callable after HT
 test('Host-rejected interface replacement preserves its last accepted callbacks', async () => {
   const {s, commands} = webViewSession(); s.render(); await s.action('onLoad');
   const id = commands[0].payload.object.currentTheme.__actionId;
-  s.context.NativeInterface.composeWebViewControllerCommand =
+  s.context.__operitNativeComposeWebViewControllerCommand =
     /** Rejects the transport call before any interface descriptor is accepted. */
     function() { throw new Error('Host rejected interface command'); };
   assert.throws(() => s.context.controller.addJavascriptInterface('CharacterMemoryHost', {currentTheme: () => 'light'}), /Host rejected interface command/);

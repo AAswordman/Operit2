@@ -93,12 +93,10 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (shell_args, link_args) = parse_tui_startup_args(args)?;
-    let approval_bridge = TuiApprovalBridge::new();
     let language_cell = Arc::new(StdMutex::new(None::<TuiLanguage>));
     let (toast_sender, toast_receiver) = mpsc::channel::<String>();
     let toast_host = tui_toast_host(toast_sender.clone());
     let (network_event_sender, network_event_receiver) = mpsc::channel::<NetworkUiEvent>();
-    let approval_bridge_for_core = approval_bridge.clone();
     let language_for_core = language_cell.clone();
     let core_application = create_cli_core_application_configured_with_toast_host(
         "client",
@@ -112,7 +110,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
             let service = EnhancedAIService::new(application.toolHandler.clone(), application.providerRuntimeContext.clone());
             application.chatRuntimeHolder.try_lock().map_err(|error| error.to_string())?
                 .getCore(ChatRuntimeSlot::MAIN).enhancedAiService = Some(service);
-            install_local_permission_requester(local_core, approval_bridge_for_core);
+            install_local_permission_requester(local_core);
             *language_for_core
                 .lock()
                 .expect("TUI language cell lock must not be poisoned") = Some(language);

@@ -24,9 +24,9 @@ function event(change = {}) {
 
 /** Opens the real main registrations and file service with explicitly controlled Chat/AI ABI inputs. */
 async function environment(t) {
-  const failures = [], runtime = await selectorEnvironment(t, {}, { NativeInterface: {
+  const failures = [], runtime = await selectorEnvironment(t, {}, { console: { ...console,
     /** Records actual asynchronous plugin failures without implementing another error handler. */
-    logError(message) { failures.push(message); },
+    error(message) { failures.push(message); },
   } });
   assert.equal(runtime.chatInputHooks.length, 1); assert.equal(runtime.chatInputHooks[0].function, runtime.main.onGroupInputSubmit);
   return { ...runtime, failures,

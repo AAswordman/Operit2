@@ -27,7 +27,7 @@ struct ModuleSpec {
 }
 
 const MODULES: &[ModuleSpec] = &[
-    ModuleSpec { rust_file: "js_sdk/edge.rs", additional_rust_file: None, ts_file: "edge.d.ts" },
+    ModuleSpec { rust_file: "js_sdk/edge.rs", additional_rust_file: None, ts_file: "edge.d.ts", nullable_wire_fields: false },
     ModuleSpec {
         rust_file: "js_sdk/storage.rs",
         additional_rust_file: Some("../../../foundation/host-api/src/PluginStorage.rs"),
@@ -1471,7 +1471,6 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
             "UIHost" => Some(vec!["UI".to_string()]),
             "ChatHost" => Some(vec!["Chat".to_string()]),
             "StorageHost" => Some(vec!["Storage".to_string()]),
-            "NativeInterfaceHost" => Some(vec!["NativeInterface".to_string()]),
             "GlobalHost" => Some(vec!["global".to_string()]),
             _ => None,
         };

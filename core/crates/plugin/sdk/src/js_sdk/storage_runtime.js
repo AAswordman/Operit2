@@ -1,25 +1,7 @@
-/** Sends one structured storage request through the existing typed host callback. */
+/** Sends typed storage data through the same scoped host Promise transport as other SDK calls. */
 function __operitStorageRequest(request) {
-    var ownerCallId = globalThis.__operitCurrentCallId;
-    return new Promise(/** Owns one retained native request until its callback completes. */ function(resolve, reject) {
-        var callbackId = "__operit_storage_" + (++globalThis.__operitStorageSequence);
-        if (ownerCallId) globalThis.__operitRetainCallReference(ownerCallId);
-        /** Releases this callback and its exact owner reference after its continuation is queued. */
-        function cleanup() {
-            delete globalThis[callbackId];
-            if (ownerCallId) Promise.resolve().then(/** Releases the owner after queued promise continuations. */ function() { globalThis.__operitReleaseCallReference(ownerCallId); });
-        }
-        /** Delivers one structured result without decoding a text envelope. */
-        globalThis[callbackId] = function(result, isError) {
-            if (ownerCallId) globalThis.__operitActivateCall(ownerCallId);
-            try { if (isError) reject(new Error(result)); else resolve(result); }
-            finally { cleanup(); }
-        };
-        try { __operitNativeStorageRequestAsync(callbackId, request); }
-        catch (error) { reject(error); cleanup(); }
-    });
+    return __operitInvokeHostAsync(__operitNativeStorageRequestAsync, [request]);
 }
-globalThis.__operitStorageSequence = 0;
 
 /** Rejects unsupported structured data instead of silently dropping values. */
 function __operitStorageValidate(value, ancestors) {

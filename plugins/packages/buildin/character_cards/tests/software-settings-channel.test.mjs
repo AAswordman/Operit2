@@ -1,3 +1,4 @@
+import { installScopedHostRuntime } from '../../../../../tools/tests/fixtures/scoped_host_runtime.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -11,11 +12,11 @@ const setterNames = ["applyThemeConfig", "setCurrentTtsConfigId"];
 /** Reads actual SDK and native sources without running stale generation or claiming a Rust host integration. */
 function source(path) { return readFileSync(new URL(path, root), "utf8"); }
 
-/** Extracts only the official generator's current JavaScript callback-channel helpers. */
+/** Extracts only the official generator's current JavaScript scoped Promise helpers. */
 function helpers() {
   const code = source(codegenPath);
-  const start = code.indexOf("/** Reads one declared SoftwareSettings directory");
-  const end = code.indexOf("/** Validates complete JSON objects", start);
+  const start = code.indexOf("function __operitReadSoftwareSettingsDirectory");
+  const end = code.indexOf("function __operitRequireChatJsonObject", start);
   assert.ok(start !== -1 && end > start);
   return code.slice(start, end);
 }
@@ -37,39 +38,35 @@ function wrapper(arity, method) {
     .replaceAll("{expression}", 'Tools["SoftwareSettings"]').replaceAll("{method}", method);
 }
 
-/** Runs real generated-channel source over explicit callback IO only, without mocking canonical Theme or TTS persistence. */
+/** Runs real generated-channel source over explicit host Promise IO only, without mocking canonical Theme or TTS persistence. */
 function transport() {
   const calls = [], pending = new Map(), methods = {}, context = vm.createContext({ Tools: { SoftwareSettings: methods } });
   let scheduledError = null;
   /** Records a single declared native call and leaves completion under the test's explicit control. */
-  function enqueue(callbackId, method, id) {
+  function enqueue(requestId, method, id) {
     if (scheduledError !== null) { const original = scheduledError; scheduledError = null; throw original; }
-    assert.equal(pending.has(callbackId), false);
-    calls.push({ callbackId, method, id }); pending.set(callbackId, true);
+    assert.equal(pending.has(requestId), false);
+    calls.push({ requestId, method, id }); pending.set(requestId, true);
   }
-  context.__operitNativeReadSoftwareSettingsDirectoryAsync =
-    /** Captures the directory ABI without supplying a default catalog or active ID. */
-    (callbackId, method) => enqueue(callbackId, method, undefined);
-  context.__operitNativeApplySoftwareSettingsConfigAsync =
-    /** Captures the ordinary setter ABI without performing or pretending a native preference commit. */
-    (callbackId, method, id) => enqueue(callbackId, method, id);
+  const registry=installScopedHostRuntime(context);
+  context.__operitNativeReadSoftwareSettingsDirectoryAsync=registry.binding((requestId,method)=>enqueue(requestId,method,undefined));
+  context.__operitNativeApplySoftwareSettingsConfigAsync=registry.binding((requestId,method,id)=>enqueue(requestId,method,id));
   vm.runInContext(helpers(), context);
   for (const method of directoryNames) vm.runInContext(wrapper(0, method), context);
   for (const method of setterNames) vm.runInContext(wrapper(1, method), context);
   return { calls, methods,
     /** Delivers only an actually pending native callback and asserts that its JS receiver is removed exactly once. */
     complete(call, result, isError = false) {
-      assert.equal(pending.delete(call.callbackId), true);
-      const callback = context[call.callbackId]; assert.equal(typeof callback, "function");
-      callback(result, isError); assert.equal(context[call.callbackId], undefined);
+      assert.equal(pending.delete(call.requestId), true);
+      registry.settle(call.requestId,result,isError);
     },
     /** Schedules an exact original native scheduling failure rather than fabricating callback success. */
-    failSchedule(error) { assert.equal(scheduledError, null); scheduledError = error; },
-    /** Counts actual callback receivers retained by the production channel helper. */
-    retainedReceivers() { return Object.keys(context).filter(
-      /** Identifies only the two exact callback-ID formats declared by this settings channel. */
-      key => /^__operit_(?:directory|config)_\d+$/.test(key),
-    ).length; },
+    failSchedule(error) { assert.equal(scheduledError, null); scheduledError = new (vm.runInContext("Error",context))(error.message); },
+    /** Counts only uncompleted host requests; no completion function is published in the SDK realm. */
+    pendingRequests() {
+      assert.equal(Object.keys(context).some(key=>/^__operit_(?:directory|config)_\d+$/.test(key)),false);
+      return pending.size;
+    },
   };
 }
 
@@ -100,9 +97,9 @@ test("JS channel: listThemeConfigs waits for native and preserves full returned 
   assert.equal(io.calls.length, 1); assert.equal(io.calls[0].method, "listThemeConfigs");
   const record = { id: "ordinary.theme", name: "Named appearance", snapshot: { appearanceField: false, explicitNull: null }, createdAt: 123, updatedAt: 456 };
   // This JSON tests transport only; the canonical appearance validator and disk are not replaced or claimed by this fixture.
-  io.complete(io.calls[0], JSON.stringify([record]));
+  io.complete(io.calls[0], [record]);
   assert.deepEqual(JSON.parse(JSON.stringify(await result)), [record]);
-  assert.equal(io.retainedReceivers(), 0);
+  assert.equal(io.pendingRequests(), 0);
 });
 
 /** Prevents an apply Promise from completing before the actual native preference result arrives. */
@@ -115,15 +112,15 @@ test("JS channel: applyThemeConfig cannot complete before native returns its com
   await Promise.resolve(); assert.equal(settled, false);
   assert.equal(io.calls.length, 1); assert.equal(io.calls[0].method, "applyThemeConfig"); assert.equal(io.calls[0].id, "ordinary.theme");
   const applied = { id: "ordinary.theme", name: "Applied", snapshot: {}, createdAt: 10, updatedAt: 20 };
-  io.complete(io.calls[0], JSON.stringify(applied));
+  io.complete(io.calls[0], applied);
   assert.deepEqual(JSON.parse(JSON.stringify(await result)), applied); assert.equal(settled, true);
 });
 
 /** Carries exact current and committed TTS IDs through the two established ordinary-setting signatures. */
 test("JS channel: current TTS get/set preserve actual IDs and distinct callbacks", async () => {
   const io = transport(), current = io.methods.getCurrentTtsConfigId(), changed = io.methods.setCurrentTtsConfigId("speech.exact");
-  assert.equal(io.calls.length, 2); assert.notEqual(io.calls[0].callbackId, io.calls[1].callbackId);
-  io.complete(io.calls[1], JSON.stringify("speech.exact")); io.complete(io.calls[0], JSON.stringify("speech.before"));
+  assert.equal(io.calls.length, 2); assert.notEqual(io.calls[0].requestId, io.calls[1].requestId);
+  io.complete(io.calls[1], "speech.exact"); io.complete(io.calls[0], "speech.before");
   assert.equal(await current, "speech.before"); assert.equal(await changed, "speech.exact");
 });
 
@@ -136,33 +133,33 @@ test("JS channel: exact arity and configuration ID validation do not invoke nati
     await assert.rejects(io.methods[method]("id", "extra"), /requires exactly 1 argument/);
     for (const id of [undefined, null, 17, "", " ", " id", "id "]) await assert.rejects(io.methods[method](id), /exact nonblank text/);
   }
-  assert.equal(io.calls.length, 0); assert.equal(io.retainedReceivers(), 0);
+  assert.equal(io.calls.length, 0); assert.equal(io.pendingRequests(), 0);
 });
 
 /** Propagates original invalid-ID or persistence failure messages instead of emitting a replacement config or success. */
 test("JS channel: native Theme and TTS failures reject with the exact original message", async () => {
   for (const method of setterNames) {
     const io = transport(), result = io.methods[method]("missing.exact");
-    io.complete(io.calls[0], JSON.stringify({ message: " exact native failure " }), true);
-    await assert.rejects(result, { message: " exact native failure " }); assert.equal(io.retainedReceivers(), 0);
+    io.complete(io.calls[0], " exact native failure ", true);
+    await assert.rejects(result, { message: " exact native failure " }); assert.equal(io.pendingRequests(), 0);
   }
 });
 
-/** Rejects malformed native JSON and malformed error envelopes rather than converting them to ordinary custom state. */
-test("JS channel: malformed native result and error envelopes reject explicitly", async () => {
-  const io = transport(), broken = io.methods.applyThemeConfig("id");
-  io.complete(io.calls[0], "not-json"); await assert.rejects(broken);
-  const malformed = io.methods.setCurrentTtsConfigId("id");
-  io.complete(io.calls[1], "null", true); await assert.rejects(malformed, /Malformed SoftwareSettings configuration error/);
-  assert.equal(io.retainedReceivers(), 0);
+/** Application strings are values, not JSON envelopes to decode or guess. */
+test('JS channel preserves literal host strings and rejects only an explicit failure',async()=>{
+  const io=transport(),literal=io.methods.applyThemeConfig('id');
+  io.complete(io.calls[0],'{"success":false}');assert.equal(await literal,'{"success":false}');
+  const failure=io.methods.setCurrentTtsConfigId('id');
+  io.complete(io.calls[1],'null',true);await assert.rejects(failure,{message:'null'});
+  assert.equal(io.pendingRequests(),0);
 });
 
 /** Retains the actual scheduling exception object and clears the callback instead of retrying or claiming success. */
 test("JS channel: native scheduling errors propagate without retained callbacks", async () => {
   const io = transport(), failure = new Error("exact schedule failure"); io.failSchedule(failure);
   await assert.rejects(io.methods.applyThemeConfig("ordinary.theme"),
-    /** Requires the original exception identity from the native scheduling boundary. */
-    error => error === failure,
+    /** Requires the original exception message from the native scheduling boundary. */
+    error => error.message === failure.message,
   );
-  assert.equal(io.calls.length, 0); assert.equal(io.retainedReceivers(), 0);
+  assert.equal(io.calls.length, 0); assert.equal(io.pendingRequests(), 0);
 });

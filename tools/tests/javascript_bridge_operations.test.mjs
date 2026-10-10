@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { productionBootstrap } from './fixtures/production_bootstrap.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -17,42 +19,6 @@ function embedded(path) {
   return text.slice(start, text.indexOf('"#', start));
 }
 
-/** Expands the actual production bootstrap with its embedded libraries and SDK bridge. */
-function bootstrap() {
-  const text = source(bridge + 'JsLibraries.rs');
-  const begin = text.indexOf('pub fn buildRuntimeBootstrapScript()');
-  const start = text.indexOf('r#"', begin) + 3;
-  const end = text.indexOf('"#,', start);
-  const replacements = [
-    source(bridge + 'JsInitRuntime.script.js'),
-    '"/runtime/clean-on-exit"',
-    JSON.stringify(embedded(sdk + 'JsExecutionScriptBuilder.rs')),
-    embedded(bridge + 'JsJavaBridge.rs'),
-    embedded(sdk + 'toolpkg/ToolPkgComposeDslBridge.rs'),
-    embedded(sdk + 'toolpkg/ToolPkgApiRuntimeScript.rs'),
-    embedded(sdk + 'toolpkg/ToolPkgRegistrationBridge.rs').replace('__OPERIT_TOOLPKG_REGISTRATION_ONLY__', 'false'),
-    '', '', // These tests exercise host operations, not generated Tools or external libraries.
-    source(bridge + 'PluginConfig.script.js'),
-    source(bridge + 'RuntimeContext.script.js'),
-    source(bridge + 'CryptoJS.script.js'),
-    source(bridge + 'Jimp.script.js'),
-    source(bridge + 'UINode.script.js'),
-    source(bridge + 'AndroidUtils.script.js'),
-    source(bridge + 'OkHttp3.script.js'),
-    source(bridge + 'pako.script.js'),
-    source(sdk + 'JsExecutionRuntimeBridge.script.js'),
-  ];
-  let position = 0;
-  const result = text.slice(start, end).replace(/\{\{|\}\}|\{\}/g, token => {
-    if (token === '{{') return '{';
-    if (token === '}}') return '}';
-    assert.ok(position < replacements.length, 'Unexpected bootstrap placeholder');
-    return replacements[position++];
-  });
-  assert.equal(position, replacements.length);
-  return result;
-}
-
 /** Installs the production Web host value registry under every required engine binding. */
 function runtime(operations = {}) {
   const calls = [];
@@ -63,6 +29,7 @@ function runtime(operations = {}) {
   vm.runInContext(source('hosts/web/src/javascript_promises.js'), context);
   const registry = context.__operitHostPromiseRegistry;
   const builtins = {
+    __operitNativeHashText(value) { return createHash("sha256").update(value).digest("hex"); },
     /** Records plugin logs as structured host requests. */
     __operitNativeLog() { return null; },
     /** Records execution diagnostics without changing test output. */
@@ -101,7 +68,7 @@ function runtime(operations = {}) {
   }
   context.__operitNativeCancelJavaScriptPromises = registry.syncBinding(builtins.__operitNativeCancelJavaScriptPromises);
   context.__operitNativeScheduleJavaScriptTimer = registry.binding((id, delay) => timers.set(id, delay));
-  vm.runInContext(bootstrap(), context, { filename: 'production-bootstrap.js' });
+  vm.runInContext(productionBootstrap(), context, { filename: 'production-bootstrap.js' });
   /** Opens a real execution session for direct public library calls. */
   function openCall(id = 'owner') {
     context.__operitRegisterCallSession(id, {

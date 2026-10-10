@@ -514,11 +514,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             if (!owner) {
                 throw new Error('package/toolpkg runtime target is empty');
             }
-            if (typeof NativeInterface === 'undefined' || !NativeInterface ||
-                typeof NativeInterface.getPluginLocalDataDir !== 'function') {
-                throw new Error('NativeInterface.getPluginLocalDataDir is unavailable');
-            }
-            var path = NativeInterface.getPluginLocalDataDir(owner);
+            var path = __operitNativeGetPluginLocalDataDir(owner);
             if (typeof path !== 'string' || !path.startsWith('/')) {
                 throw new Error('Plugin local data directory must be an absolute VFS path');
             }
@@ -529,11 +525,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         function getToolPkgSpaceDataDir() {
             var owner = resolveCurrentToolPkgTarget();
             if (!owner) { throw new Error('package/toolpkg runtime target is empty'); }
-            if (typeof NativeInterface === 'undefined' || !NativeInterface ||
-                typeof NativeInterface.getPluginSpaceDataDir !== 'function') {
-                throw new Error('NativeInterface.getPluginSpaceDataDir is unavailable');
-            }
-            var path = NativeInterface.getPluginSpaceDataDir(owner);
+            var path = __operitNativeGetPluginSpaceDataDir(owner);
             if (typeof path !== 'string' || !path.startsWith('/')) {
                 throw new Error('Plugin shared data directory must be an absolute VFS path');
             }
