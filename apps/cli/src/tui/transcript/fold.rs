@@ -165,18 +165,26 @@ impl FoldedLines {
         self.lines.extend(other.lines);
     }
 
-    /// Records a fold hit covering every line in `line_range`.
+    /// Records the click target of one disclosure covering `line_range`.
+    ///
+    /// A disclosure owns its whole body, so the range starts at the header and
+    /// ends at the last body line. Those hits are inserted *before* the hits of
+    /// the widgets rendered inside the body: a lookup then finds the innermost
+    /// widget under the pointer, and clicking a nested tool row expands that row
+    /// instead of collapsing the block that contains it.
     pub(super) fn push_hit_range(
         &mut self,
         line_range: std::ops::Range<usize>,
         target: FoldTarget,
     ) {
-        for line_index in line_range {
-            self.hits.push(TranscriptFoldHit {
+        let mut enclosing = line_range
+            .map(|line_index| TranscriptFoldHit {
                 line_index,
                 target: target.clone(),
-            });
-        }
+            })
+            .collect::<Vec<_>>();
+        enclosing.append(&mut self.hits);
+        self.hits = enclosing;
     }
 }
 
