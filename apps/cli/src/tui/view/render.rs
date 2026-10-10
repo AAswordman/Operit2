@@ -14,7 +14,8 @@ use operit_node_runtime::RuntimeRemoteLinkService::{
 use operit_util::GithubReleaseUtil::FullUpdateStage;
 
 use super::app::{
-    join_status_label, network_hub_rows, peer_transport_label, space_join_is_active,
+    hub_member_status_label, join_status_label, network_hub_rows, peer_transport_label,
+    space_join_is_active,
     DeviceManagerAction, DeviceManagerMode, DeviceManagerModal, DeviceManagerRow, FocusArea,
     FullUpdateDownloadState, NetworkHubModal, NetworkHubRow, OperitTui, PairField, PairStage,
     PAIR_WIZARD_TRANSPORTS, StartupInstallState,
@@ -92,10 +93,6 @@ impl OperitTui {
             self.render_model_chooser(frame);
         }
 
-        if self.show_list_popup {
-            self.render_list_popup(frame);
-        }
-
         if self.show_config_popup {
             self.config_ui.render(frame, self.text());
             self.popup_selection_rect = self.config_ui.selection_rect;
@@ -126,6 +123,13 @@ impl OperitTui {
 
         if self.network_hub.is_some() {
             self.render_network_hub(frame);
+        }
+
+        // The hub opens list popups (discover, audit, policy, token, leave,
+        // unpair); they render above the panel and take keys first, so they
+        // behave like the device window instead of being hidden behind it.
+        if self.show_list_popup {
+            self.render_list_popup(frame);
         }
 
         if self.device_manager.is_some() {
@@ -1193,17 +1197,11 @@ impl OperitTui {
             Span::styled(format!("{}: ", text.network_join_decision_space()), label_style),
             Span::raw(request.spaceName.clone()),
             Span::styled("  ·  ", Style::default().fg(theme::TEXT_MUTED)),
-            Span::styled(format!("{:?}", request.status), Style::default()),
+            Span::styled(
+                join_status_label(text, &request.status).to_string(),
+                Style::default(),
+            ),
         ]));
-        if let Some(reviewer) = request.reviewerName.as_deref() {
-            body_lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{}: ", text.network_join_decision_reviewer()),
-                    label_style,
-                ),
-                Span::raw(reviewer.to_string()),
-            ]));
-        }
         if modal.requests.len() > 1 {
             body_lines.push(Line::from(""));
             body_lines.push(Line::from(Span::styled(
@@ -1328,9 +1326,19 @@ impl OperitTui {
                 todo_lines.push(Line::from(Span::raw(
                     text.network_hub_todo_outbound_join(
                         &request.targetDeviceId,
-                        join_status_label(&request.status),
+                        join_status_label(text, &request.status),
                     ),
                 )));
+            }
+        }
+        // A restricted member (or this device itself) waits on a human
+        // decision: nobody comes back until it is admitted.
+        for device in &hub.topology.devices {
+            if hub.blocked.contains(&device.deviceId) {
+                todo_lines.push(Line::from(vec![
+                    Span::styled("▸ ", Style::default().fg(theme::ERROR_DIM)),
+                    Span::raw(text.network_hub_todo_restricted(&device.deviceName)),
+                ]));
             }
         }
         if !hub.initialized {
@@ -1439,8 +1447,9 @@ impl OperitTui {
         device: &RuntimeDeviceSpaceDevice,
     ) -> Line<'static> {
         let text = self.text();
+        let blocked = hub.blocked.contains(&device.deviceId);
         if device.deviceId == hub.topology.currentDeviceId {
-            return Line::from(vec![
+            let mut spans = vec![
                 Span::raw("  "),
                 Span::styled(
                     text.network_devices_self().to_string(),
@@ -1450,13 +1459,20 @@ impl OperitTui {
                     format!(" · {}", device.platform),
                     Style::default().fg(theme::TEXT_SUBTLE),
                 ),
-            ]);
+            ];
+            // Being restricted by another administrator is exactly the state
+            // this device cannot infer from reachability alone.
+            if blocked {
+                spans.push(Span::styled(
+                    format!(" · {}", text.network_hub_member_restricted()),
+                    Style::default().fg(theme::ERROR_DIM),
+                ));
+            }
+            return Line::from(spans);
         }
-        let status = if device.online {
-            String::new()
-        } else {
-            text.network_devices_offline().to_string()
-        };
+        let status = hub_member_status_label(text, blocked, device.online)
+            .map(|status| format!(" · {status}"))
+            .unwrap_or_default();
         let identity = device
             .currentIdentity
             .as_ref()
@@ -1473,12 +1489,12 @@ impl OperitTui {
                 Style::default().fg(theme::TEXT_SUBTLE),
             ),
             Span::styled(
-                if status.is_empty() {
-                    status
+                status,
+                Style::default().fg(if blocked {
+                    theme::ERROR_DIM
                 } else {
-                    format!(" · {status}")
-                },
-                Style::default().fg(theme::TEXT_SUBTLE),
+                    theme::TEXT_SUBTLE
+                }),
             ),
         ])
     }
@@ -1845,6 +1861,31 @@ impl OperitTui {
                 .style(Style::default().fg(theme::ERROR_DIM));
                 frame.render_widget(warning, chunks[0]);
             }
+            DeviceManagerMode::ConfirmUnpair => {
+                let label = modal
+                    .menu_device_id
+                    .as_ref()
+                    .map(|id| match modal
+                        .topology
+                        .devices
+                        .iter()
+                        .find(|device| &device.deviceId == id)
+                    {
+                        Some(device) => device_manager_device_label(modal, device),
+                        None => id.clone(),
+                    })
+                    .unwrap_or_default();
+                let warning_text = text.network_unpair_warning(&label);
+                let warning = Paragraph::new(Text::from(
+                    warning_text
+                        .split('\n')
+                        .map(Line::from)
+                        .collect::<Vec<_>>(),
+                ))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(theme::ERROR_DIM));
+                frame.render_widget(warning, chunks[0]);
+            }
         }
 
         if !modal.initialized {
@@ -1859,7 +1900,7 @@ impl OperitTui {
             DeviceManagerMode::ActionMenu => text.network_devices_menu_hint(),
             DeviceManagerMode::AssignIdentity => text.network_devices_assign_hint(),
             // The confirm body already ends with the Y/N hint.
-            DeviceManagerMode::ConfirmRemove => "",
+            DeviceManagerMode::ConfirmRemove | DeviceManagerMode::ConfirmUnpair => "",
         };
         if !hint_text.is_empty() {
             let hint = Paragraph::new(Line::from(Span::styled(

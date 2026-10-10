@@ -46,6 +46,7 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("session") => run_link_session(&args[1..]).await,
         Some("discover") => run_link_discover_command(&args[1..]).await,
         Some("space") => run_link_space_command(&args[1..]).await,
+        Some("doctor") => run_link_doctor_command(&args[1..]).await,
         Some("control") => run_link_control_command(&args[1..]).await,
         Some("stream-probe") => run_link_stream_probe_command(&args[1..]).await,
         Some("edge-plugin") => run_link_edge_plugin_command(&args[1..]).await,
@@ -423,8 +424,78 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
 }
 
 /// 通过共享节点服务发现局域网设备；不要求手输 token，不直接调用旧发现或会话客户端。
-async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
-    let mut timeout_ms = 2000_u64;
+/// Runs the shared-Space doctor: read-only by default, `--repair` quarantines
+/// damaged journal lines after a backup and a shadow-replay selfcheck.
+async fn run_link_doctor_command(args: &[String]) -> Result<(), String> {
+    let repair = args.iter().any(|arg| arg == "--repair");
+    if args.iter().any(|arg| arg != "--repair") || args.len() > 1 {
+        return Err("usage: operit2 cli link doctor [--repair]".into());
+    }
+    let coreApplication = if repair {
+        create_cli_core_application("client").await?
+    } else {
+        create_cli_core_application_without_space_sync("client").await?
+    };
+    let service = coreApplication.accessServices();
+    let diagnosis = operit_node_runtime::SpaceDoctor::diagnose(&service, repair);
+    coreApplication.shutdown().await;
+    let report = diagnosis.map_err(|error| format!("space diagnosis failed: {error}"))?;
+    if cli_json_mode() {
+        emit_cli_json(serde_json::to_value(&report).map_err(|error| error.to_string())?);
+        return Ok(());
+    }
+    println!("Space: {} ({}) revision {}", report.spaceName, report.spaceId, report.spaceRevision);
+    println!(
+        "Policy replay: {} · members records={} replay={}",
+        if report.policyReadable { "readable" } else { "UNREADABLE" },
+        report.recordMembers.len(),
+        report.replayMembers.len()
+    );
+    for journal in &report.journals {
+        println!(
+            "Journal {}: {} lines, {} decoded, {} findings",
+            journal.deviceId, journal.totalLines, journal.decodedLines, journal.findings.len()
+        );
+    }
+    println!(
+        "Projection: {} entries, {} journal-only, {} projection-only",
+        report.projection.projectionEntries,
+        report.projection.journalOnlyOperationIds.len(),
+        report.projection.projectionOnlyOperationIds.len()
+    );
+    for pair in &report.pairs {
+        println!(
+            "Peer {}: member={} online={} inbound={} outbound={}",
+            pair.deviceId, pair.member, pair.online, pair.pairedInbound, pair.pairedOutbound
+        );
+    }
+    if report.findings.is_empty() {
+        println!("Findings: none");
+    } else {
+        for finding in &report.findings {
+            println!("[{}] {}: {}", finding.severity, finding.check, finding.summary);
+        }
+    }
+    println!(
+        "Counters: divergences={} quarantined={} repairs={} failed={} reconciles={} rounds={} incomplete={}",
+        report.counters.divergencesDetected, report.counters.linesQuarantined,
+        report.counters.repairsRun, report.counters.repairsFailed,
+        report.counters.reconcileExchanges, report.counters.reconcileRounds,
+        report.counters.reconcileIncomplete
+    );
+    if let Some(repair) = &report.repair {
+        println!(
+            "Repair: selfcheck={} quarantined={} restoredFromBackup={} ({})",
+            repair.selfcheckPassed, repair.linesQuarantined, repair.restoredFromBackup, repair.detail
+        );
+        for backup in &repair.backupPaths {
+            println!("  backup: {backup}");
+        }
+    }
+    Ok(())
+}
+
+async fn run_link_discover_command(args: &[String]) -> Result<(), String> {    let mut timeout_ms = 2000_u64;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -459,7 +530,7 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
 async fn run_link_space_command(args: &[String]) -> Result<(), String> {
     let ownsSpaceMutation = matches!(
         args,
-        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync")
+        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "admit" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync")
     );
     let coreApplication = if ownsSpaceMutation {
         create_cli_core_application("client").await?
@@ -506,13 +577,24 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             else { println!("{device_label}: {status:?}"); }
             Ok(())
         }
+        // Same policy operation as `control device disconnect`: one word, one
+        // meaning across the CLI, the TUI and Flutter's control panel.
         Some("disconnect") if args.len() == 2 => {
             let topology = service.deviceSpaceTopology()?;
             let device_id = network_device_id(&topology, &args[1])?;
             let device_label = network_device_label_by_id(&topology, &device_id)?;
-            service.disconnectDeviceSpaceConnection(device_id).await?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({ "disconnected": true })); }
-            else { println!("Disconnected device {device_label}"); }
+            service.disconnectDeviceSpaceNode(device_id).await?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "disconnected": true, "restricted": true })); }
+            else { println!("Disconnected device {device_label}; direct links and route transit stay blocked until `space admit`"); }
+            Ok(())
+        }
+        Some("admit") if args.len() == 2 => {
+            let topology = service.deviceSpaceTopology()?;
+            let device_id = network_device_id(&topology, &args[1])?;
+            let device_label = network_device_label_by_id(&topology, &device_id)?;
+            service.admitDeviceSpaceMember(device_id)?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "admitted": true })); }
+            else { println!("Admitted device {device_label}; it may connect again"); }
             Ok(())
         }
         Some("remove") if args.len() == 2 => {
@@ -521,7 +603,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             let device_label = network_device_label_by_id(&topology, &device_id)?;
             service.removeDeviceSpaceMember(device_id).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({ "removed": true })); }
-            else { println!("Removed device {device_label} from the Space"); }
+            else { println!("Removed device {device_label} from the Space and forgot its pairing"); }
             Ok(())
         }
         Some("join") if args.len() == 2 => {
@@ -565,7 +647,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             else { println!("Left device space; current space: {}", space.spaceName); }
             Ok(())
         }
-        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|sync|disconnect <device-name>|remove <device-name>|leave>".to_string()),
+        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|sync|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>".to_string()),
     }
 }
 
@@ -991,17 +1073,18 @@ fn find_core_stream_descriptor(value: &CoreValue) -> Option<CoreStreamDescriptor
 pub(crate) fn print_link_usage() {
     if cli_json_mode() {
         emit_cli_json(
-            serde_json::json!({ "usage": "operit2 cli link <discover|token|pair-start|pair-finish|pair-cancel|unpair|peers|listen|session|space|control|stream-probe|edge-plugin>" }),
+            serde_json::json!({ "usage": "operit2 cli link <discover|token|pair-start|pair-finish|pair-cancel|unpair|peers|listen|session|space|doctor|control|stream-probe|edge-plugin>" }),
         );
         return;
     }
     println!("operit2 cli link discover [--timeout-ms <ms>]");
+    println!("operit2 cli link doctor [--repair]  # shared-Space health diagnosis and repair");
     println!("operit2 cli link token show  # explicitly reveal the local pairing token");
     println!("operit2 cli link pair-start <node-id> <address> <http|ws|tcp|serial|bluetooth> [--token <token>]");
     println!("operit2 cli link pair-finish <pairing-id> <code>");
     println!("operit2 cli link pair-cancel <pairing-id> | unpair <node-id> | peers");
     println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth>");
-    println!("operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|remove <device-name>|leave>");
+    println!("operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
     println!("operit2 cli link space requests <incoming|outgoing> | refresh <request-id> | cancel <request-id>");
     println!("operit2 cli link space approve|reject <request-id> <assignment-version> | sync");
     println!("operit2 cli link session <http|ws|tcp> [--bind <host:port>] [--no-discovery]  # live interactive management");

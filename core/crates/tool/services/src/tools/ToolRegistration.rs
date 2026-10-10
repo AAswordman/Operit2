@@ -166,14 +166,23 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                     };
                     let result = serde_json::json!({
                         "currentNodeId": state.currentNodeId,
-                        "nodes": state.nodes.into_iter().map(|node| serde_json::json!({
-                            "nodeId": node.nodeId,
-                            "displayName": node.displayName,
-                            "userName": node.userName,
-                            "platform": node.platform,
-                            "model": node.model,
-                            "reachable": node.reachable,
-                        })).collect::<Vec<_>>(),
+                        "nodes": state.nodes.into_iter().map(|node| {
+                            let mut encoded = serde_json::json!({
+                                "nodeId": node.nodeId,
+                                "displayName": node.displayName,
+                                "userName": node.userName,
+                                "platform": node.platform,
+                                "model": node.model,
+                                "reachable": node.reachable,
+                            });
+                            if let Some(relayHops) = node.relayHops {
+                                encoded["relayHops"] = serde_json::json!(relayHops);
+                            }
+                            if let Some(relayPath) = node.relayPath {
+                                encoded["relayPath"] = serde_json::json!(relayPath);
+                            }
+                            encoded
+                        }).collect::<Vec<_>>(),
                     });
                     ToolResult {
                         toolName: tool.name.clone(),

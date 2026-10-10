@@ -4176,6 +4176,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceDevices => '设备';
 
   @override
+  String get deviceSpaceMemberNotPaired => '空间成员 · 未直连';
+
+  @override
+  String get deviceSpaceDirectLink => '直连';
+
+  @override
+  String deviceSpaceRelayHops(int hops) {
+    return '经中继 $hops 跳';
+  }
+
+  @override
+  String get deviceSpaceRelayPath => '路径';
+
+  @override
+  String get deviceSpaceLocalDevice => '本机';
+
+  @override
+  String get deviceSpaceManageDevice => '管理设备';
+
+  @override
   String get deviceSpaceMore => '更多设备操作';
 
   @override

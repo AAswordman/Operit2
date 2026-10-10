@@ -55,9 +55,39 @@ mod routing_contracts {
         "/tests/device_space/routing_contracts.rs"
     ));
 }
+mod topology_publication {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/topology_publication.rs"
+    ));
+}
 mod policy_contracts {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/device_space/policy_contracts.rs"
+    ));
+}
+mod approving_exit {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/approving_exit.rs"
+    ));
+}
+mod doctor {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/doctor.rs"
+    ));
+}
+mod reconcile_protocol {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/reconcile_protocol.rs"
+    ));
+}
+mod convergence_properties {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/device_space/convergence_properties.rs"
     ));
 }

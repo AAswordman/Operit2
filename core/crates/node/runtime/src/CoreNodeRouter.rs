@@ -9,7 +9,7 @@ use operit_link::route_runtime::CoreRouteRuntime;
 use operit_link::{CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient, CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET, CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT, CORE_STREAM_TARGET};
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingRecord, CoreNodeBindingStore};
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
-use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
+use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceRoutePlan, CoreSpaceStore};
 use operit_store::NetworkControlStore::NetworkControlStore;
 use operit_store::PreferencesDataStore::StateFlow;
 use serde::{Deserialize, Serialize};
@@ -597,6 +597,23 @@ impl CoreNodeRouter {
         if targetNodeId == self.localNodeId { return Ok(true); }
         let peers = self.nodeServices()?.peers().activePeerNodeIds().map_err(|error| error.to_string())?;
         coreNodeIsReachableThroughPeers(
+            &self.localNodeId,
+            &self.spaceStore,
+            &self.networkControlStore,
+            targetNodeId,
+            &peers,
+        )
+    }
+
+    /// Resolves the multi-hop route plan this device would use for one Space member.
+    ///
+    /// `None` covers the local device itself, a policy-disconnected member, a node outside
+    /// the current Space, and any member the active Peer Link graph cannot reach.
+    #[allow(non_snake_case)]
+    pub fn nodeRoutePlan(&self, targetNodeId: &str) -> Result<Option<CoreSpaceRoutePlan>, String> {
+        if targetNodeId == self.localNodeId { return Ok(None); }
+        let peers = self.nodeServices()?.peers().activePeerNodeIds().map_err(|error| error.to_string())?;
+        coreNodeRoutePlanThroughPeers(
             &self.localNodeId,
             &self.spaceStore,
             &self.networkControlStore,
@@ -1851,18 +1868,27 @@ impl CoreNodeToolRuntime for CoreNodeToolRouteRuntime {
             let profile = profiles.get(&nodeId).ok_or_else(|| {
                 format!("Device profile is missing in the current device space: {nodeId}")
             })?;
+            let plan = coreNodeRoutePlanThroughPeers(
+                &self.localNodeId,
+                &self.spaceStore,
+                &self.networkControlStore,
+                &nodeId,
+                &peers,
+            )?;
+            let (relayHops, relayPath) = match plan {
+                Some(plan) if plan.hops() > 1 => {
+                    (Some(plan.hops()), Some(plan.path.clone()))
+                }
+                _ => (None, None),
+            };
             nodes.push(RuntimeCoreNodeStatus {
                 displayName: profile.displayName.clone(),
                 userName: profile.userName.clone(),
                 platform: profile.platform.clone(),
                 model: profile.model.clone(),
-                reachable: coreNodeIsReachableThroughPeers(
-                    &self.localNodeId,
-                    &self.spaceStore,
-                    &self.networkControlStore,
-                    &nodeId,
-                    &peers,
-                )?,
+                reachable: nodeId == self.localNodeId || relayHops.is_some(),
+                relayHops,
+                relayPath,
                 nodeId,
             });
         }
@@ -1885,34 +1911,56 @@ fn coreNodeIsReachableThroughPeers(
     if targetNodeId == localNodeId {
         return Ok(true);
     }
+    Ok(coreNodeRoutePlanThroughPeers(
+        localNodeId,
+        spaceStore,
+        networkControlStore,
+        targetNodeId,
+        peers,
+    )?
+    .is_some())
+}
+
+/// Resolves the multi-hop route plan reachable through one fixed active Peer Link snapshot.
+#[allow(non_snake_case)]
+fn coreNodeRoutePlanThroughPeers(
+    localNodeId: &str,
+    spaceStore: &CoreSpaceStore,
+    networkControlStore: &NetworkControlStore,
+    targetNodeId: &str,
+    peers: &BTreeSet<String>,
+) -> Result<Option<CoreSpaceRoutePlan>, String> {
+    if targetNodeId == localNodeId {
+        return Ok(None);
+    }
     if networkControlStore.nodeIsDisconnected(targetNodeId)? {
-        return Ok(false);
+        return Ok(None);
     }
     if !spaceStore.contains(targetNodeId.to_string())? {
-        return Ok(false);
+        return Ok(None);
     }
-    let blockedPeers = peers
-        .iter()
-        .map(|nodeId| {
-            networkControlStore
-                .nodeIsDisconnected(nodeId)
-                .map(|blocked| (nodeId.clone(), blocked))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let permittedPeers = permittedActivePeers(networkControlStore, peers)?;
+    let transitNodeIds = networkControlStore.relayNodeIds()?;
+    spaceStore.routePlanThroughPeersWithTransitNodes(
+        targetNodeId.to_string(),
+        permittedPeers,
+        transitNodeIds,
+    )
+}
+
+/// Removes peers the current Space policy has disconnected from one active Peer Link snapshot.
+#[allow(non_snake_case)]
+fn permittedActivePeers(
+    networkControlStore: &NetworkControlStore,
+    peers: &BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
     let mut permittedPeers = peers.clone();
-    for (nodeId, blocked) in blockedPeers {
-        if blocked {
-            permittedPeers.remove(&nodeId);
+    for nodeId in peers {
+        if networkControlStore.nodeIsDisconnected(nodeId)? {
+            permittedPeers.remove(nodeId);
         }
     }
-    let transitNodeIds = networkControlStore.relayNodeIds()?;
-    spaceStore
-        .reachableNextHopThroughPeersWithTransitNodes(
-            targetNodeId.to_string(),
-            permittedPeers,
-            transitNodeIds,
-        )
-        .map(|nextHop| nextHop.is_some())
+    Ok(permittedPeers)
 }
 
 /// Resolves the route that produced one embedded stream descriptor.
