@@ -310,6 +310,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
         probeState,
         pendingJoin,
         member,
+        projected,
       ),
       onTap: () => _showDeviceDetails(
         icon: _remoteProbeIconData(probeState),
@@ -324,7 +325,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     );
   }
 
-  /// Builds the paired-device entries that only touch local trust records.
+  /// Builds the paired-device entries: local trust actions for every identity,
+  /// plus the managed-device commands while the device is a Space member.
   ///
   /// Joining, reviewing, and unpairing are applicant-side actions, so they are
   /// offered to every identity; a removed-from-space device keeps its recovery
@@ -336,6 +338,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     _PairedRemoteProbeState probeState,
     bool pendingJoin,
     bool member,
+    generated.RuntimeDeviceSpaceDevice? projected,
   ) {
     return <Widget>[
       if (pendingJoin && request != null)
@@ -353,6 +356,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
               : () => _offerJoiningExistingPairedDeviceSpace(device),
           child: Text(l10n.settingsRuntimeJoinSpace),
         ),
+      if (projected != null) ..._managedDeviceActions(l10n, projected),
       if (probeState == _PairedRemoteProbeState.removedFromSpace)
         MenuItemButton(
           onPressed: _busy ? null : _handleRemovedFromSpace,
@@ -410,7 +414,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
       status: status,
       tag: l10n.deviceSpaceMemberNotPaired,
       path: path,
-      actions: _memberActions(l10n, device),
+      actions: _managedDeviceActions(l10n, device),
       onTap: () => _showDeviceDetails(
         icon: icon,
         name: device.deviceName,
@@ -424,11 +428,12 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     );
   }
 
-  /// Builds the device-management entries the local identity may run.
+  /// Builds the managed-device entries the local identity may run.
   ///
   /// Entries appear only when the synchronized policy grants the matching
-  /// capability; an identity without any of them gets no menu at all.
-  List<Widget> _memberActions(
+  /// capability; an identity without any of them gets no menu at all. Pairing is
+  /// irrelevant here: a paired member and a relayed member are managed alike.
+  List<Widget> _managedDeviceActions(
     AppLocalizations l10n,
     generated.RuntimeDeviceSpaceDevice device,
   ) {

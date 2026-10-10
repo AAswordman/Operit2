@@ -334,6 +334,76 @@ void main() {
     await unmount(tester, bridge);
   });
 
+  testWidgets('paired Space members keep the managed device commands', (
+    tester,
+  ) async {
+    final bridge = DeviceSpacePanelBridge(
+      topology: _topology(
+        selfCapabilities: _administratorCapabilities,
+        selfIdentityName: 'Administrator',
+      ),
+      control: _control(),
+    )..paired = <Map<String, Object?>>[
+      <String, Object?>{
+        'deviceId': 'tablet',
+        'deviceInfo': <String, Object?>{'platform': 'android', 'model': 'elish'},
+        'inbound': true,
+        'outbound': true,
+      },
+    ]
+    ..statuses = <String, String>{'tablet': 'Online'};
+    await mountPanel(tester, bridge);
+    expect(find.text('android-elish'), findsOneWidget);
+    expect(find.textContaining('空间成员 · 已直连'), findsOneWidget);
+    final menus = find.byIcon(Icons.more_vert_outlined);
+    expect(menus, findsWidgets);
+    await tester.tap(menus.first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.widgetWithText(MenuItemButton, '断开设备'), findsOneWidget);
+    expect(find.widgetWithText(MenuItemButton, '移除设备'), findsOneWidget);
+    expect(find.widgetWithText(MenuItemButton, '重置为默认身份'), findsOneWidget);
+    expect(find.widgetWithText(MenuItemButton, '解除配对'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await unmount(tester, bridge);
+  });
+
+  testWidgets('paired devices outside the Space keep local pairing actions only', (
+    tester,
+  ) async {
+    final bridge = DeviceSpacePanelBridge(
+      topology: _topology(
+        selfCapabilities: _administratorCapabilities,
+        selfIdentityName: 'Administrator',
+      ),
+      control: _control(),
+    )..paired = <Map<String, Object?>>[
+      <String, Object?>{
+        'deviceId': 'stranger',
+        'deviceInfo': <String, Object?>{
+          'platform': 'android',
+          'model': 'stranger',
+        },
+        'inbound': true,
+        'outbound': true,
+      },
+    ]
+    ..statuses = <String, String>{'stranger': 'Online'};
+    await mountPanel(tester, bridge);
+    expect(find.text('android-stranger'), findsOneWidget);
+    expect(find.textContaining('已配对'), findsWidgets);
+    final menus = find.byIcon(Icons.more_vert_outlined);
+    await tester.tap(menus.first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.widgetWithText(MenuItemButton, '解除配对'), findsOneWidget);
+    expect(find.widgetWithText(MenuItemButton, '加入设备空间'), findsOneWidget);
+    expect(find.widgetWithText(MenuItemButton, '断开设备'), findsNothing);
+    expect(find.widgetWithText(MenuItemButton, '移除设备'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await unmount(tester, bridge);
+  });
+
   testWidgets('the identity panel never repeats the device list', (
     tester,
   ) async {
