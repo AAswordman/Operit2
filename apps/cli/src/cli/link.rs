@@ -79,17 +79,26 @@ async fn run_node_pairing_command(args: &[String]) -> Result<(), String> {
     result
 }
 
-/// 管理配置仍保存原路径；监听由统一 RuntimePeerService 拥有。
-async fn start_node_listener(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<Option<u64>, String> {
-    use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::{PeerHostConfig, PeerHostPortMode}};
-    let mut transports = Vec::new();
-    let mut config = application.accessServices().localHostConfig()?.unwrap_or(PeerHostConfig {
+/// 读取本机监听配置；`link listen` 与 TUI 启动共用同一份默认，不各自造配置。
+/// 显式启动监听时统一使用自动避让端口，包括更早保存的固定端口配置。
+pub(crate) fn cli_listener_config(
+    services: &operit_node_runtime::RuntimeRemoteLinkService::RuntimeRemoteLinkService,
+) -> Result<operit_node_runtime::PeerStateStore::PeerHostConfig, String> {
+    use operit_node_runtime::PeerStateStore::{PeerHostConfig, PeerHostPortMode};
+    let mut config = services.localHostConfig()?.unwrap_or(PeerHostConfig {
         bindAddress: "0.0.0.0:37195".into(), token: uuid::Uuid::new_v4().to_string(),
         transports: Vec::new(), discoveryEnabled: true, portMode: PeerHostPortMode::Fixed,
         updatedAt: operit_host_api::TimeUtils::currentTimeMillis(),
     });
-    // Automatic port avoidance is the default, including for older saved configs.
     config.portMode = PeerHostPortMode::Automatic;
+    Ok(config)
+}
+
+/// 管理配置仍保存原路径；监听由统一 RuntimePeerService 拥有。
+async fn start_node_listener(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<Option<u64>, String> {
+    use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::PeerHostPortMode};
+    let mut transports = Vec::new();
+    let mut config = cli_listener_config(&application.accessServices())?;
     let mut duration = None;
     let mut index = 0;
     while index < args.len() {
