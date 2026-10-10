@@ -156,7 +156,13 @@ switch_core(nodeId)
 ```
 
 `list_core_nodes` 只读取本机已经同步的 Space 成员视图。Agent 使用它获得精确节点 ID，
-不引入 EnvRegistry、设备选择器或新的绑定概念。
+不引入 EnvRegistry、设备选择器或新的绑定概念。每个成员的 `reachable` 与设备面板同源：
+只要当前 Peer Link 图能解析出路由计划（含直连的 1 跳）即为可达；`relayHops`/`relayPath`
+仅对多跳成员填充。
+
+`switch_core` 在调用时按同一份路由视图校验目标：目标不是 Space 成员或当前不可达时，
+工具直接返回失败，而不是让切换在回合结束后异步落空。校验通过时工具返回目标
+`node_id` 标记；真正的 Binding 提交与目标端续跑发生在本回合完成之后。
 
 每个需要路由的业务 key 必须有一条 Binding。创建可执行聊天时，Chat 仓库单独写入
 `Binding(chatId)`。每次比较写入成功后 `generation` 单调递增，它同时标识目标节点即将
