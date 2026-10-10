@@ -181,10 +181,23 @@ class _AddDeviceDialog extends StatefulWidget {
     required this.clients,
     required this.onJoined,
     this.autoScan = true,
+    this.title,
+    this.hint,
+    this.onlyNodeId,
   });
   final GeneratedCoreProxyClients clients;
   final Future<void> Function(generated.CoreSpace) onJoined;
   final bool autoScan;
+
+  /// Overrides the dialog title for a focused pairing purpose.
+  final String? title;
+
+  /// Overrides the body hint describing what pairing will achieve.
+  final String? hint;
+
+  /// Restricts the scanned candidates to one known device, so a per-device
+  /// entry point cannot pair a different neighbour by accident.
+  final String? onlyNodeId;
 
   /// Creates state that owns discovery results and pairing interactions.
   @override
@@ -225,9 +238,14 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     try {
       final peers = await widget.clients.server.runtimeRemoteLinkService
           .discoverPeers(timeoutMs: 2000);
+      final onlyNodeId = widget.onlyNodeId;
       if (mounted) {
         setState(() {
-          _peers = peers;
+          _peers = onlyNodeId == null
+              ? peers
+              : peers
+                    .where((peer) => peer.nodeId == onlyNodeId)
+                    .toList(growable: false);
           _error = null;
         });
       }
@@ -241,6 +259,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   /// Pairs the selected device or opens explicit address entry.
   Future<void> _pair([generated.DiscoveredPeer? peer]) async {
     if (_busy) return;
+    final l10n = AppLocalizations.of(context)!;
     _setBusy(true);
     try {
       final _RemotePairResult? result;
@@ -274,6 +293,21 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       }
       if (result != null) {
         if (!mounted) return;
+        // An admitted member needs only the direct link: the join submission
+        // would be rejected as a duplicate membership, so pairing ends here.
+        if (await _isSpaceMember(result.peer.nodeId)) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                l10n.deviceSpaceDirectLinkEstablished(result.peer.displayName),
+              ),
+            ),
+          );
+          Navigator.pop(context);
+          return;
+        }
+        if (!mounted) return;
         final space = await showSpaceJoinRequest(
           context,
           clients: widget.clients,
@@ -289,6 +323,21 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       if (mounted) setState(() => _error = error.toString());
     } finally {
       _setBusy(false);
+    }
+  }
+
+  /// Reports whether one device already belongs to this device's Space.
+  ///
+  /// Membership is judged by the same projection the join contract uses:
+  /// the coordinator rejects a request from an already admitted device, so the
+  /// dialog must not offer a join that cannot succeed.
+  Future<bool> _isSpaceMember(String nodeId) async {
+    try {
+      final space = await widget.clients.server.runtimeRemoteLinkService
+          .deviceSpace();
+      return space.members.contains(nodeId);
+    } catch (_) {
+      return false;
     }
   }
 
@@ -437,7 +486,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     return OperitDialogScaffold(
-      title: l10n.deviceSpaceAddDevice,
+      title: widget.title ?? l10n.deviceSpaceAddDevice,
       maxWidth: 480,
       maxHeight: (MediaQuery.sizeOf(context).height * .8).clamp(0.0, 520.0),
       expandContent: false,
@@ -468,7 +517,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
             child: Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Text(
-                l10n.devicePickerHint,
+                widget.hint ?? l10n.devicePickerHint,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                   height: 1.5,
@@ -490,6 +539,34 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
       ),
     );
   }
+}
+
+/// Opens the shared discovery and pairing dialog for one focused purpose.
+///
+/// `title` and `hint` describe what pairing achieves - adding a device versus
+/// giving an already relayed Space member a direct link; `onlyNodeId` keeps the
+/// scan list on that one device so a per-device entry point cannot pair a
+/// different neighbour by accident. Pairing a device that already belongs to
+/// this Space completes without a join request.
+Future<void> showDeviceSpacePairingDialog(
+  BuildContext context, {
+  required GeneratedCoreProxyClients clients,
+  String? title,
+  String? hint,
+  String? onlyNodeId,
+  bool autoScan = true,
+}) async {
+  await showDialog<void>(
+    context: context,
+    builder: (_) => _AddDeviceDialog(
+      clients: clients,
+      autoScan: autoScan,
+      title: title,
+      hint: hint,
+      onlyNodeId: onlyNodeId,
+      onJoined: (_) async {},
+    ),
+  );
 }
 
 Future<generated.CoreSpace?> confirmAndJoinPairedDeviceSpace({

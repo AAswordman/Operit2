@@ -414,7 +414,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
       status: status,
       tag: l10n.deviceSpaceMemberNotPaired,
       path: path,
-      actions: _managedDeviceActions(l10n, device),
+      actions: _managedDeviceActions(l10n, device, offerDirectLink: true),
       onTap: () => _showDeviceDetails(
         icon: icon,
         name: device.deviceName,
@@ -430,14 +430,26 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
 
   /// Builds the managed-device entries the local identity may run.
   ///
-  /// Entries appear only when the synchronized policy grants the matching
-  /// capability; an identity without any of them gets no menu at all. Pairing is
-  /// irrelevant here: a paired member and a relayed member are managed alike.
+  /// Command entries appear only when the synchronized policy grants the
+  /// matching capability; an identity without any of them gets no menu unless a
+  /// link-layer entry below applies. Pairing is irrelevant here: a paired member
+  /// and a relayed member are managed alike. `offerDirectLink` adds the
+  /// link-layer entry a relayed member can always run: pairing it adds this
+  /// device's own edge and needs no Space capability, which is why it stays
+  /// outside the capability gates below.
   List<Widget> _managedDeviceActions(
     AppLocalizations l10n,
-    generated.RuntimeDeviceSpaceDevice device,
-  ) {
+    generated.RuntimeDeviceSpaceDevice device, {
+    bool offerDirectLink = false,
+  }) {
     return <Widget>[
+      if (offerDirectLink && !_disconnectedDeviceIds.contains(device.deviceId))
+        MenuItemButton(
+          onPressed: _busy
+              ? null
+              : () => unawaited(_connectDirectly(device, l10n)),
+          child: Text(l10n.deviceSpaceConnectDirect),
+        ),
       if (_localHasCapability('network.members.join'))
         MenuItemButton(
           onPressed: () => _runDeviceCommand(
@@ -482,6 +494,36 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
           child: Text(l10n.settingsRuntimeControlRemoveDevice),
         ),
     ];
+  }
+
+  /// Device ids the Space policy restricts to no direct connection or transit.
+  Set<String> get _disconnectedDeviceIds {
+    final raw = _control?.disconnectedNodeIds;
+    if (raw is Iterable) {
+      return raw.whereType<String>().toSet();
+    }
+    return const <String>{};
+  }
+
+  /// Pairs one relayed member directly without joining the Space again.
+  ///
+  /// The shared pairing dialog owns the whole link-level flow - scanning or an
+  /// explicit address plus the receiver's token, then its six-digit code - and
+  /// completes without a join request because the device is already a member.
+  Future<void> _connectDirectly(
+    generated.RuntimeDeviceSpaceDevice device,
+    AppLocalizations l10n,
+  ) async {
+    await showDeviceSpacePairingDialog(
+      context,
+      clients: _clients,
+      title: l10n.deviceSpaceConnectDirect,
+      hint: l10n.deviceSpaceConnectDirectHint,
+      onlyNodeId: device.deviceId,
+    );
+    if (mounted) {
+      await _refreshCurrentDeviceSpace();
+    }
   }
 
   /// Opens the read-only device details reachable without any capability.

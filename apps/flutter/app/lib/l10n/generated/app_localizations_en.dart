@@ -4391,6 +4391,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get deviceSpaceManageDevice => 'Manage device';
 
   @override
+  String get deviceSpaceConnectDirect => 'Connect directly';
+
+  @override
+  String get deviceSpaceConnectDirectHint =>
+      'This device is already a Space member. Pairing it adds a direct link without joining again; pairing shows a six-digit code on the other device for you to enter.';
+
+  @override
+  String deviceSpaceDirectLinkEstablished(String device) {
+    return 'Direct link established: $device';
+  }
+
+  @override
   String get deviceSpaceUnpair => 'Unpair device';
 
   @override

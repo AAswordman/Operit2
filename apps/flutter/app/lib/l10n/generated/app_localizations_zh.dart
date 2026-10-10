@@ -4215,6 +4215,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceManageDevice => '管理设备';
 
   @override
+  String get deviceSpaceConnectDirect => '建立直连';
+
+  @override
+  String get deviceSpaceConnectDirectHint =>
+      '该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。';
+
+  @override
+  String deviceSpaceDirectLinkEstablished(String device) {
+    return '已建立直连：$device';
+  }
+
+  @override
   String get deviceSpaceUnpair => '解除配对';
 
   @override

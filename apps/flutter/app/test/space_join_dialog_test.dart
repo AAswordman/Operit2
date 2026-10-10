@@ -42,6 +42,9 @@ class JoinBridge extends OperitRuntimeBridge {
   bool failOutgoing = false;
   bool failSubmit = false, failDecision = false, failCancel = false;
   Object submissionError = StateError('COMMAND_ERROR: not admitted');
+
+  /// Members the local Space projection advertises.
+  List<String> members = <String>['ios', 'mac'];
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     calls.add(request.methodName);
@@ -79,7 +82,7 @@ class JoinBridge extends OperitRuntimeBridge {
             'spaceId': 'target-space',
             'spaceName': 'iPhone 的空间',
             'spaceRevision': 3,
-            'members': ['ios', 'mac'],
+            'members': members,
           },
         ]);
       default:
