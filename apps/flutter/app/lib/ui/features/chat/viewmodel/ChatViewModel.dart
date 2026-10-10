@@ -107,21 +107,6 @@ class ChatViewModel {
   /// The chat runtime scoped to this view model's window.
   GeneratedChatRuntimeHolderMainCoreProxy get chatCore => _chat;
 
-  /// Extraction and selected-message queue use the chat's persisted binding.
-  Future<void> updateMemory(String chatId) =>
-      _chat.updateMemory(chatId: chatId);
-  Future<void> enqueueSelectedMessagesForMemory(
-    String chatId,
-    List<int> timestamps,
-  ) => _chat.enqueueSelectedMessagesForMemory(
-    chatId: chatId,
-    messageTimestamps: timestamps,
-  );
-
-  /// Core resolves character/shared/group memory ownership for the persisted chat.
-  Future<String> memoryOwnerForChat(String chatId) =>
-      _chat.memoryOwnerKeyForChat(chatId: chatId);
-
   /// Watches the selected chat id used to bind per-chat Core flows.
   Stream<String?> watchCurrentChatId() {
     return _chat.currentChatIdFlow();
@@ -167,7 +152,7 @@ class ChatViewModel {
     final attachments = await _chat.attachments();
     await _chat.sendUserMessage(
       promptFunctionType: core_proxy.PromptFunctionType.chat,
-      roleCardIdOverride: null,
+      participantId: null,
       chatIdOverride: chatIdOverride,
       messageText: text,
       proxySenderNameOverride: null,
@@ -180,6 +165,7 @@ class ChatViewModel {
         notifyReply: null,
         hideUserMessage: false,
         disableWarning: false,
+        continuation: null,
         chatInputSubmitRequestedHandled: true,
       ),
     );
@@ -210,14 +196,16 @@ class ChatViewModel {
     required String text,
     required int selectionStart,
     required int selectionEnd,
-    required int attachmentCount,
+    required List<AttachmentInfo> attachments,
+    required int? replyToMessageTimestamp,
   }) async {
     final result = await _chat.dispatchChatInputSubmitRequested(
       chatIdOverride: chatId,
       messageText: text,
       selectionStart: selectionStart,
       selectionEnd: selectionEnd,
-      attachmentCount: attachmentCount,
+      attachments: attachments,
+      replyToMessageTimestamp: replyToMessageTimestamp,
     );
     if (result == null) {
       return null;

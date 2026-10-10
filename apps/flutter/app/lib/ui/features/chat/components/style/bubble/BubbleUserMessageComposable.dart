@@ -671,7 +671,7 @@ class _AttachmentMatch {
 
 /// Extracts message decorations and trims the remaining display text.
 MessageParseResult parseMessageContent(String content) {
-  var cleanedContent = content.replaceAll(ChatMarkupRegex.memoryTag, '').trim();
+  var cleanedContent = content.trim();
 
   final proxySenderMatch = ChatMarkupRegex.proxySenderTag.firstMatch(
     cleanedContent,

@@ -71,7 +71,6 @@ pub struct SendMessageRequest<'a> {
     pub workspaceFolders: Vec<String>,
     pub promptFunctionType: PromptFunctionType,
     pub enableThinking: bool,
-    pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
     pub proxySenderName: Option<String>,
@@ -403,7 +402,6 @@ impl AIMessageManager {
         options.promptFunctionType = request.promptFunctionType;
         options.executionParticipantId = Some(request.chatConfiguration.profile.id.clone());
         options.enableThinking = request.enableThinking;
-        options.enableMemoryAutoUpdate = request.enableMemoryAutoUpdate;
         options.maxTokens = request.maxTokens;
         options.tokenUsageThreshold = request.tokenUsageThreshold;
         options.proxySenderName = request.proxySenderName;
@@ -615,6 +613,8 @@ impl AIMessageManager {
                 request.workspaceFolders,
                 request.promptFunctionType,
                 Some(request.runtime.chatConfiguration.profile.id.clone()),
+                false,
+                None,
                 request.proxySenderName,
                 request.chatProviderIdOverride,
                 request.chatModelIdOverride,

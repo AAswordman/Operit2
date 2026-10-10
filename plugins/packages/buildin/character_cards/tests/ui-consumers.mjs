@@ -164,7 +164,7 @@ export function sidebarViolationsFromSources(readSource) {
   let mainBuild, drawerBuild, catalog, content, activation;
   try {
     mainBuild = methodBody(classBody(main.raw, "_OperitMainScreenState"), "build"); drawerBuild = methodBody(classBody(drawer.raw, "_DrawerContentState"), "build");
-    catalog = methodBody(host.raw, "_readCatalog"); content = methodBody(host.raw, "_content"); activation = methodBody(host.raw, "_handleResult");
+    catalog = methodBody(host.raw, "_readCatalog"); content = methodBody(host.raw, "_content"); if (/\b_embedded\s*\(/.test(content)) content += methodBody(host.raw, "_embedded"); activation = methodBody(host.raw, "_handleResult");
   } catch (error) {
     violations.push("Sidebar production rendering/catalog method is missing or ambiguous: " + error.message);
     return violations;
@@ -229,7 +229,16 @@ export function sidebarViolationsFromSources(readSource) {
     violations.push(host.file + ": activation must validate the protocol, current catalog and chat existence before awaiting the host callback");
   }
   try {
-    if (invocation(semanticCode(methodBody(host.raw, "_reloadCatalog")), "_readCatalog") === null || invocation(semanticCode(methodBody(classBody(host.raw, "_ChatSidebarTabHostState"), "build")), "_content") === null) {
+    const reload = semanticCode(methodBody(host.raw, "_reloadCatalog"));
+    let catalogIsLoaded = invocation(reload, "_readCatalog") !== null;
+    if (!catalogIsLoaded && invocation(reload, "_loadCatalog") !== null) {
+      const loader = semanticCode(methodBody(host.raw, "_loadCatalog"));
+      catalogIsLoaded = invocation(loader, "_readCatalog") !== null;
+    }
+    const hostClass = classBody(host.raw, "_ChatSidebarTabHostState");
+    const buildPath = semanticCode(methodBody(hostClass, "build"));
+    const surfacePath = invocation(buildPath, "_surface") !== null ? semanticCode(methodBody(hostClass, "_surface")) : buildPath;
+    if (!catalogIsLoaded || invocation(surfacePath, "_content") === null) {
       violations.push(host.file + ": catalog and embedded route helpers must be called by the actual host rendering path");
     }
   } catch (error) { violations.push(host.file + ": " + error.message); }

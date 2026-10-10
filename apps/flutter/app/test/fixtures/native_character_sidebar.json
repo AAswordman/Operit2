@@ -1,0 +1,2201 @@
+{
+  "__composeNode": true,
+  "type": "Column",
+  "props": {
+    "key": "native-character-sidebar",
+    "fillMaxSize": true,
+    "onLoad": {
+      "__actionId": "__action_231"
+    },
+    "onInputsChanged": {
+      "__actionId": "__action_232"
+    }
+  },
+  "children": [
+    {
+      "__composeNode": true,
+      "type": "LazyColumn",
+      "props": {
+        "key": "native-sidebar-history",
+        "weight": 1,
+        "fillMaxWidth": true,
+        "paddingBottom": 16,
+        "spacing": 0
+      },
+      "children": [
+        {
+          "__composeNode": true,
+          "type": "Row",
+          "props": {
+            "key": "sidebar-toolbar",
+            "fillMaxWidth": true,
+            "verticalAlignment": "center",
+            "spacing": 8,
+            "paddingStart": 14,
+            "paddingEnd": 12,
+            "paddingBottom": 8
+          },
+          "children": [
+            {
+              "__composeNode": true,
+              "type": "Surface",
+              "props": {
+                "key": "sidebar-create-bar",
+                "weight": 1,
+                "height": 34,
+                "containerColor": {
+                  "__colorToken": "primaryContainer",
+                  "copy": {
+                    "__actionId": "__action_136"
+                  }
+                },
+                "contentColor": {
+                  "__colorToken": "onPrimaryContainer",
+                  "copy": {
+                    "__actionId": "__action_137"
+                  }
+                },
+                "shape": {
+                  "type": "pill"
+                }
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "Row",
+                  "props": {
+                    "fillMaxSize": true,
+                    "verticalAlignment": "center"
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "Row",
+                      "props": {
+                        "key": "sidebar-new-chat",
+                        "weight": 1,
+                        "height": 34,
+                        "verticalAlignment": "center",
+                        "horizontalArrangement": "center",
+                        "onClick": {
+                          "__actionId": "__action_132"
+                        },
+                        "spacing": 6
+                      },
+                      "children": [
+                        {
+                          "__composeNode": true,
+                          "type": "Icon",
+                          "props": {
+                            "name": "AddRounded",
+                            "size": 17,
+                            "tint": {
+                              "__colorToken": "onPrimaryContainer",
+                              "copy": {
+                                "__actionId": "__action_130"
+                              }
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Text",
+                          "props": {
+                            "text": "新建对话",
+                            "fontSize": 13,
+                            "fontWeight": "600",
+                            "color": {
+                              "__colorToken": "onPrimaryContainer",
+                              "copy": {
+                                "__actionId": "__action_131"
+                              }
+                            },
+                            "letterSpacing": -0.1
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Box",
+                      "props": {
+                        "width": 1,
+                        "height": 16,
+                        "background": {
+                          "__colorToken": "onPrimaryContainer",
+                          "alpha": 0.16,
+                          "copy": {
+                            "__actionId": "__action_133"
+                          }
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Row",
+                      "props": {
+                        "key": "sidebar-new-group",
+                        "width": 38,
+                        "height": 34,
+                        "verticalAlignment": "center",
+                        "horizontalArrangement": "center",
+                        "onClick": {
+                          "__actionId": "__action_135"
+                        }
+                      },
+                      "children": [
+                        {
+                          "__composeNode": true,
+                          "type": "Icon",
+                          "props": {
+                            "name": "CreateNewFolderOutlined",
+                            "size": 16,
+                            "tint": {
+                              "__colorToken": "onPrimaryContainer",
+                              "copy": {
+                                "__actionId": "__action_134"
+                              }
+                            },
+                            "contentDescription": "新建分组"
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "__composeNode": true,
+              "type": "Row",
+              "props": {
+                "key": "sidebar-search-toggle",
+                "width": 34,
+                "height": 34,
+                "verticalAlignment": "center",
+                "horizontalArrangement": "center",
+                "onClick": {
+                  "__actionId": "__action_139"
+                },
+                "modifier": {
+                  "__modifierOps": [
+                    {
+                      "name": "clip",
+                      "args": [
+                        {
+                          "cornerRadius": 6
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "background": {
+                  "__colorToken": "surface",
+                  "alpha": 0,
+                  "copy": {
+                    "__actionId": "__action_140"
+                  }
+                }
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "Icon",
+                  "props": {
+                    "name": "Search",
+                    "size": 17,
+                    "tint": {
+                      "__colorToken": "onSurfaceVariant",
+                      "alpha": 0.78,
+                      "copy": {
+                        "__actionId": "__action_138"
+                      }
+                    },
+                    "contentDescription": "搜索对话"
+                  },
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "__composeNode": true,
+          "type": "Column",
+          "props": {
+            "key": "sidebar-section-card:travel",
+            "fillMaxWidth": true,
+            "paddingStart": 20,
+            "paddingEnd": 12,
+            "paddingTop": 10,
+            "paddingBottom": 5
+          },
+          "children": [
+            {
+              "__composeNode": true,
+              "type": "DragTarget",
+              "props": {
+                "key": "sidebar-category-drop-card:travel",
+                "acceptedTypes": [
+                  "character-sidebar.chat"
+                ],
+                "acceptedData": [
+                  "c1",
+                  "c2",
+                  "c3"
+                ],
+                "onDrop": {
+                  "__actionId": "__action_147"
+                }
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "Row",
+                  "props": {
+                    "fillMaxWidth": true,
+                    "verticalAlignment": "center",
+                    "height": 24,
+                    "onClick": {
+                      "__actionId": "__action_146"
+                    },
+                    "modifier": {
+                      "__modifierOps": [
+                        {
+                          "name": "clip",
+                          "args": [
+                            {
+                              "cornerRadius": 18
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "Image",
+                      "props": {
+                        "key": "sidebar-avatar-card:travel",
+                        "uri": "data:image/png;base64,iVBORw0KGgo=",
+                        "width": 22,
+                        "height": 22,
+                        "contentScale": "crop",
+                        "contentDescription": "旅行角色",
+                        "modifier": {
+                          "__modifierOps": [
+                            {
+                              "name": "clip",
+                              "args": [
+                                {
+                                  "type": "circle"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Spacer",
+                      "props": {
+                        "width": 8
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Text",
+                      "props": {
+                        "text": "旅行角色",
+                        "style": "titleSmall",
+                        "fontWeight": "700",
+                        "maxLines": 1,
+                        "overflow": "ellipsis",
+                        "modifier": {
+                          "__modifierOps": [
+                            {
+                              "name": "widthIn",
+                              "args": [
+                                {
+                                  "max": 170
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "color": {
+                          "__colorToken": "onSurface",
+                          "copy": {
+                            "__actionId": "__action_141"
+                          }
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Spacer",
+                      "props": {
+                        "width": 8
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Text",
+                      "props": {
+                        "text": "3",
+                        "style": "labelSmall",
+                        "fontWeight": "700",
+                        "color": {
+                          "__colorToken": "onSurfaceVariant",
+                          "alpha": 0.64,
+                          "copy": {
+                            "__actionId": "__action_142"
+                          }
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "GradientRule",
+                      "props": {
+                        "weight": 1,
+                        "paddingHorizontal": 10,
+                        "height": 2,
+                        "startColor": {
+                          "__colorToken": "outlineVariant",
+                          "alpha": 0.62,
+                          "copy": {
+                            "__actionId": "__action_143"
+                          }
+                        },
+                        "endColor": {
+                          "__colorToken": "outlineVariant",
+                          "alpha": 0,
+                          "copy": {
+                            "__actionId": "__action_144"
+                          }
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Icon",
+                      "props": {
+                        "name": "KeyboardArrowUp",
+                        "size": 23,
+                        "tint": {
+                          "__colorToken": "onSurfaceVariant",
+                          "alpha": 0.78,
+                          "copy": {
+                            "__actionId": "__action_145"
+                          }
+                        }
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "__composeNode": true,
+          "type": "Column",
+          "props": {
+            "key": "sidebar-group-1",
+            "fillMaxWidth": true,
+            "paddingStart": 46,
+            "paddingEnd": 12,
+            "paddingTop": 4,
+            "paddingBottom": 2
+          },
+          "children": [
+            {
+              "__composeNode": true,
+              "type": "DragTarget",
+              "props": {
+                "key": "sidebar-group-drop-1",
+                "acceptedTypes": [
+                  "character-sidebar.chat"
+                ],
+                "acceptedData": [
+                  "c1",
+                  "c2",
+                  "c3"
+                ],
+                "hoverBorderColor": {
+                  "__colorToken": "primary",
+                  "alpha": 0.55,
+                  "copy": {
+                    "__actionId": "__action_157"
+                  }
+                },
+                "shape": {
+                  "cornerRadius": 12
+                },
+                "onDrop": {
+                  "__actionId": "__action_158"
+                }
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "HoverRegion",
+                  "props": {
+                    "shape": {
+                      "cornerRadius": 12
+                    }
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "Row",
+                      "props": {
+                        "fillMaxWidth": true,
+                        "verticalAlignment": "center",
+                        "paddingStart": 12,
+                        "paddingEnd": 8,
+                        "paddingTop": 6,
+                        "paddingBottom": 6,
+                        "background": {
+                          "__colorToken": "surfaceContainerLow",
+                          "alpha": 0.72,
+                          "copy": {
+                            "__actionId": "__action_154"
+                          }
+                        },
+                        "backgroundShape": {
+                          "cornerRadius": 12
+                        },
+                        "modifier": {
+                          "__modifierOps": [
+                            {
+                              "name": "border",
+                              "args": [
+                                1,
+                                {
+                                  "__colorToken": "outlineVariant",
+                                  "alpha": 0.24,
+                                  "copy": {
+                                    "__actionId": "__action_155"
+                                  }
+                                },
+                                {
+                                  "cornerRadius": 12
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "onClick": {
+                          "__actionId": "__action_156"
+                        }
+                      },
+                      "children": [
+                        {
+                          "__composeNode": true,
+                          "type": "Icon",
+                          "props": {
+                            "name": "FolderOutlined",
+                            "size": 16,
+                            "tint": {
+                              "__colorToken": "onSurfaceVariant",
+                              "alpha": 0.76,
+                              "copy": {
+                                "__actionId": "__action_148"
+                              }
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Spacer",
+                          "props": {
+                            "width": 7
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Text",
+                          "props": {
+                            "text": "行程分组",
+                            "weight": 1,
+                            "style": "labelLarge",
+                            "fontWeight": "700",
+                            "maxLines": 1,
+                            "overflow": "ellipsis",
+                            "color": {
+                              "__colorToken": "onSurface",
+                              "alpha": 1,
+                              "copy": {
+                                "__actionId": "__action_149"
+                              }
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Spacer",
+                          "props": {
+                            "width": 4
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Icon",
+                          "props": {
+                            "name": "PushPinRounded",
+                            "size": 12,
+                            "tint": {
+                              "__colorToken": "onSurfaceVariant",
+                              "alpha": 0.65,
+                              "copy": {
+                                "__actionId": "__action_150"
+                              }
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Spacer",
+                          "props": {
+                            "width": 2
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "HoverOnly",
+                          "props": {
+                            "key": "sidebar-group-menu-1-visibility",
+                            "alwaysVisible": false
+                          },
+                          "children": [
+                            {
+                              "__composeNode": true,
+                              "type": "PopupMenu",
+                              "props": {
+                                "key": "sidebar-group-menu-1",
+                                "width": 22,
+                                "height": 22,
+                                "menuMaxWidth": 138,
+                                "tooltip": "分组操作",
+                                "items": [
+                                  {
+                                    "label": "新建对话",
+                                    "icon": "AddCommentOutlined"
+                                  },
+                                  {
+                                    "label": "编辑名称",
+                                    "icon": "EditOutlined"
+                                  },
+                                  {
+                                    "label": "取消置顶",
+                                    "icon": "PushPinOutlined"
+                                  },
+                                  {
+                                    "label": "删除",
+                                    "icon": "DeleteOutlineRounded",
+                                    "danger": true,
+                                    "dividerBefore": true
+                                  }
+                                ],
+                                "enabled": true,
+                                "onSelected": {
+                                  "__actionId": "__action_152"
+                                }
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "Icon",
+                                  "props": {
+                                    "name": "MoreHorizRounded",
+                                    "size": 16,
+                                    "tint": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "alpha": 0.78,
+                                      "copy": {
+                                        "__actionId": "__action_151"
+                                      }
+                                    }
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Spacer",
+                          "props": {
+                            "width": 2
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Icon",
+                          "props": {
+                            "name": "KeyboardArrowUp",
+                            "size": 20,
+                            "tint": {
+                              "__colorToken": "onSurfaceVariant",
+                              "alpha": 0.62,
+                              "copy": {
+                                "__actionId": "__action_153"
+                              }
+                            }
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "__composeNode": true,
+          "type": "DragTarget",
+          "props": {
+            "key": "sidebar-chat-drop-c1",
+            "acceptedTypes": [
+              "character-sidebar.chat"
+            ],
+            "acceptedData": [
+              "c2",
+              "c3"
+            ],
+            "hoverBorderColor": {
+              "__colorToken": "primary",
+              "alpha": 0.55,
+              "copy": {
+                "__actionId": "__action_180"
+              }
+            },
+            "shape": {
+              "cornerRadius": 8
+            },
+            "fillMaxWidth": true,
+            "onDrop": {
+              "__actionId": "__action_181"
+            }
+          },
+          "children": [
+            {
+              "__composeNode": true,
+              "type": "Row",
+              "props": {
+                "key": "sidebar-chat-c1",
+                "fillMaxWidth": true,
+                "height": 34,
+                "paddingStart": 56,
+                "paddingEnd": 12,
+                "verticalAlignment": "center"
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "Box",
+                  "props": {
+                    "key": "sidebar-chat-rail-c1",
+                    "width": 20,
+                    "height": 34,
+                    "contentAlignment": "center"
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "Box",
+                      "props": {
+                        "width": 1,
+                        "height": 34,
+                        "background": {
+                          "__colorToken": "outlineVariant",
+                          "alpha": 0.45,
+                          "copy": {
+                            "__actionId": "__action_171"
+                          }
+                        }
+                      },
+                      "children": []
+                    },
+                    {
+                      "__composeNode": true,
+                      "type": "Box",
+                      "props": {
+                        "width": 2,
+                        "height": 16,
+                        "background": {
+                          "__colorToken": "primary",
+                          "copy": {
+                            "__actionId": "__action_172"
+                          }
+                        },
+                        "backgroundShape": {
+                          "cornerRadius": 1.5
+                        }
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "__composeNode": true,
+                  "type": "Spacer",
+                  "props": {
+                    "width": 2
+                  },
+                  "children": []
+                },
+                {
+                  "__composeNode": true,
+                  "type": "HoverRegion",
+                  "props": {
+                    "weight": 1,
+                    "hoverBackground": {
+                      "__colorToken": "onSurfaceVariant",
+                      "alpha": 0.07,
+                      "copy": {
+                        "__actionId": "__action_179"
+                      }
+                    },
+                    "shape": {
+                      "cornerRadius": 8
+                    }
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "SwipeActions",
+                      "props": {
+                        "key": "sidebar-chat-swipe-c1",
+                        "actionThreshold": 0.4,
+                        "onStartAction": {
+                          "__actionId": "__action_177"
+                        },
+                        "onEndAction": {
+                          "__actionId": "__action_178"
+                        }
+                      },
+                      "children": [
+                        {
+                          "__composeNode": true,
+                          "type": "Row",
+                          "props": {
+                            "key": "sidebar-chat-hit-c1",
+                            "weight": 1,
+                            "height": 31,
+                            "verticalAlignment": "center",
+                            "paddingHorizontal": 6,
+                            "modifier": {
+                              "__modifierOps": [
+                                {
+                                  "name": "background",
+                                  "args": [
+                                    {
+                                      "__colorToken": "secondaryContainer",
+                                      "alpha": 0.78,
+                                      "copy": {
+                                        "__actionId": "__action_167"
+                                      }
+                                    },
+                                    {
+                                      "cornerRadius": 8
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "border",
+                                  "args": [
+                                    1,
+                                    {
+                                      "__colorToken": "onSecondaryContainer",
+                                      "alpha": 0.08,
+                                      "copy": {
+                                        "__actionId": "__action_168"
+                                      }
+                                    },
+                                    {
+                                      "cornerRadius": 8
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "combinedClickable",
+                                  "args": [
+                                    {
+                                      "onClick": {
+                                        "__actionId": "__action_169"
+                                      },
+                                      "onLongClick": {
+                                        "__actionId": "__action_170"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "children": [
+                            {
+                              "__composeNode": true,
+                              "type": "Draggable",
+                              "props": {
+                                "key": "sidebar-chat-drag-c1",
+                                "data": "c1",
+                                "dragType": "character-sidebar.chat",
+                                "enabled": true
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "ActivityDots",
+                                  "props": {
+                                    "key": "sidebar-status-c1",
+                                    "width": 10,
+                                    "height": 13.5,
+                                    "running": false,
+                                    "selected": true,
+                                    "restingColor": {
+                                      "__colorToken": "onSecondaryContainer",
+                                      "alpha": 0.7,
+                                      "copy": {
+                                        "__actionId": "__action_159"
+                                      }
+                                    },
+                                    "activeColor": {
+                                      "__colorToken": "primary",
+                                      "copy": {
+                                        "__actionId": "__action_160"
+                                      }
+                                    }
+                                  },
+                                  "children": []
+                                }
+                              ],
+                              "slots": {
+                                "feedback": [
+                                  {
+                                    "__composeNode": true,
+                                    "type": "Row",
+                                    "props": {
+                                      "width": 220,
+                                      "height": 34,
+                                      "paddingHorizontal": 10,
+                                      "verticalAlignment": "center",
+                                      "background": {
+                                        "__colorToken": "surfaceContainerHighest",
+                                        "copy": {
+                                          "__actionId": "__action_162"
+                                        }
+                                      },
+                                      "backgroundShape": {
+                                        "cornerRadius": 8
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "__composeNode": true,
+                                        "type": "Text",
+                                        "props": {
+                                          "text": "对话 c1",
+                                          "weight": 1,
+                                          "maxLines": 1,
+                                          "overflow": "ellipsis",
+                                          "fontSize": 13,
+                                          "color": {
+                                            "__colorToken": "onSurface",
+                                            "copy": {
+                                              "__actionId": "__action_161"
+                                            }
+                                          }
+                                        },
+                                        "children": []
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 5
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Text",
+                              "props": {
+                                "key": "sidebar-chat-title-c1",
+                                "text": "对话 c1",
+                                "weight": 1,
+                                "fontSize": 13,
+                                "fontWeight": "600",
+                                "maxLines": 1,
+                                "overflow": "ellipsis",
+                                "color": {
+                                  "__colorToken": "onSecondaryContainer",
+                                  "copy": {
+                                    "__actionId": "__action_163"
+                                  }
+                                },
+                                "letterSpacing": -0.1
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 5
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Icon",
+                              "props": {
+                                "name": "PushPin",
+                                "size": 12,
+                                "tint": {
+                                  "__colorToken": "onSecondaryContainer",
+                                  "alpha": 0.6,
+                                  "copy": {
+                                    "__actionId": "__action_164"
+                                  }
+                                }
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 4
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "HoverOnly",
+                              "props": {
+                                "key": "sidebar-chat-menu-c1-visibility",
+                                "alwaysVisible": true
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "PopupMenu",
+                                  "props": {
+                                    "key": "sidebar-chat-menu-c1",
+                                    "width": 22,
+                                    "height": 22,
+                                    "tooltip": "对话操作",
+                                    "enabled": true,
+                                    "items": [
+                                      {
+                                        "label": "编辑名称",
+                                        "icon": "Edit"
+                                      },
+                                      {
+                                        "label": "取消置顶",
+                                        "icon": "PushPin"
+                                      },
+                                      {
+                                        "label": "锁定",
+                                        "icon": "Lock"
+                                      },
+                                      {
+                                        "label": "删除",
+                                        "icon": "DeleteOutline",
+                                        "danger": true
+                                      }
+                                    ],
+                                    "onSelected": {
+                                      "__actionId": "__action_166"
+                                    }
+                                  },
+                                  "children": [
+                                    {
+                                      "__composeNode": true,
+                                      "type": "Icon",
+                                      "props": {
+                                        "name": "MoreHoriz",
+                                        "size": 16,
+                                        "tint": {
+                                          "__colorToken": "onSurfaceVariant",
+                                          "alpha": 0.78,
+                                          "copy": {
+                                            "__actionId": "__action_165"
+                                          }
+                                        }
+                                      },
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "slots": {
+                        "startBackground": [
+                          {
+                            "__composeNode": true,
+                            "type": "Box",
+                            "props": {
+                              "fillMaxSize": true,
+                              "paddingStart": 12,
+                              "background": {
+                                "__colorToken": "primary",
+                                "copy": {
+                                  "__actionId": "__action_174"
+                                }
+                              },
+                              "contentAlignment": "start"
+                            },
+                            "children": [
+                              {
+                                "__composeNode": true,
+                                "type": "Icon",
+                                "props": {
+                                  "name": "Edit",
+                                  "size": 18,
+                                  "tint": {
+                                    "__colorToken": "onPrimary",
+                                    "copy": {
+                                      "__actionId": "__action_173"
+                                    }
+                                  }
+                                },
+                                "children": []
+                              }
+                            ]
+                          }
+                        ],
+                        "endBackground": [
+                          {
+                            "__composeNode": true,
+                            "type": "Box",
+                            "props": {
+                              "fillMaxSize": true,
+                              "paddingEnd": 12,
+                              "background": {
+                                "__colorToken": "error",
+                                "copy": {
+                                  "__actionId": "__action_176"
+                                }
+                              },
+                              "contentAlignment": "end"
+                            },
+                            "children": [
+                              {
+                                "__composeNode": true,
+                                "type": "Icon",
+                                "props": {
+                                  "name": "Delete",
+                                  "size": 18,
+                                  "tint": {
+                                    "__colorToken": "onError",
+                                    "copy": {
+                                      "__actionId": "__action_175"
+                                    }
+                                  }
+                                },
+                                "children": []
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "__composeNode": true,
+          "type": "DragTarget",
+          "props": {
+            "key": "sidebar-chat-drop-c2",
+            "acceptedTypes": [
+              "character-sidebar.chat"
+            ],
+            "acceptedData": [
+              "c1",
+              "c3"
+            ],
+            "hoverBorderColor": {
+              "__colorToken": "primary",
+              "alpha": 0.55,
+              "copy": {
+                "__actionId": "__action_200"
+              }
+            },
+            "shape": {
+              "cornerRadius": 8
+            },
+            "fillMaxWidth": true,
+            "onDrop": {
+              "__actionId": "__action_201"
+            }
+          },
+          "children": [
+            {
+              "__composeNode": true,
+              "type": "Row",
+              "props": {
+                "key": "sidebar-chat-c2",
+                "fillMaxWidth": true,
+                "height": 34,
+                "paddingStart": 56,
+                "paddingEnd": 12,
+                "verticalAlignment": "center"
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "Box",
+                  "props": {
+                    "key": "sidebar-chat-rail-c2",
+                    "width": 20,
+                    "height": 34,
+                    "contentAlignment": "center"
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "Box",
+                      "props": {
+                        "width": 1,
+                        "height": 34,
+                        "background": {
+                          "__colorToken": "outlineVariant",
+                          "alpha": 0.45,
+                          "copy": {
+                            "__actionId": "__action_192"
+                          }
+                        }
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "__composeNode": true,
+                  "type": "Spacer",
+                  "props": {
+                    "width": 2
+                  },
+                  "children": []
+                },
+                {
+                  "__composeNode": true,
+                  "type": "HoverRegion",
+                  "props": {
+                    "weight": 1,
+                    "hoverBackground": {
+                      "__colorToken": "onSurfaceVariant",
+                      "alpha": 0.07,
+                      "copy": {
+                        "__actionId": "__action_199"
+                      }
+                    },
+                    "shape": {
+                      "cornerRadius": 8
+                    }
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "SwipeActions",
+                      "props": {
+                        "key": "sidebar-chat-swipe-c2",
+                        "actionThreshold": 0.4,
+                        "onStartAction": {
+                          "__actionId": "__action_197"
+                        },
+                        "onEndAction": {
+                          "__actionId": "__action_198"
+                        }
+                      },
+                      "children": [
+                        {
+                          "__composeNode": true,
+                          "type": "Row",
+                          "props": {
+                            "key": "sidebar-chat-hit-c2",
+                            "weight": 1,
+                            "height": 31,
+                            "verticalAlignment": "center",
+                            "paddingHorizontal": 6,
+                            "modifier": {
+                              "__modifierOps": [
+                                {
+                                  "name": "combinedClickable",
+                                  "args": [
+                                    {
+                                      "onClick": {
+                                        "__actionId": "__action_190"
+                                      },
+                                      "onLongClick": {
+                                        "__actionId": "__action_191"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "children": [
+                            {
+                              "__composeNode": true,
+                              "type": "Draggable",
+                              "props": {
+                                "key": "sidebar-chat-drag-c2",
+                                "data": "c2",
+                                "dragType": "character-sidebar.chat",
+                                "enabled": true
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "ActivityDots",
+                                  "props": {
+                                    "key": "sidebar-status-c2",
+                                    "width": 10,
+                                    "height": 13.5,
+                                    "running": true,
+                                    "selected": false,
+                                    "restingColor": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "alpha": 0.3,
+                                      "copy": {
+                                        "__actionId": "__action_182"
+                                      }
+                                    },
+                                    "activeColor": {
+                                      "__colorToken": "primary",
+                                      "copy": {
+                                        "__actionId": "__action_183"
+                                      }
+                                    }
+                                  },
+                                  "children": []
+                                }
+                              ],
+                              "slots": {
+                                "feedback": [
+                                  {
+                                    "__composeNode": true,
+                                    "type": "Row",
+                                    "props": {
+                                      "width": 220,
+                                      "height": 34,
+                                      "paddingHorizontal": 10,
+                                      "verticalAlignment": "center",
+                                      "background": {
+                                        "__colorToken": "surfaceContainerHighest",
+                                        "copy": {
+                                          "__actionId": "__action_185"
+                                        }
+                                      },
+                                      "backgroundShape": {
+                                        "cornerRadius": 8
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "__composeNode": true,
+                                        "type": "Text",
+                                        "props": {
+                                          "text": "对话 c2",
+                                          "weight": 1,
+                                          "maxLines": 1,
+                                          "overflow": "ellipsis",
+                                          "fontSize": 13,
+                                          "color": {
+                                            "__colorToken": "onSurface",
+                                            "copy": {
+                                              "__actionId": "__action_184"
+                                            }
+                                          }
+                                        },
+                                        "children": []
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 5
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Text",
+                              "props": {
+                                "key": "sidebar-chat-title-c2",
+                                "text": "对话 c2",
+                                "weight": 1,
+                                "fontSize": 13,
+                                "fontWeight": "400",
+                                "maxLines": 1,
+                                "overflow": "ellipsis",
+                                "color": {
+                                  "__colorToken": "onSurfaceVariant",
+                                  "alpha": 0.8,
+                                  "copy": {
+                                    "__actionId": "__action_186"
+                                  }
+                                },
+                                "letterSpacing": -0.1
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 5
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Icon",
+                              "props": {
+                                "name": "Lock",
+                                "size": 12,
+                                "tint": {
+                                  "__colorToken": "onSurfaceVariant",
+                                  "alpha": 0.6,
+                                  "copy": {
+                                    "__actionId": "__action_187"
+                                  }
+                                }
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 4
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "HoverOnly",
+                              "props": {
+                                "key": "sidebar-chat-menu-c2-visibility",
+                                "alwaysVisible": false
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "PopupMenu",
+                                  "props": {
+                                    "key": "sidebar-chat-menu-c2",
+                                    "width": 22,
+                                    "height": 22,
+                                    "tooltip": "对话操作",
+                                    "enabled": true,
+                                    "items": [
+                                      {
+                                        "label": "编辑名称",
+                                        "icon": "Edit"
+                                      },
+                                      {
+                                        "label": "置顶",
+                                        "icon": "PushPin"
+                                      },
+                                      {
+                                        "label": "解锁",
+                                        "icon": "LockOpen"
+                                      },
+                                      {
+                                        "label": "删除",
+                                        "icon": "DeleteOutline",
+                                        "danger": true
+                                      }
+                                    ],
+                                    "onSelected": {
+                                      "__actionId": "__action_189"
+                                    }
+                                  },
+                                  "children": [
+                                    {
+                                      "__composeNode": true,
+                                      "type": "Icon",
+                                      "props": {
+                                        "name": "MoreHoriz",
+                                        "size": 16,
+                                        "tint": {
+                                          "__colorToken": "onSurfaceVariant",
+                                          "alpha": 0.78,
+                                          "copy": {
+                                            "__actionId": "__action_188"
+                                          }
+                                        }
+                                      },
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "slots": {
+                        "startBackground": [
+                          {
+                            "__composeNode": true,
+                            "type": "Box",
+                            "props": {
+                              "fillMaxSize": true,
+                              "paddingStart": 12,
+                              "background": {
+                                "__colorToken": "primary",
+                                "copy": {
+                                  "__actionId": "__action_194"
+                                }
+                              },
+                              "contentAlignment": "start"
+                            },
+                            "children": [
+                              {
+                                "__composeNode": true,
+                                "type": "Icon",
+                                "props": {
+                                  "name": "Edit",
+                                  "size": 18,
+                                  "tint": {
+                                    "__colorToken": "onPrimary",
+                                    "copy": {
+                                      "__actionId": "__action_193"
+                                    }
+                                  }
+                                },
+                                "children": []
+                              }
+                            ]
+                          }
+                        ],
+                        "endBackground": [
+                          {
+                            "__composeNode": true,
+                            "type": "Box",
+                            "props": {
+                              "fillMaxSize": true,
+                              "paddingEnd": 12,
+                              "background": {
+                                "__colorToken": "error",
+                                "copy": {
+                                  "__actionId": "__action_196"
+                                }
+                              },
+                              "contentAlignment": "end"
+                            },
+                            "children": [
+                              {
+                                "__composeNode": true,
+                                "type": "Icon",
+                                "props": {
+                                  "name": "Delete",
+                                  "size": 18,
+                                  "tint": {
+                                    "__colorToken": "onError",
+                                    "copy": {
+                                      "__actionId": "__action_195"
+                                    }
+                                  }
+                                },
+                                "children": []
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "__composeNode": true,
+          "type": "Column",
+          "props": {
+            "key": "sidebar-group-ungrouped:card:travel",
+            "fillMaxWidth": true,
+            "paddingStart": 46,
+            "paddingEnd": 12,
+            "paddingTop": 4,
+            "paddingBottom": 2
+          },
+          "children": [
+            {
+              "__composeNode": true,
+              "type": "DragTarget",
+              "props": {
+                "key": "sidebar-group-drop-ungrouped:card:travel",
+                "acceptedTypes": [
+                  "character-sidebar.chat"
+                ],
+                "acceptedData": [
+                  "c1",
+                  "c2",
+                  "c3"
+                ],
+                "hoverBorderColor": {
+                  "__colorToken": "primary",
+                  "alpha": 0.55,
+                  "copy": {
+                    "__actionId": "__action_210"
+                  }
+                },
+                "shape": {
+                  "cornerRadius": 12
+                },
+                "onDrop": {
+                  "__actionId": "__action_211"
+                }
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "HoverRegion",
+                  "props": {
+                    "shape": {
+                      "cornerRadius": 12
+                    }
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "Row",
+                      "props": {
+                        "fillMaxWidth": true,
+                        "verticalAlignment": "center",
+                        "paddingStart": 12,
+                        "paddingEnd": 8,
+                        "paddingTop": 6,
+                        "paddingBottom": 6,
+                        "background": {
+                          "__colorToken": "surfaceContainerLow",
+                          "alpha": 0.72,
+                          "copy": {
+                            "__actionId": "__action_207"
+                          }
+                        },
+                        "backgroundShape": {
+                          "cornerRadius": 12
+                        },
+                        "modifier": {
+                          "__modifierOps": [
+                            {
+                              "name": "border",
+                              "args": [
+                                1,
+                                {
+                                  "__colorToken": "outlineVariant",
+                                  "alpha": 0.24,
+                                  "copy": {
+                                    "__actionId": "__action_208"
+                                  }
+                                },
+                                {
+                                  "cornerRadius": 12
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "onClick": {
+                          "__actionId": "__action_209"
+                        }
+                      },
+                      "children": [
+                        {
+                          "__composeNode": true,
+                          "type": "Icon",
+                          "props": {
+                            "name": "FolderOutlined",
+                            "size": 16,
+                            "tint": {
+                              "__colorToken": "onSurfaceVariant",
+                              "alpha": 0.76,
+                              "copy": {
+                                "__actionId": "__action_202"
+                              }
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Spacer",
+                          "props": {
+                            "width": 7
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Text",
+                          "props": {
+                            "text": "未分组",
+                            "weight": 1,
+                            "style": "labelLarge",
+                            "fontWeight": "700",
+                            "maxLines": 1,
+                            "overflow": "ellipsis",
+                            "color": {
+                              "__colorToken": "onSurface",
+                              "alpha": 1,
+                              "copy": {
+                                "__actionId": "__action_203"
+                              }
+                            }
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Spacer",
+                          "props": {
+                            "width": 2
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "HoverOnly",
+                          "props": {
+                            "width": 24,
+                            "height": 24
+                          },
+                          "children": [
+                            {
+                              "__composeNode": true,
+                              "type": "PopupMenu",
+                              "props": {
+                                "key": "sidebar-ungrouped-menu-card:travel",
+                                "width": 22,
+                                "height": 22,
+                                "menuMaxWidth": 138,
+                                "tooltip": "分组操作",
+                                "enabled": true,
+                                "items": [
+                                  {
+                                    "label": "新建对话",
+                                    "icon": "AddCommentOutlined"
+                                  },
+                                  {
+                                    "label": "编辑名称",
+                                    "icon": "EditOutlined"
+                                  },
+                                  {
+                                    "label": "置顶",
+                                    "icon": "PushPinRounded"
+                                  },
+                                  {
+                                    "label": "删除",
+                                    "icon": "DeleteOutlineRounded",
+                                    "danger": true,
+                                    "dividerBefore": true
+                                  }
+                                ],
+                                "onSelected": {
+                                  "__actionId": "__action_205"
+                                }
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "Icon",
+                                  "props": {
+                                    "name": "MoreHorizRounded",
+                                    "size": 16,
+                                    "tint": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "alpha": 0.78,
+                                      "copy": {
+                                        "__actionId": "__action_204"
+                                      }
+                                    }
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Spacer",
+                          "props": {
+                            "width": 2
+                          },
+                          "children": []
+                        },
+                        {
+                          "__composeNode": true,
+                          "type": "Icon",
+                          "props": {
+                            "name": "KeyboardArrowUp",
+                            "size": 20,
+                            "tint": {
+                              "__colorToken": "onSurfaceVariant",
+                              "alpha": 0.62,
+                              "copy": {
+                                "__actionId": "__action_206"
+                              }
+                            }
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "__composeNode": true,
+          "type": "DragTarget",
+          "props": {
+            "key": "sidebar-chat-drop-c3",
+            "acceptedTypes": [
+              "character-sidebar.chat"
+            ],
+            "acceptedData": [
+              "c1",
+              "c2"
+            ],
+            "hoverBorderColor": {
+              "__colorToken": "primary",
+              "alpha": 0.55,
+              "copy": {
+                "__actionId": "__action_229"
+              }
+            },
+            "shape": {
+              "cornerRadius": 8
+            },
+            "fillMaxWidth": true,
+            "onDrop": {
+              "__actionId": "__action_230"
+            }
+          },
+          "children": [
+            {
+              "__composeNode": true,
+              "type": "Row",
+              "props": {
+                "key": "sidebar-chat-c3",
+                "fillMaxWidth": true,
+                "height": 34,
+                "paddingStart": 56,
+                "paddingEnd": 12,
+                "verticalAlignment": "center"
+              },
+              "children": [
+                {
+                  "__composeNode": true,
+                  "type": "Box",
+                  "props": {
+                    "key": "sidebar-chat-rail-c3",
+                    "width": 20,
+                    "height": 34,
+                    "contentAlignment": "center"
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "Box",
+                      "props": {
+                        "width": 1,
+                        "height": 34,
+                        "background": {
+                          "__colorToken": "outlineVariant",
+                          "alpha": 0.45,
+                          "copy": {
+                            "__actionId": "__action_221"
+                          }
+                        }
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "__composeNode": true,
+                  "type": "Spacer",
+                  "props": {
+                    "width": 2
+                  },
+                  "children": []
+                },
+                {
+                  "__composeNode": true,
+                  "type": "HoverRegion",
+                  "props": {
+                    "weight": 1,
+                    "hoverBackground": {
+                      "__colorToken": "onSurfaceVariant",
+                      "alpha": 0.07,
+                      "copy": {
+                        "__actionId": "__action_228"
+                      }
+                    },
+                    "shape": {
+                      "cornerRadius": 8
+                    }
+                  },
+                  "children": [
+                    {
+                      "__composeNode": true,
+                      "type": "SwipeActions",
+                      "props": {
+                        "key": "sidebar-chat-swipe-c3",
+                        "actionThreshold": 0.4,
+                        "onStartAction": {
+                          "__actionId": "__action_226"
+                        },
+                        "onEndAction": {
+                          "__actionId": "__action_227"
+                        }
+                      },
+                      "children": [
+                        {
+                          "__composeNode": true,
+                          "type": "Row",
+                          "props": {
+                            "key": "sidebar-chat-hit-c3",
+                            "weight": 1,
+                            "height": 31,
+                            "verticalAlignment": "center",
+                            "paddingHorizontal": 6,
+                            "modifier": {
+                              "__modifierOps": [
+                                {
+                                  "name": "combinedClickable",
+                                  "args": [
+                                    {
+                                      "onClick": {
+                                        "__actionId": "__action_219"
+                                      },
+                                      "onLongClick": {
+                                        "__actionId": "__action_220"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          "children": [
+                            {
+                              "__composeNode": true,
+                              "type": "Draggable",
+                              "props": {
+                                "key": "sidebar-chat-drag-c3",
+                                "data": "c3",
+                                "dragType": "character-sidebar.chat",
+                                "enabled": true
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "ActivityDots",
+                                  "props": {
+                                    "key": "sidebar-status-c3",
+                                    "width": 10,
+                                    "height": 13.5,
+                                    "running": false,
+                                    "selected": false,
+                                    "restingColor": {
+                                      "__colorToken": "onSurfaceVariant",
+                                      "alpha": 0.3,
+                                      "copy": {
+                                        "__actionId": "__action_212"
+                                      }
+                                    },
+                                    "activeColor": {
+                                      "__colorToken": "primary",
+                                      "copy": {
+                                        "__actionId": "__action_213"
+                                      }
+                                    }
+                                  },
+                                  "children": []
+                                }
+                              ],
+                              "slots": {
+                                "feedback": [
+                                  {
+                                    "__composeNode": true,
+                                    "type": "Row",
+                                    "props": {
+                                      "width": 220,
+                                      "height": 34,
+                                      "paddingHorizontal": 10,
+                                      "verticalAlignment": "center",
+                                      "background": {
+                                        "__colorToken": "surfaceContainerHighest",
+                                        "copy": {
+                                          "__actionId": "__action_215"
+                                        }
+                                      },
+                                      "backgroundShape": {
+                                        "cornerRadius": 8
+                                      }
+                                    },
+                                    "children": [
+                                      {
+                                        "__composeNode": true,
+                                        "type": "Text",
+                                        "props": {
+                                          "text": "对话 c3",
+                                          "weight": 1,
+                                          "maxLines": 1,
+                                          "overflow": "ellipsis",
+                                          "fontSize": 13,
+                                          "color": {
+                                            "__colorToken": "onSurface",
+                                            "copy": {
+                                              "__actionId": "__action_214"
+                                            }
+                                          }
+                                        },
+                                        "children": []
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 5
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Text",
+                              "props": {
+                                "key": "sidebar-chat-title-c3",
+                                "text": "对话 c3",
+                                "weight": 1,
+                                "fontSize": 13,
+                                "fontWeight": "400",
+                                "maxLines": 1,
+                                "overflow": "ellipsis",
+                                "color": {
+                                  "__colorToken": "onSurfaceVariant",
+                                  "alpha": 0.8,
+                                  "copy": {
+                                    "__actionId": "__action_216"
+                                  }
+                                },
+                                "letterSpacing": -0.1
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "Spacer",
+                              "props": {
+                                "width": 4
+                              },
+                              "children": []
+                            },
+                            {
+                              "__composeNode": true,
+                              "type": "HoverOnly",
+                              "props": {
+                                "key": "sidebar-chat-menu-c3-visibility",
+                                "alwaysVisible": false
+                              },
+                              "children": [
+                                {
+                                  "__composeNode": true,
+                                  "type": "PopupMenu",
+                                  "props": {
+                                    "key": "sidebar-chat-menu-c3",
+                                    "width": 22,
+                                    "height": 22,
+                                    "tooltip": "对话操作",
+                                    "enabled": true,
+                                    "items": [
+                                      {
+                                        "label": "编辑名称",
+                                        "icon": "Edit"
+                                      },
+                                      {
+                                        "label": "置顶",
+                                        "icon": "PushPin"
+                                      },
+                                      {
+                                        "label": "锁定",
+                                        "icon": "Lock"
+                                      },
+                                      {
+                                        "label": "删除",
+                                        "icon": "DeleteOutline",
+                                        "danger": true
+                                      }
+                                    ],
+                                    "onSelected": {
+                                      "__actionId": "__action_218"
+                                    }
+                                  },
+                                  "children": [
+                                    {
+                                      "__composeNode": true,
+                                      "type": "Icon",
+                                      "props": {
+                                        "name": "MoreHoriz",
+                                        "size": 16,
+                                        "tint": {
+                                          "__colorToken": "onSurfaceVariant",
+                                          "alpha": 0.78,
+                                          "copy": {
+                                            "__actionId": "__action_217"
+                                          }
+                                        }
+                                      },
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "slots": {
+                        "startBackground": [
+                          {
+                            "__composeNode": true,
+                            "type": "Box",
+                            "props": {
+                              "fillMaxSize": true,
+                              "paddingStart": 12,
+                              "background": {
+                                "__colorToken": "primary",
+                                "copy": {
+                                  "__actionId": "__action_223"
+                                }
+                              },
+                              "contentAlignment": "start"
+                            },
+                            "children": [
+                              {
+                                "__composeNode": true,
+                                "type": "Icon",
+                                "props": {
+                                  "name": "Edit",
+                                  "size": 18,
+                                  "tint": {
+                                    "__colorToken": "onPrimary",
+                                    "copy": {
+                                      "__actionId": "__action_222"
+                                    }
+                                  }
+                                },
+                                "children": []
+                              }
+                            ]
+                          }
+                        ],
+                        "endBackground": [
+                          {
+                            "__composeNode": true,
+                            "type": "Box",
+                            "props": {
+                              "fillMaxSize": true,
+                              "paddingEnd": 12,
+                              "background": {
+                                "__colorToken": "error",
+                                "copy": {
+                                  "__actionId": "__action_225"
+                                }
+                              },
+                              "contentAlignment": "end"
+                            },
+                            "children": [
+                              {
+                                "__composeNode": true,
+                                "type": "Icon",
+                                "props": {
+                                  "name": "Delete",
+                                  "size": 18,
+                                  "tint": {
+                                    "__colorToken": "onError",
+                                    "copy": {
+                                      "__actionId": "__action_224"
+                                    }
+                                  }
+                                },
+                                "children": []
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

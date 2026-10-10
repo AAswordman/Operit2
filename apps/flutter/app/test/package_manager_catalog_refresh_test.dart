@@ -205,6 +205,7 @@ class _CatalogBridge extends OperitRuntimeBridge {
 /// Creates an installed plugin fixture for catalog refresh assertions.
 core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
+    chatLifecycleHooks: [],
     packageName: 'demo_toolpkg',
     displayName: core_proxy.LocalizedText(
       values: <String, String>{'default': 'Demo ToolPkg'},

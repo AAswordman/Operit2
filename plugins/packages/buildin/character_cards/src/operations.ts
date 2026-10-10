@@ -63,18 +63,6 @@ async function activateForChat(input: DomainInput<"activePrompt.activateForChat"
 
 /** Implements every published domain operation with typed handlers sharing the editor's actual business service. */
 const handlers: DomainHandlers = {
-  /** Reads exact opaque-scope manual metadata from the same repository as the editor. */
-  "conversation-group.list": (input, repository) => repository.listConversationGroups(input.ownerSelection),
-  /** Creates a real empty manual group independently from role composition. */
-  "conversation-group.create": (input, repository) => repository.createConversationGroup(input),
-  /** Writes only explicit name or pin metadata without moving a chat. */
-  "conversation-group.update": (input, repository) => repository.updateConversationGroup(input.id, input.changes),
-  /** Releases members without invoking any host chat deletion. */
-  "conversation-group.delete": (input, repository) => repository.deleteConversationGroup(input.id),
-  /** Verifies genuine host chat existence before committing one explicit membership transfer. */
-  "conversation-group.moveChat": async (input, repository) => { await requireChat(input.chatId); return repository.moveConversationGroupChat(input.chatId, input.groupId, input.ownerSelection); },
-  /** Commits a complete scoped order without mutating another section. */
-  "conversation-group.reorder": (input, repository) => repository.reorderConversationGroups(input.ownerSelection, input.ids),
   /** Keeps full-filter searches and provider embedding persistence on the same serialized service. */
   "memory.searchWithOptions": async (input, repository) => ({ ownerKey: input.ownerKey, items: await searchMemories(input, repository) }),
   /** Lists actual owner-bound generic chat summaries. */

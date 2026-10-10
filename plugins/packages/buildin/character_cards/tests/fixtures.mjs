@@ -109,6 +109,9 @@ export function installBrowserFixture(data) {
       }
     },
     /** Records explicit exports without writing outside the browser fixture. */
+    // Labelled browser resource/picker adapters, not filesystem or domain implementations.
+    async avatarImage() { return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII="; },
+    async chooseAvatar() { return null; },
     async exportFile(path, content) { window.testCalls.push({ action: "exportFile", path, content }); return true; },
   };
 }

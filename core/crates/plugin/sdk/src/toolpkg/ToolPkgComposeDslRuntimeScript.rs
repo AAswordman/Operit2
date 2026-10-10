@@ -96,6 +96,12 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                 if (__activeCallRuntime) {{
                     __options.__operit_call_runtime = __activeCallRuntime;
                 }}
+                // Input updates reuse the live context. Serialized memo is only a
+                // snapshot and cannot restore in-flight promises or listener ownership.
+                if (__options.__operit_update_inputs === true && __root.__operit_compose_bundle &&
+                    typeof __root.__operit_compose_entry === 'function') {{
+                    return __operit_rerender_compose_dsl(__options);
+                }}
                 var __bundle = OperitComposeDslRuntime.createContext(__options);
                 var __entry = __operitResolveComposeEntry();
                 if (typeof __entry !== 'function') {{

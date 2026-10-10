@@ -49,7 +49,9 @@ const PLAN_MODE_COMMAND_NAME = "plan";
 let planModeIpcRegistered = false;
 
 /** Tests whether a prompt hook invocation belongs to chat composition. */
-function usesChatPrompt(payload: ToolPkg.PromptHookEventPayload): boolean {
+function usesChatPrompt(
+  payload: Pick<ToolPkg.PromptHookEventPayload, "promptFunctionType" | "functionType">
+): boolean {
   const promptFunctionType = payload.promptFunctionType;
   if (promptFunctionType !== undefined && promptFunctionType !== "") {
     return promptFunctionType === "CHAT";
@@ -246,7 +248,7 @@ async function handleStartImplementationIpc(
     try {
       const written = await PlanModeShared.writePlanFile(workspace.chatId, normalizedPlanContent);
       await PlanModeShared.disable(written.chatId);
-      void Tools.Chat.sendMessage({ kind: "submit", chatId: written.chatId, runtime: workspace.runtime, input: { text: text.implementationMessage, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
+      void Tools.Chat.sendMessage({ kind: "submit", chatId: written.chatId, runtime: workspace.runtime ?? trackedView.runtime, input: { text: text.implementationMessage, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
         const errorText = error instanceof Error
           ? error.message || "error"
           : (typeof error === "string" || error == null ? error || "error" : "error");

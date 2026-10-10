@@ -31,13 +31,9 @@ use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::market::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
-use operit_runtime::data::preferences::ActivePromptManager::ActivePromptManager;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
-use operit_runtime::data::preferences::CharacterCardManager::CharacterCardManager;
-use operit_runtime::data::preferences::CharacterGroupCardManager::CharacterGroupCardManager;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::data::preferences::PromptTagManager::PromptTagManager;
 use operit_runtime::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::services::GitHubOAuthBrokerService::GitHubOAuthBrokerLoginCompletion;
@@ -69,7 +65,7 @@ use crate::bootstrap::{
 };
 use crate::browser_callback::CliOAuthCallback;
 use crate::chat_runtime::{
-    run_chat_send_command_with_core, run_chat_shell_command_with_core, run_shell_command,
+    run_chat_shell_command_with_core, run_shell_command,
 };
 use crate::core_proxy::local_cli_core;
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
@@ -181,9 +177,6 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
         "backup" => run_backup_command(&mut core, &args[1..]).await,
-        "chat" if args.get(1).map(String::as_str) == Some("send") => {
-            run_chat_send_command_with_core(&mut core, &args[2..]).await
-        }
         "chat" if args.get(1).map(String::as_str) == Some("shell") => {
             run_chat_shell_command_with_core(&mut core, &args[2..]).await
         }
@@ -461,25 +454,16 @@ fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Synthesizes speech through a character or exact TTS configuration.
-/// Synthesizes speech through the selected character or TTS configuration.
+/// Synthesizes speech through an explicit TTS configuration.
 fn run_tts_synthesize_cli_command(
     core: &crate::core_proxy::CliCore,
     args: &[String],
 ) -> Result<(), String> {
-    let mut characterId: Option<String> = None;
     let mut configId: Option<String> = None;
     let mut text: Option<String> = None;
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
-            "--character" => {
-                index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| "--character requires a value".to_string())?;
-                characterId = Some(value.clone());
-            }
             "--text" => {
                 index += 1;
                 let value = args
@@ -500,15 +484,8 @@ fn run_tts_synthesize_cli_command(
     }
     let text = text.ok_or_else(|| "--text is required".to_string())?;
     let service = TtsSynthesisService::getInstance(core.localHostManager()?);
-    let result = match (characterId, configId) {
-        (Some(characterId), None) => service.synthesizeForCharacter(&characterId, &text)?,
-        (None, Some(configId)) => service.synthesizeWithConfig(&configId, &text)?,
-        _ => {
-            return Err(
-                "tts synthesize requires exactly one of --character or --config".to_string(),
-            )
-        }
-    };
+    let configId = configId.ok_or_else(|| "tts synthesize requires --config <id>".to_string())?;
+    let result = service.synthesizeWithConfig(&configId, &text)?;
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({ "audioPaths": result.audioPaths }));
     } else {
@@ -534,7 +511,6 @@ fn print_tts_usage() {
     println!("operit2 cli tts config create-local <name> <model-id> <version> <voice> <speed>");
     println!("operit2 cli tts config update <id> <name|endpoint|api-key|model|voice|response-format|speed|http-method|request-body|content-type> <value>");
     println!("operit2 cli tts config delete <id>");
-    println!("operit2 cli tts synthesize --character <id> --text <text>");
     println!("operit2 cli tts synthesize --config <id> --text <text>");
 }
 
@@ -2029,7 +2005,6 @@ fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!("Input tokens: {}", chat.inputTokens);
     println!("Output tokens: {}", chat.outputTokens);
     println!("Context window: {}", chat.currentWindowSize);
-    println!("Group: {}", chat.group.clone().unwrap_or_default());
     println!("Display order: {}", chat.displayOrder);
     println!(
         "Workspace: {}",
@@ -2038,14 +2013,6 @@ fn print_chat_history_header(chat: &operit_model::ChatHistory::ChatHistory) {
     println!(
         "Parent chat: {}",
         chat.parentChatId.clone().unwrap_or_default()
-    );
-    println!(
-        "Character: {}",
-        chat.characterCardName.clone().unwrap_or_default()
-    );
-    println!(
-        "Character group: {}",
-        chat.characterGroupId.clone().unwrap_or_default()
     );
     println!("Locked: {}", chat.locked);
     println!("Pinned: {}", chat.pinned);

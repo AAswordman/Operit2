@@ -289,6 +289,10 @@ export namespace Chat {
    */
   function readExtension(target: ExtensionTarget): Promise<JsonObject | null>;
   /**
+   * Persists the supplied unique existing chat identifiers in display order.
+   */
+  function reorder(chatIds: string[]): Promise<string>;
+  /**
    * Sends one request and resolves only after its real receipt and native cleanup are complete.
    */
   function sendMessage(request: SendRequest): Promise<MessageSendResultData>;
@@ -312,6 +316,16 @@ export namespace Chat {
    * @returns Promise resolving to the chat switch result
    */
   function switchTo(chatId: string): Promise<ChatSwitchResultData>;
+  /**
+   * Updates only the pinned state of an existing canonical chat.
+   * Assigns existing conversations to a native folder; null removes folder membership.
+   */
+  function updateGroup(chatIds: string[], groupName: string | null): Promise<string>;
+  /**
+   * Updates only the deletion lock of an existing canonical chat.
+   */
+  function updateLocked(chatId: string, locked: boolean): Promise<string>;
+  function updatePinned(chatId: string, pinned: boolean): Promise<string>;
   /**
    * Update chat title
    */

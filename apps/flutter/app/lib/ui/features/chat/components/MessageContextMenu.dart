@@ -224,13 +224,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       ),
     ];
     if (message.sender == 'user') {
-      items.add(
-        _menuItem(
-          value: _MessageMenuAction.queueMemory,
-          icon: Icons.psychology_outlined,
-          label: '加入记忆队列',
-        ),
-      );
       items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
         _menuItem(
           value: _MessageMenuAction.editAndResend,
@@ -250,11 +243,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
           value: _MessageMenuAction.regenerate,
           icon: Icons.refresh,
           label: '重新生成',
-        ),
-        _menuItem(
-          value: _MessageMenuAction.modifyMemory,
-          icon: Icons.auto_fix_high,
-          label: '修改记忆',
         ),
         _menuItem(
           value: _MessageMenuAction.playVoice,
@@ -373,27 +361,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         );
         break;
       case _MessageMenuAction.editAndResend:
-        widget.onSelectMessageToEdit?.call(widget.message);
-        break;
-      case _MessageMenuAction.queueMemory:
-        try {
-          await widget.clients.chatRuntimeHolderMain
-              .enqueueSelectedMessagesForMemory(
-                chatId: widget.chatId,
-                messageTimestamps: [widget.message.timestamp],
-              );
-          if (mounted)
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('已加入所属记忆库队列')));
-        } catch (error) {
-          if (mounted)
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('入队失败：$error')));
-        }
-        break;
-      case _MessageMenuAction.modifyMemory:
         widget.onSelectMessageToEdit?.call(widget.message);
         break;
       case _MessageMenuAction.rollback:
@@ -672,8 +639,6 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
 enum _MessageMenuAction {
   copy,
   editAndResend,
-  modifyMemory,
-  queueMemory,
   rollback,
   regenerate,
   deleteVariant,
@@ -714,7 +679,6 @@ Map<String, Object?> _toolPkgJsonObject(Object? value, String fieldName) {
 
 String cleanMessageContent(String content) {
   return content
-      .replaceAll(ChatMarkupRegex.memoryTag, '')
       .replaceAll(ChatMarkupRegex.workspaceAttachmentTag, '')
       .replaceAll(ChatMarkupRegex.attachmentTag, '')
       .replaceAll(ChatMarkupRegex.attachmentSelfClosingTag, '')

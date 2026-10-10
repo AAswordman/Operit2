@@ -2,6 +2,7 @@ import type { Card } from "../../../src/model";
 import type { EditorContext } from "../../bridge/context";
 import { dataValue } from "../../shared/dom";
 import { copy } from "../../shared/ui/html";
+import { host } from "../../bridge/transport";
 import { validateBindings } from "./bindings/data";
 import { newCard, ownerFor, getCard as readCard } from "../characters/data";
 /** Binds characters actions operations to one editor context. */
@@ -33,6 +34,11 @@ export function createCharactersActionsFeature(context: EditorContext) {
         popDialog(); renderMain(); toast("角色卡已保存"); return;
       }
 
+      case "choose-avatar": {
+        const dialog = topDialog("character"), chosen = await host().chooseAvatar();
+        if (chosen !== null) { dialog.card.avatarUri = chosen.uri; state.avatarSources.set(chosen.uri, chosen.source); renderDialogs(); }
+        return;
+      }
       case "clear-avatar": topDialog("character").card.avatarUri = null; renderDialogs(); return;
 
       case "delete-card": pushDialog({ type: "confirm", title: "删除角色卡", message: `确定删除“${topDialog("character").card.name}”？`, operation: { action: "deleteCharacter", id: topDialog("character").card.id }, closeParent: true }); return;
@@ -41,5 +47,5 @@ export function createCharactersActionsFeature(context: EditorContext) {
       default: throw new Error(`Unknown characters/actions action: ${action}`);
     }
   }
-  return { names: ["create-card", "edit-card", "activate-card", "card-user", "card-graph", "save-card", "clear-avatar", "delete-card", "show-tool-access"], handleAction };
+  return { names: ["create-card", "edit-card", "activate-card", "card-user", "card-graph", "save-card", "clear-avatar", "choose-avatar", "delete-card", "show-tool-access"], handleAction };
 }

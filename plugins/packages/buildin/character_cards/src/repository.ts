@@ -1,6 +1,6 @@
 import type { CharacterRepository } from "./canonical";
-import type { ActivePrompt, BackupImportResult, Card, ChatBinding, CharacterDirectories, CharacterState, ConversationGroupChanges, ConversationGroupCreate, ConversationGroupDeletion, ConversationGroupMoveResult, ConversationGroupRecord, Group, Memory, MemoryAutoSaveStatus, MemoryGraph, MemoryImportResult, MemoryLink, MemoryLinkUpdate, MemoryLinkValues, MemoryRebuildProgress, MemorySearchConfig, MemorySearchOptions, MemorySettings, MemorySpace, MemoryValues, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument, UserDocumentWrite } from "./model";
-import { assertBoolean, assertCard, assertConversationGroupChanges, assertConversationGroups, assertConversationGroupScope, assertGroup, assertMemory, assertMemorySettings, assertMemoryValues, assertNumber, assertSearchConfig, assertSearchOptions, assertString, assertTag, assertTagValues, normalizeNames, requireDecimal, requireId, requireName } from "./validation";
+import type { ActivePrompt, BackupImportResult, Card, ChatBinding, CharacterDirectories, CharacterState, ConversationGroupRecord, Group, Memory, MemoryAutoSaveStatus, MemoryGraph, MemoryImportResult, MemoryLink, MemoryLinkUpdate, MemoryLinkValues, MemoryRebuildProgress, MemorySearchConfig, MemorySearchOptions, MemorySettings, MemorySpace, MemoryValues, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument, UserDocumentWrite } from "./model";
+import { assertBoolean, assertCard, assertConversationGroups, assertGroup, assertMemory, assertMemorySettings, assertMemoryValues, assertNumber, assertSearchConfig, assertSearchOptions, assertString, assertTag, assertTagValues, normalizeNames, requireDecimal, requireId, requireName } from "./validation";
 import { createDefaultCharacter, createMemorySpace, assertMemorySpace } from "./storage/state";
 import { searchMemorySpace } from "./memory-search";
 import { requireChatSelection } from "./chat-bindings";
@@ -148,83 +148,8 @@ export class RepositorySession implements CharacterRepository {
     const original = defaults[0], reset = createDefaultCharacter(Date.now());
     reset.id = original.id; reset.createdAt = original.createdAt; Object.assign(original, reset); return copy(original);
   }
-  /** Lists full manual metadata in the exact supplied scope and persisted display order. */
-  async listConversationGroups(ownerSelection: string | null): Promise<ConversationGroupRecord[]> {
-    assertConversationGroupScope(ownerSelection);
-    const groups = this.state.conversationGroups.filter(
-      /** Uses opaque scope equality without reading Core role, workspace or group fields. */
-      group => group.ownerSelection === ownerSelection,
-    ).sort(
-      /** Preserves the complete persisted scoped order. */
-      (left, right) => left.displayOrder - right.displayOrder,
-    );
-    return copy(groups);
-  }
-  /** Reads every scoped manual record without dropping memberships or replacing opaque tokens. */
+  /** Archived compatibility data only; never used by sidebar projection or live folder operations. */
   async readConversationGroupsForBackup(): Promise<ConversationGroupRecord[]> { return copy(this.state.conversationGroups); }
-  /** Creates a real empty group with explicit scope, pin state, identity and timestamps. */
-  async createConversationGroup(values: ConversationGroupCreate): Promise<ConversationGroupRecord> {
-    assertConversationGroupScope(values.ownerSelection); assertBoolean(values.pinned, "conversation group pinned");
-    const name = requireName(values.name, "conversation group name"), groups = await this.listConversationGroups(values.ownerSelection);
-    uniqueName(groups, name, ""); const now = Date.now();
-    const created: ConversationGroupRecord = { id: this.allocate(), ownerSelection: values.ownerSelection, name, chatIds: [], displayOrder: groups.length, pinned: values.pinned, createdAt: now, updatedAt: now };
-    this.state.conversationGroups.push(created); return copy(created);
-  }
-  /** Applies only explicit editable metadata while keeping complete membership and creation fields. */
-  async updateConversationGroup(id: string, changes: ConversationGroupChanges): Promise<ConversationGroupRecord> {
-    assertConversationGroupChanges(changes); const original = get(this.state.conversationGroups, requireDecimal(id, "conversation group id", true), "conversation group");
-    const updated = { ...copy(original), ...copy(changes) }; updated.name = requireName(updated.name, "conversation group name");
-    uniqueName(await this.listConversationGroups(original.ownerSelection), updated.name, original.id); updated.updatedAt = Date.now();
-    Object.assign(original, updated); return copy(original);
-  }
-  /** Removes only this group's metadata, releases its chats and compacts its own scoped order. */
-  async deleteConversationGroup(id: string): Promise<ConversationGroupDeletion> {
-    const original = get(this.state.conversationGroups, requireDecimal(id, "conversation group id", true), "conversation group");
-    const result: ConversationGroupDeletion = { id, deleted: true, releasedChatIds: copy(original.chatIds) };
-    this.state.conversationGroups.splice(this.state.conversationGroups.indexOf(original), 1);
-    const groups = await this.listConversationGroups(original.ownerSelection), now = Date.now();
-    for (let index = 0; index < groups.length; index += 1) {
-      const record = get(this.state.conversationGroups, groups[index].id, "conversation group");
-      if (record.displayOrder !== index) { record.displayOrder = index; record.updatedAt = now; }
-    }
-    return result;
-  }
-  /** Transfers one membership atomically across the private snapshot without changing any chat binding. */
-  async moveConversationGroupChat(chatId: string, groupId: string | null, ownerSelection: string | null): Promise<ConversationGroupMoveResult> {
-    requireId(chatId, "conversation chat id"); assertConversationGroupScope(ownerSelection);
-    const previous = this.state.conversationGroups.filter(
-      /** Locates only the genuine stored membership of this exact chat. */
-      group => group.chatIds.indexOf(chatId) !== -1,
-    );
-    if (previous.length > 1) throw new Error("Chat belongs to multiple manual groups: " + chatId);
-    const target = groupId === null ? null : get(this.state.conversationGroups, requireDecimal(groupId, "conversation group id", true), "conversation group");
-    if (target !== null && target.ownerSelection !== ownerSelection) throw new Error("Target conversation group has a different scope");
-    if (target === null && previous.length === 1 && previous[0].ownerSelection !== ownerSelection) throw new Error("Cannot unassign a conversation group from another scope");
-    const previousGroupId = previous.length === 0 ? null : previous[0].id;
-    if (previousGroupId === groupId) return { chatId, previousGroupId, groupId };
-    const now = Date.now();
-    if (previous.length === 1) { previous[0].chatIds.splice(previous[0].chatIds.indexOf(chatId), 1); previous[0].updatedAt = now; }
-    if (target !== null) { target.chatIds.push(chatId); target.updatedAt = now; }
-    return { chatId, previousGroupId, groupId };
-  }
-  /** Requires the caller's complete scoped permutation before changing any persisted ordering. */
-  async reorderConversationGroups(ownerSelection: string | null, ids: string[]): Promise<ConversationGroupRecord[]> {
-    assertConversationGroupScope(ownerSelection);
-    const groups = await this.listConversationGroups(ownerSelection), supplied = new Set<string>();
-    if (ids.length !== groups.length) throw new Error("Reorder requires all conversation groups in the requested scope");
-    for (const id of ids) {
-      requireDecimal(id, "conversation group id", true);
-      if (supplied.has(id)) throw new Error("Reorder contains a duplicate conversation group"); supplied.add(id);
-      const group = get(this.state.conversationGroups, id, "conversation group");
-      if (group.ownerSelection !== ownerSelection) throw new Error("Reorder contains a conversation group from another scope");
-    }
-    const now = Date.now();
-    for (let index = 0; index < ids.length; index += 1) {
-      const group = get(this.state.conversationGroups, ids[index], "conversation group");
-      if (group.displayOrder !== index) { group.displayOrder = index; group.updatedAt = now; }
-    }
-    return this.listConversationGroups(ownerSelection);
-  }
   /** Restores an explicit full manual-group backup, preserving every field and reserving lossless IDs. */
   async restoreConversationGroups(groups: ConversationGroupRecord[]): Promise<void> {
     assertConversationGroups(groups); for (const group of groups) this.reserve(group.id); this.state.conversationGroups = copy(groups);

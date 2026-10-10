@@ -137,20 +137,16 @@ test("selection deletion reads actual host records and blocks referenced roles w
 });
 
 /** Exercises memory-chat ownership and group metadata against the same service after file bindings were removed. */
-test("memory chat lists use real extension owners and namespace deletion does not mutate manual group membership", async t => {
+test("memory chat lists use real extension owners and namespace deletion does not mutate plugin repository data", async t => {
   const h = await extensionHarness(t), ownerKey = "character:default";
   const initial = plain(await h.service.dispatchDomain("memory.chat.list", { ownerKey }));
   assert.deepEqual(initial.map(
     /** Selects exact genuinely bound chat identities, excluding explicit null namespaces. */
     chat => chat.id,
   ), ["chat-a", "chat-b"]);
-  const group = plain(await h.service.dispatchDomain("conversation-group.create", { ownerSelection: "card:default", name: "文件归属", pinned: false }));
-  await h.service.dispatchDomain("conversation-group.moveChat", { ownerSelection: "card:default", groupId: group.id, chatId: "chat-a" });
   const stateBefore = await readFile(h.statePath);
   await h.service.dispatchDomain("chat.configuration.binding.delete", { chatId: "chat-a" });
   assert.deepEqual(await readFile(h.statePath), stateBefore);
-  const listed = plain(await h.service.dispatchDomain("conversation-group.list", { ownerSelection: "card:default" }));
-  assert.deepEqual(listed[0].chatIds, ["chat-a"]);
   const remaining = plain(await h.service.dispatchDomain("memory.chat.list", { ownerKey }));
   assert.deepEqual(remaining.map(
     /** Retains only the actual remaining record extension binding. */

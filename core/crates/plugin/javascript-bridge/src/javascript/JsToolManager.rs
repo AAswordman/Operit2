@@ -446,7 +446,7 @@ mod tests {
         GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult,
     };
     use operit_plugin_sdk::javascript::{
-        JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsToolCallRequest, JsToolCallResult,
+        JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsPackageToolSelection, JsToolCallRequest, JsToolCallResult,
         JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
         JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope,
         ToolPkgExecutionContext,

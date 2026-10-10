@@ -1,7 +1,7 @@
 import type { CharacterDirectories, CharacterState, UserDocumentWrite } from "../model";
 import type { CharacterRepository, CharacterRepositoryOwner } from "../canonical";
 import { RepositorySession } from "../repository";
-import { assertCharacterState, copyState, createInitialState, decodeCharacterState } from "./state";
+import { assertCharacterState, copyState, createInitialState, decodeCharacterState, upgradeUntouchedDefault } from "./state";
 import { assertString } from "../validation";
 
 /** Requires the actual successful Files result without replacing failure details. */
@@ -33,6 +33,7 @@ export class FileCharacterRepository implements CharacterRepositoryOwner {
       const pending = await Tools.Files.exists(directory + "/state.next.json");
       if (pending.exists) throw new Error("Unfinished plugin snapshot publication: " + directory + "/state.next.json");
       await repository.verifyDocuments(state);
+      if (upgradeUntouchedDefault(state)) await repository.publish(state, [], []);
       return repository;
     }
     completed(await Tools.Files.mkdir(directory, true));

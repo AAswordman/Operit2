@@ -4,7 +4,7 @@ import type { CharacterMemoryBridge } from "./contracts";
 export function host(): CharacterMemoryBridge {
   const bridge = window.CharacterMemoryHost;
   if (bridge === undefined) throw new Error("CharacterMemoryHost 尚未注册");
-  const methods: readonly (keyof CharacterMemoryBridge)[] = ["currentTheme", "currentScreen", "completeScreen", "cancelScreen", "request", "exportFile"];
+  const methods: readonly (keyof CharacterMemoryBridge)[] = ["currentTheme", "currentScreen", "completeScreen", "cancelScreen", "request", "exportFile", "avatarImage", "chooseAvatar"];
   for (const method of methods) if (typeof bridge[method] !== "function") throw new Error(`CharacterMemoryHost.${method} 尚未注册`);
   return bridge;
 }

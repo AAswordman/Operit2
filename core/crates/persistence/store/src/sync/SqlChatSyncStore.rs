@@ -216,7 +216,8 @@ impl SqlChatSyncStore {
                 variantRows,
                 deletions: Vec::new(),
             };
-            let payloadValue = serde_json::to_value(&payload)?;
+            let payloadValue = serde_json::to_value(&payload)
+                .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
             upsertChat(transaction, &chat)?;
             upsertMessage(transaction, &message)?;
             for variant in &payload.variantRows {
@@ -606,7 +607,7 @@ fn readPayload(store: &SqliteStore, opId: &str) -> Result<ChatSyncPayload, Sqlit
 
 /// Reads complete chat sync records including independently persisted extension maps.
 fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, SqliteStoreError> {
-    store.queryRows("SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions FROM sync_sql_chat_rows WHERE opId = ?1 ORDER BY id", sqliteParams![opId])?
+    store.queryRows("SELECT id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions, \"group\" FROM sync_sql_chat_rows WHERE opId = ?1 ORDER BY id", sqliteParams![opId])?
         .into_iter().map(|row| Ok(ChatEntity {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -621,6 +622,7 @@ fn readChatRows(store: &SqliteStore, opId: &str) -> Result<Vec<ChatEntity>, Sqli
                 locked: row.get(10)?,
                 pinned: row.get(11)?,
                 pluginExtensions: decodePluginExtensions(&row.get::<_, String>(12)?)?,
+                group: row.get(13)?,
             })).collect()
 }
 
@@ -811,7 +813,7 @@ fn insertChatSyncRow(
     opId: &str,
     chat: &ChatEntity,
 ) -> Result<(), SqliteStoreError> {
-    transaction.execute("INSERT INTO sync_sql_chat_rows (opId, id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)", sqliteParams![opId, chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, encodePluginExtensions(&chat.pluginExtensions)?])?;
+    transaction.execute("INSERT INTO sync_sql_chat_rows (opId, id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions, \"group\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)", sqliteParams![opId, chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, encodePluginExtensions(&chat.pluginExtensions)?, chat.group])?;
     Ok(())
 }
 
@@ -991,7 +993,7 @@ fn upsertChat(
     transaction: &mut SqliteTransaction<'_>,
     chat: &ChatEntity,
 ) -> Result<(), SqliteStoreError> {
-    transaction.execute("INSERT INTO chats (id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) ON CONFLICT(id) DO UPDATE SET title = excluded.title, createdAt = excluded.createdAt, updatedAt = excluded.updatedAt, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, currentWindowSize = excluded.currentWindowSize, displayOrder = excluded.displayOrder, workspaceId = excluded.workspaceId, parentChatId = excluded.parentChatId, locked = excluded.locked, pinned = excluded.pinned, pluginExtensions = excluded.pluginExtensions", sqliteParams![chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, encodePluginExtensions(&chat.pluginExtensions)?])?;
+    transaction.execute("INSERT INTO chats (id, title, createdAt, updatedAt, inputTokens, outputTokens, currentWindowSize, displayOrder, workspaceId, parentChatId, locked, pinned, pluginExtensions, \"group\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) ON CONFLICT(id) DO UPDATE SET title = excluded.title, createdAt = excluded.createdAt, updatedAt = excluded.updatedAt, inputTokens = excluded.inputTokens, outputTokens = excluded.outputTokens, currentWindowSize = excluded.currentWindowSize, displayOrder = excluded.displayOrder, workspaceId = excluded.workspaceId, parentChatId = excluded.parentChatId, locked = excluded.locked, pinned = excluded.pinned, pluginExtensions = excluded.pluginExtensions, \"group\" = excluded.\"group\"", sqliteParams![chat.id, chat.title, chat.createdAt, chat.updatedAt, chat.inputTokens, chat.outputTokens, chat.currentWindowSize, chat.displayOrder, chat.workspaceId, chat.parentChatId, chat.locked, chat.pinned, encodePluginExtensions(&chat.pluginExtensions)?, chat.group])?;
     Ok(())
 }
 

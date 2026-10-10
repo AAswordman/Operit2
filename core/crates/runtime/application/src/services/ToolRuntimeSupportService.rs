@@ -768,7 +768,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
             let slot = runtimeChatSlotToRuntimeSlot(request.slot);
             let mut context = {
                 let mut holder = self.chatRuntimeHolder.lock().await;
-                let core = holder.getCore(slot);
+                let core = holder.getCore(slot.clone());
                 let chatId = match request.chatId.clone() {
                     Some(chatId) => chatId,
                     None => core.chatHistoryDelegate.currentChatIdFlow.value()
@@ -806,7 +806,7 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
             request.turnOptions.chatInputSubmitRequestedHandled = true;
             let submission = {
                 let mut holder = self.chatRuntimeHolder.lock().await;
-                let core = holder.getCore(slot);
+                let core = holder.getCore(slot.clone());
                 let reply = request.replyToMessageTimestamp.map(|timestamp| core.chatHistoryDelegate.chatHistoryManager
                     .loadChatMessageVariant(&context.chatId, timestamp, 0).map_err(|error| error.to_string())).transpose()?;
                 let submission = core.startUserMessage(PromptFunctionType::CHAT, request.participantId,

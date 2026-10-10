@@ -5,6 +5,12 @@
 
 .graph-node rect{stroke:var(--outline);stroke-width:1.1}.graph-node.selected rect,.graph-node.link-source rect{stroke:var(--primary);stroke-width:2.2}.graph-node text,.graph-node.selected text{fill:var(--onSurface);font-size:12px;line-height:1.2}.graph-edge-action{cursor:pointer}.graph-edge-hit{stroke:transparent;stroke-width:16;pointer-events:stroke}.graph-edge{pointer-events:none;opacity:.55}.graph-edge.selected{stroke:var(--error);opacity:1}.edge-label{text-anchor:middle;font-size:10px;fill:var(--onSurfaceVariant);stroke:var(--surface);stroke-width:5;paint-order:stroke;stroke-linejoin:round;pointer-events:none}.memory-metadata{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;color:var(--onSurfaceVariant)}
 
+/* Source parity: old _SettingsEntityTile / _SettingsListAvatar / avatar input. */
+.entity{gap:8px;min-height:0}.entity-main{gap:10px}.entity .avatar{width:32px;height:32px;margin-right:2px;overflow:visible}.avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}.avatar-check{position:absolute;right:-1px;bottom:-1px;width:14px;height:14px;border:1.5px solid var(--surface);border-radius:50%;background:var(--primary);color:var(--onPrimary);display:grid;place-items:center}.avatar-check svg{width:9px;height:9px}.section-head .actions{gap:6px}.avatar-editor{border:1px solid var(--outline);border-radius:8px;padding:8px 12px;margin:0 0 12px;gap:12px}.avatar-editor legend{font-size:12px;padding:0 4px;color:var(--onSurfaceVariant)}.avatar-editor .avatar{width:44px;height:44px}.avatar-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.entity-title{line-height:20px}.entity-subtitle{line-height:1.25}.entity .badges{gap:6px;margin-top:5px}@media(max-width:430px){.entity{flex-wrap:wrap}.entity-actions{width:100%;max-width:none;margin-top:6px}}
+
+/* Full-height native WebView document; only page content, not its header, scrolls. */
+#app{height:100%;min-height:0;display:flex;flex-direction:column}.page{flex:1;min-height:0}.avatar-editor .avatar-path{flex:1;min-width:0}.avatar-editor .button{flex:none}.avatar-editor{min-width:0}.avatar-editor .avatar{flex:none}
+
 /* Presentation views reuse the manager's host-provided Material palette and offline icons. */
 .presentation-page{min-width:0;max-width:100%;background:var(--surface)}
 .selection-toolbar{flex:none;padding:8px 16px 0}.selection-toolbar .field{margin:4px 0 8px}
@@ -523,12 +529,6 @@
   var contentOnly = shape({ content: required(text) });
   var format = enumeration("operit", "tavern");
   var validators = {
-    "conversation-group.list": shape({ ownerSelection: required(nullable(nonblank)) }),
-    "conversation-group.create": shape({ ownerSelection: required(nullable(nonblank)), name: required(nonblank), pinned: required(boolean) }),
-    "conversation-group.update": shape({ id: required(memoryIdentifier), changes: required(shape({ name: optional(nonblank), pinned: optional(boolean) }, true)) }),
-    "conversation-group.delete": shape({ id: required(memoryIdentifier) }),
-    "conversation-group.moveChat": shape({ chatId: required(nonblank), groupId: required(nullable(memoryIdentifier)), ownerSelection: required(nullable(nonblank)) }),
-    "conversation-group.reorder": shape({ ownerSelection: required(nullable(nonblank)), ids: required(array(memoryIdentifier)) }),
     "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
     "memory.chat.list": ownerOnly,
     "memory.chat.update": shape({ ownerKey: required(owner), chatId: required(nonblank) }),
@@ -757,6 +757,23 @@
     return { names: ["save-tool-access"], handleAction };
   }
 
+  // web/bridge/transport.ts
+  function host() {
+    const bridge = window.CharacterMemoryHost;
+    if (bridge === void 0) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C");
+    const methods = ["currentTheme", "currentScreen", "completeScreen", "cancelScreen", "request", "exportFile", "avatarImage", "chooseAvatar"];
+    for (const method of methods) if (typeof bridge[method] !== "function") throw new Error(`CharacterMemoryHost.${method} \u5C1A\u672A\u6CE8\u518C`);
+    return bridge;
+  }
+  async function waitForHost() {
+    const deadline = performance.now() + 5e3;
+    while (window.CharacterMemoryHost === void 0) {
+      if (performance.now() >= deadline) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C\uFF0C\u8BF7\u4ECE\u5E94\u7528\u4E2D\u7684\u89D2\u8272\u5361\u63D2\u4EF6\u6253\u5F00\u6B64\u9875\u9762\u3002");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    host();
+  }
+
   // web/features/characters/actions.ts
   function createCharactersActionsFeature(context) {
     const { snapshot, state, topDialog, pushDialog, popDialog, request, renderMain, renderDialogs, toast, openUser, openGraph } = context;
@@ -795,6 +812,15 @@
           toast("\u89D2\u8272\u5361\u5DF2\u4FDD\u5B58");
           return;
         }
+        case "choose-avatar": {
+          const dialog = topDialog("character"), chosen = await host().chooseAvatar();
+          if (chosen !== null) {
+            dialog.card.avatarUri = chosen.uri;
+            state.avatarSources.set(chosen.uri, chosen.source);
+            renderDialogs();
+          }
+          return;
+        }
         case "clear-avatar":
           topDialog("character").card.avatarUri = null;
           renderDialogs();
@@ -811,7 +837,7 @@
           throw new Error(`Unknown characters/actions action: ${action}`);
       }
     }
-    return { names: ["create-card", "edit-card", "activate-card", "card-user", "card-graph", "save-card", "clear-avatar", "delete-card", "show-tool-access"], handleAction };
+    return { names: ["create-card", "edit-card", "activate-card", "card-user", "card-graph", "save-card", "clear-avatar", "choose-avatar", "delete-card", "show-tool-access"], handleAction };
   }
 
   // web/features/groups/view.ts
@@ -819,7 +845,7 @@
     let names = "";
     for (const member2 of group.members) names += `${names === "" ? "" : "\u3001"}${getCard(snapshot, member2.characterCardId).name}`;
     const active = isActive(snapshot.active, "group", group.id);
-    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-group" data-id="${escapeHtml(group.id)}" aria-label="\u7F16\u8F91\u7FA4\u7EC4 ${escapeHtml(group.name)}"><span class="avatar">${icon("groups")}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(group.name)}</span><div class="entity-subtitle">${escapeHtml(group.description)}</div><span class="badges"><span class="badge">${group.members.length} \u4E2A\u89D2\u8272</span><span class="badge">${escapeHtml(names)}</span></span></span></button><div class="entity-actions">${iconButton("preview-group", "\u9884\u89C8\u7FA4\u7EC4", "info", `data-id="${escapeHtml(group.id)}"`)}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-group", "\u4F7F\u7528", "", `data-id="${escapeHtml(group.id)}"`, "small")}${iconButton("edit-group", "\u7F16\u8F91\u7FA4\u7EC4", "edit", `data-id="${escapeHtml(group.id)}"`)}</div></article>`;
+    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-group" data-id="${escapeHtml(group.id)}" aria-label="\u7F16\u8F91\u7FA4\u7EC4 ${escapeHtml(group.name)}"><span class="avatar">${icon("groups")}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(group.name)}</span>${names === "" ? "" : `<div class="entity-subtitle">${escapeHtml(names)}</div>`}<span class="badges"><span class="badge">${group.members.length} \u4E2A\u89D2\u8272</span></span></span></button><div class="entity-actions">${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-group", "\u4F7F\u7528", "", `data-id="${escapeHtml(group.id)}"`, "small")}</div></article>`;
   }
   function groupBody(dialog, snapshot) {
     let members = "";
@@ -828,16 +854,33 @@
       for (let i = 0; i < dialog.group.members.length; i++) if (dialog.group.members[i].characterCardId === card.id) index = i;
       members += `<label class="checkbox-row"><input type="checkbox" data-member="${escapeHtml(card.id)}" ${index >= 0 ? "checked" : ""}><span class="avatar">${icon("person")}</span><span class="grow">${escapeHtml(card.name)}</span></label>`;
     }
-    return field("\u7FA4\u7EC4\u540D\u79F0 *", "name", dialog.group.name) + field("\u63CF\u8FF0", "description", dialog.group.description, 3) + themeReferenceSection(dialog.group.themeConfigId) + `<div class="tag-head">\u7EC4\u5185\u89D2\u8272</div><div class="members-list">${members}</div>` + notice("\u4E0E\u539F\u7FA4\u7EC4\u7F16\u8F91\u5668\u4E00\u81F4\uFF0C\u9009\u4E2D\u7684\u89D2\u8272\u6309\u89D2\u8272\u5217\u8868\u987A\u5E8F\u4FDD\u5B58\u3002");
+    return field("\u7FA4\u7EC4\u540D\u79F0 *", "name", dialog.group.name) + field("\u63CF\u8FF0", "description", dialog.group.description, 3) + themeReferenceSection(dialog.group.themeConfigId) + `<div class="tag-head">\u7EC4\u5185\u89D2\u8272</div><div class="members-list">${members}</div>`;
   }
 
   // web/features/characters/tiles.ts
-  function cardTile(card, snapshot) {
+  function cardTile(card, snapshot, avatarSources) {
     let tags = "";
     for (const id2 of card.attachedTagIds) for (const tag of snapshot.tags) if (tag.id === id2) tags += `<span class="badge">${escapeHtml(tag.name)}</span>`;
     const active = isActive(snapshot.active, "card", card.id);
     const binding = card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6";
-    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-card" data-id="${escapeHtml(card.id)}" aria-label="\u7F16\u8F91 ${escapeHtml(card.name)}"><span class="avatar">${icon("person")}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(card.name)}</span>${card.description === "" ? "" : `<div class="entity-subtitle">${escapeHtml(card.description)}</div>`}<span class="badges"><span class="badge">${card.chatModelBindingMode === "FIXED_MODEL" ? "\u56FA\u5B9A\u6A21\u578B\u914D\u7F6E" : "\u8DDF\u968F\u5168\u5C40\u6A21\u578B"}</span><span class="badge">${binding}</span>${tags}</span></span></button><div class="entity-actions">${iconButton("preview-card", "\u9884\u89C8\u89D2\u8272\u5361", "info", `data-id="${escapeHtml(card.id)}"`)}${iconButton("card-graph", "\u6253\u5F00\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-id="${escapeHtml(card.id)}"`)}${iconButton("card-user", "\u7F16\u8F91\u7528\u6237\u8D44\u6599", "profile", `data-id="${escapeHtml(card.id)}"`)}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-card", "\u4F7F\u7528", "", `data-id="${escapeHtml(card.id)}"`, "small")}</div></article>`;
+    return `<article class="entity ${active ? "active" : ""}"><button type="button" class="entity-main" data-action="edit-card" data-id="${escapeHtml(card.id)}" aria-label="\u7F16\u8F91 ${escapeHtml(card.name)}"><span class="avatar">${avatarSources.has(card.avatarUri ?? "") ? `<img src="${escapeHtml(avatarSources.get(card.avatarUri ?? ""))}" alt="">` : icon("person")}${active ? `<span class="avatar-check">${icon("check")}</span>` : ""}</span><span class="entity-copy"><span class="entity-title">${escapeHtml(card.name)}</span>${card.description === "" ? "" : `<div class="entity-subtitle">${escapeHtml(card.description)}</div>`}<span class="badges"><span class="badge">${card.chatModelBindingMode === "FIXED_MODEL" ? "\u56FA\u5B9A\u6A21\u578B\u914D\u7F6E" : "\u8DDF\u968F\u5168\u5C40\u6A21\u578B"}</span><span class="badge">${binding}</span>${tags}</span></span></button><div class="entity-actions">${iconButton("card-graph", "\u6253\u5F00\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-id="${escapeHtml(card.id)}"`)}${iconButton("card-user", "\u7F16\u8F91\u7528\u6237\u8D44\u6599", "profile", `data-id="${escapeHtml(card.id)}"`)}${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : button("activate-card", "\u4F7F\u7528", "", `data-id="${escapeHtml(card.id)}"`, "small")}</div></article>`;
+  }
+
+  // web/features/memory/library-view.ts
+  function memoryPageBody(snapshot, avatarSources) {
+    let stores = "";
+    for (const store of snapshot.stores) {
+      let count = 0;
+      for (const card of snapshot.cards) if (card.memoryBindingMode === "SHARED" && card.sharedMemoryId === store.id) count++;
+      stores += `<div class="entity"><span class="avatar">${icon("hub")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(store.name)}</div><div class="badges"><span class="badge">${count} \u4E2A\u89D2\u8272\u7ED1\u5B9A</span></div></div><div class="entity-actions">${iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("owner-user", "\u7528\u6237\u8D44\u6599", "profile", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("edit-store", "\u7F16\u8F91\u5171\u4EAB\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(store.id)}"`)}${iconButton("delete-store", "\u5220\u9664\u5171\u4EAB\u8BB0\u5FC6\u5E93", "trash", `data-id="${escapeHtml(store.id)}"`)}</div></div>`;
+    }
+    let characters = "";
+    for (const card of snapshot.cards) {
+      const owner2 = ownerFor(card), active = isActive(snapshot.active, "card", card.id);
+      const source = avatarSources.get(card.avatarUri ?? "");
+      characters += `<article class="entity ${active ? "active" : ""}" data-memory-card="${escapeHtml(card.id)}"><span class="avatar">${source ? `<img src="${escapeHtml(source)}" alt="">` : icon("person")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(card.name)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6"}</span>${active ? '<span class="active-pill">\u5F53\u524D\u4F7F\u7528</span>' : ""}</div></div><div class="entity-actions">${iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="${escapeHtml(owner2)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-user", "\u7528\u6237\u8D44\u6599 \xB7 USER.md", "profile", `data-owner="${escapeHtml(owner2)}" data-name="${escapeHtml(card.name)}"`)}${iconButton("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(owner2)}" data-name="${escapeHtml(card.name)}"`)}</div></article>`;
+    }
+    return `<section class="section"><div class="section-head">${icon("tune")}<h2>\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E</h2></div><div id="unwired-notice" class="muted">\u8FD9\u4E24\u4E2A\u5168\u5C40\u5F00\u5173\u5C1A\u672A\u63A5\u5165\u63D2\u4EF6\u9886\u57DF\u8BFB\u5199\uFF0C\u672C\u9875\u4E0D\u663E\u793A\u731C\u6D4B\u72B6\u6001\u3002</div>${switchRow("\u5411\u6A21\u578B\u63D0\u4F9B\u7528\u6237\u8D44\u6599", "\u804A\u5929\u65F6\u628A\u5F53\u524D\u7528\u6237\u8D44\u6599\u5199\u5165\u63D0\u793A\u8BCD\u3002\u72B6\u6001\u672A\u63A5\u5165\u3002", "userDescription", null, true)}${switchRow("\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93", "\u5141\u8BB8 AI \u4ECE\u5BF9\u8BDD\u4E2D\u6574\u7406\u4FE1\u606F\u5E76\u5199\u5165\u8BB0\u5FC6\u5E93\u3002\u72B6\u6001\u672A\u63A5\u5165\u3002", "autoMemory", null, true)}</section><section class="section"><div class="section-head">${icon("hub")}<h2>\u5171\u4EAB\u8BB0\u5FC6\u5E93</h2>${button("create-store", "\u521B\u5EFA", "add", "", "small")}</div>${stores === "" ? '<div class="empty">\u5F53\u524D\u8FD8\u6CA1\u6709\u5171\u4EAB\u8BB0\u5FC6\u5E93\uFF0C\u521B\u5EFA\u540E\u53EF\u88AB\u591A\u4E2A\u89D2\u8272\u5361\u6302\u8F7D\u5171\u4EAB\u3002</div>' : stores}</section><section class="section"><div class="section-head">${icon("badge")}<h2>\u89D2\u8272\u8BB0\u5FC6\u5E93</h2></div>${characters}</section>`;
   }
 
   // web/features/characters/page.ts
@@ -845,10 +888,14 @@
     const { state, app, snapshot } = context;
     function renderMain() {
       if (state.snapshot === null) return;
+      if (state.managementView === "memory") {
+        app.innerHTML = `<div class="page"><header class="appbar"><h1>\u8BB0\u5FC6</h1><span class="spacer"></span>${iconButton("refresh", "\u5237\u65B0", "refresh")}</header><div class="scroll">${state.error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(state.error)}</div>`}${memoryPageBody(snapshot(), state.avatarSources)}</div></div>`;
+        return;
+      }
       let cards = "", groups = "";
-      for (const card of snapshot().cards) cards += cardTile(card, snapshot());
+      for (const card of snapshot().cards) cards += cardTile(card, snapshot(), state.avatarSources);
       for (const group of snapshot().groups) groups += groupTile(group, snapshot());
-      app.innerHTML = `<div class="page"><header class="appbar">${icon("badge")}<h1>\u89D2\u8272\u5361</h1>${iconButton("memory-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune")}${iconButton("refresh", "\u5237\u65B0", "refresh")}</header><div class="scroll">${state.error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(state.error)}</div>`}<section class="section"><div class="section-head"><span class="section-icon">${icon("badge")}</span><h2>\u89D2\u8272\u5361</h2><div class="actions">${button("import-card", "\u5BFC\u5165", "upload", "", "small")}${button("create-card", "\u521B\u5EFA", "add", "", "small")}</div></div>${cards === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u89D2\u8272\u5361\uFF0C\u70B9\u51FB\u521B\u5EFA\u6DFB\u52A0\u89D2\u8272\u3002</div>' : cards}</section><section class="section"><div class="section-head"><span class="section-icon">${icon("groups")}</span><h2>\u7FA4\u7EC4</h2><div class="actions">${button("import-group", "\u5BFC\u5165 JSON", "upload", "", "small")}${button("create-group", "\u521B\u5EFA", "add", "", "small")}</div></div>${groups === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u7FA4\u7EC4\uFF0C\u521B\u5EFA\u540E\u53EF\u7F16\u6392\u591A\u4E2A\u89D2\u8272\u53C2\u4E0E\u5BF9\u8BDD\u3002</div>' : groups}</section></div></div>`;
+      app.innerHTML = `<div class="page"><div class="scroll">${state.error === "" ? "" : `<div class="error-banner" role="alert">${escapeHtml(state.error)}</div>`}<section class="section"><div class="section-head"><span class="section-icon">${icon("badge")}</span><h2>\u89D2\u8272\u5361</h2><div class="actions">${button("import-card", "\u5BFC\u5165", "upload", "", "small")}${button("create-card", "\u521B\u5EFA", "add", "", "small")}</div></div>${cards === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u89D2\u8272\u5361\uFF0C\u70B9\u51FB\u521B\u5EFA\u6DFB\u52A0\u89D2\u8272\u3002</div>' : cards}</section><section class="section"><div class="section-head"><span class="section-icon">${icon("groups")}</span><h2>\u7FA4\u7EC4</h2><div class="actions">${button("import-group", "\u5BFC\u5165 JSON", "upload", "", "small")}${button("create-group", "\u521B\u5EFA", "add", "", "small")}</div></div>${groups === "" ? '<div class="empty">\u8FD8\u6CA1\u6709\u7FA4\u7EC4\uFF0C\u521B\u5EFA\u540E\u53EF\u7F16\u6392\u591A\u4E2A\u89D2\u8272\u53C2\u4E0E\u5BF9\u8BDD\u3002</div>' : groups}</section></div></div>`;
     }
     return { renderMain };
   }
@@ -983,23 +1030,6 @@
       }
     }
     return { names: ["toggle-tag", "show-tags", "create-tag", "edit-tag", "save-tag", "delete-tag", "confirm-tag-delete"], handleAction };
-  }
-
-  // web/bridge/transport.ts
-  function host() {
-    const bridge = window.CharacterMemoryHost;
-    if (bridge === void 0) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C");
-    const methods = ["currentTheme", "currentScreen", "completeScreen", "cancelScreen", "request", "exportFile"];
-    for (const method of methods) if (typeof bridge[method] !== "function") throw new Error(`CharacterMemoryHost.${method} \u5C1A\u672A\u6CE8\u518C`);
-    return bridge;
-  }
-  async function waitForHost() {
-    const deadline = performance.now() + 5e3;
-    while (window.CharacterMemoryHost === void 0) {
-      if (performance.now() >= deadline) throw new Error("CharacterMemoryHost \u5C1A\u672A\u6CE8\u518C\uFF0C\u8BF7\u4ECE\u5E94\u7528\u4E2D\u7684\u89D2\u8272\u5361\u63D2\u4EF6\u6253\u5F00\u6B64\u9875\u9762\u3002");
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    host();
   }
 
   // web/features/characters/transfers.ts
@@ -1499,10 +1529,7 @@
 
   // web/features/groups/actions.ts
   function createGroupsActionsFeature(context) {
-    const { snapshot, state, topDialog, pushDialog, popDialog, request, renderMain, renderDialogs, toast } = context;
-    function renumberMembers2(group) {
-      for (let index = 0; index < group.members.length; index++) group.members[index].orderIndex = index;
-    }
+    const { snapshot, state, topDialog, pushDialog, popDialog, request, renderMain, toast } = context;
     async function handleAction(action, element) {
       const id2 = element.dataset.id;
       switch (action) {
@@ -1536,23 +1563,11 @@
         case "delete-group":
           pushDialog({ type: "confirm", title: "\u5220\u9664\u7FA4\u7EC4", message: `\u786E\u5B9A\u5220\u9664\u201C${topDialog("group").group.name}\u201D\uFF1F`, operation: { action: "deleteGroup", id: topDialog("group").group.id }, closeParent: true });
           return;
-        case "member-up":
-        case "member-down": {
-          const group = topDialog("group").group;
-          let index = -1;
-          for (let i = 0; i < group.members.length; i++) if (group.members[i].characterCardId === id2) index = i;
-          const target = index + (action === "member-up" ? -1 : 1);
-          if (index < 0 || target < 0 || target >= group.members.length) throw new Error("\u7FA4\u7EC4\u6210\u5458\u987A\u5E8F\u65E0\u6548");
-          [group.members[index], group.members[target]] = [group.members[target], group.members[index]];
-          renumberMembers2(group);
-          renderDialogs();
-          return;
-        }
         default:
           throw new Error(`Unknown groups/actions action: ${action}`);
       }
     }
-    return { names: ["activate-group", "create-group", "edit-group", "save-group", "delete-group", "member-up", "member-down"], handleAction };
+    return { names: ["activate-group", "create-group", "edit-group", "save-group", "delete-group"], handleAction };
   }
 
   // web/features/memory/controls-actions.ts
@@ -1618,9 +1633,6 @@
     async function handleAction(action, element) {
       const id2 = element.dataset.id;
       switch (action) {
-        case "memory-settings":
-          pushDialog({ type: "global-memory" });
-          return;
         case "create-store":
           pushDialog({ type: "store", create: true, store: { id: "", name: "" } });
           return;
@@ -1646,7 +1658,7 @@
           throw new Error(`Unknown memory/library-actions action: ${action}`);
       }
     }
-    return { names: ["memory-settings", "create-store", "edit-store", "save-store", "delete-store"], handleAction };
+    return { names: ["create-store", "edit-store", "save-store", "delete-store"], handleAction };
   }
 
   // web/features/memory/link-actions.ts
@@ -1931,28 +1943,18 @@
   }
 
   // web/features/characters/editor.ts
-  function characterBody(dialog, snapshot) {
+  function characterBody(dialog, snapshot, avatarSources) {
     const card = dialog.card;
     switch (dialog.tab) {
       case 0: {
         let tags = "";
         for (const tag of dialog.tags) tags += `<button type="button" class="chip ${card.attachedTagIds.indexOf(tag.id) >= 0 ? "selected" : ""}" data-action="toggle-tag" data-id="${escapeHtml(tag.id)}">${card.attachedTagIds.indexOf(tag.id) >= 0 ? icon("check") : ""}${escapeHtml(tag.name)}</button>`;
-        return field("\u89D2\u8272\u540D\u79F0 *", "name", card.name) + field("\u63CF\u8FF0", "description", card.description) + `<div class="avatar-editor"><div class="avatar" title="\u5934\u50CF\u9884\u89C8\u5C1A\u672A\u63A5\u5165\u8D44\u6E90\u63A5\u53E3">${icon("person")}</div><div class="grow">${field("\u5934\u50CF URI", "avatarUri", card.avatarUri)}<div class="actions">${button("choose-avatar", "\u9009\u62E9\u56FE\u7247", "", 'disabled title="\u56FE\u7247\u9009\u62E9\u63A5\u53E3\u5F85\u63A5\u5165"', "small")}${button("clear-avatar", "\u6E05\u9664", "", "", "small")}</div></div></div>` + field("\u89D2\u8272\u8BBE\u5B9A", "characterSetting", card.characterSetting, 6) + field("\u5F00\u573A\u767D", "openingStatement", card.openingStatement, 3) + `<div class="tag-head"><span>\u6807\u7B7E</span>${button("show-tags", "\u7BA1\u7406\u6807\u7B7E", "", "", "small")}</div><div class="chips">${tags === "" ? '<span class="muted">\u6682\u65E0\u63D0\u793A\u8BCD\u6807\u7B7E</span>' : tags}</div>`;
+        return field("\u89D2\u8272\u540D\u79F0 *", "name", card.name) + field("\u63CF\u8FF0", "description", card.description) + `<fieldset class="avatar-editor"><legend>\u89D2\u8272\u5934\u50CF</legend><div class="avatar">${avatarSources.has(card.avatarUri ?? "") ? `<img src="${escapeHtml(avatarSources.get(card.avatarUri ?? ""))}" alt="\u89D2\u8272\u5934\u50CF">` : icon("person")}</div><span class="grow avatar-path">${escapeHtml(card.avatarUri ?? "\u672A\u8BBE\u7F6E")}</span>${button("choose-avatar", "\u9009\u62E9", "", "", "small")}${card.avatarUri === null ? "" : button("clear-avatar", "\u6E05\u9664", "", "", "small")}</fieldset>` + field("\u89D2\u8272\u8BBE\u5B9A", "characterSetting", card.characterSetting, 6) + field("\u5F00\u573A\u767D", "openingStatement", card.openingStatement, 3) + `<div class="tag-head"><span>\u6807\u7B7E</span>${button("show-tags", "\u7BA1\u7406\u6807\u7B7E", "", "", "small")}</div><div class="chips">${tags === "" ? '<span class="muted">\u6682\u65E0\u63D0\u793A\u8BCD\u6807\u7B7E</span>' : tags}</div>`;
       }
       case 1:
         return field("\u804A\u5929\u9644\u52A0\u5185\u5BB9", "otherContentChat", card.otherContentChat, 4) + field("\u8BED\u97F3\u9644\u52A0\u5185\u5BB9", "otherContentVoice", card.otherContentVoice, 4) + field("\u9AD8\u7EA7\u81EA\u5B9A\u4E49 Prompt", "advancedCustomPrompt", card.advancedCustomPrompt, 4) + field("\u5907\u6CE8", "marks", card.marks, 3);
       case 2:
         return bindingsBody(dialog, snapshot);
-      case 3: {
-        if (dialog.create) return notice("\u4FDD\u5B58\u89D2\u8272\u5361\u540E\uFF0C\u5373\u53EF\u5728\u8FD9\u91CC\u7BA1\u7406\u8FD9\u5F20\u89D2\u8272\u5361\u7ED1\u5B9A\u7684\u8BB0\u5FC6\u5E93\u3002");
-        const owner2 = ownerFor(card);
-        let mounts = "";
-        for (const mount2 of card.sharedMemoryMounts) {
-          const name = sharedStore(snapshot, mount2.sharedMemoryId).name;
-          mounts += `<div class="memory-entry"><h3>${escapeHtml(name)}</h3><div class="badges"><span class="badge">${mount2.readable ? "\u53EF\u8BFB" : "\u4E0D\u53EF\u8BFB"}</span><span class="badge">${mount2.writable ? "\u53EF\u5199" : "\u4E0D\u53EF\u5199"}</span></div><div class="memory-buttons">${button("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="shared:${escapeHtml(mount2.sharedMemoryId)}" data-name="${escapeHtml(name)}"`, "tonal")}${button("owner-user", "\u7528\u6237\u8D44\u6599", "profile", `data-owner="shared:${escapeHtml(mount2.sharedMemoryId)}" data-name="${escapeHtml(name)}"`)}</div></div>`;
-        }
-        return `<div class="memory-entry"><h3>${escapeHtml(card.name)} \u7684\u8BB0\u5FC6\u5E93</h3><div class="muted">${escapeHtml(owner2)}</div><div class="badges"><span class="badge">${card.memoryBindingMode === "SHARED" ? "\u5171\u4EAB\u8BB0\u5FC6" : "\u89D2\u8272\u8BB0\u5FC6"}</span></div><div class="memory-buttons">${button("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="${escapeHtml(owner2)}" data-name="${escapeHtml(card.name)}"`, "tonal")}${button("owner-user", "\u7528\u6237\u8D44\u6599 \xB7 USER.md", "profile", `data-owner="${escapeHtml(owner2)}" data-name="${escapeHtml(card.name)}"`)}${button("owner-settings", "\u8BB0\u5FC6\u8BBE\u7F6E", "tune", `data-owner="${escapeHtml(owner2)}" data-name="${escapeHtml(card.name)}"`)}</div></div>${mounts === "" ? "" : `<div class="tag-head">\u6302\u8F7D\u7684\u5171\u4EAB\u8BB0\u5FC6\u5E93</div>${mounts}`}${notice("\u8BB0\u5FC6\u5185\u5BB9\u8BFB\u5199\u8FD9\u5F20\u89D2\u8272\u5361\u5F53\u524D\u7ED1\u5B9A\u7684\u63D2\u4EF6\u8BB0\u5FC6\u5E93\uFF0C\u89D2\u8272\u4E0E\u8BB0\u5FC6\u6570\u636E\u72EC\u7ACB\u5B58\u50A8\u5728\u63D2\u4EF6\u76EE\u5F55\u6587\u4EF6\u4E2D\u3002")}`;
-      }
       default:
         throw new Error("Invalid character editor tab");
     }
@@ -2050,17 +2052,6 @@
     return { title: dialog.originalTitle === null ? "\u521B\u5EFA\u8BB0\u5FC6" : "\u7F16\u8F91\u8BB0\u5FC6", style: "large", tabs: [], body: field("\u6807\u9898 *", "title", dialog.draft.title) + field("\u5185\u5BB9", "content", dialog.draft.content, 12) + field("\u5185\u5BB9\u7C7B\u578B", "contentType", dialog.draft.contentType) + field("\u6765\u6E90", "source", dialog.draft.source) + scoreField("\u53EF\u4FE1\u5EA6", "credibility", dialog.draft.credibility) + scoreField("\u91CD\u8981\u6027", "importance", dialog.draft.importance) + field("\u6587\u4EF6\u5939", "folderPath", dialog.draft.folderPath) + field("\u6807\u7B7E\uFF08\u9017\u53F7\u5206\u9694\uFF09", "tags", dialog.draft.tags), footer: button("close-dialog", "\u53D6\u6D88", "") + button("save-memory", "\u4FDD\u5B58", "", "", "filled") };
   }
 
-  // web/features/memory/library-view.ts
-  function globalMemoryBody(snapshot) {
-    let stores = "";
-    for (const store of snapshot.stores) {
-      let count = 0;
-      for (const card of snapshot.cards) if (card.memoryBindingMode === "SHARED" && card.sharedMemoryId === store.id) count++;
-      stores += `<div class="entity"><span class="avatar">${icon("hub")}</span><div class="entity-copy"><div class="entity-title">${escapeHtml(store.name)}</div><div class="badges"><span class="badge">${count} \u4E2A\u89D2\u8272\u7ED1\u5B9A</span></div></div><div class="entity-actions">${iconButton("owner-graph", "\u8BB0\u5FC6\u56FE\u8C31", "graph", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("owner-user", "\u7528\u6237\u8D44\u6599", "profile", `data-owner="shared:${escapeHtml(store.id)}" data-name="${escapeHtml(store.name)}"`)}${iconButton("edit-store", "\u7F16\u8F91\u5171\u4EAB\u8BB0\u5FC6\u5E93", "edit", `data-id="${escapeHtml(store.id)}"`)}${iconButton("delete-store", "\u5220\u9664\u5171\u4EAB\u8BB0\u5FC6\u5E93", "trash", `data-id="${escapeHtml(store.id)}"`)}</div></div>`;
-    }
-    return `<section class="section"><div class="section-head">${icon("tune")}<h2>\u5168\u5C40\u8BB0\u5FC6\u8BBE\u7F6E</h2></div><div id="unwired-notice" class="muted">\u8FD9\u4E24\u4E2A\u5168\u5C40\u5F00\u5173\u5C1A\u672A\u63A5\u5165\u63D2\u4EF6\u9886\u57DF\u8BFB\u5199\uFF0C\u672C\u9875\u4E0D\u663E\u793A\u731C\u6D4B\u72B6\u6001\u3002</div>${switchRow("\u5411\u6A21\u578B\u63D0\u4F9B\u7528\u6237\u8D44\u6599", "\u804A\u5929\u65F6\u628A\u5F53\u524D\u7528\u6237\u8D44\u6599\u5199\u5165\u63D0\u793A\u8BCD\u3002\u72B6\u6001\u672A\u63A5\u5165\u3002", "userDescription", null, true)}${switchRow("\u81EA\u52A8\u66F4\u65B0\u8BB0\u5FC6\u5E93", "\u5141\u8BB8 AI \u4ECE\u5BF9\u8BDD\u4E2D\u6574\u7406\u4FE1\u606F\u5E76\u5199\u5165\u8BB0\u5FC6\u5E93\u3002\u72B6\u6001\u672A\u63A5\u5165\u3002", "autoMemory", null, true)}</section><section class="section"><div class="section-head">${icon("hub")}<h2>\u5171\u4EAB\u8BB0\u5FC6\u5E93</h2>${button("create-store", "\u521B\u5EFA", "add", "", "small")}</div>${stores === "" ? '<div class="empty">\u5F53\u524D\u8FD8\u6CA1\u6709\u5171\u4EAB\u8BB0\u5FC6\u5E93\uFF0C\u521B\u5EFA\u540E\u53EF\u88AB\u591A\u4E2A\u89D2\u8272\u5361\u6302\u8F7D\u5171\u4EAB\u3002</div>' : stores}</section>${notice("\u6BCF\u5F20\u89D2\u8272\u7684\u8BB0\u5FC6\u5185\u5BB9\u4F4D\u4E8E\u89D2\u8272\u7F16\u8F91\u5668\u7684\u201C\u8BB0\u5FC6\u201D\u9875\u7B7E\u3002\u8FD9\u91CC\u4EC5\u7BA1\u7406\u5168\u5C40\u8BBE\u7F6E\u548C\u5171\u4EAB\u5E93\uFF0C\u4E0D\u662F\u53E6\u4E00\u4E2A\u63D2\u4EF6\u5165\u53E3\u3002")}`;
-  }
-
   // web/features/memory/links-view.ts
   function linkSpec(dialog) {
     {
@@ -2092,11 +2083,9 @@
     function dialogSpec(dialog) {
       switch (dialog.type) {
         case "character":
-          return { title: dialog.create ? "\u521B\u5EFA\u89D2\u8272\u5361" : "\u7F16\u8F91\u89D2\u8272\u5361", style: "large", tabs: ["\u57FA\u7840", "\u5185\u5BB9", "\u7ED1\u5B9A", "\u8BB0\u5FC6"], body: characterBody(dialog, snapshot()), footer: `${!dialog.create && !dialog.card.isDefault ? button("delete-card", "\u5220\u9664", "", "", "danger") : ""}${!dialog.create ? button("export-card", "\u5BFC\u51FA", "") : ""}<span class="spacer"></span>${button("close-dialog", "\u53D6\u6D88", "")}${button("save-card", "\u4FDD\u5B58", "", "", "filled")}` };
+          return { title: dialog.create ? "\u521B\u5EFA\u89D2\u8272\u5361" : "\u7F16\u8F91\u89D2\u8272\u5361", style: "large", tabs: ["\u57FA\u7840", "\u5185\u5BB9", "\u7ED1\u5B9A"], body: characterBody(dialog, snapshot(), state.avatarSources), footer: `${!dialog.create && !dialog.card.isDefault ? button("delete-card", "\u5220\u9664", "", "", "danger") : ""}${!dialog.create ? button("export-card", "\u5BFC\u51FA", "") : ""}<span class="spacer"></span>${button("close-dialog", "\u53D6\u6D88", "")}${button("save-card", "\u4FDD\u5B58", "", "", "filled")}` };
         case "group":
-          return { title: dialog.create ? "\u521B\u5EFA\u7FA4\u7EC4" : "\u7F16\u8F91\u7FA4\u7EC4", style: "large", tabs: [], body: groupBody(dialog, snapshot()), footer: `${!dialog.create ? button("delete-group", "\u5220\u9664", "", "", "danger") + button("export-group", "\u5BFC\u51FA", "") : ""}<span class="spacer"></span>${button("close-dialog", "\u53D6\u6D88", "")}${button("save-group", "\u4FDD\u5B58", "", "", "filled")}` };
-        case "global-memory":
-          return { title: "\u8BB0\u5FC6\u8BBE\u7F6E", style: "large", tabs: [], body: globalMemoryBody(snapshot()), footer: button("close-dialog", "\u5173\u95ED", "") };
+          return { title: dialog.create ? "\u521B\u5EFA\u7FA4\u7EC4" : "\u7F16\u8F91\u7FA4\u7EC4", style: "large", tabs: [], body: groupBody(dialog, snapshot()), footer: `${!dialog.create ? button("delete-group", "\u5220\u9664", "", "", "danger") + button("export-group", "\u5BFC\u51FA JSON", "") : ""}<span class="spacer"></span>${button("close-dialog", "\u53D6\u6D88", "")}${button("save-group", "\u4FDD\u5B58", "", "", "filled")}` };
         case "owner-settings":
           return { title: "\u8BB0\u5FC6\u8BBE\u7F6E", style: "large", tabs: ["\u81EA\u52A8\u63D0\u53D6", "\u68C0\u7D22", "\u5386\u53F2\u91CD\u5EFA"], body: ownerSettingsBody(dialog), footer: button("close-dialog", "\u5173\u95ED", "") + button("unwired", "\u4FDD\u5B58", "", "disabled", "filled") };
         case "store":
@@ -2343,7 +2332,7 @@
 
   // web/bridge/state.ts
   function createState() {
-    return { snapshot: null, dialogs: [], busy: false, error: "", toastTimer: null, pointers: /* @__PURE__ */ new Map(), gestureMoved: false };
+    return { managementView: "characters", avatarSources: /* @__PURE__ */ new Map(), snapshot: null, dialogs: [], busy: false, error: "", toastTimer: null, pointers: /* @__PURE__ */ new Map(), gestureMoved: false };
   }
 
   // web/features/memory/attachments.ts
@@ -2569,9 +2558,15 @@ ${sections.join("\n\n")}`;
     if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("screen.input must be an object");
     const object = value;
     switch (object.mode) {
-      case "manage":
-        fields(object, ["mode"], "screen.input");
-        return { mode: "manage" };
+      case "manage": {
+        if (object.view === void 0) {
+          fields(object, ["mode"], "screen.input");
+          return { mode: "manage" };
+        }
+        fields(object, ["mode", "view"], "screen.input");
+        if (object.view !== "characters" && object.view !== "memory") throw new Error("screen.view must be characters or memory");
+        return { mode: "manage", view: object.view };
+      }
       case "select": {
         fields(object, ["mode", "kind", "selected"], "screen.input");
         if (object.kind !== "card" && object.kind !== "group" && object.kind !== "all") throw new Error("screen.kind must be card, group, or all");
@@ -2656,7 +2651,7 @@ ${sections.join("\n\n")}`;
   async function initializeHostScreen(editor2) {
     const bridge = host(), current = parseCurrentScreen(await bridge.currentScreen());
     if (current.input.mode === "manage") {
-      await editor2.initialize();
+      await editor2.initialize(current.input.view);
       return;
     }
     if (current.requestId === null) throw new Error("\u5F39\u7A97\u89C6\u56FE\u6CA1\u6709\u771F\u5B9E presentation requestId");
@@ -2888,7 +2883,7 @@ ${sections.join("\n\n")}`;
     const graph = createGraphActionsFeature(context), profile = createProfileFeature(context), transfers = createCharactersTransfersFeature(context);
     const themePicker = createThemeFeature(
       context,
-      /** Reads actual independent choices through the existing package Request/IPC path, never a browser-owned directory. */
+      /** Reads independent theme choices through the existing package request channel. */
       () => context.request({ action: "listThemeChoices" })
     );
     const events = createEditorEvents(context, [...screens.features, themePicker, createTtsFeature(context), createToolPolicyFeature(context), createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createCharactersTagsActionsFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
@@ -2906,10 +2901,18 @@ ${sections.join("\n\n")}`;
       dialogsRoot.addEventListener("wheel", gestures.onWheel, { passive: false });
       dialogsRoot.addEventListener("keydown", gestures.onKeyDown);
     }
-    async function initialize2() {
+    async function loadAvatars() {
+      await Promise.all(snapshot().cards.map(async (card) => {
+        const key = card.avatarUri ?? "";
+        if (!state.avatarSources.has(key)) state.avatarSources.set(key, await host().avatarImage(card.avatarUri));
+      }));
+    }
+    async function initialize2(view = "characters") {
+      state.managementView = view;
       state.busy = true;
       try {
         state.snapshot = await request({ action: "snapshot" });
+        await loadAvatars();
       } finally {
         state.busy = false;
         renderMain();
@@ -2922,6 +2925,7 @@ ${sections.join("\n\n")}`;
       state.busy = true;
       try {
         state.snapshot = await request({ action: "snapshot" });
+        await loadAvatars();
         await screens.enter(input, receiver);
       } finally {
         state.busy = false;

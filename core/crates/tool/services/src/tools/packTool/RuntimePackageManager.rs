@@ -335,6 +335,7 @@ impl RuntimePackageManager {
 
     /// Returns the shared lifecycle handle without cloning an incomplete registration snapshot.
     #[allow(non_snake_case)]
+    #[operit_route_macros::operit_core_internal]
     pub fn packageRegistryReadiness(&self) -> PackageRegistryReadiness {
         self.packageRegistryReadiness.clone()
     }
@@ -451,8 +452,10 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
-    /// Acquires one explicit owner lease for a ToolPkg execution engine.
-    pub fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
+    /// Acquires a lease outside the proxy's package-manager lock. Worker startup
+    /// authenticates against that same manager, so synchronous proxy dispatch
+    /// would deadlock while waiting for the worker to finish initialization.
+    pub async fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
         self.toolPkgManager()
             .acquireToolPkgExecutionEngine(contextKey, containerPackageName);
     }

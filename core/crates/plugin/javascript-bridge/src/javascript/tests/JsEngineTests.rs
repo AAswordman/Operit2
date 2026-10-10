@@ -3465,3 +3465,46 @@ fn chat_extension_owner_requires_real_execution_context() {
     let context = chatExtensionFixtureContext(" ");
     assert!(super::chatExtensionExecutionOwner(Some(&context)).is_err());
 }
+
+/// Lowered async functions subscribing to one retained service Promise keep distinct call owners.
+#[tokio::test(flavor = "current_thread")]
+async fn shared_initialization_promise_preserves_each_waiting_call_context() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let first_engine = engine.clone();
+    let first = tokio::spawn(first_engine.execute_script_function(
+        r#"exports.initialize = function() {
+            const owner = globalThis.__operitCurrentCallId;
+            globalThis.sharedInitialization = toolCall('gate', {});
+            return globalThis.sharedInitialization.then(function() {
+                if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
+                return getEnv('CALL_OWNER');
+            });
+        };"#,
+        "initialize", &testParams(),
+        &BTreeMap::from([("CALL_OWNER".to_string(), "initializer".to_string())]),
+        None, true, 2, None,
+    ));
+    host.gatedToolStarted.notified().await;
+    let (sender, mut started) = tokio::sync::mpsc::unbounded_channel();
+    let second_engine = engine.clone();
+    let second = tokio::spawn(second_engine.execute_script_function(
+        r#"exports.useService = function() {
+            const owner = globalThis.__operitCurrentCallId;
+            sendIntermediateResult('awaiting-initialization');
+            return globalThis.sharedInitialization.then(function() { return Promise.resolve().then(function() {
+                if (globalThis.__operitCurrentCallId !== owner) throw new Error('Shared Promise resumed under a different execution call');
+                return getEnv('CALL_OWNER');
+            }); });
+        };"#,
+        "useService", &testParams(),
+        &BTreeMap::from([("CALL_OWNER".to_string(), "consumer".to_string())]),
+        Some(Arc::new(move |value| { sender.send(value).unwrap(); })), true, 2, None,
+    ));
+    started.recv().await.expect("consumer must await initialization before its completion");
+    finishGatedTool(&host);
+    assert_eq!(expect_js_output(first.await.unwrap(), "shared initialization owner"), "\"initializer\"");
+    assert_eq!(expect_js_output(second.await.unwrap(), "shared initialization consumer"), "\"consumer\"");
+    assert_eq!(executionSessionCounts(&engine).await, (0, 0));
+    engine.destroy();
+}

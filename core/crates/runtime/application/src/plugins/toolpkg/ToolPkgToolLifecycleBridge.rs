@@ -325,6 +325,10 @@ fn decode_intercept_result(raw: Option<String>) -> Result<AIToolHookDecision, St
     let Some(raw) = raw else {
         return Ok(AIToolHookDecision::Allow);
     };
+    // The native JS completion ABI encodes a void return as an empty string.
+    if raw.is_empty() {
+        return Ok(AIToolHookDecision::Allow);
+    }
     let value: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
     if value.is_null() {
         return Ok(AIToolHookDecision::Allow);
@@ -463,6 +467,15 @@ mod interception_tests {
         changed["description"] = Value::String("mutated".to_string());
         assert!(validate_catalog_descriptors(&[changed], &supplied).is_err());
         assert!(validate_catalog_descriptors(&[second], &[first]).is_err());
+    }
+
+    /// Accepts the actual native void encoding without treating malformed decisions as success.
+    #[test]
+    fn permits_native_void_interception_results() {
+        for raw in [None, Some(String::new()), Some("null".to_string()), Some(r#"{"action":"allow"}"#.to_string())] {
+            assert!(matches!(decode_intercept_result(raw), Ok(AIToolHookDecision::Allow)));
+        }
+        assert!(decode_intercept_result(Some(" ".to_string())).is_err());
     }
 
     /// Verifies malformed or incomplete decisions do not silently allow execution.

@@ -174,6 +174,7 @@ void main() {
       final call = bridge.configurationCalls.single;
       expect(call.target, 'core/chatRuntimeHolderMain');
       expect(call.args, {'chatId': 'chat-a'});
+      await tester.pump();
       expect(
         bridge.events,
         containsAllInOrder([
@@ -529,7 +530,6 @@ class _ContextBridge extends OperitRuntimeBridge {
     switch (request.methodName) {
       case 'chatInputMenuSettings':
         value = const core_proxy.ChatInputMenuSettings(
-          enableMemoryAutoUpdate: false,
           permissionMode: core_proxy.AiPermissionMode.full,
           disableStreamOutput: false,
           disableUserPreferenceDescription: false,
@@ -587,10 +587,14 @@ class _ContextBridge extends OperitRuntimeBridge {
         if (configurationError case final Object error) throw error;
         events.add('configuration:${args['chatId']}');
         await configurationGate?.future;
-        value = core_proxy.ChatConfigurationResult(
+        value = const core_proxy.ChatConfigurationDisplayResult(
           contextKey: 'opaque-runtime-context',
-          profile: _profile(),
-          participants: [_profile()],
+          identity: core_proxy.ChatDisplayIdentity(
+            title: 'Persisted participant',
+            avatarUri: null,
+          ),
+          participants: [],
+          initialMessages: [],
         ).toJson();
       default:
         throw StateError('Unexpected method: ${request.methodName}');
@@ -618,7 +622,9 @@ class _ContextBridge extends OperitRuntimeBridge {
           onError: controller.addError,
           onDone: controller.close,
         );
-        controller.onCancel = subscription.cancel;
+        controller.onCancel = () {
+          unawaited(subscription.cancel());
+        };
         controller.add(_event(request, currentChatId));
       });
     }
@@ -668,30 +674,6 @@ class _ContextBridge extends OperitRuntimeBridge {
     yield _event(request, {'phase': 'complete'});
   }
 }
-
-/// Supplies the full runtime descriptor consumed by the real generated decoder.
-core_proxy.ChatParticipantProfile _profile() =>
-    const core_proxy.ChatParticipantProfile(
-      id: 'saved-participant',
-      name: 'Persisted participant',
-      avatarUri: null,
-      introPrompt: '',
-      userPreferencesText: '',
-      openingStatement: '',
-      modelBinding: core_proxy.ProviderFunctionModelBinding(
-        providerId: 'provider',
-        modelId: 'model',
-      ),
-      ttsConfigId: 'saved-voice',
-      toolAccess: core_proxy.ChatToolAccess(
-        enabled: false,
-        allowedBuiltinTools: [],
-        allowedPackages: [],
-        allowedSkills: [],
-        allowedMcpServers: [],
-      ),
-      resources: [],
-    );
 
 /// Renders an actual embedded DSL dialog with explicit V1 cancellation and actions.
 String _render(Map<String, Object?> state, {Object? result}) => jsonEncode({
@@ -749,6 +731,7 @@ CoreEvent _event(CoreWatchRequest request, Object? value) => CoreEvent.raw(
 /// Creates complete registered container metadata for the existing embedded launcher.
 core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
     core_proxy.ToolPkgContainerRuntime(
+      chatLifecycleHooks: const [],
       packageName: owner,
       displayName: const core_proxy.LocalizedText(
         values: {'default': 'Generic test package'},

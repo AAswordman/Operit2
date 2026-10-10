@@ -19,7 +19,6 @@ pub mod compose_dsl_material3_generated;
 pub mod core;
 pub mod files;
 pub mod material_icons;
-pub mod memory;
 pub mod network;
 pub mod results;
 pub mod runtime_bindings;
@@ -309,7 +308,6 @@ pub trait JsToolsHost:
     + system::SystemMusicHost
     + software_settings::SoftwareSettingsHost
     + chat::ChatHost
-    + memory::MemoryHost
     + edge::EdgeHost
     + edge::IoHost
     + Send
@@ -328,7 +326,6 @@ impl<T> JsToolsHost for T where
         + system::SystemMusicHost
         + software_settings::SoftwareSettingsHost
         + chat::ChatHost
-        + memory::MemoryHost
         + edge::EdgeHost
         + edge::IoHost
         + Send

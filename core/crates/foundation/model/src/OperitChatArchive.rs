@@ -24,6 +24,9 @@ pub struct OperitChatArchive {
 pub struct OperitArchivedChat {
     pub id: String,
     pub title: String,
+    /// Native conversation folder; independent of plugin-owned role bindings.
+    #[serde(default)]
+    pub group: Option<String>,
     pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub messages: Vec<OperitArchivedMessage>,
     pub createdAt: String,
@@ -48,6 +51,7 @@ impl OperitArchivedChat {
         Ok(Self {
             id: history.id,
             title: history.title,
+            group: history.group,
             pluginExtensions: history.pluginExtensions,
             messages,
             createdAt: millisStringToLocalDateTimeString(&history.createdAt)?,
@@ -69,6 +73,7 @@ impl OperitArchivedChat {
         Ok(ChatHistory {
             id: self.id.clone(),
             title: self.title.clone(),
+            group: self.group.clone(),
             pluginExtensions: self.pluginExtensions.clone(),
             messages: self
                 .messages

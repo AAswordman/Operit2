@@ -22,6 +22,10 @@ export interface CharacterMemoryBridge {
   cancelScreen(): Promise<PresentationCancel>;
   /** Invokes the package provider using a typed domain request and result. */
   request<A extends WebAction>(operation: WebRequest<A>): Promise<WebResponses[A]>;
+  /** Returns a readable avatar image, including the real built-in default. */
+  avatarImage(uri: string | null): Promise<string>;
+  /** Imports one real picker selection; cancellation leaves the existing draft intact. */
+  chooseAvatar(): Promise<{ uri: string; source: string } | null>;
   /** Writes an explicitly chosen VFS export path through the host filesystem. */
   exportFile(path: string, content: string): Promise<boolean>;
 }
@@ -44,7 +48,6 @@ export interface TtsDialog extends DialogState { type: "tts"; parent: CharacterD
 export interface ToolAccessDialog extends DialogState { type: "tool-access"; parent: CharacterDialog; draft: ToolAccessConfig }
 export interface GroupDialog extends DialogState { type: "group"; group: GroupValues; create: boolean }
 export interface StoreDialog extends DialogState { type: "store"; store: StoreValues; create: boolean }
-export interface GlobalMemoryDialog extends DialogState { type: "global-memory" }
 export interface OwnerSettingsDialog extends DialogState {
   type: "owner-settings"; ownerKey: string; name: string; tab: number;
 }
@@ -75,7 +78,7 @@ export interface GraphDialog extends DialogState {
   sizes: Map<string, NodeSize>; positions: Map<string, Point>; camera: GraphCamera;
   query: string; appliedQuery: string; searchIds: Set<string> | null; folder: string;
 }
-export type Dialog = PreviewDialog | CharacterDialog | ThemeDialog | TtsDialog | ToolAccessDialog | GroupDialog | StoreDialog | GlobalMemoryDialog | OwnerSettingsDialog | UserDialog | TagsDialog | TagEditDialog | TagDeleteDialog | MemoryEditDialog | LinkDialog | LinkEditDialog | ConfirmDialog | ExportDialog | ImportDialog | TextDialog | InfoDialog | GraphDialog;
+export type Dialog = PreviewDialog | CharacterDialog | ThemeDialog | TtsDialog | ToolAccessDialog | GroupDialog | StoreDialog | OwnerSettingsDialog | UserDialog | TagsDialog | TagEditDialog | TagDeleteDialog | MemoryEditDialog | LinkDialog | LinkEditDialog | ConfirmDialog | ExportDialog | ImportDialog | TextDialog | InfoDialog | GraphDialog;
 export type DialogType = Dialog["type"];
 export type DialogOf<T extends DialogType> = Extract<Dialog, { type: T }>;
 export type DialogInput = {
@@ -87,7 +90,7 @@ export interface GraphPointer {
   node: { id: string; start: Point } | null;
 }
 export interface UIState {
-  snapshot: Snapshot | null; dialogs: Dialog[]; busy: boolean; error: string;
+  managementView: "characters" | "memory"; avatarSources: Map<string, string>; snapshot: Snapshot | null; dialogs: Dialog[]; busy: boolean; error: string;
   toastTimer: ReturnType<typeof setTimeout> | null; pointers: Map<number, GraphPointer>; gestureMoved: boolean;
 }
 export type NativeRecord = Card | Group;

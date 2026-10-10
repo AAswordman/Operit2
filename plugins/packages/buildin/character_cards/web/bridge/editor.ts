@@ -120,7 +120,7 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
   const screens = createScreenController(context, page);
   const graph = createGraphActionsFeature(context), profile = createProfileFeature(context), transfers = createCharactersTransfersFeature(context);
   const themePicker = createThemeFeature(context,
-    /** Reads actual independent choices through the existing package Request/IPC path, never a browser-owned directory. */
+    /** Reads independent theme choices through the existing package request channel. */
     () => context.request({ action: "listThemeChoices" }),
   );
   const events = createEditorEvents(context, [...screens.features, themePicker, createTtsFeature(context), createToolPolicyFeature(context), createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createCharactersTagsActionsFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
@@ -139,10 +139,18 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
     dialogsRoot.addEventListener("wheel", gestures.onWheel, { passive: false });
     dialogsRoot.addEventListener("keydown", gestures.onKeyDown);
   }
+  /** Hydrates image sources without modifying persisted character paths. */
+  async function loadAvatars(): Promise<void> {
+    await Promise.all(snapshot().cards.map(async card => {
+      const key = card.avatarUri ?? "";
+      if (!state.avatarSources.has(key)) state.avatarSources.set(key, await host().avatarImage(card.avatarUri));
+    }));
+  }
   /** Loads the real package aggregate before exposing editable controls. */
-  async function initialize(): Promise<void> {
+  async function initialize(view: "characters" | "memory" = "characters"): Promise<void> {
+    state.managementView = view;
     state.busy = true;
-    try { state.snapshot = await request({ action: "snapshot" }); }
+    try { state.snapshot = await request({ action: "snapshot" }); await loadAvatars(); }
     finally { state.busy = false; renderMain(); }
   }
   /** Presents a startup failure without substituting records or transports. */
@@ -152,6 +160,7 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
     state.busy = true;
     try {
       state.snapshot = await request({ action: "snapshot" });
+      await loadAvatars();
       await screens.enter(input, receiver);
     } finally { state.busy = false; renderMain(); }
   }

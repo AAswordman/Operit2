@@ -174,8 +174,7 @@ void main() {
             inputState: core.InputProcessingState.idle(),
             viewModel: viewModel,
             currentChatId: 'model-sync-chat',
-            currentCharacterCardName: null,
-            currentCharacterCardAvatarUri: null,
+
             onSendMessage: () {},
             onQueueMessage: () {},
             onCancelMessage: () {},

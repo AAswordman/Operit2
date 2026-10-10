@@ -912,6 +912,39 @@ void main() {
     ]);
   });
 
+  testWidgets(
+    'premature action stream closure reports failure without publishing success',
+    (tester) async {
+      final results = <Object?>[];
+      final bridge = _ToolPkgDslTestBridge(closeBeforeActionComplete: true);
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: Scaffold(
+            body: ToolPkgUiLauncherScreen(
+              clients: GeneratedCoreProxyClients(bridge),
+              plugin: _pluginRuntime(),
+              onActionResult: results.add,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Increment'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('action stream closed before completion'),
+        findsOneWidget,
+      );
+      expect(results, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('serializes rapid input and ignores delayed echoes', (
     tester,
   ) async {
@@ -2016,6 +2049,7 @@ Widget _screen(
 
 core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
+    chatLifecycleHooks: [],
     packageName: 'demo_toolpkg',
     displayName: core_proxy.LocalizedText(
       values: <String, String>{'default': 'Demo ToolPkg'},
@@ -2095,6 +2129,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
 
 core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
+    chatLifecycleHooks: [],
     packageName: 'module_only_toolpkg',
     displayName: core_proxy.LocalizedText(
       values: <String, String>{'default': 'Module ToolPkg'},
@@ -2164,6 +2199,7 @@ core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
 /// Creates a selected message whose tool and thinking parts must stay out of translation.
 core_proxy.ChatMessage _translationMessage(String sender) {
   return core_proxy.ChatMessage(
+    pluginExtensions: const {},
     sender: sender,
     parts: [
       for (final entry in [
@@ -2204,12 +2240,14 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   _ToolPkgDslTestBridge({
     String Function(int count)? renderResult,
     this.holdActionCompletion = false,
+    this.closeBeforeActionComplete = false,
     this.onAction,
   }) : _renderResult = renderResult ?? _counterRenderResult;
 
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
   final String Function(int count) _renderResult;
   final bool holdActionCompletion;
+  final bool closeBeforeActionComplete;
   final void Function(Map<String, Object?>)? onAction;
   Completer<void>? actionCompletion;
   Completer<String>? renderCompletion;
@@ -2374,11 +2412,12 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
         jsonEncode(<String, Object?>{'phase': 'final', 'result': result}),
       ),
     );
+    if (closeBeforeActionComplete) return;
     yield CoreEvent.raw(
       requestId: request.requestId,
       target: request.target,
       propertyName: request.propertyName,
-      kind: 'Completed',
+      kind: 'Changed',
       decodeValue: decodeCoreLink<Object?>,
       valueBytes: encodeCoreLink(
         jsonEncode(<String, Object?>{'phase': 'complete'}),

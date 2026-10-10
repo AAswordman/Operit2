@@ -102,7 +102,7 @@ async function onPlanModeCommand(event) {
     }
     await plan_mode_runtime_ipc_js_1.PlanModeShared.enable(activeView.chatId);
     if (message) {
-        void Tools.Chat.sendMessage(message, activeView.chatId, undefined, undefined, { runtime: activeView.runtime }).catch((error) => {
+        void Tools.Chat.sendMessage({ kind: "submit", chatId: activeView.chatId, runtime: activeView.runtime, input: { text: message, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
             const errorText = error instanceof Error ? error.message || "error" : String(error);
             void Tools.System.toast(`${text.toastPlanSendFailedPrefix}${errorText}`);
         });
@@ -161,7 +161,7 @@ async function handleSubmitPlanaskAnswersIpc(request) {
                 error: text.toastWorkspaceRequired,
             };
         }
-        void Tools.Chat.sendMessage(request.message, trackedView.chatId, undefined, undefined, { runtime: trackedView.runtime }).catch((error) => {
+        void Tools.Chat.sendMessage({ kind: "submit", chatId: trackedView.chatId, runtime: trackedView.runtime, input: { text: request.message, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
             const errorText = error instanceof Error
                 ? error.message || "error"
                 : (typeof error === "string" || error == null ? error || "error" : "error");
@@ -210,7 +210,7 @@ async function handleStartImplementationIpc(request) {
         try {
             const written = await plan_mode_runtime_ipc_js_1.PlanModeShared.writePlanFile(workspace.chatId, normalizedPlanContent);
             await plan_mode_runtime_ipc_js_1.PlanModeShared.disable(written.chatId);
-            void Tools.Chat.sendMessage(text.implementationMessage, written.chatId, undefined, undefined, { runtime: workspace.runtime }).catch((error) => {
+            void Tools.Chat.sendMessage({ kind: "submit", chatId: written.chatId, runtime: workspace.runtime ?? trackedView.runtime, input: { text: text.implementationMessage, attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false }).catch((error) => {
                 const errorText = error instanceof Error
                     ? error.message || "error"
                     : (typeof error === "string" || error == null ? error || "error" : "error");

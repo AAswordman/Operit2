@@ -7,6 +7,38 @@ The package owns character cards and memory in one ToolPkg
 The offline Material UI is present, but passing Node or browser tests does **not**
 mean the application is connected or the original feature has been fully extracted.
 
+## Compose route entries
+
+Each of the five UI routes has its own default-exported entry at
+`src/ui/<route-id>/index.ui.ts`, built as `dist/ui/<route-id>/index.ui.js`.
+The main bundle keeps these imports external and does not re-export the screen
+functions: the SDK serializes a screen's module path, not its named export, and
+root export tagging would otherwise overwrite the independently loaded module
+identity. The build includes all five executable screen modules in the `.toolpkg`
+archive alongside the main provider and memory tools.
+
+The route regression tests execute the actual JavaScript registration and Compose
+SDK scripts, check the serialized paths and render each entry with explicit input.
+Installed module bytes and the Core asset archive are compared against the current
+build. The embedded chat sidebar uses native Compose DSL rows, search, group menus
+and dialogs; it does not instantiate a WebView. The obsolete browser sidebar source, resource
+registration and packaging entry have been removed. Role categories contain their
+conversation groups, so this package contributes only the legacy Characters tab;
+the native Workspace tab remains owned by Flutter. These are Node/script checks, not a live native-host acceptance result.
+
+## Character settings scope
+
+The plugin-menu character settings follow the native settings page immediately
+before commit `824dcb7c`: character/group lists; basic, content and binding editor
+tabs; model/TTS/memory/tool bindings; and existing import/export operations.
+The character page's entire inner title bar (icon, title and refresh action) is
+removed; the character/group section titles remain. Character and group editors
+retain the independent theme reference picker. Extra group preview/duplicate edit
+buttons, member reordering actions and the implementation notice remain removed.
+Group rows show member names as their subtitle and only a member-count badge.
+Theme references remain editable and are preserved by persistence/interchange.
+Chat identity previews and the independent memory page are unchanged surfaces.
+
 ## Current Chat integration review
 
 The current send/control contract is documented in `docs/chat-send-api.md` at the

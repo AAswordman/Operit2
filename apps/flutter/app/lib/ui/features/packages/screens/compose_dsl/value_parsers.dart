@@ -102,10 +102,12 @@ EdgeInsets? _commonPaddingFromProps(Map<String, Object?> props) {
   return null;
 }
 
-/// Uses spaced-by gap only when the arrangement is the Compose start default.
+/// Preserves fixed gaps in aligned groups; distributed arrangements own their gaps.
 double _flexSpacing(Object? arrangement, Object? spacing) {
   final token = _normalizeToken(_string(arrangement));
-  if (token.isNotEmpty && token != 'start') {
+  if (token == 'spacebetween' ||
+      token == 'spacearound' ||
+      token == 'spaceevenly') {
     return 0;
   }
   return _number(spacing) ?? 0;
@@ -231,6 +233,7 @@ TextStyle? _textStyle(BuildContext context, Map<String, Object?> props) {
   return _scaledTextStyle(style!, _number(props['fontSize'])).copyWith(
     color: _color(context, props['color']),
     fontWeight: _fontWeight(_string(props['fontWeight'])),
+    letterSpacing: _number(props['letterSpacing']),
   );
 }
 
@@ -424,6 +427,26 @@ Color? _colorToken(ColorScheme scheme, String token) {
     'onTertiaryContainer' => scheme.onTertiaryContainer,
     'surface' => scheme.surface,
     'onSurface' => scheme.onSurface,
+    'surfaceDim' => scheme.surfaceDim,
+    'surfaceBright' => scheme.surfaceBright,
+    'surfaceContainerLowest' => scheme.surfaceContainerLowest,
+    'surfaceContainerLow' => scheme.surfaceContainerLow,
+    'surfaceContainer' => scheme.surfaceContainer,
+    'surfaceContainerHigh' => scheme.surfaceContainerHigh,
+    'surfaceContainerHighest' => scheme.surfaceContainerHighest,
+    'shadow' => scheme.shadow,
+    'primaryFixed' => scheme.primaryFixed,
+    'primaryFixedDim' => scheme.primaryFixedDim,
+    'onPrimaryFixed' => scheme.onPrimaryFixed,
+    'onPrimaryFixedVariant' => scheme.onPrimaryFixedVariant,
+    'secondaryFixed' => scheme.secondaryFixed,
+    'secondaryFixedDim' => scheme.secondaryFixedDim,
+    'onSecondaryFixed' => scheme.onSecondaryFixed,
+    'onSecondaryFixedVariant' => scheme.onSecondaryFixedVariant,
+    'tertiaryFixed' => scheme.tertiaryFixed,
+    'tertiaryFixedDim' => scheme.tertiaryFixedDim,
+    'onTertiaryFixed' => scheme.onTertiaryFixed,
+    'onTertiaryFixedVariant' => scheme.onTertiaryFixedVariant,
     'surfaceVariant' => scheme.surfaceContainerHighest,
     'onSurfaceVariant' => scheme.onSurfaceVariant,
     'background' => scheme.surface,

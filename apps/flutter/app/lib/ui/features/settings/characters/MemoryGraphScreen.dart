@@ -14,7 +14,6 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitFormStyles.dart';
-import '../memory/MemoryOwnerControlsDialog.dart';
 import 'MemoryGraphCanvas.dart';
 
 const XTypeGroup _memoryJsonFileTypeGroup = XTypeGroup(
@@ -542,11 +541,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
             onPressed: _busy ? null : _importDocument,
             icon: const Icon(Icons.article_outlined),
           ),
-          IconButton(
-            tooltip: 'AI 分类未归类记忆',
-            onPressed: _busy ? null : _autoCategorize,
-            icon: const Icon(Icons.auto_awesome),
-          ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('取消'),
@@ -635,29 +629,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     }
   }
 
-  Future<void> _autoCategorize() async {
-    setState(() => _busy = true);
-    try {
-      final count = await _clients.application
-          .memoryManagementService(ownerKey: widget.ownerKey)
-          .autoCategorize();
-      if (mounted) {
-        _refresh();
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('已分类 $count 条记忆')));
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('自动分类：$error')));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   /// Builds the page scaffold and graph canvas.
   @override
   Widget build(BuildContext context) {
@@ -673,20 +644,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
           icon: const Icon(Icons.close),
         ),
         actions: <Widget>[
-          IconButton(
-            tooltip: '记忆设置',
-            icon: const Icon(Icons.tune),
-            onPressed: _busy
-                ? null
-                : () async {
-                    await MemoryOwnerControlsDialog.open(
-                      context,
-                      _clients,
-                      widget.ownerKey,
-                    );
-                    if (mounted) _refresh();
-                  },
-          ),
           IconButton(
             tooltip: '导入 JSON',
             onPressed: _busy ? null : _importJson,

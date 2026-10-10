@@ -6,7 +6,7 @@ export function requireDecimal(value: unknown, label: string, positive = false):
   return value;
 }
 import type {
-  Card, ConversationGroupChanges, ConversationGroupRecord, Group, GroupValues, Memory, MemoryGraph, MemorySearchConfig,
+  Card, ConversationGroupRecord, Group, GroupValues, Memory, MemoryGraph, MemorySearchConfig,
   MemorySearchOptions, MemorySettings, MemoryChatMessage, MemoryValues, Tag, TagValues, ToolAccessConfig,
 } from "./model";
 
@@ -104,19 +104,6 @@ export function assertConversationGroups(value: unknown): asserts value is Conve
     assertConversationGroup(group);
     const count = scopeCounts.get(group.ownerSelection);
     if (count === undefined || group.displayOrder >= count) throw new Error("Conversation group order must be a complete zero-based scoped sequence");
-  }
-}
-
-/** Rejects empty or unsupported manual-group edits instead of treating them as successful saves. */
-export function assertConversationGroupChanges(value: unknown): asserts value is ConversationGroupChanges {
-  assertObject(value, "conversation group changes"); const keys = Object.keys(value);
-  if (keys.length === 0) throw new Error("Conversation group changes must contain at least one field");
-  for (const key of keys) {
-    switch (key) {
-      case "name": requireName(value.name, "conversation group name"); break;
-      case "pinned": assertBoolean(value.pinned, "conversation group pinned"); break;
-      default: throw new Error("Unsupported conversation group edit: " + key);
-    }
   }
 }
 

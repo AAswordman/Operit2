@@ -108,38 +108,40 @@ test("one character-and-memory package registers native selection, embedded side
   const selectionScreen = () => { throw new Error("Registration tests do not render the native selector"); };
   /** Supplies a distinct native execution-controls screen for its actual route registration. */
   const groupExecutionScreen = () => { throw new Error("Registration tests do not render group controls"); };
-  assert.equal(api.register({ id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 }, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen), true);
+  const memoryScreen = () => { throw new Error("Registration tests do not render memory UI"); };
+  assert.equal(api.register({ id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 }, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen, memoryScreen), true);
   api.installService();
   const managementRoute = "toolpkg:com.operit.character_cards:ui:main";
   const attachmentRoute = "toolpkg:com.operit.character_cards:ui:memory-attachment";
-  assert.equal(routes.length, 5);
+  assert.equal(routes.length, 6);
   assert.deepEqual(plain(routes), [
     { id: "main", route: managementRoute, runtime: "compose_dsl", keepAlive: true, title: { zh: "角色卡", en: "Characters" } },
     { id: "memory-attachment", route: attachmentRoute, runtime: "compose_dsl", keepAlive: false, title: { zh: "记忆附件", en: "Memory attachment" } },
     { id: "chat-sidebar", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", runtime: "compose_dsl", keepAlive: true, title: { zh: "会话侧边栏", en: "Chat sidebar" } },
     { id: "selection", route: "toolpkg:com.operit.character_cards:ui:selection", runtime: "compose_dsl", keepAlive: false, title: { zh: "切换角色卡", en: "Switch character" } },
     { id: "group-execution", route: "toolpkg:com.operit.character_cards:ui:group-execution", runtime: "compose_dsl", keepAlive: false, title: { zh: "群组执行", en: "Group execution" } },
+    { id: "memory", route: "toolpkg:com.operit.character_cards:ui:memory", runtime: "compose_dsl", keepAlive: true, title: { zh: "记忆", en: "Memory" } },
   ]);
   assert.equal(routes[0].screen, screen); assert.equal(routes[1].screen, attachmentScreen);
-  assert.equal(routes[2].screen, sidebarScreen); assert.equal(routes[3].screen, selectionScreen); assert.equal(routes[4].screen, groupExecutionScreen);
+  assert.equal(routes[2].screen, sidebarScreen); assert.equal(routes[3].screen, selectionScreen); assert.equal(routes[4].screen, groupExecutionScreen); assert.equal(routes[5].screen, memoryScreen);
   assert.equal(new Set(routes.map(
     /** Requires five independent real screen callbacks, not aliases of the management page. */
     entry => entry.screen,
-  )).size, 5);
+  )).size, 6);
   assert.equal(navigation.length, 5);
   assert.deepEqual(plain(navigation.filter(
-    /** Validates the two plugin-owned tabs and their exact opaque input on the shared registered sidebar route. */
+    /** Validates the single legacy role tab and their exact opaque input on the shared registered sidebar route. */
     entry => entry.surface === "chat_sidebar_tabs",
   )), [
-    { id: "sidebar-characters", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", surface: "chat_sidebar_tabs", title: { zh: "角色分类", en: "Characters" }, icon: "Badge", order: 150, params: { view: "characters" } },
-    { id: "sidebar-groups", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", surface: "chat_sidebar_tabs", title: { zh: "会话群组", en: "Conversation groups" }, icon: "Groups", order: 151, params: { view: "groups" } },
+    { id: "sidebar-characters", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", surface: "chat_sidebar_tabs", title: { zh: "角色卡", en: "Characters" }, icon: "Badge", order: 150, params: { view: "characters" } },
   ]);
   const sidebar = navigation.filter(
     /** Requires exactly the host's sidebar extension surface. */
     definition => definition.surface === "main_sidebar_plugins",
   );
-  assert.equal(sidebar.length, 1);
+  assert.equal(sidebar.length, 2);
   assert.deepEqual(plain(sidebar[0]), { id: "sidebar", route: managementRoute, surface: "main_sidebar_plugins", title: { zh: "角色卡", en: "Characters" }, icon: "Badge", order: 150 });
+  assert.deepEqual(plain(sidebar[1]), { id: "memory-settings", route: "toolpkg:com.operit.character_cards:ui:memory", surface: "main_sidebar_plugins", title: { zh: "记忆", en: "Memory" }, icon: "Memory", order: 151 });
   const toolbox = navigation.filter(
     /** Keeps the existing toolbox entry separate from attachment registration. */
     definition => definition.surface === "toolbox",

@@ -77,12 +77,23 @@ extension _ComposeMaterialControls on _ComposeDslRendererState {
   Widget _surface(BuildContext context) {
     final radius = _borderRadius(node.props['shape']);
     final borderSide = _borderSide(context, node.props['border']);
-    final shape = borderSide == null && radius == null
-        ? null
-        : RoundedRectangleBorder(
-            borderRadius: radius ?? BorderRadius.zero,
-            side: borderSide ?? BorderSide.none,
-          );
+    final rawShape = node.props['shape'];
+    final kind = _normalizeToken(
+      _string(
+        rawShape is Map ? rawShape['type'] ?? rawShape['kind'] : rawShape,
+      ),
+    );
+    final ShapeBorder? shape = switch (kind) {
+      'pill' => StadiumBorder(side: borderSide ?? BorderSide.none),
+      'circle' => CircleBorder(side: borderSide ?? BorderSide.none),
+      _ =>
+        borderSide == null && radius == null
+            ? null
+            : RoundedRectangleBorder(
+                borderRadius: radius ?? BorderRadius.zero,
+                side: borderSide ?? BorderSide.none,
+              ),
+    };
     final child = _surfaceContent(
       context,
       contentColor: _color(context, node.props['contentColor']),
@@ -112,6 +123,7 @@ extension _ComposeMaterialControls on _ComposeDslRendererState {
           0,
       shape: shape,
       borderRadius: shape == null ? radius : null,
+      clipBehavior: shape == null ? Clip.none : Clip.antiAlias,
       child: surfaceChild,
     );
   }

@@ -302,3 +302,5 @@ test("real sidebar tab registration rejects non JSON params without partially ca
   }
   assert.deepEqual(actual.entries(), []);
 });
+
+

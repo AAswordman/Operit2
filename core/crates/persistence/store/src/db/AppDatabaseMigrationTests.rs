@@ -13,7 +13,7 @@ const EXTENSION_TABLES: [&str; 6] = [
     "sync_sql_message_rows",
     "sync_sql_message_variant_rows",
 ];
-const RETIRED_CHAT_COLUMNS: [&str; 3] = ["group", "characterCardName", "characterGroupId"];
+const RETIRED_CHAT_COLUMNS: [&str; 2] = ["characterCardName", "characterGroupId"];
 
 /// Creates the genuine production version-27 schema with populated records, legacy columns and sync logs.
 fn version27Database(name: &str) -> (RuntimeStorePaths, Arc<AppDatabase>) {
@@ -190,6 +190,7 @@ fn opening_version27_atomically_upgrades_records_and_reopens_version28() {
     );
     let chat = database.chatDao().getChatById("v27-chat").unwrap().unwrap();
     assert_eq!(chat.title, "Kept title");
+    assert_eq!(chat.group.as_deref(), Some("legacy-sidebar"));
     assert_eq!(
         (
             chat.createdAt,
@@ -355,3 +356,4 @@ fn fresh_and_migrated_version28_have_identical_schema() {
     database.store.setUserVersion(28).unwrap();
     assert_eq!(schemaDefinitions(&database.store), upgraded);
 }
+

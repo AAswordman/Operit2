@@ -73,7 +73,7 @@ export function createHostScreenReceiver(bridge: CharacterMemoryBridge, requestI
 /** Describes the same editor reused by the management route and caller-owned plugin popups. */
 export interface PresentedEditor {
   /** Loads the management screen without creating a presentation result channel. */
-  initialize(): Promise<void>;
+  initialize(view?: "characters" | "memory"): Promise<void>;
   /** Loads one real route input with its existing WebView result receiver. */
   initializeScreen(input: PresentedScreen, receiver: ScreenReceiver): Promise<void>;
 }
@@ -81,7 +81,7 @@ export interface PresentedEditor {
 /** Starts the exact mode supplied by UiRoute initialState through the existing package host bridge. */
 export async function initializeHostScreen(editor: PresentedEditor): Promise<void> {
   const bridge = host(), current = parseCurrentScreen(await bridge.currentScreen());
-  if (current.input.mode === "manage") { await editor.initialize(); return; }
+  if (current.input.mode === "manage") { await editor.initialize(current.input.view); return; }
   if (current.requestId === null) throw new Error("弹窗视图没有真实 presentation requestId");
   await editor.initializeScreen(current.input, createHostScreenReceiver(bridge, current.requestId, current.input));
 }

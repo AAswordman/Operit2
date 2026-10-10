@@ -6,6 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../components/CollapsedDrawerContent.dart';
+import '../../../core/bridge/OperitRuntimeBridge.dart';
+import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+
 import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
@@ -15,6 +18,7 @@ import '../../theme/OperitGlassSurface.dart';
 class TabletLayout extends StatefulWidget {
   const TabletLayout({
     super.key,
+    this.bridge = const ProxyCoreRuntimeBridge(),
     required this.content,
     required this.navigationEntries,
     required this.pluginSidebarEntries,
@@ -27,6 +31,7 @@ class TabletLayout extends StatefulWidget {
     required this.onConversationActivated,
   });
 
+  final OperitRuntimeBridge bridge;
   final Widget content;
   final List<NavigationEntrySpec> navigationEntries;
   final List<NavigationEntrySpec> pluginSidebarEntries;
@@ -139,6 +144,7 @@ class _TabletLayoutState extends State<TabletLayout> {
                       valueListenable: widget.drawerConversationState,
                       builder: (context, drawerState, _) {
                         return DrawerContent(
+                          bridge: widget.bridge,
                           key: const ValueKey<String>('expandedDrawerContent'),
                           navigationEntries: widget.navigationEntries,
                           pluginEntries: widget.pluginSidebarEntries,
@@ -162,6 +168,7 @@ class _TabletLayoutState extends State<TabletLayout> {
                       valueListenable: widget.drawerConversationState,
                       builder: (context, drawerState, _) {
                         return CollapsedDrawerContent(
+                          bridge: widget.bridge,
                           key: const ValueKey<String>('collapsedDrawerContent'),
                           navigationEntries: widget.navigationEntries,
                           pluginEntries: widget.pluginSidebarEntries,

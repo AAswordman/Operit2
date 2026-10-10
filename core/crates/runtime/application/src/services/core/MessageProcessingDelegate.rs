@@ -395,7 +395,6 @@ pub struct SendUserMessageProcessingRequest<'a> {
     pub attachments: Vec<AttachmentInfo>,
     pub replyToMessage: Option<ChatMessage>,
     pub enableThinking: bool,
-    pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
     pub chatProviderIdOverride: Option<String>,
@@ -430,7 +429,6 @@ pub struct RegenerateAiMessageVariantRequest<'a> {
     pub attachments: Vec<AttachmentInfo>,
     pub replyToMessage: Option<ChatMessage>,
     pub enableThinking: bool,
-    pub enableMemoryAutoUpdate: bool,
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
     pub chatProviderIdOverride: Option<String>,
@@ -1707,7 +1705,6 @@ impl MessageProcessingDelegate {
             workspaceFolders: request.workspaceFolders.clone(),
             promptFunctionType: request.promptFunctionType.clone(),
             enableThinking: request.enableThinking,
-            enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
             maxTokens: request.maxTokens,
             tokenUsageThreshold: request.tokenUsageThreshold,
             proxySenderName: request.proxySenderNameOverride.clone(),
@@ -1804,6 +1801,7 @@ impl MessageProcessingDelegate {
         if !streamAccepted || !self.isCurrentChatTurn(&chatId, turnId) {
             sharedResponseStream.close();
             return Ok(SendUserMessageProcessingResult {
+                completion: ChatTurnSubmission::Pending(receiptReceiver),
                 aiMessage,
                 nextWindowSize: None,
             });
@@ -1835,7 +1833,6 @@ impl MessageProcessingDelegate {
         let completionContextParticipantId = configuration.profile.id.clone();
         let completionContextConfiguration = configuration.clone();
         let completionContextEnableThinking = request.enableThinking;
-        let completionContextEnableMemoryAutoUpdate = request.enableMemoryAutoUpdate;
         let completionContextProxySenderName = request.proxySenderNameOverride.clone();
         let completionContextProviderIdOverride = request.chatProviderIdOverride.clone();
         let completionContextModelIdOverride = request.chatModelIdOverride.clone();
@@ -2362,7 +2359,6 @@ impl MessageProcessingDelegate {
                 attachments: request.attachments,
                 replyToMessage: request.replyToMessage,
                 enableThinking: request.enableThinking,
-                enableMemoryAutoUpdate: request.enableMemoryAutoUpdate,
                 maxTokens: request.maxTokens,
                 tokenUsageThreshold: request.tokenUsageThreshold,
                 chatProviderIdOverride: request.chatProviderIdOverride,

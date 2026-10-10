@@ -744,6 +744,7 @@ CoreEvent _event(CoreWatchRequest request, Map<String, Object?> value) =>
 /// Provides complete runtime metadata required by the existing embedded launcher.
 core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
     core_proxy.ToolPkgContainerRuntime(
+      chatLifecycleHooks: const [],
       packageName: owner,
       displayName: const core_proxy.LocalizedText(
         values: {'default': 'Generic test package'},

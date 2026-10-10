@@ -176,10 +176,10 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 
     final stream = widget.contentStream;
     _streamDone = stream == null;
-    _rendererState.reset();
     if (stream == null) {
       final cachedNodes = _staticMarkdownNodeCache.get(widget.content);
       if (cachedNodes != null) {
+        _rendererState.reset();
         _streamDone = true;
         _rendererState.collectedContent.write(widget.content);
         _rendererState.streamParsingCompletedSuccessfully = true;
@@ -198,6 +198,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       return;
     }
 
+    _rendererState.reset();
     _synchronizeRenderNodes(isStreaming: true);
     _subscribe(stream);
   }
@@ -207,6 +208,8 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     if (!mounted || generation != _startGeneration) {
       return;
     }
+    // Keep the live tree visible until the persisted source has been parsed.
+    _rendererState.reset();
     for (final event in events) {
       _applyMarkdownEvent(event);
     }

@@ -1,6 +1,7 @@
 import type { ComposeDslContext, ComposeNode, ComposeThemeSnapshot } from "../../../../types/compose-dsl";
 import type { Definition, Request, RequestOutput } from "./model";
 import type { DomainOperation, DomainOutput } from "./api";
+import { imageSource, pickedImagePath } from "./image-source";
 import { parseScreenResult } from "./presentation";
 import { dispatch, dispatchDomain, initializeService } from "./service-runtime";
 import { record } from "./domain";
@@ -8,10 +9,11 @@ import { createUiScreenSession } from "./ui-contributions";
 import type { UiScreenSession, UiPresentation, DomainMessage } from "./ui-contributions";
 import { parseDomainMessage } from "./ui-contributions";
 
-/** Registers one package with character and memory views under a single navigation entry. */
-export function register(definition: Definition, screen: (ctx: ComposeDslContext) => ComposeNode, attachmentScreen: (ctx: ComposeDslContext) => ComposeNode, sidebarScreen: (ctx: ComposeDslContext) => ComposeNode, selectionScreen: (ctx: ComposeDslContext) => ComposeNode, groupExecutionScreen: (ctx: ComposeDslContext) => ComposeNode): boolean {
+/** Registers independent character and memory management entries using the same generic route. */
+export function register(definition: Definition, screen: (ctx: ComposeDslContext) => ComposeNode, attachmentScreen: (ctx: ComposeDslContext) => ComposeNode, sidebarScreen: (ctx: ComposeDslContext) => ComposeNode, selectionScreen: (ctx: ComposeDslContext) => ComposeNode, groupExecutionScreen: (ctx: ComposeDslContext) => ComposeNode, memoryScreen: (ctx: ComposeDslContext) => ComposeNode): boolean {
   const route = `toolpkg:${definition.id}:ui:main`;
   ToolPkg.registerUiRoute({ id: "main", route, screen, runtime: "compose_dsl", keepAlive: true, title: { zh: definition.title, en: "Characters" } });
+  const memoryRoute = `toolpkg:${definition.id}:ui:memory`;
   const attachmentRoute = `toolpkg:${definition.id}:ui:memory-attachment`;
   ToolPkg.registerUiRoute({ id: "memory-attachment", route: attachmentRoute, screen: attachmentScreen, runtime: "compose_dsl", keepAlive: false, title: { zh: "记忆附件", en: "Memory attachment" } });
   const sidebarRoute = `toolpkg:${definition.id}:ui:chat-sidebar`;
@@ -19,9 +21,10 @@ export function register(definition: Definition, screen: (ctx: ComposeDslContext
   const selectionRoute = `toolpkg:${definition.id}:ui:selection`;
   ToolPkg.registerUiRoute({ id: "selection", route: selectionRoute, screen: selectionScreen, runtime: "compose_dsl", keepAlive: false, title: { zh: "切换角色卡", en: "Switch character" } });
   ToolPkg.registerUiRoute({ id: "group-execution", route: `toolpkg:${definition.id}:ui:group-execution`, screen: groupExecutionScreen, runtime: "compose_dsl", keepAlive: false, title: { zh: "群组执行", en: "Group execution" } });
-  ToolPkg.registerNavigationEntry({ id: "sidebar-characters", route: sidebarRoute, surface: "chat_sidebar_tabs", title: { zh: "角色分类", en: "Characters" }, icon: "Badge", order: definition.order, params: { view: "characters" } });
-  ToolPkg.registerNavigationEntry({ id: "sidebar-groups", route: sidebarRoute, surface: "chat_sidebar_tabs", title: { zh: "会话群组", en: "Conversation groups" }, icon: "Groups", order: definition.order + 1, params: { view: "groups" } });
+  ToolPkg.registerUiRoute({ id: "memory", route: memoryRoute, screen: memoryScreen, runtime: "compose_dsl", keepAlive: true, title: { zh: "记忆", en: "Memory" } });
+  ToolPkg.registerNavigationEntry({ id: "sidebar-characters", route: sidebarRoute, surface: "chat_sidebar_tabs", title: { zh: "角色卡", en: "Characters" }, icon: "Badge", order: definition.order, params: { view: "characters" } });
   ToolPkg.registerNavigationEntry({ id: "sidebar", route, surface: "main_sidebar_plugins", title: { zh: definition.title, en: "Characters" }, icon: definition.icon, order: definition.order });
+  ToolPkg.registerNavigationEntry({ id: "memory-settings", route: memoryRoute, surface: "main_sidebar_plugins", title: { zh: "记忆", en: "Memory" }, icon: "Memory", order: definition.order + 1 });
   ToolPkg.registerNavigationEntry({ id: "toolbox", route, surface: "toolbox", title: { zh: definition.title, en: "Characters" }, icon: definition.icon, order: definition.order });
   ToolPkg.registerNavigationEntry({ id: "memory-attachment", route: attachmentRoute, surface: "chat_attachments", title: { zh: "记忆附件", en: "Memory attachment" }, icon: "Memory", order: definition.order, params: { mode: "memory-attachment", ownerKey: null, folderPath: null } });
   return true;
@@ -65,7 +68,7 @@ export async function onServiceInitialize(_event: ToolPkg.AppLifecycleHookEvent)
   await initializeService();
 }
 /** Uses the workflow plugin's offline WebView pattern with the application's Material palette. */
-export function renderScreen(ctx: ComposeDslContext, definition: Definition, requiredMode: "memory-attachment" | null = null): ComposeNode {
+export function renderScreen(ctx: ComposeDslContext, definition: Definition, requiredMode: "memory-attachment" | null = null, managementView: "characters" | "memory" = "characters"): ComposeNode {
   const controller = ctx.createWebViewController("character-memory-web");
   const [path, setPath] = ctx.useState("character-memory-html", "");
   const [error, setError] = ctx.useState("character-memory-error", "");
@@ -96,7 +99,9 @@ export function renderScreen(ctx: ComposeDslContext, definition: Definition, req
         /** Returns the readonly plugin screen input and its real host presentation request id. */
         currentScreen: (...args: unknown[]) => {
           webArguments(args, 0);
-          return screenSession.currentScreen();
+          const current = screenSession.currentScreen();
+          return current.input.mode === "manage" && managementView === "memory"
+            ? { ...current, input: { mode: "manage", view: "memory" } } : current;
         },
         /** Returns an explicit completion action result for this exact presented screen. */
         completeScreen: (...args: unknown[]) => {
@@ -109,6 +114,28 @@ export function renderScreen(ctx: ComposeDslContext, definition: Definition, req
         cancelScreen: (...args: unknown[]) => {
           webArguments(args, 0);
           return screenSession.cancelScreen();
+        },
+        /** Reads an image through Files instead of exposing VFS paths to Image.file. */
+        avatarImage: async (...args: unknown[]) => {
+          const [uri] = webArguments(args, 1);
+          if (uri !== null && typeof uri !== "string") throw new Error("头像路径必须是字符串或 null");
+          return imageSource(uri === null ? await ToolPkg.readResource("character_default_avatar", "operit-avatar.png") : uri);
+        },
+        /** Imports only a user-selected image to persistent package storage. */
+        chooseAvatar: async (...args: unknown[]) => {
+          webArguments(args, 0);
+          const selected = await ctx.openFilePicker({ picker: "image", allowMultiple: false, mimeTypes: ["image/*"] });
+          if (selected.cancelled) return null;
+          if (selected.files.length !== 1) throw new Error("请选择一张头像图片");
+          const platform = (await Tools.System.terminal.info()).platform;
+          const source = await imageSource(pickedImagePath(selected.files[0].path, platform));
+          const directory = ToolPkg.getConfigDir().replace(/\/$/, "") + "/avatars";
+          const created = await Tools.Files.mkdir(directory, true);
+          if (!created.successful) throw new Error(created.details);
+          const uri = directory + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".image";
+          const saved = await Tools.Files.writeBinary(uri, source.slice(source.indexOf(",") + 1));
+          if (!saved.successful) throw new Error(saved.details);
+          return { uri, source };
         },
         /** Saves an export to the VFS path explicitly supplied by the user. */
         exportFile: async (...args: unknown[]) => {
@@ -128,7 +155,7 @@ export function renderScreen(ctx: ComposeDslContext, definition: Definition, req
     ready.current = false;
     if (unsubscribe.current !== null) { unsubscribe.current(); unsubscribe.current = null; }
   }
-  return ctx.UI.Box({ fillMaxSize: true, onLoad: initialize }, path === "" ? ctx.UI.Text({ text: error === "" ? `正在加载${definition.title}…` : error }) : ctx.UI.WebView({
+  return ctx.UI.Box({ fillMaxSize: true, onLoad: initialize }, path === "" ? ctx.UI.Text({ text: error === "" ? `正在加载${managementView === "memory" ? "记忆" : definition.title}…` : error }) : ctx.UI.WebView({
     key: "character-memory-web", controller, fillMaxSize: true, url: origin,
     javaScriptEnabled: true, domStorageEnabled: true, supportZoom: false, useWideViewPort: true,
     /** Restricts top-level navigation to the package document. */

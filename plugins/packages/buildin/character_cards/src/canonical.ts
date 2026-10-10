@@ -1,26 +1,13 @@
 import type {
-  ActivePrompt, Card, ChatBinding, ConversationGroupChanges, ConversationGroupCreate, ConversationGroupDeletion, ConversationGroupMoveResult, ConversationGroupRecord, Group, Memory, MemoryGraph, MemoryLink, MemoryLinkUpdate, MemoryLinkValues,
+  ActivePrompt, Card, ChatBinding, ConversationGroupRecord, Group, Memory, MemoryGraph, MemoryLink, MemoryLinkUpdate, MemoryLinkValues,
   MemorySearchConfig, MemorySearchOptions, MemorySettings, MemoryValues, MemoryAutoSaveStatus,
   MemoryRebuildProgress, MemorySpace, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument,
 } from "./model";
 
 /** Defines the plugin's local business repository, not an SDK host or global service. */
 export interface CharacterRepository {
-  /** Lists ordered full manual groups in exactly the caller's explicit sidebar scope. */
-  listConversationGroups(ownerSelection: string | null): Promise<ConversationGroupRecord[]>;
-  /** Lists all scoped manual groups only for full lossless backup operations. */
+  /** Losslessly preserves legacy folder sidecars in old backups; live folders belong to native chats. */
   readConversationGroupsForBackup(): Promise<ConversationGroupRecord[]>;
-  /** Creates a genuinely new empty manual group independently from role selections. */
-  createConversationGroup(values: ConversationGroupCreate): Promise<ConversationGroupRecord>;
-  /** Saves name and pin edits without changing scope or membership. */
-  updateConversationGroup(id: string, changes: ConversationGroupChanges): Promise<ConversationGroupRecord>;
-  /** Deletes metadata and releases memberships without invoking host chat deletion. */
-  deleteConversationGroup(id: string): Promise<ConversationGroupDeletion>;
-  /** Moves one actual chat into one scoped manual group or explicitly unassigns it. */
-  moveConversationGroupChat(chatId: string, groupId: string | null, ownerSelection: string | null): Promise<ConversationGroupMoveResult>;
-  /** Commits a complete permutation of one scope without affecting other scopes. */
-  reorderConversationGroups(ownerSelection: string | null, ids: string[]): Promise<ConversationGroupRecord[]>;
-  /** Restores complete scoped records with original identities and timestamps in one operation. */
   restoreConversationGroups(groups: ConversationGroupRecord[]): Promise<void>;
   /** Lists full character records in this operation's snapshot. */
   listCharacters(): Promise<Card[]>;

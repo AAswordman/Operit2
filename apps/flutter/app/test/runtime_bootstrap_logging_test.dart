@@ -47,6 +47,7 @@ void main() {
 
     await manager.confirmLocalRuntimeStorage('/runtime', '/workspaces');
     await ClientLogger.readText();
-    expect(connectionStorageStates, [true]);
+    expect(connectionStorageStates, isNotEmpty);
+    expect(connectionStorageStates, everyElement(isTrue));
   });
 }

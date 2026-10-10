@@ -65,7 +65,7 @@ function receipt(request, status = "completed", assistant = null) {
 
 /** Opens the actual production Compose controls using the generic SDK render and action channel. */
 function controls(runtime, requestId = "group-controls") {
-  return mountRegisteredComposeRoute(runtime, { requestId, input: { mode: "group-execution", chatId: "selector-chat" } }, "group-execution", "groupExecutionScreen");
+  return mountRegisteredComposeRoute(runtime, { requestId, input: { mode: "group-execution", chatId: "selector-chat" } }, "group-execution");
 }
 
 /** Checks that unrelated events and unassociated or single-character chats never acquire group ownership. */

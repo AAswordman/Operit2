@@ -1,3 +1,5 @@
+import 'support/native_sidebar_bridge.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -112,6 +114,7 @@ void main() {
                     child: Scaffold(
                       body: tablet
                           ? TabletLayout(
+                              bridge: NativeSidebarBridge(),
                               content: content,
                               navigationEntries: const [
                                 NavigationEntrySpec(
@@ -146,6 +149,7 @@ void main() {
                               onConversationActivated: () {},
                             )
                           : PhoneLayout(
+                              bridge: NativeSidebarBridge(),
                               content: content,
                               navigationEntries: const [
                                 NavigationEntrySpec(
@@ -324,8 +328,7 @@ class _ComposerRoute extends OperitScreen {
             inputState: InputProcessingState.idle(),
             viewModel: viewModel,
             currentChatId: 'empty-chat',
-            currentCharacterCardName: null,
-            currentCharacterCardAvatarUri: null,
+
             onSendMessage: () {},
             onQueueMessage: () {},
             onCancelMessage: () {},
@@ -340,8 +343,7 @@ class _ComposerRoute extends OperitScreen {
             inputState: InputProcessingState.idle(),
             viewModel: viewModel,
             currentChatId: 'empty-chat',
-            currentCharacterCardName: null,
-            currentCharacterCardAvatarUri: null,
+
             onSendMessage: () {},
             onQueueMessage: () {},
             onCancelMessage: () {},

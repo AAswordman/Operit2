@@ -14,6 +14,7 @@ test("dragging measures page and card renders without host traffic", async () =>
     newNode("trigger", (index % 6) * 270, Math.floor(index / 6) * 150),
   );
   const result = await build({
+    absWorkingDir: new URL("../../", import.meta.url).pathname,
     entryPoints: ["web/app.tsx"],
     bundle: true,
     minify: true,
@@ -44,7 +45,11 @@ test("dragging measures page and card renders without host traffic", async () =>
       },
     ],
   });
-  const browser = await chromium.launch({ channel: "msedge", headless: true });
+  const browser = await chromium.launch({
+    ...(process.env.OPERIT_TEST_BROWSER_CHANNEL
+      ? { channel: process.env.OPERIT_TEST_BROWSER_CHANNEL } : {}),
+    headless: true,
+  });
   try {
     const page = await browser.newPage({
       viewport: { width: 1280, height: 800 },

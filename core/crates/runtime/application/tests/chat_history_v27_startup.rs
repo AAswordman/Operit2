@@ -77,6 +77,8 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
         .unwrap()
         .unwrap();
     assert_eq!(history.title, "Kept title");
+    assert_eq!(history.group.as_deref(), Some("legacy-sidebar"));
+    assert_eq!(delegate.chatHistoryManager.loadChatHistory("v27-second".to_string()).unwrap().unwrap().group.as_deref(), Some("old-folder"));
     assert_eq!(history.workspaceId.as_deref(), Some("workspace-kept"));
     assert!(history.pluginExtensions.is_empty());
     let messages = delegate.currentChatMessagesSnapshot();

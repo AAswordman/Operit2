@@ -2,7 +2,6 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';

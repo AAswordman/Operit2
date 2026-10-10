@@ -117,7 +117,6 @@ fn serializeChatInputHookResult(result: Option<ChatInputHookResult>) -> serde_js
 /// Settings belong to the execution Core selected by the chat binding, not the UI device.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatInputMenuSettings {
-    pub enableMemoryAutoUpdate: bool,
     pub permissionMode: AiPermissionMode,
     pub disableStreamOutput: bool,
     pub disableUserPreferenceDescription: bool,
@@ -1390,6 +1389,11 @@ impl ChatServiceCore {
     }
 
     /// Updates whether a chat is pinned in chat history ordering.
+    /// Updates native folder membership independently of plugin role bindings.
+    pub fn updateChatGroups(&mut self, chatIds: Vec<String>, groupName: Option<String>) -> Result<(), String> {
+        self.chatHistoryDelegate.updateChatGroups(chatIds, groupName)
+    }
+
     pub fn updateChatPinned(&mut self, chatId: String, pinned: bool) {
         self.chatHistoryDelegate.updateChatPinned(chatId, pinned);
     }
@@ -2737,10 +2741,6 @@ impl ChatServiceCore {
         let preferences = ApiPreferences::getInstance();
         let bridge = self.inputMenuBridge();
         Ok(ChatInputMenuSettings {
-            enableMemoryAutoUpdate: preferences
-                .enableMemoryAutoUpdateFlow()
-                .first()
-                .map_err(|e| e.to_string())?,
             permissionMode: ToolPermissionSystem::getInstance()
                 .getAiPermissionMode()
                 .map_err(|e| e.to_string())?,
@@ -2766,18 +2766,12 @@ impl ChatServiceCore {
     pub async fn saveChatInputMenuSettings(
         &self,
         chatId: Option<String>,
-        enableMemoryAutoUpdate: Option<bool>,
         permissionMode: Option<AiPermissionMode>,
         disableStreamOutput: Option<bool>,
         disableUserPreferenceDescription: Option<bool>,
     ) -> Result<(), String> {
         let _ = chatId;
         let preferences = ApiPreferences::getInstance();
-        if let Some(value) = enableMemoryAutoUpdate {
-            preferences
-                .saveEnableMemoryAutoUpdate(value)
-                .map_err(|e| e.to_string())?;
-        }
         if let Some(value) = permissionMode {
             ToolPermissionSystem::getInstance()
                 .saveAiPermissionMode(value)

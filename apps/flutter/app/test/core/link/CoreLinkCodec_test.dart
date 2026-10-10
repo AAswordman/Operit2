@@ -10,6 +10,46 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 
 /// Verifies Dart preserves MessagePack bin values as Uint8List.
 void main() {
+  test(
+    'message outcomes preserve native tags through JSON and MessagePack',
+    () {
+      final payloads = <Map<String, Object?>>[
+        {
+          'type': 'committed',
+          'status': 'completed',
+          'userMessageTimestamp': 123,
+          'assistant': {'messageTimestamp': 456, 'variantIndex': 2},
+        },
+        {
+          'type': 'committed',
+          'status': 'cancelled',
+          'userMessageTimestamp': null,
+          'assistant': null,
+        },
+        {'type': 'not_persisted', 'status': 'completed'},
+        {'type': 'blocked', 'message': 'Blocked by input hook'},
+        {'type': 'blocked', 'message': null},
+        {
+          'type': 'consumed',
+          'metadata': {'owner': 'character_cards'},
+        },
+      ];
+      for (final payload in payloads) {
+        final fromJson = MessageSendOutcome.fromJson(payload);
+        expect(fromJson.toJson(), payload);
+        final fromMessagePack = decodeCoreLink<MessageSendOutcome>(
+          encodeCoreLink(payload),
+          decode: MessageSendOutcome.fromMessagePack,
+        );
+        expect(fromMessagePack.toJson(), payload);
+        if (payload['type'] == 'blocked' || payload['type'] == 'consumed') {
+          expect(fromJson.status, isNull);
+          expect(fromMessagePack.status, isNull);
+        }
+      }
+    },
+  );
+
   /// Verifies arrays are growable at decode time without copying the decoded tree.
   test('raw decoding creates independently growable nested arrays', () {
     final bytes = encodeCoreLink([

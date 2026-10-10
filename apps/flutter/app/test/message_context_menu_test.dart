@@ -11,6 +11,56 @@ import 'package:operit2/ui/features/chat/components/MessageContextMenu.dart';
 
 /// Verifies every selected reply can be deleted when another revision exists.
 void main() {
+  test(
+    'copy preserves plugin-owned markup without interpreting its business',
+    () {
+      const text = '<memory>Plugin-owned payload</memory>\nVisible message';
+      expect(cleanMessageContent(text), text);
+    },
+  );
+
+  for (final sender in ['user', 'ai']) {
+    testWidgets('native $sender menu has no hardcoded plugin business', (
+      tester,
+    ) async {
+      await _openMenu(
+        tester,
+        sender: sender,
+        selectedVariantIndex: 0,
+        variantCount: 1,
+      );
+      expect(find.text('加入记忆队列'), findsNothing);
+      expect(find.text('修改记忆'), findsNothing);
+    });
+  }
+
+  testWidgets(
+    'forwards arbitrary registered action and opaque message namespace',
+    (tester) async {
+      final bridge = _MessageMenuBridge(withPluginAction: true);
+      await _openMenu(
+        tester,
+        bridge: bridge,
+        selectedVariantIndex: 2,
+        variantCount: 3,
+      );
+      await tester.tap(find.text('Opaque plugin action'));
+      await tester.pumpAndSettle();
+      expect(bridge.invocations, hasLength(1));
+      final args = bridge.invocations.single;
+      expect(args['containerPackageName'], 'arbitrary.plugin');
+      expect(args['itemId'], 'opaque_action');
+      expect(args['chatId'], 'chat');
+      final message = args['message'] as Map;
+      expect(message['timestamp'], 123);
+      expect(message['selectedVariantIndex'], 2);
+      expect(message['pluginExtensions'], {
+        'arbitrary.plugin': {'opaque': 'unchanged'},
+      });
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'does not offer variant deletion for a reply without alternates',
     (tester) async {
@@ -57,19 +107,24 @@ Future<void> _openMenu(
   WidgetTester tester, {
   required int selectedVariantIndex,
   required int variantCount,
+  String sender = 'ai',
+  _MessageMenuBridge? bridge,
   MessageVariantAction? onDeleteMessageVariant,
   Future<void> Function()? onRefresh,
 }) async {
   await tester.binding.setSurfaceSize(const Size(800, 1200));
   addTearDown(() => tester.binding.setSurfaceSize(null));
-  final clients = GeneratedCoreProxyClients(_MessageMenuBridge());
+  final clients = GeneratedCoreProxyClients(bridge ?? _MessageMenuBridge());
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
         body: Center(
           child: MessageContextMenu(
             message: ChatMessage(
-              sender: 'ai',
+              pluginExtensions: const {
+                'arbitrary.plugin': {'opaque': 'unchanged'},
+              },
+              sender: sender,
               parts: const <MessagePart>[],
               timestamp: 123,
               roleName: 'assistant',
@@ -107,17 +162,43 @@ Future<void> _openMenu(
   );
   await tester.longPress(find.text('Assistant reply'));
   await tester.pumpAndSettle();
-  expect(find.text('重新生成'), findsOneWidget);
+  expect(find.text(sender == 'ai' ? '重新生成' : '编辑并重发'), findsOneWidget);
 }
 
 /// Supplies an empty extension menu through the actual Core bridge codec.
 class _MessageMenuBridge extends OperitRuntimeBridge {
+  _MessageMenuBridge({this.withPluginAction = false});
+  final bool withPluginAction;
+  final invocations = <Map<String, Object?>>[];
+
   /// Returns only the extension-menu response expected by this fixture.
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     expect(request.target, 'core/application.packageManager');
-    expect(request.methodName, 'getToolPkgChatMessageMenuItems');
-    return encodeCoreLink(<Object?>[0, <Object?>[]]);
+    switch (request.methodName) {
+      case 'getToolPkgChatMessageMenuItems':
+        return encodeCoreLink(<Object?>[
+          0,
+          [
+            if (withPluginAction)
+              const ToolPkgChatMessageMenuItem(
+                containerPackageName: 'arbitrary.plugin',
+                itemId: 'opaque_action',
+                title: 'Opaque plugin action',
+                icon: null,
+                order: 1,
+                dialog: null,
+              ).toJson(),
+          ],
+        ]);
+      case 'invokeToolPkgChatMessageMenuItem':
+        invocations.add(Map<String, Object?>.from(request.args as Map));
+        return encodeCoreLink(<Object?>[0, null]);
+      default:
+        throw StateError(
+          'Unexpected host menu operation: ${request.methodName}',
+        );
+    }
   }
 
   /// Rejects push operations outside this menu fixture.

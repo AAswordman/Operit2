@@ -1018,7 +1018,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       text: queuedText,
       selectionStart: queuedText.length,
       selectionEnd: queuedText.length,
-      attachmentCount: 0,
+      attachments: const [],
+      replyToMessageTimestamp: null,
     );
     if (decision != null) {
       final timeoutMessage = decision.message;
@@ -1708,7 +1709,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       text: text,
       selectionStart: inputValue.selection.start,
       selectionEnd: inputValue.selection.end,
-      attachmentCount: _attachments.length,
+      attachments: _attachments,
+      replyToMessageTimestamp: _replyToMessage?.timestamp,
     );
     if (!mounted || _currentChatId != chatId) {
       return;

@@ -72,6 +72,15 @@ class _ComposeDslRenderResult {
 
 /// Canonical node names indexed by the Kotlin-compatible normalized token.
 const _composeNodeTypes = <String, String>{
+  'gradientrule': 'GradientRule',
+  'loadingindicator': 'LoadingIndicator',
+  'activitydots': 'ActivityDots',
+  'draggable': 'Draggable',
+  'dragtarget': 'DragTarget',
+  'swipeactions': 'SwipeActions',
+  'hoverregion': 'HoverRegion',
+  'hoveronly': 'HoverOnly',
+  'popupmenu': 'PopupMenu',
   'outlinedtextfield': 'OutlinedTextField',
   'asyncimage': 'AsyncImage',
   'navigationbaritem': 'NavigationBarItem',
@@ -261,7 +270,9 @@ bool _composeInputEquals(Object? left, Object? right) {
     if (left.length != right.length) return false;
     for (final entry in left.entries) {
       if (!right.containsKey(entry.key) ||
-          !_composeInputEquals(entry.value, right[entry.key])) return false;
+          !_composeInputEquals(entry.value, right[entry.key])) {
+        return false;
+      }
     }
     return true;
   }

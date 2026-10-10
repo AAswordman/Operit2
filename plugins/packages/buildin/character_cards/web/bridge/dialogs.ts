@@ -10,7 +10,6 @@ import { graphHeader, graphSpec } from "../features/graph/view";
 import { groupBody } from "../features/groups/view";
 import { ownerSettingsBody } from "../features/memory/controls-view";
 import { memoryEditorSpec } from "../features/memory/item-view";
-import { globalMemoryBody } from "../features/memory/library-view";
 import { linkEditSpec, linkSpec } from "../features/memory/links-view";
 import { requireElement } from "../shared/dom";
 import { button, escapeHtml, field, iconButton, notice } from "../shared/ui/html";
@@ -37,9 +36,8 @@ export function createDialogRenderer(context: EditorContext) {
   /** Renders finite dialog types, preserving the owning character and memory references. */
   function dialogSpec(dialog: Dialog): DialogSpec {
     switch (dialog.type) {
-      case "character": return { title: dialog.create ? "创建角色卡" : "编辑角色卡", style: "large", tabs: ["基础", "内容", "绑定", "记忆"], body: characterBody(dialog, snapshot()), footer: `${!dialog.create && !dialog.card.isDefault ? button("delete-card", "删除", "", "", "danger") : ""}${!dialog.create ? button("export-card", "导出", "") : ""}<span class="spacer"></span>${button("close-dialog", "取消", "")}${button("save-card", "保存", "", "", "filled")}` };
-      case "group": return { title: dialog.create ? "创建群组" : "编辑群组", style: "large", tabs: [], body: groupBody(dialog, snapshot()), footer: `${!dialog.create ? button("delete-group", "删除", "", "", "danger") + button("export-group", "导出", "") : ""}<span class="spacer"></span>${button("close-dialog", "取消", "")}${button("save-group", "保存", "", "", "filled")}` };
-      case "global-memory": return { title: "记忆设置", style: "large", tabs: [], body: globalMemoryBody(snapshot()), footer: button("close-dialog", "关闭", "") };
+      case "character": return { title: dialog.create ? "创建角色卡" : "编辑角色卡", style: "large", tabs: ["基础", "内容", "绑定"], body: characterBody(dialog, snapshot(), state.avatarSources), footer: `${!dialog.create && !dialog.card.isDefault ? button("delete-card", "删除", "", "", "danger") : ""}${!dialog.create ? button("export-card", "导出", "") : ""}<span class="spacer"></span>${button("close-dialog", "取消", "")}${button("save-card", "保存", "", "", "filled")}` };
+      case "group": return { title: dialog.create ? "创建群组" : "编辑群组", style: "large", tabs: [], body: groupBody(dialog, snapshot()), footer: `${!dialog.create ? button("delete-group", "删除", "", "", "danger") + button("export-group", "导出 JSON", "") : ""}<span class="spacer"></span>${button("close-dialog", "取消", "")}${button("save-group", "保存", "", "", "filled")}` };
       case "owner-settings": return { title: "记忆设置", style: "large", tabs: ["自动提取", "检索", "历史重建"], body: ownerSettingsBody(dialog), footer: button("close-dialog", "关闭", "") + button("unwired", "保存", "", "disabled", "filled") };
       case "store": return { title: dialog.create ? "创建共享记忆库" : "编辑共享记忆库", style: "compact", tabs: [], body: field("名称 *", "name", dialog.store.name), footer: button("close-dialog", "取消", "") + button("save-store", "保存", "", "", "filled") };
       case "user": return { title: `${dialog.name} 的用户资料`, style: "large", tabs: [], body: dialog.loading ? '<div class="loading">正在读取 USER.md…</div>' : `<div class="muted">${escapeHtml(dialog.ownerKey)} · USER.md</div>${field("用户资料", "content", dialog.content, 18)}${notice("保存会更新当前绑定记忆库的 USER.md。")}`, footer: button("close-dialog", "取消", "") + button("save-user", "保存", "", !dialog.loaded ? "disabled" : "", "filled") };

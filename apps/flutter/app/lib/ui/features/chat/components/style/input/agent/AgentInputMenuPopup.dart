@@ -330,7 +330,6 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     bool? disableStreamOutput,
   }) => widget.viewModel.chatCore.saveChatInputMenuSettings(
     chatId: widget.currentChatId,
-    enableMemoryAutoUpdate: null,
     permissionMode: permissionMode,
     disableStreamOutput: disableStreamOutput,
     disableUserPreferenceDescription: null,
@@ -668,7 +667,8 @@ class _ChatSessionSummarySectionState
       if (chatId != null) {
         await chatCore.chatConfiguration(chatId: chatId);
       }
-      if (!ownsCurrentContext()) return;
+      final selectedAfterRefresh = await chatCore.currentChatIdFlow().first;
+      if (selectedAfterRefresh != chatId || !ownsCurrentContext()) return;
       requireSelectionObservation();
       ToolPkgCatalogChangeBus.notifyCatalogChanged();
     } catch (error) {

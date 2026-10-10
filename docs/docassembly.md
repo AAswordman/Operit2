@@ -1466,7 +1466,6 @@ SendMessageOptions
   functionType
   promptFunctionType
   enableThinking
-  enableMemoryAutoUpdate
   customSystemPromptTemplate
   isSubTask
   characterName

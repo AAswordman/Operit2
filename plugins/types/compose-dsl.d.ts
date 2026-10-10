@@ -21,7 +21,7 @@ export type ComposeCanvasBrushType = "VerticalGradient";
 /**
  * Completion mode returned by the primary-click handler.
  */
-export type ComposeModifierCombinedClickableOptionsOnClickOutput = void | Promise<void>;
+export type ComposeModifierCombinedClickableOptionsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Completion mode returned by the long-click handler.
@@ -459,7 +459,7 @@ export type TextFieldPropsPlaceholder = string | ComposeChildren;
 /**
  * Completion mode returned by a button click handler.
  */
-export type ButtonPropsOnClickOutput = void | Promise<void>;
+export type ButtonPropsOnClickOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Completion mode returned by an icon-button click handler.
@@ -2597,6 +2597,10 @@ export interface ComposeCommonProps {
    */
   onLoad?: () => ComposeCommonPropsOnLoadOutput;
   /**
+   * Runs after host inputs update in the same live execution context.
+   */
+  onInputsChanged?: () => ComposeCommonPropsOnLoadOutput;
+  /**
    * Content presented as the host screen's top-bar title.
    */
   topBarTitle?: ComposeChildren;
@@ -2928,6 +2932,78 @@ export interface TextFieldProps extends ComposeCommonProps {
    * Typography and foreground overrides for the entered value.
    */
   style?: ComposeTextFieldStyle;
+}
+
+/**
+ * Completion of a generic interaction callback, including asynchronous plugin work.
+ */
+export type ComposeInteractionOutput = void | Promise<void>;
+
+/**
+ * Final coordinates and acceptance status of an arbitrary drag payload.
+ */
+export interface ComposeDragEndEvent {
+  data: ToolPkg.JsonValue;
+  dragType: string;
+  wasAccepted: boolean;
+  x: number;
+  y: number;
+  velocityX: number;
+  velocityY: number;
+}
+
+/**
+ * Native dragging of arbitrary JSON data; content and feedback remain composable.
+ */
+export interface DraggableProps extends ComposeCommonProps {
+  data: ToolPkg.JsonValue;
+  dragType?: string;
+  enabled?: boolean;
+  axis?: string;
+  longPress?: boolean;
+  delayMillis?: number;
+  maxSimultaneousDrags?: number;
+  feedback?: ComposeChildren;
+  childWhenDragging?: ComposeChildren;
+  content?: ComposeChildren;
+  onDragStarted?: (arg0: ToolPkg.JsonValue) => ComposeInteractionOutput;
+  onDragEnd?: (arg0: ComposeDragEndEvent) => ComposeInteractionOutput;
+}
+
+/**
+ * Native drop acceptance with optional declarative type/data filters, not business rules.
+ */
+export interface DragTargetProps extends ComposeCommonProps {
+  enabled?: boolean;
+  acceptedTypes?: string[];
+  acceptedData?: ToolPkg.JsonValue[];
+  hoverBackground?: ComposeColor;
+  hoverBorderColor?: ComposeColor;
+  shape?: ComposeShape;
+  content?: ComposeChildren;
+  onDrop?: (arg0: ToolPkg.JsonValue) => ComposeInteractionOutput;
+  onLeave?: (arg0: ToolPkg.JsonValue) => ComposeInteractionOutput;
+}
+
+/**
+ * Bounded horizontal swipe actions with arbitrary background slots and callbacks.
+ */
+export interface SwipeActionsProps extends ComposeCommonProps {
+  enabled?: boolean;
+  actionThreshold?: number;
+  startBackground?: ComposeChildren;
+  endBackground?: ComposeChildren;
+  content?: ComposeChildren;
+  onStartAction?: () => ComposeInteractionOutput;
+  onEndAction?: () => ComposeInteractionOutput;
+}
+
+/**
+ * Application Material 3 morphing polygon indicator, independent of business state.
+ */
+export interface LoadingIndicatorProps extends ComposeCommonProps {
+  size?: number;
+  color?: ComposeColor;
 }
 
 /**
@@ -3693,6 +3769,18 @@ export interface ComposeUiFactoryRegistry {
    */
   Box: ComposeNodeFactory<BoxProps>;
   /**
+   * Drags arbitrary serializable data using native gesture arbitration.
+   */
+  Draggable: ComposeNodeFactory<DraggableProps>;
+  /**
+   * Accepts arbitrary drag payloads without host business-model knowledge.
+   */
+  DragTarget: ComposeNodeFactory<DragTargetProps>;
+  /**
+   * Composes independent start/end swipe callbacks and background content.
+   */
+  SwipeActions: ComposeNodeFactory<SwipeActionsProps>;
+  /**
    * Creates an empty element that reserves layout space.
    */
   Spacer: ComposeNodeFactory<SpacerProps>;
@@ -3748,6 +3836,7 @@ export interface ComposeUiFactoryRegistry {
    * Creates a circular progress indicator.
    */
   CircularProgressIndicator: ComposeNodeFactory<CircularProgressIndicatorProps>;
+  LoadingIndicator: ComposeNodeFactory<LoadingIndicatorProps>;
   /**
    * Creates the presentation slot for queued snackbars.
    */

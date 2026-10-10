@@ -126,26 +126,32 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     let commandContext = context.clone();
     context.withCoreCommandExecutor(Arc::new(move |args: Vec<String>| {
         let commandContext = commandContext.clone();
-        Box::pin(async move {
-            let scheduler = commandContext.hostRuntimeTaskSchedulerHost.clone()
-                .ok_or_else(|| "Runtime task scheduler host is not configured".to_string())?;
-            let (mut sender, receiver) = tokio::sync::oneshot::channel();
-            // Core may await executor-local Host futures. Create and poll those
-            // futures on the owning Host, returning only an owned result across threads.
-            scheduler.scheduleHostRuntimeAsyncTask("operit-cli-core-command", Box::new(move || {
+        // JS/plugin command futures stay on their owning local runtime; the host boundary awaits a Send receipt.
+        let executionContext = operit_tools::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
+        let (mut sender, receiver) = tokio::sync::oneshot::channel();
+        let scheduler = commandContext.hostRuntimeTaskSchedulerHost.clone()
+            .expect("CLI requires its configured host runtime task scheduler");
+        let scheduled = scheduler.scheduleHostRuntimeAsyncTask("cli-core-command", Box::new(move || {
                 Box::pin(async move {
+                    let command = async move {
+                        let output = operit_command_core::run_core_command_with_context(commandContext, &args).await?;
+                        persist_cli_storage_config(&output.stdout)?;
+                        Ok(output.stdout)
+                    };
+                    let result = async { match executionContext {
+                        Some(context) => operit_tools::ToolExecutionManager::ToolExecutionManager::scopeToolRuntimeContext(context, command).await,
+                        None => command.await,
+                    } };
                     tokio::select! {
                         biased;
                         _ = sender.closed() => {},
-                        result = async {
-                            let output = operit_command_core::run_core_command_with_context(commandContext, &args).await?;
-                            persist_cli_storage_config(&output.stdout)?;
-                            Ok(output.stdout)
-                        } => { let _ = sender.send(result); }
+                        result = result => { let _ = sender.send(result); }
                     }
                 })
-            })).map_err(|error| error.to_string())?;
-            receiver.await.map_err(|_| "Core command task ended without a result".to_string())?
+            }));
+        Box::pin(async move {
+            scheduled.map_err(|error| format!("CLI command scheduling failed: {error}"))?;
+            receiver.await.map_err(|error| format!("CLI command ended without a result: {error}"))?
         })
     }))
 }

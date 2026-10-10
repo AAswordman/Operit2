@@ -992,6 +992,7 @@ pub fn createAllTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             inputTokens INTEGER NOT NULL DEFAULT 0,
             outputTokens INTEGER NOT NULL DEFAULT 0,
             currentWindowSize INTEGER NOT NULL DEFAULT 0,
+            "group" TEXT,
             displayOrder INTEGER NOT NULL DEFAULT 0,
             workspaceId TEXT,
             workspaceEnv TEXT,
@@ -1210,6 +1211,7 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             inputTokens INTEGER NOT NULL,
             outputTokens INTEGER NOT NULL,
             currentWindowSize INTEGER NOT NULL,
+            "group" TEXT,
             displayOrder INTEGER NOT NULL,
             workspaceId TEXT,
             workspaceEnv TEXT,
@@ -1297,7 +1299,8 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
     )
 }
 
-/// Removes obsolete domain columns and adds generic extension columns without translating old role data.
+/// Removes plugin role-binding columns, but NEVER native folder membership.
+/// Native "group" values in chats and historical sync rows survive 27 -> 28.
 fn MIGRATION_27_28(database: &AppDatabase) -> Result<(), SqliteStoreError> {
     database.store.transaction(|transaction| {
         for statement in migration27To28Statements() {
@@ -1310,10 +1313,8 @@ fn MIGRATION_27_28(database: &AppDatabase) -> Result<(), SqliteStoreError> {
 /// Returns the physical record-schema upgrade with the version update strictly last.
 fn migration27To28Statements() -> &'static [&'static str] {
     &[
-        r#"ALTER TABLE chats DROP COLUMN "group""#,
         "ALTER TABLE chats DROP COLUMN characterCardName",
         "ALTER TABLE chats DROP COLUMN characterGroupId",
-        r#"ALTER TABLE sync_sql_chat_rows DROP COLUMN "group""#,
         "ALTER TABLE sync_sql_chat_rows DROP COLUMN characterCardName",
         "ALTER TABLE sync_sql_chat_rows DROP COLUMN characterGroupId",
         "ALTER TABLE chats ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",

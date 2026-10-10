@@ -5,7 +5,7 @@ export type EntityKind = "card" | "group";
 /** Identifies the selector's exact allowed categories. */
 export type SelectionKind = EntityKind | "all";
 /** Identifies the management route, which has no presentation result channel. */
-export interface ManageScreen { readonly mode: "manage" }
+export interface ManageScreen { readonly mode: "manage"; readonly view?: "characters" | "memory" }
 /** Supplies readonly selector parameters rather than mutable editor state. */
 export interface SelectScreen { readonly mode: "select"; readonly kind: SelectionKind; readonly selected: ActivePrompt | null }
 /** Supplies the exact entity to preview without permitting a different target. */
@@ -97,7 +97,12 @@ export function parseScreenInput(value: unknown): ScreenInput {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("screen.input must be an object");
   const object = value as Record<string, unknown>;
   switch (object.mode) {
-    case "manage": fields(object, ["mode"], "screen.input"); return { mode: "manage" };
+    case "manage": {
+      if (object.view === undefined) { fields(object, ["mode"], "screen.input"); return { mode: "manage" }; }
+      fields(object, ["mode", "view"], "screen.input");
+      if (object.view !== "characters" && object.view !== "memory") throw new Error("screen.view must be characters or memory");
+      return { mode: "manage", view: object.view };
+    }
     case "select": {
       fields(object, ["mode", "kind", "selected"], "screen.input");
       if (object.kind !== "card" && object.kind !== "group" && object.kind !== "all") throw new Error("screen.kind must be card, group, or all");

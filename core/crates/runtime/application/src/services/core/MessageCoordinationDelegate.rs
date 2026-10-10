@@ -1,3 +1,4 @@
+use operit_util::stream::Stream::Stream;
 use operit_store::ChatExecutionLease::ChatExecutionLease;
 use std::collections::HashMap;
 
@@ -325,10 +326,6 @@ impl MessageCoordinationDelegate {
             .enableThinkingModeFlow()
             .first()
             .expect("enable_thinking_mode preference must be readable");
-        let enableMemoryAutoUpdate = ApiPreferences::getInstance()
-            .enableMemoryAutoUpdateFlow()
-            .first()
-            .expect("enable_memory_auto_update preference must be readable");
         let modelProviderId = configuration.profile.modelBinding.providerId.clone();
         let modelId = configuration.profile.modelBinding.modelId.clone();
         self.regenerateSingleAiMessageWithRequest(
@@ -341,7 +338,6 @@ impl MessageCoordinationDelegate {
             requestHistory,
             workspacePath,
             enableThinking,
-            enableMemoryAutoUpdate,
             modelProviderId.clone(),
             modelId.clone(),
             chatProviderIdOverride,
@@ -361,7 +357,6 @@ impl MessageCoordinationDelegate {
         requestHistory: Vec<ChatMessage>,
         workspacePath: Option<String>,
         enableThinking: bool,
-        enableMemoryAutoUpdate: bool,
         modelProviderId: String,
         modelId: String,
         chatProviderIdOverride: Option<String>,
@@ -389,7 +384,6 @@ impl MessageCoordinationDelegate {
                 attachments: Vec::new(),
                 replyToMessage: None,
                 enableThinking,
-                enableMemoryAutoUpdate,
                 maxTokens,
                 tokenUsageThreshold: chatContextSettings.summary.summaryTokenThreshold as f64,
                 chatProviderIdOverride,
@@ -477,7 +471,6 @@ impl MessageCoordinationDelegate {
                 attachments: Vec::new(),
                 replyToMessage: None,
                 enableThinking: context.enableThinking,
-                enableMemoryAutoUpdate: false,
                 maxTokens: 0,
                 tokenUsageThreshold: 0.0,
                 chatProviderIdOverride: context.chatProviderIdOverride,
@@ -527,7 +520,7 @@ impl MessageCoordinationDelegate {
             Some(_) => {
                 self.messageProcessingDelegate
                     .nonFatalErrorEventFlow
-                    .emit("Chat id is empty".to_string());
+                    .set_value(Some("Chat id is empty".to_string()));
                 return Err("Chat id is empty".to_string());
             }
             None => match self.chatHistoryDelegate.currentChatIdFlow.value() {
@@ -541,7 +534,7 @@ impl MessageCoordinationDelegate {
                     Err(error) => {
                         self.messageProcessingDelegate
                             .nonFatalErrorEventFlow
-                            .emit(error.clone());
+                            .set_value(Some(error.clone()));
                         return Err(error);
                     }
                 },
@@ -681,15 +674,6 @@ impl MessageCoordinationDelegate {
                 attachments,
                 replyToMessage,
                 enableThinking,
-                enableMemoryAutoUpdate: turnOptions.persistTurn
-                    && proxySenderNameOverride
-                        .as_ref()
-                        .map(|s| s.trim().is_empty())
-                        .unwrap_or(true)
-                    && ApiPreferences::getInstance()
-                        .enableMemoryAutoUpdateFlow()
-                        .first()
-                        .expect("memory auto-update preference must be readable"),
                 maxTokens: 0,
                 tokenUsageThreshold: 0.0,
                 chatProviderIdOverride,
@@ -916,6 +900,7 @@ impl MessageCoordinationDelegate {
             self.refreshStableContextWindow(
                 enhancedAiService,
                 Some(originalChatId.clone()),
+                None,
                 None,
                 chatProviderIdOverride,
                 chatModelIdOverride)

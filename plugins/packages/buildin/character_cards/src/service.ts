@@ -36,6 +36,8 @@ export interface CharacterCardsService {
   dispatch<R extends Request>(request: R): Promise<RequestOutput<R>>;
   /** Reads independent canonical catalogs without inserting empty substitute collections. */
   snapshot(): Promise<Snapshot>;
+  /** Reads only role records, without unrelated model, speech or tool catalogs. */
+  sidebarDirectory(): Promise<Pick<Snapshot, "cards" | "groups">>;
   /** Executes an exact typed domain method on the same service dependency. */
   dispatchDomain<K extends DomainOperation>(operation: K, input: DomainInput<K>): Promise<DomainOutput<K>>;
 }
@@ -70,6 +72,12 @@ export function createCharacterCardsService(owner: CharacterRepositoryOwner, con
     dispatch: dispatchRequest,
     /** Reads one consistent domain snapshot through the same operation queue. */
     snapshot: () => owner.run(snapshot),
+    /** Preserves the same repository queue and integrity checks as full snapshots. */
+    sidebarDirectory: () => owner.run(async repository => {
+      const [cards, groups] = await Promise.all([repository.listCharacters(), repository.listGroups()]);
+      records(cards, assertCard, "角色卡列表"); records(groups, assertGroup, "角色组列表");
+      return { cards, groups };
+    }),
     /** Keeps every real selection alias and sidebar binding on the same awaited application sequence. */
     dispatchDomain<K extends DomainOperation>(operation: K, input: DomainInput<K>): Promise<DomainOutput<K>> {
       if (!isSelectionOperation(operation)) return owner.run(
@@ -525,12 +533,6 @@ export async function dispatch(request: Request, host: CharacterRepository): Pro
     case "readChatBinding": return executeDomain("chat.configuration.binding.read", { chatId: request.chatId }, host);
     case "writeChatBinding": return executeDomain("chat.configuration.binding.write", { chatId: request.chatId, selection: request.selection }, host);
     case "deleteChatBinding": return executeDomain("chat.configuration.binding.delete", { chatId: request.chatId }, host);
-    case "listConversationGroups": return executeDomain("conversation-group.list", { ownerSelection: request.ownerSelection }, host);
-    case "createConversationGroup": return executeDomain("conversation-group.create", request.values, host);
-    case "updateConversationGroup": return executeDomain("conversation-group.update", { id: request.id, changes: request.changes }, host);
-    case "deleteConversationGroup": return executeDomain("conversation-group.delete", { id: request.id }, host);
-    case "moveConversationGroupChat": return executeDomain("conversation-group.moveChat", { chatId: request.chatId, groupId: request.groupId, ownerSelection: request.ownerSelection }, host);
-    case "reorderConversationGroups": return executeDomain("conversation-group.reorder", { ownerSelection: request.ownerSelection, ids: request.ids }, host);
     case "listGroups": return records(await host.listGroups(), assertGroup, "角色组列表");
     case "getGroup": { const group = await host.getGroup(requireId(request.id, "群组标识")); assertGroup(group); return group; }
     case "saveGroup": await saveGroup(request.group, request.create, host); return snapshot(host);

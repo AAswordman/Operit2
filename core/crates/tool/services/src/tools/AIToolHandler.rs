@@ -116,7 +116,6 @@ pub struct AIToolHandlerState {
     availableTools: BTreeMap<String, RegisteredToolExecutor>,
     executingTools: BTreeSet<String>,
     toolVisibility: BTreeMap<String, ToolRegistrationVisibility>,
-    unavailableBuiltinTools: BTreeMap<BuiltinToolName, String>,
     defaultToolsRegistered: bool,
     context: HostManager,
     runtimeDependencies: ToolRuntimeDependencies,
@@ -191,7 +190,6 @@ impl AIToolHandler {
                 availableTools: BTreeMap::new(),
                 executingTools: BTreeSet::new(),
                 toolVisibility: BTreeMap::new(),
-                unavailableBuiltinTools: BTreeMap::new(),
                 defaultToolsRegistered: false,
                 context,
                 runtimeDependencies,
@@ -511,10 +509,6 @@ impl AIToolHandler {
             !guard.availableTools.contains_key(&toolName),
             "Built-in tool is registered more than once: {toolName}"
         );
-        assert!(
-            !guard.unavailableBuiltinTools.contains_key(&name),
-            "Built-in tool cannot be both registered and unavailable: {toolName}"
-        );
         guard.availableTools.insert(
             toolName.clone(),
             RegisteredToolExecutor::Asynchronous(Box::new(ContractCheckedBuiltinToolExecutor {
@@ -523,25 +517,6 @@ impl AIToolHandler {
             })),
         );
         guard.toolVisibility.insert(toolName, visibility);
-    }
-
-    /// Marks built-in tools as unavailable because their required host capability is absent.
-    #[allow(non_snake_case)]
-    pub(crate) fn markBuiltinToolsUnavailable(&mut self, names: &[BuiltinToolName], reason: &str) {
-        let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
-        for name in names {
-            assert!(
-                !guard.availableTools.contains_key(name.as_str()),
-                "Registered built-in tool cannot be marked unavailable: {name}"
-            );
-            assert!(
-                guard
-                    .unavailableBuiltinTools
-                    .insert(*name, reason.to_string())
-                    .is_none(),
-                "Built-in tool is marked unavailable more than once: {name}"
-            );
-        }
     }
 
     /// Registers a tool executor with explicit public or internal visibility.
@@ -607,14 +582,6 @@ impl AIToolHandler {
         };
         registerAllTools(self, &context);
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
-        for name in BuiltinToolName::ALL {
-            let registered = guard.availableTools.contains_key(name.as_str());
-            let unavailable = guard.unavailableBuiltinTools.contains_key(name);
-            assert!(
-                registered ^ unavailable,
-                "Built-in tool must be exactly registered or unavailable: {name}"
-            );
-        }
         guard.defaultToolsRegistered = true;
     }
 
@@ -1337,7 +1304,6 @@ impl AIToolHandler {
         let mut guard = self.inner.lock().expect("AIToolHandler mutex poisoned");
         guard.availableTools.clear();
         guard.toolVisibility.clear();
-        guard.unavailableBuiltinTools.clear();
         guard.defaultToolsRegistered = false;
     }
 }

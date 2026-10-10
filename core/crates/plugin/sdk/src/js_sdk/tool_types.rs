@@ -120,25 +120,16 @@ pub struct ToolResultMap {
     pub agent_status: AgentStatusResultData,
     pub switch_chat: ChatSwitchResultData,
     pub update_chat_title: ChatTitleUpdateResultData,
+    pub update_chat_group: String,
+    pub update_chat_pinned: String,
+    pub update_chat_locked: String,
+    pub reorder_chats: String,
     pub delete_chat: ChatDeleteResultData,
     pub send_message_to_ai: MessageSendResultData,
     pub send_message_to_ai_streaming: MessageSendResultData,
     pub call_chat_model: ChatCallResultData,
-    pub list_character_cards: CharacterCardListResultData,
     pub get_chat_messages: ChatMessagesResultData,
     pub get_chat_messages_range: ChatMessagesResultData,
-    pub query_memory: MemoryQueryResultData,
-    pub get_memory_owner_key: String,
-    pub get_memory_by_title: MemoryQueryResultData,
-    pub create_memory: String,
-    pub update_memory: String,
-    pub delete_memory: String,
-    pub move_memory: String,
-    pub link_memories: MemoryLinkResultData,
-    pub query_memory_links: MemoryLinkQueryResultData,
-    pub update_memory_link: MemoryLinkQueryResultData,
-    pub delete_memory_link: String,
-    pub update_user_preferences: String,
 }
 
 include!(concat!(env!("OUT_DIR"), "/builtin_tool_names.rs"));
@@ -172,6 +163,19 @@ mod tests {
         assert!(BuiltinToolName::ApplyFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::CreateFile.accepts_runtime_result(&result));
         assert!(BuiltinToolName::EditFile.accepts_runtime_result(&result));
+    }
+
+    #[test]
+    /// Keeps plugin-owned role and memory tools out of the Core built-in catalog.
+    fn plugin_owned_tools_are_not_builtin_catalog_entries() {
+        for name in [
+            "list_character_cards", "get_memory_owner_key", "query_memory",
+            "get_memory_by_title", "create_memory", "update_memory", "delete_memory",
+            "move_memory", "update_user_preferences", "link_memories",
+            "query_memory_links", "update_memory_link", "delete_memory_link",
+        ] {
+            assert_eq!(BuiltinToolName::from_name(name), None, "{name} belongs to a plugin");
+        }
     }
 
     #[test]

@@ -10,7 +10,6 @@ export function createMemoryLibraryActionsFeature(context: EditorContext) {
   async function handleAction(action: string, element: HTMLElement | SVGElement): Promise<void> {
     const id = element.dataset.id;
     switch (action) {
-      case "memory-settings": pushDialog({ type: "global-memory" }); return;
 
       case "create-store": pushDialog({ type: "store", create: true, store: { id: "", name: "" } }); return;
 
@@ -29,5 +28,5 @@ export function createMemoryLibraryActionsFeature(context: EditorContext) {
       default: throw new Error(`Unknown memory/library-actions action: ${action}`);
     }
   }
-  return { names: ["memory-settings", "create-store", "edit-store", "save-store", "delete-store"], handleAction };
+  return { names: ["create-store", "edit-store", "save-store", "delete-store"], handleAction };
 }

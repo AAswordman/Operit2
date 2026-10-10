@@ -1498,6 +1498,7 @@ impl ChatHistoryDelegate {
                 draft.messages.push(opening);
             }
         }
+        draft.group = source.as_ref().and_then(|chat| chat.group.clone());
         let initialMessages = draft.messages.clone();
         let cloneSource = if isBranch {
             Some((
@@ -2391,6 +2392,11 @@ impl ChatHistoryDelegate {
             }
             true
         })
+    }
+
+    /// Restores native conversation folders independently of role-card plugins.
+    pub fn updateChatGroups(&mut self, chatIds: Vec<String>, groupName: Option<String>) -> Result<(), String> {
+        self.chatHistoryManager.updateChatGroups(chatIds, groupName).map_err(|error| error.to_string())
     }
 
     /// Applies a neutral order to existing chats without interpreting plugin sidebar groups.

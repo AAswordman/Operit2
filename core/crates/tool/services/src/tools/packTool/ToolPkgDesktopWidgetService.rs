@@ -83,7 +83,7 @@ pub(super) async fn render(
         ("state".into(), json!({})),
         ("memo".into(), json!({})),
     ]);
-    manager.acquireToolPkgExecutionEngine(&context_key, package_name);
+    manager.acquireToolPkgExecutionEngine(&context_key, package_name).await;
     let _owner = ExecutionOwner {
         manager,
         context_key: context_key.clone(),

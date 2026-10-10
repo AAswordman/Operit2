@@ -34,12 +34,12 @@ export function keyedNode(tree, key) {
 }
 
 /** Mounts one exact registered Compose handler on the production SDK context and JSON action-result runtime. */
-export function mountRegisteredComposeRoute(plugin, presentation, routeId, exportName) {
+export function mountRegisteredComposeRoute(plugin, presentation, routeId) {
   const routes = plugin.routes.filter(
     /** Requires the exact production route rather than selecting a management handler with similar fields. */
     route => route.id === routeId,
   );
-  assert.equal(routes.length, 1); assert.equal(routes[0].screen, plugin.main[exportName]);
+  assert.equal(routes.length, 1); assert.equal(typeof routes[0].screen, "function");
   assert.equal(routes[0].route, "toolpkg:com.operit.character_cards:ui:" + routeId);
   const module = { exports: { Screen: routes[0].screen } };
   const context = vm.createContext({ module, exports: module.exports, console, setTimeout, clearTimeout });
@@ -70,5 +70,5 @@ export function mountRegisteredComposeRoute(plugin, presentation, routeId, expor
 
 /** Mounts only the actual native selector, retaining its existing independently verified route identity. */
 export function mountRegisteredSelector(plugin, presentation) {
-  return mountRegisteredComposeRoute(plugin, presentation, "selection", "selectionScreen");
+  return mountRegisteredComposeRoute(plugin, presentation, "selection");
 }

@@ -210,7 +210,6 @@ pub struct SendMessageOptions {
     pub functionType: FunctionType,
     pub promptFunctionType: PromptFunctionType,
     pub enableThinking: bool,
-    pub enableMemoryAutoUpdate: bool,
     pub onNonFatalError: Option<fn(String)>,
     pub onTokenLimitExceeded: Option<fn()>,
     pub customSystemPromptTemplate: Option<String>,
@@ -252,7 +251,6 @@ impl SendMessageOptions {
             functionType: FunctionType::CHAT,
             promptFunctionType: PromptFunctionType::CHAT,
             enableThinking: false,
-            enableMemoryAutoUpdate: true,
             onNonFatalError: None,
             onTokenLimitExceeded: None,
             customSystemPromptTemplate: None,
@@ -1420,7 +1418,6 @@ impl EnhancedAIService {
         let functionType = options.functionType.clone();
         let promptFunctionType = options.promptFunctionType.clone();
         let enableThinking = options.enableThinking;
-        let enableMemoryAutoUpdate = options.enableMemoryAutoUpdate;
         let maxTokens = options.maxTokens;
         let tokenUsageThreshold = options.tokenUsageThreshold;
         let customSystemPromptTemplate = options.customSystemPromptTemplate.clone();
@@ -1937,7 +1934,6 @@ impl EnhancedAIService {
                 functionType,
                 promptFunctionType,
                 enableThinking,
-                enableMemoryAutoUpdate,
                 onNonFatalError,
                 onTokenLimitExceeded,
                 maxTokens,
@@ -2040,7 +2036,6 @@ impl EnhancedAIService {
         functionType: FunctionType,
         promptFunctionType: PromptFunctionType,
         enableThinking: bool,
-        enableMemoryAutoUpdate: bool,
         onNonFatalError: Option<fn(String)>,
         onTokenLimitExceeded: Option<fn()>,
         maxTokens: i32,
@@ -2408,7 +2403,6 @@ impl EnhancedAIService {
             functionType,
             promptFunctionType,
             enableThinking,
-            enableMemoryAutoUpdate,
             onNonFatalError,
             onTokenLimitExceeded,
             maxTokens,
@@ -2440,7 +2434,6 @@ impl EnhancedAIService {
         functionType: FunctionType,
         promptFunctionType: PromptFunctionType,
         enableThinking: bool,
-        enableMemoryAutoUpdate: bool,
         onNonFatalError: Option<fn(String)>,
         onTokenLimitExceeded: Option<fn()>,
         maxTokens: i32,
@@ -2495,7 +2488,6 @@ impl EnhancedAIService {
             self.finalizeAssistantResponse(
                 context,
                 &content,
-                enableMemoryAutoUpdate,
                 onNonFatalError,
                 isSubTask,
                 chatId.clone(),
@@ -2521,7 +2513,6 @@ impl EnhancedAIService {
                 self.finalizeAssistantResponse(
                     context,
                     &displayContent,
-                    enableMemoryAutoUpdate,
                     onNonFatalError,
                     isSubTask,
                     chatId.clone(),
@@ -2551,7 +2542,6 @@ impl EnhancedAIService {
                 functionType,
                 promptFunctionType,
                 enableThinking,
-                enableMemoryAutoUpdate,
                 onNonFatalError,
                 onTokenLimitExceeded,
                 maxTokens,
@@ -2643,7 +2633,6 @@ impl EnhancedAIService {
                 functionType,
                 promptFunctionType,
                 enableThinking,
-                enableMemoryAutoUpdate,
                 onNonFatalError,
                 onTokenLimitExceeded,
                 maxTokens,
@@ -2680,7 +2669,6 @@ impl EnhancedAIService {
         self.finalizeAssistantResponse(
             context,
             &context.roundManager.getDisplayContent(),
-            enableMemoryAutoUpdate,
             onNonFatalError,
             isSubTask,
             chatId.clone(),
@@ -2702,7 +2690,6 @@ impl EnhancedAIService {
         functionType: FunctionType,
         promptFunctionType: PromptFunctionType,
         enableThinking: bool,
-        enableMemoryAutoUpdate: bool,
         onNonFatalError: Option<fn(String)>,
         onTokenLimitExceeded: Option<fn()>,
         maxTokens: i32,
@@ -2842,7 +2829,6 @@ impl EnhancedAIService {
                 functionType,
                 promptFunctionType,
                 enableThinking,
-                enableMemoryAutoUpdate,
                 onNonFatalError,
                 onTokenLimitExceeded,
                 maxTokens,
@@ -2875,7 +2861,6 @@ impl EnhancedAIService {
                 functionType,
                 promptFunctionType,
                 enableThinking,
-                enableMemoryAutoUpdate,
                 onNonFatalError,
                 onTokenLimitExceeded,
                 maxTokens,
@@ -2958,7 +2943,6 @@ impl EnhancedAIService {
         &mut self,
         context: &mut MessageExecutionContext,
         content: &str,
-        _enableMemoryAutoUpdate: bool,
         _onNonFatalError: Option<fn(String)>,
         _isSubTask: bool,
         chatId: Option<String>,

@@ -131,6 +131,7 @@ ChatMessage _message({
   String model = 'org/model:latest',
   String provider = '我的代理: OpenAI',
 }) => ChatMessage(
+  pluginExtensions: const {},
   sender: sender,
   parts: const [],
   timestamp: 1,

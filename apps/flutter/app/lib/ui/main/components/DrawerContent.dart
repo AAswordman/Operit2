@@ -14,13 +14,18 @@ import '../../common/contributions/ChatSidebarTabHost.dart';
 import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../layout/SidebarDockController.dart';
+import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
 import '../../window/DetachedChatWindowLauncher.dart';
 import '../../window/OperitWindowPlatform.dart';
 import 'CollapsedDrawerContent.dart';
+import '../../common/components/M3LoadingIndicator.dart';
 import 'DrawerContentDialogs.dart';
 import 'NavigationDrawerAppearance.dart';
+
+part 'DrawerContentGroups.dart';
 
 class DrawerContent extends StatefulWidget {
   /// Receives generic chat metadata; plugin tabs own all subject-specific views.
@@ -69,6 +74,8 @@ class _DrawerContentState extends State<DrawerContent> {
   final Set<String> _expandedWorkspaces = <String>{};
   bool _searchExpanded = false;
   String? _errorMessage;
+  final Set<String> _collapsedGroups = {};
+  bool _groupMutationPending = false;
 
   /// Uses the actual receiving bridge for native conversation operations.
   GeneratedCoreProxyClients get _clients =>
@@ -364,31 +371,28 @@ class _DrawerContentState extends State<DrawerContent> {
     }
   }
 
-  /// Uses workspace identity only; plugin grouping never enters this projection.
-  String _workspaceKey(core_proxy.ChatHistoryListItem history) =>
-      history.workspaceId == null
-      ? 'unbound'
-      : 'workspace:${history.workspaceId}';
+  /// Keeps the legacy native workspace identity and unbound fallback.
+  String _workspaceKey(core_proxy.ChatHistoryListItem history) {
+    final id = history.workspaceId?.trim();
+    return id == null || id.isEmpty ? 'workspace:unbound' : 'workspace:$id';
+  }
 
-  /// Labels the native unbound state explicitly instead of guessing a plugin subject.
   String _workspaceLabel(core_proxy.ChatHistoryListItem history) {
-    if (history.workspaceId == null) return '未绑定工作区';
-    if (history.workspaceName == null ||
-        history.workspaceName!.trim().isEmpty) {
-      return '工作区名称未提供 (${history.workspaceId})';
-    }
-    return history.workspaceName!;
+    final name = history.workspaceName?.trim();
+    return name == null || name.isEmpty ? '未绑定工作区' : name;
   }
 
   /// Projects the full canonical order into native workspace sections and search matches.
-  List<_WorkspaceSection> get _workspaceSections {
+  List<_WorkspaceSection> _workspaceSections({bool filter = true}) {
     final query = _searchController.text.trim().toLowerCase();
     final sections = <String, _WorkspaceSection>{};
     for (final history in widget.histories) {
       final label = _workspaceLabel(history);
-      if (query.isNotEmpty &&
+      if (filter &&
+          query.isNotEmpty &&
           !history.title.toLowerCase().contains(query) &&
-          !label.toLowerCase().contains(query)) {
+          !label.toLowerCase().contains(query) &&
+          !(history.group ?? '未分组').toLowerCase().contains(query)) {
         continue;
       }
       final key = _workspaceKey(history);
@@ -401,17 +405,8 @@ class _DrawerContentState extends State<DrawerContent> {
     return sections.values.toList(growable: false);
   }
 
-  /// Keeps active, selected and pinned conversations visible in collapsed previews.
-  List<core_proxy.ChatHistoryListItem> _sectionPreview(
-    _WorkspaceSection section,
-  ) => <core_proxy.ChatHistoryListItem>[
-    for (var index = 0; index < section.histories.length; index++)
-      if (index < _previewLimit ||
-          section.histories[index].pinned ||
-          section.histories[index].id == widget.currentChatId ||
-          widget.activeStreamingChatIds.contains(section.histories[index].id))
-        section.histories[index],
-  ];
+  void _showGroupError(Object error) =>
+      setState(() => _errorMessage = error.toString());
 
   /// Remembers workspace expansion without retaining deleted domain grouping state.
   void _toggleWorkspace(String key) => setState(() {
@@ -459,6 +454,9 @@ class _DrawerContentState extends State<DrawerContent> {
     if (moved.id == target.id ||
         _workspaceKey(moved) != _workspaceKey(target)) {
       return;
+    }
+    if (moved.group != target.group) {
+      await _moveWorkspaceGroup(moved, target.group);
     }
     final from = widget.histories.indexWhere((item) => item.id == moved.id);
     final to = widget.histories.indexWhere((item) => item.id == target.id);
@@ -517,103 +515,251 @@ class _DrawerContentState extends State<DrawerContent> {
             if (mounted) setState(() => _errorMessage = error.toString());
           }),
         ),
-        onMoveTo: (moved) => unawaited(_moveConversationTo(moved, history)),
+        onMoveTo: (moved) => unawaited(
+          _runGroupMutation(() => _moveConversationTo(moved, history)),
+        ),
         canAcceptDrop: (moved) =>
             _workspaceKey(moved) == _workspaceKey(history),
       );
 
-  /// Renders only workspace history; plugin tabs supply their own complete UI.
-  Widget _workspaceContent(BuildContext context) {
-    final sections = _workspaceSections;
-    final searching = _searchController.text.trim().isNotEmpty;
-    final error = _errorMessage ?? widget.errorMessage;
-    return Column(
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: FilledButton(
-                  key: const ValueKey('workspace-create-chat'),
-                  onPressed: () => unawaited(_createConversation()),
-                  child: const Text('新建对话'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              _ToolbarIconButton(
-                icon: _searchExpanded
-                    ? Icons.search_off_rounded
-                    : Icons.search_rounded,
-                tooltip: _searchExpanded ? '收起搜索' : '搜索对话',
-                appearance: widget.appearance,
-                active: _searchExpanded || searching,
-                onClick: _toggleSearchExpanded,
-              ),
-            ],
+  Widget _sidebarHeader(Widget tabs) => Padding(
+    padding: const EdgeInsets.only(top: 26, right: 12),
+    child: SidebarInfoCard(
+      brandName: 'Operit',
+      appearance: widget.appearance,
+      trailing: tabs,
+    ),
+  );
+
+  List<Widget> _pluginNavigationSlivers() => <Widget>[
+    if (widget.pluginEntries.isNotEmpty) ...<Widget>[
+      const SliverToBoxAdapter(child: SizedBox(height: 10)),
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsetsDirectional.only(
+            start: 28,
+            end: 12,
+            bottom: 2,
           ),
-        ),
-        if (_searchExpanded)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: ConversationSearchField(
-              controller: _searchController,
-              appearance: widget.appearance,
+          child: Text(
+            '插件',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: widget.appearance.titleColor.withValues(alpha: 0.82),
+              fontWeight: FontWeight.w600,
             ),
           ),
-        if (error != null)
-          SidebarStatusText(text: error, appearance: widget.appearance),
-        Expanded(
-          child: widget.loading && widget.histories.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : ListView(
-                  controller: _historyScrollController,
-                  key: const PageStorageKey('workspace-history'),
-                  padding: EdgeInsets.zero,
-                  children: <Widget>[
-                    for (final section in sections) ...<Widget>[
-                      _WorkspaceHeader(
-                        label: section.label,
-                        count: section.histories.length,
-                        expanded: !_collapsedWorkspaces.contains(section.key),
-                        appearance: widget.appearance,
-                        onToggleExpanded: () => _toggleWorkspace(section.key),
-                      ),
-                      if (!_collapsedWorkspaces.contains(
-                        section.key,
-                      )) ...<Widget>[
-                        for (final history
-                            in searching ||
-                                    _expandedWorkspaces.contains(section.key)
-                                ? section.histories
-                                : _sectionPreview(section))
-                          _historyRow(history),
-                        if (!searching &&
-                            _sectionPreview(section).length <
-                                section.histories.length)
-                          _HistoryLimitButton(
-                            key: ValueKey('history-limit:${section.key}'),
-                            icon: _expandedWorkspaces.contains(section.key)
-                                ? Icons.expand_less
-                                : Icons.expand_more,
-                            label: _expandedWorkspaces.contains(section.key)
-                                ? '收起'
-                                : '展开更多 ${section.histories.length - _sectionPreview(section).length}',
-                            workspaceStyle: true,
-                            appearance: widget.appearance,
-                            onClick: () => _togglePreview(section.key),
-                          ),
-                      ],
-                    ],
-                    if (sections.isEmpty)
-                      SidebarStatusText(
-                        text: searching ? '没有匹配的会话' : '暂无会话',
-                        appearance: widget.appearance,
-                      ),
-                    const SizedBox(height: 12),
-                  ],
-                ),
         ),
+      ),
+      const SliverToBoxAdapter(child: SizedBox(height: 6)),
+      SliverList(
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final entry = widget.pluginEntries[index];
+          return PluginNavigationDrawerItem(
+            entry: entry,
+            selected: widget.selectedRouteId == entry.routeId,
+            appearance: widget.appearance,
+            onClick: () => widget.onNavigationEntrySelected(entry),
+          );
+        }, childCount: widget.pluginEntries.length),
+      ),
+      SliverToBoxAdapter(
+        child: SidebarDockEndDropTarget(
+          controller:
+              MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+              ? SidebarDockScope.maybeOf(context)
+              : null,
+          location: SidebarDockLocation.primary,
+          height: 18,
+        ),
+      ),
+    ],
+  ];
+
+  /// The workspace is always native; resolving membership never replaces its widgets.
+  Widget _workspaceHistory(_WorkspaceSection section, bool searching) {
+    final groups = _nativeGroups(section);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final group in groups) ...[
+          _GroupSectionHeader(
+            key: ValueKey('workspace-group:${group.key}'),
+            label: group.label,
+            pinned:
+                group.histories.isNotEmpty &&
+                group.histories.every((chat) => chat.pinned),
+            workspaceStyle: true,
+            expanded: !_collapsedGroups.contains(group.key),
+            appearance: widget.appearance,
+            onToggleExpanded: () => setState(() {
+              if (!_collapsedGroups.remove(group.key))
+                _collapsedGroups.add(group.key);
+            }),
+            onCreateChat: () => unawaited(
+              _runGroupMutation(
+                () => _createGroupedConversation(section, group.name),
+              ),
+            ),
+            onRename: () => unawaited(_renameWorkspaceGroup(section, group)),
+            onTogglePinned: () => unawaited(
+              _runGroupMutation(() async {
+                final pinned =
+                    group.histories.isNotEmpty &&
+                    group.histories.every((chat) => chat.pinned);
+                for (final chat in group.histories) {
+                  await _chatCoreProxy.updateChatPinned(
+                    chatId: chat.id,
+                    pinned: !pinned,
+                  );
+                }
+              }),
+            ),
+            onDelete: () => unawaited(_deleteWorkspaceGroup(group)),
+            canAcceptDrop: (chat) => _workspaceKey(chat) == section.key,
+            onMoveToGroup: (chat) => unawaited(
+              _runGroupMutation(() => _moveWorkspaceGroup(chat, group.name)),
+            ),
+          ),
+          if (!_collapsedGroups.contains(group.key)) ...[
+            for (final chat
+                in searching || _expandedWorkspaces.contains(group.key)
+                    ? group.histories
+                    : _groupPreview(group.histories))
+              _historyRow(chat),
+            if (!searching &&
+                _groupPreview(group.histories).length < group.histories.length)
+              _HistoryLimitButton(
+                key: ValueKey('history-limit:${group.key}'),
+                icon: _expandedWorkspaces.contains(group.key)
+                    ? Icons.expand_less
+                    : Icons.expand_more,
+                label: _expandedWorkspaces.contains(group.key)
+                    ? '收起'
+                    : '展开更多 ${group.histories.length - _groupPreview(group.histories).length}',
+                workspaceStyle: true,
+                appearance: widget.appearance,
+                onClick: () => _togglePreview(group.key),
+              ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  /// Uses the original native sliver layout, with no plugin UI route or loading substitution.
+  Widget _workspaceContent(BuildContext context, {Widget? tabs}) {
+    final sections = _workspaceSections();
+    final searching = _searchController.text.trim().isNotEmpty;
+    final error = _errorMessage ?? widget.errorMessage;
+    return Stack(
+      children: <Widget>[
+        CustomScrollView(
+          controller: _historyScrollController,
+          key: const PageStorageKey<String>('drawer-history-scroll'),
+          primary: false,
+          slivers: <Widget>[
+            if (tabs != null) ...<Widget>[
+              SliverToBoxAdapter(child: _sidebarHeader(tabs)),
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
+            ],
+            SliverToBoxAdapter(
+              child: RepaintBoundary(
+                key: const ValueKey('workspace-create-toolbar'),
+                child: Padding(
+                  padding: const EdgeInsetsDirectional.only(
+                    start: 14,
+                    end: 12,
+                    bottom: 8,
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: _WorkspaceCreateBar(
+                          onCreateGroup: () =>
+                              unawaited(_createWorkspaceGroup()),
+                          onCreateConversation: () =>
+                              unawaited(_createConversation()),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _ToolbarIconButton(
+                        icon: _searchExpanded
+                            ? Icons.search_off_rounded
+                            : Icons.search_rounded,
+                        tooltip: _searchExpanded ? '收起搜索' : '搜索对话',
+                        appearance: widget.appearance,
+                        active: _searchExpanded || searching,
+                        onClick: _toggleSearchExpanded,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                child: _searchExpanded
+                    ? Padding(
+                        padding: const EdgeInsetsDirectional.only(
+                          start: 12,
+                          end: 12,
+                          bottom: 12,
+                        ),
+                        child: ConversationSearchField(
+                          controller: _searchController,
+                          appearance: widget.appearance,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
+            if (error != null)
+              SliverToBoxAdapter(
+                child: SidebarStatusText(
+                  text: error,
+                  appearance: widget.appearance,
+                ),
+              ),
+            for (final section in sections) ...<Widget>[
+              SliverToBoxAdapter(
+                child: _WorkspaceHeader(
+                  key: ValueKey('workspace-header:${section.key}'),
+                  label: section.label,
+                  count: section.histories.length,
+                  expanded: !_collapsedWorkspaces.contains(section.key),
+                  appearance: widget.appearance,
+                  onToggleExpanded: () => _toggleWorkspace(section.key),
+                ),
+              ),
+              if (!_collapsedWorkspaces.contains(section.key)) ...<Widget>[
+                SliverToBoxAdapter(
+                  child: _workspaceHistory(section, searching),
+                ),
+              ],
+            ],
+            if (sections.isEmpty && !widget.loading)
+              SliverToBoxAdapter(
+                child: SidebarStatusText(
+                  text: searching ? '没有匹配的会话' : '暂无会话',
+                  appearance: widget.appearance,
+                ),
+              ),
+            ..._pluginNavigationSlivers(),
+            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+          ],
+        ),
+        if (widget.loading && widget.histories.isEmpty && error == null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: M3LoadingIndicator(
+                  color: widget.appearance.statusAvailableColor,
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -624,40 +770,33 @@ class _DrawerContentState extends State<DrawerContent> {
     final theme = OperitTheme.of(context);
     return Column(
       children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.only(top: 26, right: 12),
-          child: SidebarInfoCard(
-            brandName: 'Operit',
-            appearance: widget.appearance,
-          ),
-        ),
-        const SizedBox(height: 12),
         Expanded(
           child: ChatSidebarTabHost(
             clients: _clients,
             chats: widget.histories,
             currentChatId: widget.currentChatId,
             activeStreamingChatIds: widget.activeStreamingChatIds,
+            headerBuilder: (context, tabs) => Column(
+              children: <Widget>[
+                _sidebarHeader(tabs),
+                const SizedBox(height: 12),
+              ],
+            ),
             workspaceBuilder: _workspaceContent,
+            workspaceWithTabsBuilder: (context, tabs) =>
+                _workspaceContent(context, tabs: tabs),
+            pluginFooter: widget.pluginEntries.isEmpty
+                ? null
+                : ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 160),
+                    child: CustomScrollView(
+                      shrinkWrap: true,
+                      slivers: _pluginNavigationSlivers(),
+                    ),
+                  ),
             onActivateChat: _activateChat,
           ),
         ),
-        if (widget.pluginEntries.isNotEmpty)
-          SizedBox(
-            height: 100,
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: <Widget>[
-                for (final entry in widget.pluginEntries)
-                  PluginNavigationDrawerItem(
-                    entry: entry,
-                    selected: widget.selectedRouteId == entry.routeId,
-                    appearance: widget.appearance,
-                    onClick: () => widget.onNavigationEntrySelected(entry),
-                  ),
-              ],
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
           child: Row(
@@ -705,6 +844,92 @@ class _DrawerContentState extends State<DrawerContent> {
   }
 }
 
+class _WorkspaceCreateBar extends StatelessWidget {
+  const _WorkspaceCreateBar({
+    required this.onCreateConversation,
+    required this.onCreateGroup,
+  });
+  final VoidCallback onCreateConversation;
+  final VoidCallback onCreateGroup;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final contentColor = scheme.onPrimaryContainer;
+    return SizedBox(
+      height: 34,
+      child: Material(
+        color: scheme.primaryContainer,
+        shape: const StadiumBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                key: const ValueKey('workspace-create-chat'),
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(17),
+                ),
+                hoverColor: contentColor.withValues(alpha: 0.08),
+                focusColor: contentColor.withValues(alpha: 0.10),
+                splashColor: contentColor.withValues(alpha: 0.10),
+                highlightColor: contentColor.withValues(alpha: 0.10),
+                onTap: onCreateConversation,
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(Icons.add_rounded, size: 17, color: contentColor),
+                      const SizedBox(width: 6),
+                      Text(
+                        '新建对话',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: contentColor,
+                          letterSpacing: -0.1,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            ...[
+              Container(
+                width: 1,
+                height: 16,
+                color: contentColor.withValues(alpha: 0.16),
+              ),
+              SizedBox(
+                width: 38,
+                height: 34,
+                child: InkWell(
+                  key: const ValueKey('workspace-create-group'),
+                  onTap: onCreateGroup,
+                  borderRadius: const BorderRadius.horizontal(
+                    right: Radius.circular(17),
+                  ),
+                  child: Tooltip(
+                    message: '新建分组',
+                    child: Center(
+                      child: Icon(
+                        Icons.create_new_folder_outlined,
+                        size: 16,
+                        color: contentColor,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _WorkspaceSection {
   /// Retains complete native conversation rows for count, collapse and search behavior.
   _WorkspaceSection({required this.key, required this.label});
@@ -717,6 +942,7 @@ class _WorkspaceSection {
 class _WorkspaceHeader extends StatelessWidget {
   /// Displays the native workspace header without subject-specific icons or avatars.
   const _WorkspaceHeader({
+    super.key,
     required this.label,
     required this.count,
     required this.expanded,
@@ -732,15 +958,33 @@ class _WorkspaceHeader extends StatelessWidget {
   /// Preserves native workspace collapse and complete conversation counts.
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(18, 8, 12, 4),
+    padding: const EdgeInsetsDirectional.only(
+      start: 18,
+      end: 12,
+      top: 8,
+      bottom: 4,
+    ),
     child: InkWell(
-      onTap: onToggleExpanded,
       borderRadius: BorderRadius.circular(8),
+      onTap: onToggleExpanded,
       child: Padding(
-        padding: const EdgeInsets.all(4),
+        padding: const EdgeInsetsDirectional.fromSTEB(2, 3, 4, 3),
         child: Row(
           children: <Widget>[
-            Icon(Icons.work_outline, size: 15, color: appearance.itemColor),
+            Container(
+              width: 3,
+              height: 17,
+              decoration: BoxDecoration(
+                color: appearance.statusAvailableColor.withValues(alpha: 0.62),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 9),
+            Icon(
+              Icons.work_outline,
+              size: 15,
+              color: appearance.itemColor.withValues(alpha: 0.82),
+            ),
             const SizedBox(width: 7),
             Expanded(
               child: Text(
@@ -753,11 +997,13 @@ class _WorkspaceHeader extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(width: 8),
             _HistoryCountBadge(count: count, appearance: appearance),
+            const SizedBox(width: 6),
             Icon(
               expanded ? Icons.expand_less : Icons.expand_more,
               size: 18,
-              color: appearance.itemColor,
+              color: appearance.itemColor.withValues(alpha: 0.70),
             ),
           ],
         ),

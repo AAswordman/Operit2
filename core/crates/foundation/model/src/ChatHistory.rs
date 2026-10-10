@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 pub struct ChatHistory {
     pub id: String,
     pub title: String,
+    /// Native conversation folder; independent of plugin-owned role bindings.
+    #[serde(default)]
+    pub group: Option<String>,
     pub pluginExtensions: BTreeMap<String, serde_json::Value>,
     pub messages: Vec<ChatMessage>,
     pub createdAt: String,
