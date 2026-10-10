@@ -1918,6 +1918,7 @@
   "settingsDataAdvancedBackupOptionsDescription": "Single-item JSON export and restore",
   "settingsRuntimeNetworkControl": "Network control",
   "settingsRuntimeNetworkControlDescription": "Roles, identities, device authority, and audit",
+  "settingsRuntimeIdentitiesAndPermissions": "Identities & permissions",
   "settingsRuntimeControlInitialize": "Initialize control",
   "settingsRuntimeControlRoles": "Roles",
   "settingsRuntimeControlIdentities": "Identities",

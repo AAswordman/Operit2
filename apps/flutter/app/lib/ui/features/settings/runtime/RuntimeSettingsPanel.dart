@@ -1056,7 +1056,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
         ],
       ),
       _SectionCard(
-        title: l10n.settingsRuntimeNetworkControl,
+        title: l10n.settingsRuntimeIdentitiesAndPermissions,
         children: <Widget>[
           NetworkControlPanel(
             clients: _clients,

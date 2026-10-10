@@ -3661,6 +3661,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeNetworkControlDescription => '角色、身份、设备权限与审计';
 
   @override
+  String get settingsRuntimeIdentitiesAndPermissions => '身份与权限';
+
+  @override
   String get settingsRuntimeControlInitialize => '初始化控制';
 
   @override

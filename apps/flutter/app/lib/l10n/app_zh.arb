@@ -1911,6 +1911,7 @@
   "settingsDataAdvancedBackupOptionsDescription": "单项 JSON 导出与恢复",
   "settingsRuntimeNetworkControl": "网络控制",
   "settingsRuntimeNetworkControlDescription": "角色、身份、设备权限与审计",
+  "settingsRuntimeIdentitiesAndPermissions": "身份与权限",
   "settingsRuntimeControlInitialize": "初始化控制",
   "settingsRuntimeControlRoles": "角色",
   "settingsRuntimeControlIdentities": "身份",

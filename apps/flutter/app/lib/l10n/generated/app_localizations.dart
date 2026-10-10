@@ -6819,6 +6819,12 @@ abstract class AppLocalizations {
   /// **'Roles, identities, device authority, and audit'**
   String get settingsRuntimeNetworkControlDescription;
 
+  /// No description provided for @settingsRuntimeIdentitiesAndPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'Identities & permissions'**
+  String get settingsRuntimeIdentitiesAndPermissions;
+
   /// No description provided for @settingsRuntimeControlInitialize.
   ///
   /// In en, this message translates to:

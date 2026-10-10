@@ -3813,6 +3813,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Roles, identities, device authority, and audit';
 
   @override
+  String get settingsRuntimeIdentitiesAndPermissions =>
+      'Identities & permissions';
+
+  @override
   String get settingsRuntimeControlInitialize => 'Initialize control';
 
   @override

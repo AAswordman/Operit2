@@ -9,10 +9,14 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
+import 'SpaceIdentityLabels.dart';
 
-/// Exposes the current device-to-identity state and administrator controls.
+/// Shows the local identity and the administrator controls it unlocks.
+///
+/// The panel owns identities, assignment, and audit only: devices and their
+/// commands live in the device section, so no device list is duplicated here.
 class NetworkControlPanel extends StatefulWidget {
-  /// Creates the network identity panel over the generated runtime clients.
+  /// Creates the identity and permission panel over the generated runtime clients.
   const NetworkControlPanel({
     super.key,
     required this.clients,
@@ -27,10 +31,11 @@ class NetworkControlPanel extends StatefulWidget {
   State<NetworkControlPanel> createState() => _NetworkControlPanelState();
 }
 
-/// Loads the current control state and topology for the panel.
+/// Loads the synchronized control state visible to the current identity.
 class _NetworkControlPanelState extends State<NetworkControlPanel> {
   generated.NetworkControlState? _state;
   generated.RuntimeDeviceSpaceTopology? _topology;
+  List<generated.NetworkControlAuditRecord>? _audit;
   String? _error;
 
   /// Starts the first state load.
@@ -40,25 +45,31 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     unawaited(_reload());
   }
 
-  /// Reloads network control and device-space relationship settings.
+  /// Reloads the panel and the device projection it depends on.
   Future<void> _reloadSettings() async {
     await _reload();
     await widget.onChanged();
   }
 
-  /// Reads the current synchronized state and device projection.
+  /// Reads the current synchronized state, projection, and allowed audit.
   Future<void> _reload() async {
     try {
       final results = await Future.wait<Object>(<Future<Object>>[
         widget.clients.server.runtimeRemoteLinkService.deviceSpaceControl(),
         widget.clients.server.runtimeRemoteLinkService.deviceSpaceTopology(),
       ]);
+      final topology = results[1] as generated.RuntimeDeviceSpaceTopology;
+      final audit = _hasCapability(topology, 'network.audit.read')
+          ? await widget.clients.server.runtimeRemoteLinkService
+                .deviceSpaceControlAudit()
+          : null;
       if (!mounted) {
         return;
       }
       setState(() {
         _state = results[0] as generated.NetworkControlState;
-        _topology = results[1] as generated.RuntimeDeviceSpaceTopology;
+        _topology = topology;
+        _audit = audit;
         _error = null;
       });
     } catch (error) {
@@ -68,7 +79,7 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     }
   }
 
-  /// Builds the compact entry point for the current identity view.
+  /// Builds the panel sections the current identity is allowed to see.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -79,14 +90,12 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
       children: <Widget>[
         Row(
           children: <Widget>[
-            const Icon(Icons.admin_panel_settings_outlined),
-            const SizedBox(width: 10),
             Expanded(
               child: Text(
-                l10n.settingsRuntimeNetworkControl,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                l10n.settingsRuntimeNetworkControlDescription,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
             IconButton(
@@ -98,14 +107,6 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          l10n.settingsRuntimeNetworkControlDescription,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 8),
         if (state == null || topology == null)
           const SizedBox(
             height: 36,
@@ -115,13 +116,7 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
             ),
           )
         else
-          OutlinedButton.icon(
-            onPressed: !state.initialized ? null : _openManager,
-            icon: const Icon(Icons.devices_outlined, size: 18),
-            label: Text(
-              '${topology.devices.length} ${l10n.settingsRuntimeControlDevice}',
-            ),
-          ),
+          ..._sections(context, l10n, state, topology),
         if (_error case final error?) ...<Widget>[
           const SizedBox(height: 8),
           Text(
@@ -135,73 +130,13 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     );
   }
 
-  /// Opens the current-state dialog without exposing protocol records.
-  Future<void> _openManager() async {
-    final state = _state;
-    final topology = _topology;
-    if (state == null || topology == null) {
-      return;
-    }
-    await _NetworkControlDialog.show(
-      context,
-      state: state,
-      topology: topology,
-      clients: widget.clients,
-      onChanged: widget.onChanged,
-    );
-    await _reload();
-  }
-}
-
-/// Shows current device identities and administrator-only identity controls.
-class _NetworkControlDialog extends StatefulWidget {
-  /// Creates the current-state dialog.
-  const _NetworkControlDialog({
-    required this.state,
-    required this.topology,
-    required this.clients,
-    required this.onChanged,
-  });
-
-  final generated.NetworkControlState state;
-  final generated.RuntimeDeviceSpaceTopology topology;
-  final GeneratedCoreProxyClients clients;
-  final Future<void> Function() onChanged;
-
-  /// Opens the dialog in the enclosing navigator.
-  static Future<void> show(
-    BuildContext context, {
-    required generated.NetworkControlState state,
-    required generated.RuntimeDeviceSpaceTopology topology,
-    required GeneratedCoreProxyClients clients,
-    required Future<void> Function() onChanged,
-  }) {
-    return showDialog<void>(
-      context: context,
-      builder: (_) => _NetworkControlDialog(
-        state: state,
-        topology: topology,
-        clients: clients,
-        onChanged: onChanged,
-      ),
-    );
-  }
-
-  @override
-  State<_NetworkControlDialog> createState() => _NetworkControlDialogState();
-}
-
-class _NetworkControlDialogState extends State<_NetworkControlDialog> {
-  generated.NetworkControlState get state => widget.state;
-  generated.RuntimeDeviceSpaceTopology get topology => widget.topology;
-  GeneratedCoreProxyClients get clients => widget.clients;
-  Future<void> Function() get onChanged => widget.onChanged;
-  Future<List<generated.NetworkControlAuditRecord>>? _auditFuture;
-
-  /// Builds the tabs visible to the current device identity.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+  /// Builds the identity, assignment, and audit sections of the panel.
+  List<Widget> _sections(
+    BuildContext context,
+    AppLocalizations l10n,
+    generated.NetworkControlState state,
+    generated.RuntimeDeviceSpaceTopology topology,
+  ) {
     final canManageIdentities = _hasCapability(
       topology,
       'network.identity.manage',
@@ -211,234 +146,104 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
       'network.identity.assign',
     );
     final canReadAudit = _hasCapability(topology, 'network.audit.read');
-    final showIdentityTab = canManageIdentities || canAssignIdentities;
-    final tabs = <Widget>[
-      Tab(text: l10n.settingsRuntimeControlDevice),
-      if (showIdentityTab)
-        Tab(text: l10n.settingsRuntimeControlManageIdentities),
-      if (canReadAudit) Tab(text: l10n.settingsRuntimeControlAudit),
-    ];
-    return Dialog(
-      child: SizedBox(
-        width: 760,
-        height: 600,
-        child: DefaultTabController(
-          length: tabs.length,
-          child: Column(
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        l10n.settingsRuntimeNetworkControl,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: MaterialLocalizations.of(
-                        context,
-                      ).closeButtonTooltip,
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_outlined),
-                    ),
-                  ],
-                ),
-              ),
-              TabBar(tabs: tabs),
-              Expanded(
-                child: TabBarView(
-                  children: <Widget>[
-                    _statusTab(context, l10n),
-                    if (showIdentityTab)
-                      _identityTab(
-                        context,
-                        l10n,
-                        canManageIdentities,
-                        canAssignIdentities,
-                      ),
-                    if (canReadAudit) _auditTab(context, l10n),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Builds the all-device current-state view.
-  Widget _statusTab(BuildContext context, AppLocalizations l10n) {
-    final devices = <generated.RuntimeDeviceSpaceDevice>[...topology.devices];
-    final directory = _DeviceDirectory(devices);
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: <Widget>[
-        for (final device in devices)
-          _deviceStatusCard(context, device, directory, l10n),
-      ],
-    );
-  }
-
-  /// Builds one device card around its current identity and effective abilities.
-  Widget _deviceStatusCard(
-    BuildContext context,
-    generated.RuntimeDeviceSpaceDevice device,
-    _DeviceDirectory directory,
-    AppLocalizations l10n,
-  ) {
-    final identity = device.currentIdentity;
-    final capabilityText = identity == null
-        ? l10n.settingsRuntimeControlNoIdentity
-        : _values(
-            identity.capabilities,
-          ).map((value) => _capabilityLabel(value, l10n)).join('、');
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: Icon(
-          device.online ? Icons.devices_outlined : Icons.link_off_outlined,
-          color: device.online
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.error,
-        ),
-        title: Text(directory.label(device.deviceId)),
-        subtitle: Text(
-          '${l10n.settingsRuntimeControlDeviceId}: ${directory.id(device.deviceId)}\n'
-          '${l10n.settingsRuntimeControlCurrentIdentity}: ${identity == null ? l10n.settingsRuntimeControlNoIdentity : _identityDisplayName(identity.displayName, l10n)}\n'
-          '${l10n.settingsRuntimeControlCurrentCapabilities}: $capabilityText\n'
-          '${device.online ? l10n.settingsRuntimeControlOnline : l10n.settingsRuntimeControlOffline}',
-        ),
-        trailing: _deviceActions(context, device, l10n),
-      ),
-    );
-  }
-
-  /// Builds administrator-only device membership actions.
-  Widget? _deviceActions(
-    BuildContext context,
-    generated.RuntimeDeviceSpaceDevice device,
-    AppLocalizations l10n,
-  ) {
-    final actions = <Widget>[
-      if (device.deviceId != topology.currentDeviceId &&
-          _hasCapability(topology, 'network.members.join'))
-        MenuItemButton(
-          onPressed: () => _commit(
-            context,
-            () => clients.server.runtimeRemoteLinkService
-                .admitDeviceSpaceMember(deviceId: device.deviceId),
-            feedback: l10n.settingsRuntimeControlDeviceAdmitted,
-          ),
-          child: Text(l10n.settingsRuntimeControlAdmitDevice),
-        ),
-      if (device.deviceId != topology.currentDeviceId &&
-          device.currentIdentity != null &&
-          _hasCapability(topology, 'network.identity.manage'))
-        MenuItemButton(
-          onPressed: () => _commit(
-            context,
-            () => clients.server.runtimeRemoteLinkService
-                .clearDeviceSpaceIdentity(nodeId: device.deviceId),
-            feedback: l10n.settingsRuntimeControlIdentityResetDone,
-          ),
-          child: Text(l10n.settingsRuntimeControlClearIdentity),
-        ),
-      if (device.deviceId != topology.currentDeviceId &&
-          _hasCapability(topology, 'network.connections.disconnect'))
-        MenuItemButton(
-          onPressed: () => _commit(
-            context,
-            () => clients.server.runtimeRemoteLinkService
-                .disconnectDeviceSpaceNode(deviceId: device.deviceId),
-            feedback: l10n.settingsRuntimeControlDisconnected,
-          ),
-          child: Text(l10n.settingsRuntimeControlDisconnectDevice),
-        ),
-      if (device.deviceId != topology.currentDeviceId &&
-          _hasCapability(topology, 'network.members.remove'))
-        MenuItemButton(
-          onPressed: () => _commit(
-            context,
-            () => clients.server.runtimeRemoteLinkService
-                .removeDeviceSpaceMember(deviceId: device.deviceId),
-            feedback: l10n.settingsRuntimeControlRemoved,
-          ),
-          child: Text(l10n.settingsRuntimeControlRemoveDevice),
-        ),
-    ];
-    if (actions.isEmpty) {
-      return null;
-    }
-    return MenuAnchor(
-      builder: (context, controller, _) => IconButton(
-        tooltip: l10n.settingsRuntimeControlDevice,
-        onPressed: controller.open,
-        icon: const Icon(Icons.more_vert_outlined),
-      ),
-      menuChildren: actions,
-    );
-  }
-
-  /// Builds identity controls permitted by the current device identity.
-  Widget _identityTab(
-    BuildContext context,
-    AppLocalizations l10n,
-    bool canManageIdentities,
-    bool canAssignIdentities,
-  ) {
-    final roles = state.roles.values.toList(growable: false);
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: <Widget>[
-        if (canManageIdentities) ...<Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  l10n.settingsRuntimeControlIdentityDefinitions,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              FilledButton.icon(
-                onPressed: () => _defineIdentity(context, l10n),
-                icon: const Icon(Icons.add_outlined, size: 18),
-                label: Text(l10n.settingsRuntimeControlAddRole),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          for (final role in roles) _identityCard(context, role, l10n),
-        ],
-        if (canManageIdentities && canAssignIdentities)
-          const SizedBox(height: 20),
-        if (canAssignIdentities)
-          FilledButton.icon(
-            onPressed: () => _assignIdentity(context, l10n),
+    return <Widget>[
+      _selfIdentity(l10n, topology),
+      if (canManageIdentities) ..._identityDefinitions(context, l10n, state),
+      if (canAssignIdentities) ...<Widget>[
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            onPressed: () => _assignIdentity(l10n),
             icon: const Icon(Icons.assignment_ind_outlined),
             label: Text(l10n.settingsRuntimeControlAssignIdentity),
           ),
+        ),
+      ],
+      if (canReadAudit) ..._auditSection(context, l10n),
+    ];
+  }
+
+  /// Shows what the current identity is and what it may do.
+  ///
+  /// This is the only identity information every member owns; devices show the
+  /// same readout for their own identities in the device section.
+  Widget _selfIdentity(
+    AppLocalizations l10n,
+    generated.RuntimeDeviceSpaceTopology topology,
+  ) {
+    final identity = _localIdentityOf(topology);
+    final capabilities = identity == null
+        ? const <String>[]
+        : spaceCapabilityValues(identity.capabilities)
+              .map((value) => spaceCapabilityLabel(value, l10n))
+              .toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          '${l10n.settingsRuntimeControlCurrentIdentity}: ${identity == null ? l10n.settingsRuntimeControlNoIdentity : spaceIdentityDisplayName(identity.displayName, l10n)}',
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        if (capabilities.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 2),
+          Text(
+            '${l10n.settingsRuntimeControlCurrentCapabilities}: ${capabilities.join('、')}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     );
   }
 
-  /// Builds one editable identity definition card.
+  /// Builds the identity definitions owned by administrators.
+  List<Widget> _identityDefinitions(
+    BuildContext context,
+    AppLocalizations l10n,
+    generated.NetworkControlState state,
+  ) {
+    return <Widget>[
+      const SizedBox(height: 14),
+      Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              l10n.settingsRuntimeControlIdentityDefinitions,
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: () => _defineIdentity(l10n),
+            icon: const Icon(Icons.add_outlined, size: 18),
+            label: Text(l10n.settingsRuntimeControlAddRole),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      for (final role in state.roles.values) _identityCard(context, role, l10n),
+    ];
+  }
+
+  /// Builds one identity definition card.
   Widget _identityCard(
     BuildContext context,
     generated.NetworkControlRole role,
     AppLocalizations l10n,
   ) {
-    final capabilities = _values(
+    final capabilities = spaceCapabilityValues(
       role.capabilities,
-    ).map((value) => _capabilityLabel(value, l10n)).join('、');
+    ).map((value) => spaceCapabilityLabel(value, l10n)).join('、');
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         leading: const Icon(Icons.badge_outlined),
-        title: Text(_identityDisplayName(role.displayName, l10n)),
+        title: Text(spaceIdentityDisplayName(role.displayName, l10n)),
         subtitle: Text(
           '${l10n.settingsRuntimeControlCurrentCapabilities}: $capabilities',
         ),
@@ -447,88 +252,96 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
   }
 
   /// Builds the administrator audit view for authorization history.
-  Widget _auditTab(BuildContext context, AppLocalizations l10n) {
-    return FutureBuilder<List<generated.NetworkControlAuditRecord>>(
-      future: _auditFuture ??= clients.server.runtimeRemoteLinkService
-          .deviceSpaceControlAudit(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(snapshot.error.toString()),
-            ),
-          );
-        }
-        if (!snapshot.hasData) {
-          return const Center(child: M3LoadingIndicator(size: 20));
-        }
-        final records = snapshot.data!;
-        if (records.isEmpty) {
-          return Center(child: Text(l10n.settingsRuntimeControlNoAudit));
-        }
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: records.length,
-          itemBuilder: (context, index) {
-            final record = records[index];
-            final accepted = record.accepted;
-            return Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                leading: Icon(
-                  accepted ? Icons.verified_outlined : Icons.error_outline,
-                  color: accepted
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.error,
-                ),
-                title: Text(record.summary),
-                subtitle: Text(
-                  '${accepted ? l10n.settingsRuntimeControlGranted : l10n.settingsRuntimeControlRevoked} · ${record.reason}',
-                ),
-              ),
-            );
-          },
-        );
-      },
+  List<Widget> _auditSection(BuildContext context, AppLocalizations l10n) {
+    final records = _audit;
+    return <Widget>[
+      const SizedBox(height: 14),
+      Text(
+        l10n.settingsRuntimeControlAudit,
+        style: Theme.of(
+          context,
+        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 8),
+      if (records == null)
+        const SizedBox(
+          height: 24,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: M3LoadingIndicator(size: 18),
+          ),
+        )
+      else if (records.isEmpty)
+        Text(
+          l10n.settingsRuntimeControlNoAudit,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        )
+      else
+        for (final record in records) _auditCard(context, l10n, record),
+    ];
+  }
+
+  /// Builds one authorization history entry.
+  Widget _auditCard(
+    BuildContext context,
+    AppLocalizations l10n,
+    generated.NetworkControlAuditRecord record,
+  ) {
+    final accepted = record.accepted;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: Icon(
+          accepted ? Icons.verified_outlined : Icons.error_outline,
+          color: accepted
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.error,
+        ),
+        title: Text(record.summary),
+        subtitle: Text(
+          '${accepted ? l10n.settingsRuntimeControlGranted : l10n.settingsRuntimeControlRevoked} · ${record.reason}',
+        ),
+      ),
     );
   }
 
   /// Opens the administrator identity definition editor.
-  Future<void> _defineIdentity(
-    BuildContext context,
-    AppLocalizations l10n,
-  ) async {
+  Future<void> _defineIdentity(AppLocalizations l10n) async {
+    final topology = _topology;
+    if (topology == null) {
+      return;
+    }
     final result = await _IdentityEditor.show(
       context,
       title: l10n.settingsRuntimeControlAddRole,
-      choices: _capabilityChoices(l10n)
+      choices: spaceCapabilityChoices(l10n)
           .where((choice) => _hasCapability(topology, choice.value))
           .toList(growable: false),
     );
     if (result == null) {
       return;
     }
-    if (!context.mounted) {
-      return;
-    }
-    await _commit(
-      context,
-      () => clients.server.runtimeRemoteLinkService.defineDeviceSpaceRole(
-        role: generated.NetworkControlRole(
-          roleId: _generatedControlId('identity'),
-          displayName: result.name,
-          capabilities: result.capabilities,
-        ),
-      ),
+    await _runCommand(
+      () => widget.clients.server.runtimeRemoteLinkService
+          .defineDeviceSpaceRole(
+            role: generated.NetworkControlRole(
+              roleId: _generatedControlId('identity'),
+              displayName: result.name,
+              capabilities: result.capabilities,
+            ),
+          ),
     );
   }
 
   /// Opens the administrator assignment editor for one device identity.
-  Future<void> _assignIdentity(
-    BuildContext context,
-    AppLocalizations l10n,
-  ) async {
+  Future<void> _assignIdentity(AppLocalizations l10n) async {
+    final state = _state;
+    final topology = _topology;
+    if (state == null || topology == null) {
+      return;
+    }
     final directory = _DeviceDirectory(topology.devices);
     final result = await _IdentityAssignmentEditor.show(
       context,
@@ -543,13 +356,13 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
           .toList(growable: false),
       identities: state.roles.values
           .where(
-            (role) => _values(
+            (role) => spaceCapabilityValues(
               role.capabilities,
             ).every((capability) => _hasCapability(topology, capability)),
           )
           .map(
             (role) => _Choice(
-              label: _identityDisplayName(role.displayName, l10n),
+              label: spaceIdentityDisplayName(role.displayName, l10n),
               value: role.roleId,
             ),
           )
@@ -558,58 +371,49 @@ class _NetworkControlDialogState extends State<_NetworkControlDialog> {
     if (result == null) {
       return;
     }
-    if (!context.mounted) {
-      return;
-    }
-    await _commit(
-      context,
-      () => clients.server.runtimeRemoteLinkService.setDeviceSpaceIdentity(
-        assignment: generated.NetworkControlIdentityAssignment(
-          nodeId: result.deviceId,
-          roleId: result.identityId,
-        ),
-      ),
+    await _runCommand(
+      () => widget.clients.server.runtimeRemoteLinkService
+          .setDeviceSpaceIdentity(
+            assignment: generated.NetworkControlIdentityAssignment(
+              nodeId: result.deviceId,
+              roleId: result.identityId,
+            ),
+          ),
+      feedback: l10n.settingsRuntimeControlIdentityAssignment,
     );
   }
 
-  /// Executes one administrator command, closes the stale snapshot dialog,
-  /// and surfaces an optional feedback snackbar.
-  Future<void> _commit(
-    BuildContext context,
+  /// Runs one administrator command and refreshes the synchronized state.
+  Future<void> _runCommand(
     Future<void> Function() command, {
     String? feedback,
   }) async {
     try {
       await command();
-      await onChanged();
-      if (context.mounted) {
-        final messenger = ScaffoldMessenger.of(context);
-        Navigator.of(context).pop();
-        if (feedback != null) {
-          messenger.showSnackBar(SnackBar(content: Text(feedback)));
-        }
+      await _reload();
+      await widget.onChanged();
+      if (mounted && feedback != null) {
+        _showFeedback(feedback);
       }
     } catch (error) {
-      if (context.mounted) {
-        await showDialog<void>(
-          context: context,
-          builder: (errorContext) => AlertDialog(
-            title: Text(
-              MaterialLocalizations.of(errorContext).alertDialogLabel,
-            ),
-            content: Text(error.toString()),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(errorContext).pop(),
-                child: Text(
-                  MaterialLocalizations.of(errorContext).okButtonLabel,
-                ),
-              ),
-            ],
-          ),
-        );
+      if (mounted) {
+        _showFeedback(error.toString(), failed: true);
       }
     }
+  }
+
+  /// Surfaces one outcome with the same feedback channel for every command.
+  void _showFeedback(String message, {bool failed = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: failed ? TextStyle(color: scheme.onErrorContainer) : null,
+        ),
+        backgroundColor: failed ? scheme.errorContainer : null,
+      ),
+    );
   }
 }
 
@@ -646,13 +450,13 @@ class _IdentityEditor extends StatefulWidget {
   const _IdentityEditor({required this.title, required this.choices});
 
   final String title;
-  final List<_Choice> choices;
+  final List<SpaceCapabilityChoice> choices;
 
   /// Opens the editor and returns a validated definition.
   static Future<_IdentityDefinition?> show(
     BuildContext context, {
     required String title,
-    required List<_Choice> choices,
+    required List<SpaceCapabilityChoice> choices,
   }) {
     return showDialog<_IdentityDefinition>(
       context: context,
@@ -934,100 +738,27 @@ String _deviceBaseName(generated.RuntimeDeviceSpaceDevice device) {
   ].join(' · ');
 }
 
+/// Returns the identity of the current device, when the Space assigned one.
+generated.RuntimeDeviceSpaceIdentity? _localIdentityOf(
+  generated.RuntimeDeviceSpaceTopology topology,
+) {
+  for (final device in topology.devices) {
+    if (device.deviceId == topology.currentDeviceId) {
+      return device.currentIdentity;
+    }
+  }
+  return null;
+}
+
 /// Returns whether the current device identity owns one capability.
 bool _hasCapability(
   generated.RuntimeDeviceSpaceTopology topology,
   String capability,
 ) {
-  final device = topology.devices.firstWhere(
-    (candidate) => candidate.deviceId == topology.currentDeviceId,
-  );
-  final identity = device.currentIdentity;
+  final identity = _localIdentityOf(topology);
   return identity != null &&
       (identity.capabilities.contains('*') ||
           identity.capabilities.contains(capability));
-}
-
-/// Converts built-in identity names into localized labels.
-String _identityDisplayName(String name, AppLocalizations l10n) {
-  return switch (name) {
-    'Administrator' => l10n.settingsRuntimeControlRoleAdministrator,
-    'User' => l10n.settingsRuntimeControlRoleUser,
-    'Relay' => l10n.settingsRuntimeControlRoleRelay,
-    'Storage' => l10n.settingsRuntimeControlRoleStorage,
-    'Runner' => l10n.settingsRuntimeControlRoleRunner,
-    'Auditor' => l10n.settingsRuntimeControlRoleAuditor,
-    _ => name,
-  };
-}
-
-/// Converts one protocol capability into a readable label.
-String _capabilityLabel(String capability, AppLocalizations l10n) {
-  return switch (capability) {
-    '*' => l10n.settingsRuntimeControlCapabilityAll,
-    'network.devices.view' => l10n.settingsRuntimeControlCapabilityViewDevices,
-    'network.audit.read' => l10n.settingsRuntimeControlCapabilityAuditRead,
-    'network.relay' => l10n.settingsRuntimeControlCapabilityNetworkRelay,
-    'storage.provide' => l10n.settingsRuntimeControlCapabilityStorageProvide,
-    'runtime.execute' => l10n.settingsRuntimeControlCapabilityRuntimeExecute,
-    'network.user' => l10n.settingsRuntimeControlCapabilityNetworkUser,
-    'chat.read' => l10n.settingsRuntimeControlCapabilityChatRead,
-    'network.identity.manage' => l10n.settingsRuntimeControlManageIdentities,
-    'network.identity.assign' => l10n.settingsRuntimeControlAssignIdentity,
-    'network.approval' => l10n.settingsRuntimeControlCapabilityApproval,
-    _ => capability.replaceAll('.', ' · '),
-  };
-}
-
-/// Returns the selectable identity capabilities exposed to administrators.
-List<_Choice> _capabilityChoices(AppLocalizations l10n) {
-  return <_Choice>[
-    _Choice(label: l10n.settingsRuntimeControlCapabilityAll, value: '*'),
-    _Choice(
-      label: l10n.settingsRuntimeControlCapabilityViewDevices,
-      value: 'network.devices.view',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlCapabilityAuditRead,
-      value: 'network.audit.read',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlCapabilityNetworkRelay,
-      value: 'network.relay',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlCapabilityStorageProvide,
-      value: 'storage.provide',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlCapabilityRuntimeExecute,
-      value: 'runtime.execute',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlCapabilityChatRead,
-      value: 'chat.read',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlManageIdentities,
-      value: 'network.identity.manage',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlAssignIdentity,
-      value: 'network.identity.assign',
-    ),
-    _Choice(
-      label: l10n.settingsRuntimeControlCapabilityApproval,
-      value: 'network.approval',
-    ),
-  ];
-}
-
-/// Converts a generated collection into stable string values.
-List<String> _values(Object? values) {
-  if (values is Iterable<Object?>) {
-    return values.map((value) => value.toString()).toList(growable: false);
-  }
-  throw StateError('network identity capabilities must be iterable');
 }
 
 /// Generates an internal assignment identifier for the replicated command.
