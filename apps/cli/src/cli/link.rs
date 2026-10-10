@@ -530,7 +530,7 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {    l
 async fn run_link_space_command(args: &[String]) -> Result<(), String> {
     let ownsSpaceMutation = matches!(
         args,
-        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync")
+        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "admit" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync")
     );
     let coreApplication = if ownsSpaceMutation {
         create_cli_core_application("client").await?
@@ -577,13 +577,24 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             else { println!("{device_label}: {status:?}"); }
             Ok(())
         }
+        // Same policy operation as `control device disconnect`: one word, one
+        // meaning across the CLI, the TUI and Flutter's control panel.
         Some("disconnect") if args.len() == 2 => {
             let topology = service.deviceSpaceTopology()?;
             let device_id = network_device_id(&topology, &args[1])?;
             let device_label = network_device_label_by_id(&topology, &device_id)?;
-            service.disconnectDeviceSpaceConnection(device_id).await?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!({ "disconnected": true })); }
-            else { println!("Disconnected device {device_label}"); }
+            service.disconnectDeviceSpaceNode(device_id).await?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "disconnected": true, "restricted": true })); }
+            else { println!("Disconnected device {device_label}; direct links and route transit stay blocked until `space admit`"); }
+            Ok(())
+        }
+        Some("admit") if args.len() == 2 => {
+            let topology = service.deviceSpaceTopology()?;
+            let device_id = network_device_id(&topology, &args[1])?;
+            let device_label = network_device_label_by_id(&topology, &device_id)?;
+            service.admitDeviceSpaceMember(device_id)?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({ "admitted": true })); }
+            else { println!("Admitted device {device_label}; it may connect again"); }
             Ok(())
         }
         Some("remove") if args.len() == 2 => {
@@ -592,7 +603,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             let device_label = network_device_label_by_id(&topology, &device_id)?;
             service.removeDeviceSpaceMember(device_id).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({ "removed": true })); }
-            else { println!("Removed device {device_label} from the Space"); }
+            else { println!("Removed device {device_label} from the Space and forgot its pairing"); }
             Ok(())
         }
         Some("join") if args.len() == 2 => {
@@ -636,7 +647,7 @@ async fn execute_link_space_command(coreApplication: &operit_core_application::C
             else { println!("Left device space; current space: {}", space.spaceName); }
             Ok(())
         }
-        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|sync|disconnect <device-name>|remove <device-name>|leave>".to_string()),
+        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|sync|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>".to_string()),
     }
 }
 
@@ -1067,13 +1078,13 @@ pub(crate) fn print_link_usage() {
         return;
     }
     println!("operit2 cli link discover [--timeout-ms <ms>]");
-    println!("operat2 cli link doctor [--repair]  # shared-Space health diagnosis and repair");
+    println!("operit2 cli link doctor [--repair]  # shared-Space health diagnosis and repair");
     println!("operit2 cli link token show  # explicitly reveal the local pairing token");
     println!("operit2 cli link pair-start <node-id> <address> <http|ws|tcp|serial|bluetooth> [--token <token>]");
     println!("operit2 cli link pair-finish <pairing-id> <code>");
     println!("operit2 cli link pair-cancel <pairing-id> | unpair <node-id> | peers");
     println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth>");
-    println!("operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|remove <device-name>|leave>");
+    println!("operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
     println!("operit2 cli link space requests <incoming|outgoing> | refresh <request-id> | cancel <request-id>");
     println!("operit2 cli link space approve|reject <request-id> <assignment-version> | sync");
     println!("operit2 cli link session <http|ws|tcp> [--bind <host:port>] [--no-discovery]  # live interactive management");

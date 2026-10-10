@@ -53,7 +53,7 @@ impl TuiCommandSuggestion {
     }
 }
 
-const COMMAND_SPECS: [TuiCommandSpec; 74] = [
+const COMMAND_SPECS: [TuiCommandSpec; 75] = [
     TuiCommandSpec {
         name: "help",
         usage: "/help",
@@ -138,6 +138,12 @@ const COMMAND_SPECS: [TuiCommandSpec; 74] = [
         name: "network audit",
         usage: "/network audit",
         description_key: TuiTextKey::CommandNetworkAuditDescription,
+        options: &[],
+    },
+    TuiCommandSpec {
+        name: "network doctor",
+        usage: "/network doctor",
+        description_key: TuiTextKey::CommandNetworkDoctorDescription,
         options: &[],
     },
     TuiCommandSpec {
