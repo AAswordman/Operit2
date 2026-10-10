@@ -1,10 +1,11 @@
+import type { ThemeChoice } from "../../../../src/selection-application";
 import type { Snapshot } from "../../../../src/model";
 import type { CharacterDialog } from "../../../bridge/contracts";
 import { button, escapeHtml, selectField, switchRow } from "../../../shared/ui/html";
 import { themeReferenceSection } from "./theme";
 
 /** Renders the original editable binding sections from real catalogues, without choosing default entries. */
-export function bindingsBody(dialog: CharacterDialog, snapshot: Snapshot): string {
+export function bindingsBody(dialog: CharacterDialog, snapshot: Snapshot, themes: readonly ThemeChoice[]): string {
   const card = dialog.card, models = [], stores = [];
   for (const model of snapshot.models) models.push({ id: model.modelId, label: `${model.providerName} · ${model.modelId}` });
   for (const store of snapshot.stores) stores.push({ id: store.id, label: store.name });
@@ -20,5 +21,5 @@ export function bindingsBody(dialog: CharacterDialog, snapshot: Snapshot): strin
   const ttsSection = `<section class="binding">${switchRow("TTS 配置", dialog.ttsBindingEnabled ? "使用角色卡 TTS 配置" : "不要求改变当前独立 TTS 配置", "fixedTts", dialog.ttsBindingEnabled, false)}${snapshot.ttsConfigs.length === 0 ? '<p class="muted">还没有 TTS 配置</p>' : ""}${dialog.ttsBindingEnabled ? `<div class="row"><span class="grow" ${ttsMissing ? 'role="alert"' : ""}>${escapeHtml(tts)}</span>${button("select-tts", "选择 TTS 配置", "tune", "", "small")}</div>` : ""}</section>`;
   const memorySection = `<section class="binding">${switchRow("记忆绑定", card.memoryBindingMode === "SHARED" ? "使用共享记忆" : "使用角色记忆", "sharedMemory", card.memoryBindingMode === "SHARED", snapshot.stores.length === 0)}${snapshot.stores.length === 0 ? '<p class="muted">还没有共享记忆库</p>' : card.memoryBindingMode === "SHARED" ? selectField("共享记忆库", "sharedMemoryId", card.sharedMemoryId, stores, false) : ""}</section>`;
   const toolSection = `<section class="binding">${switchRow("工具访问", card.toolAccessConfig.enabled ? "自定义允许使用的工具" : "跟随全局工具配置", "toolAccess", card.toolAccessConfig.enabled, false)}${card.toolAccessConfig.enabled ? `<div class="row"><span class="grow muted">已配置 ${toolCount} 个工具来源</span>${button("show-tool-access", "配置允许使用的工具", "tools", "", "small")}</div>` : ""}</section>`;
-  return modelSection + themeReferenceSection(card.themeConfigId) + ttsSection + memorySection + toolSection;
+  return modelSection + themeReferenceSection(card.themeConfigId, themes) + ttsSection + memorySection + toolSection;
 }

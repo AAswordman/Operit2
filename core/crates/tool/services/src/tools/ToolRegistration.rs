@@ -1550,6 +1550,7 @@ fn parseProxyInvocation(
             "__operit_package_caller_name",
             "__operit_package_chat_id",
             "__operit_package_caller_participant_id",
+            "__operit_package_caller_owner",
         ]
         .into_iter()
         .map(String::from),
@@ -1667,6 +1668,7 @@ fn parseProxyInvocation(
         "__operit_package_caller_name",
         "__operit_package_chat_id",
         "__operit_package_caller_participant_id",
+            "__operit_package_caller_owner",
     ] {
         forwardedParameters.retain(|parameter| parameter.name != paramName);
         if let Some(parameter) = tool

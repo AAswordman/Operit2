@@ -131,7 +131,7 @@ test("registered group input sends complete input once and ordered turns use rea
 });
 
 /** Cancels during real planner suspension, keeps duplicate input intact and resumes only by an explicit UI action. */
-test("production group menu and Compose controls cancel and resume the exact admitted submission without duplicate input", async t => {
+test("production Compose controls cancel and resume the exact admitted submission without duplicate input", async t => {
   const runtime = await environment(t); await bindGroup(runtime); const planning = barrier(), sends = [], plannerCalls = [];
   /** Suspends the only actual functional-planner call at its controlled AI boundary. */
   runtime.tools.Chat.call = request => { plannerCalls.push(plain(request)); return planning.promise; };
@@ -139,11 +139,9 @@ test("production group menu and Compose controls cancel and resume the exact adm
   runtime.tools.Chat.sendMessage = async request => { sends.push(plain(request)); return receipt(request); };
   const admitted = await runtime.submit(), duplicate = await runtime.submit();
   assert.equal(duplicate.action, "Block"); assert.equal(duplicate.clearInput, false); assert.equal(duplicate.metadata.submissionId, admitted.metadata.submissionId);
-  const menu = await runtime.api("chat.context.actions", { chatId: "selector-chat" }), action = menu.selectors.find(
-    /** Requires the exact owner-registered controls action in the real production menu projection. */
-    entry => entry.id === "group-execution",
-  );
-  assert.deepEqual(plain(action), { id: "group-execution", title: "群组执行", icon: "Groups", routeId: "toolpkg:com.operit.character_cards:ui:group-execution", input: { mode: "group-execution", chatId: "selector-chat" } });
+  const menu = await runtime.api("chat.context.actions", { chatId: "selector-chat" });
+  assert.equal(Object.hasOwn(menu, "selectors"), false);
+  assert.equal(menu.identity.title, "Hook group");
   const ui = controls(runtime); await ui.load();
   assert.equal(keyedNode(ui.render().tree, "group-execution-cancel").props.enabled, true);
   await ui.dispatch(keyedNode(ui.render().tree, "group-execution-cancel").props.onClick);
@@ -159,10 +157,10 @@ test("production group menu and Compose controls cancel and resume the exact adm
   await ui.dispatch(keyedNode(ui.render().tree, "group-execution-refresh").props.onClick);
   assert.equal(keyedNode(ui.render().tree, "group-execution-cancel").props.enabled, false);
   assert.equal(keyedNode(ui.render().tree, "group-execution-resume").props.enabled, false);
-  const bytes = await readFile(path.join(runtime.disk.directory, "character-memory/state.json"));
+  const bytes = await runtime.disk.stateBytes();
   const closed = await ui.dispatch(keyedNode(ui.render().tree, "group-execution-close").props.onClick);
   assert.deepEqual(plain(closed.actionResult), { type: "toolpkg.presentation.cancel", requestId: "group-controls" });
-  assert.deepEqual(await readFile(path.join(runtime.disk.directory, "character-memory/state.json")), bytes);
+  assert.deepEqual(await runtime.disk.stateBytes(), bytes);
 });
 
 /** Forwards active cancellation through the real native transport and resumes against the saved user locator. */

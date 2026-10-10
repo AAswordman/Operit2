@@ -1,3 +1,4 @@
+import { composeStreamFixture } from './support/compose_stream_fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -31,9 +32,13 @@ function runtime(screen) {
     } } },
     Tools: { System: { async toast() {} } },
   });
+  for (const name of ['ToolPkgComposeDslCompiler.js', 'ToolPkgComposeDslRetained.js', 'ToolPkgComposeDslReactive.js']) {
+    vm.runInContext(readFileSync(new URL(`../../core/crates/plugin/sdk/src/toolpkg/${name}`, import.meta.url), 'utf8'), context);
+  }
   vm.runInContext(embedded('ToolPkgComposeDslBridge.rs'), context);
   vm.runInContext(embedded('ToolPkgComposeDslRuntimeScript.rs').replaceAll('{{', '{').replaceAll('}}', '}').replace('{script}', ''), context);
   context.module.exports = load(context, new URL(`../../plugins/packages/buildin/plan_mode/dist/ui/${screen}/index.ui.js`, import.meta.url));
+  composeStreamFixture(context).adapt();
   return { context, calls };
 }
 
@@ -82,7 +87,7 @@ test('only a closed plan exposes the existing implementation action', async () =
   const { context, calls } = runtime('plantodo');
   const streaming = await context.__operit_render_compose_dsl({ state: { chatId: 'test-chat', xmlContent: '<plantodo>Build login' } });
   assert.equal(nodes(streaming.tree).filter(node => node.type === 'Button').length, 0);
-  const completed = await context.__operit_render_compose_dsl({ state: { chatId: 'test-chat', xmlContent: '<plantodo>Build login</plantodo>' } });
+  const completed = await context.__operit_render_compose_dsl({ __operit_update_inputs: true, __operit_input_state: { chatId: 'test-chat', xmlContent: '<plantodo>Build login</plantodo>' } });
   const button = nodes(completed.tree).find(node => node.type === 'Button');
   assert.ok(button);
   await click(context, button);

@@ -68,7 +68,7 @@ async function environment(t) {
       return target[property];
     },
   });
-  const Tools = new Proxy({ Files: disk.files, Chat, SoftwareSettings: settings.harness.globals.Tools.SoftwareSettings }, {
+  const Tools = new Proxy({ Files: disk.files, Storage: disk.storage, Chat, SoftwareSettings: settings.harness.globals.Tools.SoftwareSettings }, {
     /** Rejects all undeclared host capabilities instead of synthesizing a successful response. */
     get(target, property) {
       if (!Object.hasOwn(target, property)) throw new Error("Unsupported policy test host capability: " + String(property));
@@ -118,7 +118,7 @@ async function bind(environment, chatId = "policy-chat") {
   const chat = environment.chats.get(chatId); assert.ok(chat);
   assert.deepEqual(chat.extensions.get(authenticatedOwner), { version: 1, selection: "card:default" });
   assert.deepEqual(chat.extensions.get(siblingOwner), { version: 1, selection: "card:sibling-only", private: { retained: chatId } });
-  const state = JSON.parse(await readFile(path.join(environment.disk.directory, "character-memory", "state.json"), "utf8"));
+  const state = JSON.parse(await environment.disk.stateBytes().toString("utf8"));
   assert.equal(state.version, 3); assert.equal(Object.hasOwn(state, "chatBindings"), false);
   return resolveContext(environment, chatId, "default");
 }
@@ -278,7 +278,7 @@ test("concurrent snapshot policy evaluation does not leak the next turn's permis
 /** Keeps existing real IO failures explicit in their actual service while proving policy does not reread that service. */
 test("queued repository and host errors remain unconsumed by frozen policy and propagate on the real dependency read", async t => {
   const runtime = await environment(t), context = await bind(runtime), before = ioCounts(runtime);
-  const diskFailure = new Error("snapshot-must-not-reread-disk"); runtime.disk.failNext("read", diskFailure);
+  const diskFailure = new Error("snapshot-must-not-reread-disk"); runtime.disk.failNext("storage.list", diskFailure);
   const hostFailure = new Error("snapshot-must-not-reread-binding"); runtime.failNextHost("readExtension", hostFailure);
   assert.equal((await runtime.toolCallPolicy(event("read_file", context))).action, "allow");
   assert.deepEqual(ioCounts(runtime), before);

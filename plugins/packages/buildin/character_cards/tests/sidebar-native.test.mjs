@@ -1,6 +1,8 @@
+import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
 import { readFile, access, writeFile } from 'node:fs/promises';
 import { buildUiScreenScripts } from '../scripts/build.mjs';
 import { packageRuntime, sdkScript } from './package-runtime.mjs';
@@ -26,16 +28,30 @@ function mount(current, data, adapters = {}) {
     readResource: async (key, path) => { calls.push({ resource: key, path }); return '/test/operit-avatar.png'; },
   } };
   globals.Tools = { Files: { readBinary: adapters.readBinary ?? (async path => ({ path, size: 12, contentBase64: 'iVBORw0KGgo=' })) }, ...(adapters.chat ? { Chat: adapters.chat } : {}) };
-  const runtime = packageRuntime(modules, globals);
+  const compiledModules = { ...modules };
+  const runtime = packageRuntime(compiledModules, globals);
+  runtime.context.module = { exports: {} };
+  runtime.context.exports = runtime.context.module.exports;
+  vm.runInContext(readFileSync(new URL('../../../../../core/crates/plugin/sdk/src/toolpkg/vendor/acorn.js', import.meta.url), 'utf8'), runtime.context);
+  runtime.context.__operitAcorn = runtime.context.module.exports;
+  vm.runInContext(readFileSync(new URL('../../../../../core/crates/plugin/sdk/src/toolpkg/ToolPkgComposeDslCompiler.js', import.meta.url), 'utf8'), runtime.context);
+  for (const [modulePath, bytes] of Object.entries(compiledModules)) {
+    compiledModules[modulePath] = runtime.context.OperitComposeCompiler.compile(Buffer.from(bytes).toString('utf8'), 'com.operit.character_cards:' + modulePath);
+  }
   runtime.context.module = { exports: runtime.load('dist/ui/chat-sidebar/index.ui.js') };
+  for (const file of ['ToolPkgComposeDslRetained.js', 'ToolPkgComposeDslReactive.js']) {
+    vm.runInContext(readFileSync(new URL('../../../../../core/crates/plugin/sdk/src/toolpkg/' + file, import.meta.url), 'utf8'), runtime.context);
+  }
   vm.runInContext(sdkScript('ToolPkgComposeDslBridge.rs'), runtime.context);
   vm.runInContext(sdkScript('ToolPkgComposeDslRuntimeScript.rs').replaceAll('{{', '{').replaceAll('}}', '}').replace('{script}', ''), runtime.context);
-  const first = runtime.context.__operit_render_compose_dsl({ state: current, packageName: 'com.operit.character_cards', executionContextKey: 'native-sidebar-test' });
+  composeStreamFixture(runtime.context).adapt();
+  const options = { packageName: 'com.operit.character_cards', executionContextKey: 'native-sidebar-test' };
+  const first = runtime.context.__operit_render_compose_dsl({ ...options, state: current });
   const session = { first, calls,
     bundle() { return runtime.context.__operit_compose_bundle; },
-    update(next) { return runtime.context.__operit_render_compose_dsl({ __operit_update_inputs: true, __operit_input_state: next, state: first.state, memo: first.memo }); },
-    render() { return runtime.context.__operit_rerender_compose_dsl({}); },
-    dispatch(action, payload) { return runtime.context.__operit_dispatch_compose_dsl_action({ actionId: action.__actionId, __action_payload: payload }); },
+    update(next) { return runtime.context.__operit_render_compose_dsl({ ...options, __operit_update_inputs: true, __operit_input_state: next }); },
+    render() { return runtime.context.__operit_render_compose_dsl({ ...options, __operit_update_inputs: true }); },
+    dispatch(action, payload) { return runtime.context.__operit_dispatch_compose_dsl_action({ ...options, actionId: action.__actionId, __action_payload: payload }); },
     load() { return session.dispatch(first.tree.props.onLoad); },
     async click(tree, key) { return session.dispatch(keyedNode(tree, key).props.onClick); },
   };
@@ -48,6 +64,14 @@ test('native role sidebar restores rounded nested legacy layout without timestam
   const { tree } = await screen.load();
   if (process.env.OPERIT_NATIVE_SIDEBAR_FIXTURE) await writeFile(process.env.OPERIT_NATIVE_SIDEBAR_FIXTURE, JSON.stringify(tree, null, 2) + '\n');
   assert.equal(tree.type, 'Column');
+  assert.equal(tree.props.fillMaxWidth, true);
+  assert.equal(tree.props.fillMaxSize, undefined);
+  assert.equal(tree.props.height, undefined);
+  const content = keyedNode(tree, 'native-sidebar-history');
+  assert.equal(content.type, 'Column');
+  assert.equal(content.props.weight, undefined);
+  assert.equal(content.props.height, undefined);
+  assert.equal(composeNodes(tree, node => node.type === 'LazyColumn').length, 0);
   assert.equal(composeNodes(tree, node => node.type === 'WebView').length, 0);
   assert.equal(composeNodes(tree, node => node.type === 'Text' && node.props.text === '1791059541109').length, 0);
   assert.equal(keyedNode(tree, 'sidebar-create-bar').props.height, 34);
@@ -275,9 +299,10 @@ test('selection and streaming input changes rerender native rows without reloadi
 });
 
 test('custom avatars overlap file reads with bounded concurrency', async () => {
-  const chats = [summary('c1')], data = catalog(chats);
+  const chats = Array.from({ length: 17 }, (_, i) => summary('c' + (i + 1), { group: null })), data = catalog(chats);
   data.sections = Array.from({ length: 17 }, (_, i) => ({ ...data.sections[0], id: 'card:avatar-' + i,
-    selection: 'card:avatar-' + i, avatarUri: '/test/avatar-' + i + '.png' }));
+    selection: 'card:avatar-' + i, avatarUri: '/test/avatar-' + i + '.png',
+    chats: [chats[i]], conversationGroups: [], ungroupedChats: [chats[i]] }));
   let active = 0, maximum = 0, reads = 0;
   const screen = mount(context(chats), data, { readBinary: async () => {
     reads++; active++; maximum = Math.max(maximum, active);

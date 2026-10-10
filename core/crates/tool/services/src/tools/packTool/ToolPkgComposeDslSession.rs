@@ -52,8 +52,6 @@ pub struct ToolPkgComposeDslEvent {
     pub requestId: String,
     pub phase: String,
     pub update: Option<ToolPkgComposeDslNodeUpdate>,
-    pub state: Option<BTreeMap<String, Value>>,
-    pub memo: Option<BTreeMap<String, Value>>,
     pub actionResult: Option<Value>,
     pub navigationCommands: Vec<Value>,
     pub error: Option<String>,
@@ -61,19 +59,25 @@ pub struct ToolPkgComposeDslEvent {
 
 /// Reads the owned DSL result without parsing a JSON string or a recursive UI tree.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(non_snake_case)]
 struct ComposeResponse {
     update: Option<ToolPkgComposeDslNodeUpdate>,
-    state: BTreeMap<String, Value>,
-    memo: BTreeMap<String, Value>,
     actionResult: Option<Value>,
     navigationCommands: Vec<Value>,
 }
 
-#[derive(Default)]
-struct ComposeSnapshots {
-    state: Option<BTreeMap<String, Value>>,
-    memo: Option<BTreeMap<String, Value>>,
+/// Identifies commits published on the same synchronous JavaScript response channel.
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ComposeResponsePhase { Intermediate, Final }
+
+/// Envelopes one already structured response without converting the retained tree to JSON text.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamedComposeResponse {
+    phase: ComposeResponsePhase,
+    response: ComposeResponse,
 }
 
 struct ComposeSessionState {
@@ -82,7 +86,6 @@ struct ComposeSessionState {
     resources: Arc<BTreeMap<String, String>>,
     sender: Mutex<Option<mpsc::UnboundedSender<ToolPkgComposeDslEvent>>>,
     receiver: Mutex<Option<mpsc::UnboundedReceiver<ToolPkgComposeDslEvent>>>,
-    snapshots: Mutex<ComposeSnapshots>,
     closed: AtomicBool,
     cancellation: Notify,
     commandOwner: AtomicBool,
@@ -97,6 +100,11 @@ pub struct ToolPkgComposeDslSession {
 /// Streams one session's updates without retaining an unbounded replay history.
 pub struct ToolPkgComposeDslEventStream {
     receiver: mpsc::UnboundedReceiver<ToolPkgComposeDslEvent>,
+}
+
+impl ToolPkgComposeDslEventStream {
+    /// Receives one typed event for a finite widget command consumer.
+    pub(super) async fn recv(&mut self) -> Option<ToolPkgComposeDslEvent> { self.receiver.recv().await }
 }
 
 impl Stream for ToolPkgComposeDslEventStream {
@@ -119,7 +127,6 @@ impl ToolPkgComposeDslSession {
         let state = Arc::new(ComposeSessionState {
             id: uuid::Uuid::new_v4().to_string(), engine, resources,
             sender: Mutex::new(Some(sender)), receiver: Mutex::new(Some(receiver)),
-            snapshots: Mutex::new(ComposeSnapshots::default()),
             closed: AtomicBool::new(false), cancellation: Notify::new(), commandOwner: AtomicBool::new(false),
         });
         sessionRegistry().lock().expect("Compose registry mutex poisoned").insert(state.id.clone(), Arc::downgrade(&state));
@@ -179,50 +186,50 @@ impl ToolPkgComposeDslSession {
         if matches!(sent, Some(Err(_))) { self.close(); }
     }
 
-    /// Converts one structured response and suppresses unchanged state and memo snapshots.
-    fn deliver(&self, requestId: &str, phase: &str, response: Value) -> Result<(), String> {
-        let response: ComposeResponse = serde_json::from_value(response).map_err(|error| error.to_string())?;
-        let mut snapshots = self.state.snapshots.lock().expect("Compose snapshot mutex poisoned");
-        let state = if snapshots.state.as_ref() == Some(&response.state) { None } else { snapshots.state = Some(response.state.clone()); Some(response.state) };
-        let memo = if snapshots.memo.as_ref() == Some(&response.memo) { None } else { snapshots.memo = Some(response.memo.clone()); Some(response.memo) };
-        drop(snapshots);
-        self.emit(ToolPkgComposeDslEvent { requestId: requestId.into(), phase: phase.into(), update: response.update, state, memo, actionResult: response.actionResult, navigationCommands: response.navigationCommands, error: None });
+    /// Forwards structured UI changes without exporting or comparing JS-owned state and memo.
+    fn deliver(&self, requestId: &str, value: Value) -> Result<(), String> {
+        let streamed: StreamedComposeResponse = serde_json::from_value(value).map_err(|error| error.to_string())?;
+        let phase = match streamed.phase { ComposeResponsePhase::Intermediate => "intermediate", ComposeResponsePhase::Final => "final" };
+        let response = streamed.response;
+        self.emit(ToolPkgComposeDslEvent { requestId: requestId.into(), phase: phase.into(), update: response.update, actionResult: response.actionResult, navigationCommands: response.navigationCommands, error: None });
         Ok(())
     }
 
     /// Reports malformed results and execution errors through the same request-correlated stream.
     fn fail(&self, requestId: &str, error: String) {
-        self.emit(ToolPkgComposeDslEvent { requestId: requestId.into(), phase: "error".into(), update: None, state: None, memo: None, actionResult: None, navigationCommands: Vec::new(), error: Some(error) });
+        self.emit(ToolPkgComposeDslEvent { requestId: requestId.into(), phase: "error".into(), update: None, actionResult: None, navigationCommands: Vec::new(), error: Some(error) });
     }
 
     /// Runs one command with an explicit operation and a cancellation lease owned by the page.
-    async fn execute(&self, mut command: ToolPkgComposeDslCommand) {
+    async fn execute(&self, command: ToolPkgComposeDslCommand) {
         let cancellation = self.state.cancellation.notified();
         if self.state.closed.load(Ordering::Acquire) { return; }
-        command.runtimeOptions.insert("__operit_compose_retained_session".into(), Value::Bool(true));
         let work = async {
+            let session = self.clone();
+            let requestId = command.requestId.clone();
+            let onResponse: Arc<dyn Fn(Value) + Send + Sync> = Arc::new(move |response| {
+                if let Err(error) = session.deliver(&requestId, response) { session.fail(&requestId, error); }
+            });
             let result = match command.operation.as_str() {
                 "render" => {
                     let script = command.script.ok_or("Compose render command requires a script")?;
-                    self.state.engine.execute_compose_dsl_script_async(script, command.runtimeOptions, command.envOverrides, self.state.resources.clone()).await
+                    self.state.engine.execute_compose_dsl_script_stream_async(script, command.runtimeOptions, command.envOverrides, self.state.resources.clone(), onResponse).await
                 },
                 "action" => {
                     let actionId = command.actionId.ok_or("Compose action command requires an action id")?;
-                    let session = self.clone();
-                    let requestId = command.requestId.clone();
-                    self.state.engine.dispatch_compose_dsl_action_result_async(actionId, command.payload, command.runtimeOptions, command.envOverrides, Some(Arc::new(move |response| {
-                        if let Err(error) = session.deliver(&requestId, "intermediate", response) { session.fail(&requestId, error); }
-                    }))).await
+                    self.state.engine.dispatch_compose_dsl_action_stream_async(actionId, command.payload, command.runtimeOptions, command.envOverrides, onResponse).await
                 },
                 _ => return Err(format!("Unsupported Compose session operation: {}", command.operation)),
             }.map_err(|error| error.to_string())?;
-            if let Some(response) = result { self.deliver(&command.requestId, "final", response)?; }
+            if result != Some(Value::Null) {
+                return Err("Compose session command must publish its responses on the owned stream".into());
+            }
             Ok::<(), String>(())
         };
         tokio::select! {
             result = work => {
                 if let Err(error) = result { self.fail(&command.requestId, error); }
-                self.emit(ToolPkgComposeDslEvent { requestId: command.requestId, phase: "complete".into(), update: None, state: None, memo: None, actionResult: None, navigationCommands: Vec::new(), error: None });
+                self.emit(ToolPkgComposeDslEvent { requestId: command.requestId, phase: "complete".into(), update: None, actionResult: None, navigationCommands: Vec::new(), error: None });
             },
             _ = cancellation => {},
         }
@@ -248,3 +255,7 @@ impl Drop for ComposeSessionState {
         sessionRegistry().lock().expect("Compose registry mutex poisoned").remove(&self.id);
     }
 }
+
+#[cfg(test)]
+#[path = "tests/ToolPkgComposeDslSessionTests.rs"]
+mod tests;

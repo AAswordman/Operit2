@@ -49,7 +49,7 @@ test("disk IO harness moves real bytes and rejects escapes and non-IO production
   assert.throws(
     /** Attempts the prohibited old business transport directly. */
     () => disk.globals.Tools.Memory,
-    /Tools.Files IO only/,
+    /Files and Storage only/,
   );
   assert.throws(
     /** Requires unsupported IO capabilities to fail visibly rather than be silently synthesized. */

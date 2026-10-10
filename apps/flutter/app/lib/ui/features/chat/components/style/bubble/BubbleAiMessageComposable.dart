@@ -6,7 +6,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
-import '../../../../../common/CharacterAvatar.dart';
+import '../../../../../common/ChatAvatarImage.dart';
 import '../../../../../common/markdown/MarkdownImageRenderer.dart';
 import '../../../../../common/markdown/MarkdownRemoteImage.dart';
 import '../../../../../common/markdown/MarkdownNodeGrouper.dart';
@@ -674,7 +674,7 @@ class _MessageAvatar extends StatelessWidget {
           borderRadius: square ? BorderRadius.circular(cornerRadius) : null,
         ),
         clipBehavior: Clip.antiAlias,
-        child: CharacterAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
+        child: ChatAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
       ),
     );
   }

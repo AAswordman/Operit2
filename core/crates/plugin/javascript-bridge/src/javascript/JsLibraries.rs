@@ -6,6 +6,7 @@ use crate::javascript::JsInitRuntimeScriptBuilder;
 use crate::javascript::JsJavaBridge::buildJavaClassBridgeDefinition;
 use operit_plugin_sdk::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslBridge::buildComposeDslContextBridgeDefinition;
+use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
 use operit_plugin_sdk::JsExecutionScriptBuilder;
 use operit_plugin_sdk::JsTools::getJsToolsDefinition;
@@ -221,6 +222,8 @@ pub fn getJsThirdPartyLibraries() -> String {
 #[allow(non_snake_case)]
 /// Builds the host-backed JavaScript bootstrap and scoped runtime services.
 pub fn buildRuntimeBootstrapScript() -> String {
+    let composeRuntimeJson = serde_json::to_string(&buildComposeDslRuntimeWrappedScript(""))
+        .expect("Compose runtime source must serialize");
     let executionPreludeJson =
         serde_json::to_string(&JsExecutionScriptBuilder::buildExecutionPreludeSource())
             .expect("Execution prelude source must serialize");
@@ -233,6 +236,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
         var window = globalThis;
         var OPERIT_CLEAN_ON_EXIT_DIR = {};
         var __operitRuntimePrelude = {};
+        var __operitComposeRuntimeSource = {};
         {}
         var console = {{
             log: function() {{ __operitNativeLog('info', String(globalThis.__operitCurrentCallId || ''), Array.prototype.slice.call(arguments).join(' ')); }},
@@ -478,13 +482,9 @@ pub fn buildRuntimeBootstrapScript() -> String {
             ];
         }}
 
+        /** Computes the existing UTF-16 cache fingerprint through the shared Host callback. */
         function __operitHashText(value) {{
-            var textValue = String(value == null ? '' : value);
-            var hash = 0;
-            for (var i = 0; i < textValue.length; i += 1) {{
-                hash = (((hash << 5) - hash) + textValue.charCodeAt(i)) | 0;
-            }}
-            return (hash >>> 0).toString(16);
+            return __operitNativeHashText(String(value == null ? '' : value));
         }}
 
         function __operitBuildFactoryKey(kind, identity, source) {{
@@ -502,7 +502,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 'exports',
                 'require',
                 '__operit_call_runtime',
-                __operitRuntimePrelude + '\n' + (composeCompilation ? OperitComposeCompiler.compile(source, identity) : source)
+                __operitRuntimePrelude + '\n' + (composeCompilation ? OperitComposeCompiler.compile(source, identity) + (kind === 'main' ? '\n' + __operitComposeRuntimeSource : '') : source)
             );
             cache[key] = factory;
             return factory;
@@ -542,6 +542,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 return null;
             }}
             ScreenPlaceholder.__operit_toolpkg_module_path = modulePath;
+            ScreenPlaceholder.__operit_toolpkg_export_name = "default";
             return ScreenPlaceholder;
         }}
 
@@ -753,6 +754,15 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 log: emitIntermediate,
                 update: emitIntermediate,
                 sendIntermediateResult: emitIntermediate,
+                /** Publishes each retained commit immediately on its own command's structured channel. */
+                sendComposeResponse: function(phase, response) {{
+                    if (!isActive()) {{ throw new Error('Compose response owner is no longer active'); }}
+                    __operitNativeSendStructuredIntermediate(callId, {{
+                        phase: phase,
+                        response: __operitNormalizeSerializableValue(__operitNormalizeComposeResult(response), [])
+                    }});
+                }},
+                reportError: emitError,
                 done: complete,
                 complete: complete,
                 getState: function() {{ return readCallValue('__operit_package_state', undefined); }},
@@ -1175,7 +1185,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                     globalThis.RuntimeContext.__operitEnsureContextRunnerRegistered();
                 }}
                 var moduleCache = registrationMode ? {{}} : __operitGetModuleInstanceCache();
-                var mainModuleKey = ['instance', 'main', packageTarget + ':' + screenPath, String(scriptText || '').length, __operitHashText(scriptText)].join(':');
+                var mainModuleKey = ['instance', 'main', packageTarget + ':' + screenPath, String(scriptText || '').length, __operitHashText(scriptText), 'compose=' + structuredResult].join(':');
                 var module = moduleCache[mainModuleKey];
                 var exports = module && module.exports ? module.exports : null;
                 /** Reads CommonJS candidates from the execution resource owner and preserves empty modules. */
@@ -1194,7 +1204,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                     return null;
                 }}
                 function executeModule(modulePath, moduleText, requireInternal) {{
-                    var moduleKey = ['instance', 'module', packageTarget + ':' + modulePath, String(moduleText || '').length, __operitHashText(moduleText)].join(':');
+                    var moduleKey = ['instance', 'module', packageTarget + ':' + modulePath, String(moduleText || '').length, __operitHashText(moduleText), 'compose=' + structuredResult].join(':');
                     if (moduleCache[moduleKey]) {{
                         return moduleCache[moduleKey].exports;
                     }}
@@ -1393,6 +1403,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
         JsInitRuntimeScriptBuilder::buildRuntimeBootstrapScript(),
         cleanOnExitDirJson,
         executionPreludeJson,
+        composeRuntimeJson,
         buildJavaClassBridgeDefinition(),
         buildComposeDslContextBridgeDefinition(),
         buildToolPkgApiRuntimeScript(),

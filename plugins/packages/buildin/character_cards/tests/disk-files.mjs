@@ -1,3 +1,5 @@
+import { createStorageHost } from "./storage-host.mjs";
+import { loadModule } from "./runtime.mjs";
 import { mkdtemp, mkdir, readFile, writeFile, rename, stat, rm, readdir } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -96,11 +98,12 @@ export async function createDiskHarness(testContext) {
       return target[property];
     },
   });
-  const tools = new Proxy({ Files: files }, {
+  const storage = createStorageHost(directory, attempted);
+  const tools = new Proxy({ Files: files, Storage: storage }, {
     /** Permits only real disk IO and rejects legacy CLI, memory tools, or invented production services. */
     get(target, property) {
-      if (property !== "Files") throw new Error("Disk harness permits Tools.Files IO only: " + String(property));
-      return target.Files;
+      if (!Object.hasOwn(target, property)) throw new Error("Disk harness permits Files and Storage only: " + String(property));
+      return target[property];
     },
   });
 
@@ -108,14 +111,17 @@ export async function createDiskHarness(testContext) {
   async function cleanup() {
     const resolved = path.resolve(directory), relative = path.relative(temporaryRoot, resolved);
     if (relative === "" || path.isAbsolute(relative) || relative.split(path.sep)[0] === "..") throw new Error("Unsafe disk harness cleanup path");
+    storage.close();
     await rm(resolved, { recursive: true, force: false });
   }
   testContext.after(cleanup);
   return {
-    directory, calls, files,
+    directory, calls, files, storage,
     globals: {
       Tools: tools,
       ToolPkg: {
+        /** Returns the test plugin's persistent Space data namespace. */
+        getSpaceDataDir() { return directory.replaceAll("\\", "/"); },
         /** Implements only the existing authenticated config-directory IO binding, not provider or storage services. */
         getConfigDir(pluginId) {
           if (pluginId !== undefined && pluginId !== "com.operit.character_cards") throw new Error("Disk harness cannot expose another plugin directory");
@@ -125,9 +131,33 @@ export async function createDiskHarness(testContext) {
     },
     /** Injects one negative IO event; no successful domain operation is implemented by the harness. */
     failNext(method, failure) {
-      if (!Object.hasOwn(methods, method)) throw new Error("Cannot fail an unsupported disk method: " + method);
+      if (!Object.hasOwn(methods, method) && !["storage.commit", "storage.open", "storage.list", "storage.get"].includes(method)) throw new Error("Cannot fail an unsupported disk method: " + method);
       if (faults.has(method)) throw new Error("A disk failure is already scheduled for " + method);
       faults.set(method, failure);
+    },
+    /** Reconstructs assertion data independently from actual persisted SQLite records. */
+    readState() {
+      return storage.inspect(sql => {
+        const schema = loadModule("src/storage/records.ts"), rows = sql.prepare("SELECT * FROM records ORDER BY collection,key").all();
+        const meta = rows.find(row => row.collection === "meta" && row.key === "state");
+        if (meta === undefined) throw new Error("Test database has no metadata");
+        return schema.stateFromRecords(JSON.parse(meta.value), rows.filter(row => schema.collections.includes(row.collection)).map(row => ({ collection: row.collection, key: row.key, value: JSON.parse(row.value), version: row.version })));
+      });
+    },
+    /** Returns deterministic assertion bytes for the current database domain records. */
+    stateBytes() { return Buffer.from(JSON.stringify(this.readState())); },
+    /** Writes deliberate test data directly to SQLite without supplying domain responses through the host. */
+    replaceState(state) {
+      storage.inspect(sql => {
+        const schema = loadModule("src/storage/records.ts");
+        sql.exec("BEGIN");
+        try {
+          for (const collection of schema.collections) sql.prepare("DELETE FROM records WHERE collection=?").run(collection);
+          for (const row of schema.records(state)) sql.prepare("INSERT INTO records VALUES(?,?,?,?)").run(row.collection, row.key, JSON.stringify(row.value), "test-edit");
+          sql.prepare("UPDATE records SET value=?,version='test-edit' WHERE collection='meta' AND key='state'").run(JSON.stringify({ version: state.version, nextId: state.nextId, active: state.active }));
+          sql.exec("COMMIT");
+        } catch (error) { sql.exec("ROLLBACK"); throw error; }
+      });
     },
     /** Returns exact native bytes for independent assertions outside the adapted host API. */
     readBytes(file) { return readFile(confined(file)); },

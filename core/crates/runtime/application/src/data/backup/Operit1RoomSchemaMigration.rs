@@ -276,7 +276,7 @@ pub(crate) mod tests {
             bridge,
             Operit1ToOperit2ChatArchiveBridge::Operit1RoomV10ToOperit2SqliteV28
         );
-        assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
+        assert_eq!(bridge.operit2TargetSchemaVersion(), 28);
         assert_eq!(
             readOperit1RoomSchemaVersion(&mut connection).expect("schema version must be readable"),
             10
@@ -298,7 +298,7 @@ pub(crate) mod tests {
             bridge,
             Operit1ToOperit2ChatArchiveBridge::Operit1RoomV20ToOperit2SqliteV28
         );
-        assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
+        assert_eq!(bridge.operit2TargetSchemaVersion(), 28);
         assert_eq!(
             readOperit1RoomSchemaVersion(&mut connection).expect("schema version must be readable"),
             20
@@ -335,6 +335,6 @@ pub(crate) mod tests {
             bridge,
             Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV28
         );
-        assert_eq!(bridge.operit2TargetSchemaVersion(), 27);
+        assert_eq!(bridge.operit2TargetSchemaVersion(), 28);
     }
 }

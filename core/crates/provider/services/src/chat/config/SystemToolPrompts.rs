@@ -175,7 +175,6 @@ impl SystemToolPrompts {
             basic_tools_en(),
             file_system,
             http_tools_en(),
-            memory_tools_en(),
         ]
     }
 
@@ -279,7 +278,6 @@ impl SystemToolPrompts {
             basic_tools_cn(),
             file_system,
             http_tools_cn(),
-            memory_tools_cn(),
         ]
     }
 
@@ -340,14 +338,12 @@ impl SystemToolPrompts {
                 basic_tools_en(),
                 file_system_tools_en(),
                 http_tools_en(),
-                memory_tools_en(),
             ]
         } else {
             vec![
                 basic_tools_cn(),
                 file_system_tools_cn(),
                 http_tools_cn(),
-                memory_tools_cn(),
             ]
         };
         let mut seen = BTreeSet::new();
@@ -366,28 +362,13 @@ impl SystemToolPrompts {
         result
     }
 
-    #[allow(non_snake_case)]
-    pub fn generateMemoryToolsPromptEn(tool_visibility: &HashMap<String, bool>) -> String {
-        applyToolVisibility(vec![memory_tools_en()], tool_visibility)
-            .first()
-            .map(ToString::to_string)
-            .unwrap_or_default()
-    }
 
-    #[allow(non_snake_case)]
-    pub fn generateMemoryToolsPromptCn(tool_visibility: &HashMap<String, bool>) -> String {
-        applyToolVisibility(vec![memory_tools_cn()], tool_visibility)
-            .first()
-            .map(ToString::to_string)
-            .unwrap_or_default()
-    }
 
     #[allow(non_snake_case)]
     /// Propagates registered tool-policy errors before exposing any prompt to the model.
     pub async fn generateToolsPromptEn(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
-        include_memory_tools: bool,
         chat_model_has_direct_image: bool,
         has_backend_audio_recognition: bool,
         has_backend_video_recognition: bool,
@@ -400,7 +381,6 @@ impl SystemToolPrompts {
         Self::generateToolsPromptEnForHost(
             chat_id,
             has_backend_image_recognition,
-            include_memory_tools,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
             has_backend_video_recognition,
@@ -419,7 +399,6 @@ impl SystemToolPrompts {
     pub async fn generateToolsPromptEnForHost(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
-        include_memory_tools: bool,
         chat_model_has_direct_image: bool,
         has_backend_audio_recognition: bool,
         has_backend_video_recognition: bool,
@@ -430,7 +409,7 @@ impl SystemToolPrompts {
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
     ) -> Result<String, String> {
-        let mut categories = Self::getAIAllCategoriesEnForHost(
+        let categories = Self::getAIAllCategoriesEnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
@@ -440,14 +419,9 @@ impl SystemToolPrompts {
             saf_bookmark_names,
             host_environment,
         );
-        if !include_memory_tools {
-            categories
-                .retain(|category| category.category_name != "Memory and Memory Library Tools");
-        }
         compose_tool_prompt(
             chat_id,
             true,
-            include_memory_tools,
             categories,
             tool_visibility,
             hook_metadata,
@@ -460,7 +434,6 @@ impl SystemToolPrompts {
     pub async fn generateToolsPromptCn(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
-        include_memory_tools: bool,
         chat_model_has_direct_image: bool,
         has_backend_audio_recognition: bool,
         has_backend_video_recognition: bool,
@@ -473,7 +446,6 @@ impl SystemToolPrompts {
         Self::generateToolsPromptCnForHost(
             chat_id,
             has_backend_image_recognition,
-            include_memory_tools,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
             has_backend_video_recognition,
@@ -492,7 +464,6 @@ impl SystemToolPrompts {
     pub async fn generateToolsPromptCnForHost(
         chat_id: Option<String>,
         has_backend_image_recognition: bool,
-        include_memory_tools: bool,
         chat_model_has_direct_image: bool,
         has_backend_audio_recognition: bool,
         has_backend_video_recognition: bool,
@@ -503,7 +474,7 @@ impl SystemToolPrompts {
         tool_visibility: &HashMap<String, bool>,
         hook_metadata: HashMap<String, Value>,
     ) -> Result<String, String> {
-        let mut categories = Self::getAIAllCategoriesCnForHost(
+        let categories = Self::getAIAllCategoriesCnForHost(
             has_backend_image_recognition,
             chat_model_has_direct_image,
             has_backend_audio_recognition,
@@ -513,13 +484,9 @@ impl SystemToolPrompts {
             saf_bookmark_names,
             host_environment,
         );
-        if !include_memory_tools {
-            categories.retain(|category| category.category_name != "记忆与记忆库工具");
-        }
         compose_tool_prompt(
             chat_id,
             false,
-            include_memory_tools,
             categories,
             tool_visibility,
             hook_metadata,
@@ -691,7 +658,6 @@ fn applyToolVisibility(
 async fn compose_tool_prompt(
     chat_id: Option<String>,
     use_english: bool,
-    include_memory_tools: bool,
     categories: Vec<SystemToolPromptCategory>,
     tool_visibility: &HashMap<String, bool>,
     hook_metadata: HashMap<String, Value>,
@@ -699,10 +665,6 @@ async fn compose_tool_prompt(
     let visible_categories = applyToolVisibility(categories, tool_visibility);
     let available_tools = buildToolHookPayload(&visible_categories);
     let mut metadata = HashMap::from([
-        (
-            "includeMemoryTools".to_string(),
-            json!(include_memory_tools),
-        ),
         ("toolVisibility".to_string(), json!(tool_visibility)),
     ]);
     metadata.extend(hook_metadata);
@@ -1017,204 +979,6 @@ fn http_tools_en() -> SystemToolPromptCategory {
 
 fn http_tools_cn() -> SystemToolPromptCategory {
     category("HTTP工具", vec![tool("visit_web", "访问网页并提取信息（可选包含图片链接）。有两种用法：1）提供 `url` 访问新页面。2）提供上一次 visit_web 返回的 `visit_key` + `link_number`，用来继续访问结果里的某个链接。返回文本通常会包含 `Results:` 段落，形如 `[1] ...`、`[2] ...` -- 中括号里的数字是从 1 开始的编号，请把该编号原样作为 `link_number`（范围：1..links.length），不要按 0 起始。若需要图片，请设置 `include_image_links=true`，工具会额外返回 `Images:` 段落以及从 1 开始的图片编号。重要：下载图片不要用 `link_number` 乱点页面链接；请使用 `download_file` 的 `visit_key` + `image_number` 按图片编号下载。重要：这个工具用于网页浏览/提取，不能替代原始 HTTP GET/POST 请求；如果你实际需要的是接口返回体或精确响应内容，用它时可能会得到空结果或不完整内容。注意：该工具仅支持浏览/读取操作，不执行登录、点击、填写、提交等交互自动化。", vec![param("url", "string", "可选, 网页URL", false, None), param("visit_key", "string", "可选, 字符串, 上一次 visit_web 返回的 visitKey", false, None), param("link_number", "integer", "可选, 整数, 要继续访问的链接编号（从1开始，对应 Results 里的 `[n]`；范围 1..links.length）", false, None), param("include_image_links", "boolean", "可选, boolean, 为 true 时在结果中额外包含提取到的图片链接列表（imageLinks）", false, None), param("headers", "string", "可选：HTTP请求头，JSON对象字符串，例如{\"Referer\":\"...\"}", false, None), param("user_agent_preset", "string", "可选：UA预设，快速选择：desktop/android", false, None), param("user_agent", "string", "可选：完整自定义UA（优先级高于预设）", false, None)])])
-}
-
-fn memory_tools_en() -> SystemToolPromptCategory {
-    let mut category = category(
-        "Memory and Memory Library Tools",
-        vec![
-            tool(
-                "query_memory",
-                "Searches the memory library for relevant memories and document chunks.",
-                vec![
-                    param("query", "string", "the search query", true, None),
-                    param(
-                        "target_owner_key",
-                        "string",
-                        "optional, memory owner key such as character:<character-id> or shared:<shared-id>",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "folder_path",
-                        "string",
-                        "optional, the specific folder path to search within",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "start_time",
-                        "string",
-                        "optional, local-time string in YYYY-MM-DD or YYYY-MM-DD HH:mm format",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "end_time",
-                        "string",
-                        "optional, local-time string in YYYY-MM-DD or YYYY-MM-DD HH:mm format",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "snapshot_id",
-                        "string",
-                        "optional, reusable snapshot id",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "threshold",
-                        "number",
-                        "optional, number >= 0",
-                        false,
-                        Some("0"),
-                    ),
-                    param(
-                        "limit",
-                        "integer",
-                        "optional, maximum number of results",
-                        false,
-                        Some("20"),
-                    ),
-                ],
-            ),
-            tool(
-                "get_memory_by_title",
-                "Retrieves a memory by exact title, including document content or selected chunks.",
-                vec![
-                    param(
-                        "target_owner_key",
-                        "string",
-                        "required, memory owner key such as character:<character-id> or shared:<shared-id>",
-                        true,
-                        None,
-                    ),
-                    param(
-                        "title",
-                        "string",
-                        "required, the exact title of the memory",
-                        true,
-                        None,
-                    ),
-                    param(
-                        "chunk_index",
-                        "integer",
-                        "optional, read a specific chunk by its number",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "chunk_range",
-                        "string",
-                        "optional, read a range of chunks in start-end format",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "query",
-                        "string",
-                        "optional, search inside the document",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "limit",
-                        "integer",
-                        "optional, maximum number of chunks",
-                        false,
-                        Some("20"),
-                    ),
-                ],
-            ),
-        ],
-    );
-    category.category_footer = "\nNote: The graph memory library and USER.md may be updated automatically after the current reply is finalized. If you need to manage memories immediately or update USER.md, use the appropriate tools directly.".to_string();
-    category
-}
-
-fn memory_tools_cn() -> SystemToolPromptCategory {
-    let mut category = category(
-        "记忆与记忆库工具",
-        vec![
-            tool(
-                "query_memory",
-                "从记忆库中搜索相关记忆和文档分块。",
-                vec![
-                    param("query", "string", "搜索查询", true, None),
-                    param(
-                        "target_owner_key",
-                        "string",
-                        "可选，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "folder_path",
-                        "string",
-                        "可选, 要搜索的特定文件夹路径",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "start_time",
-                        "string",
-                        "可选, 本地时间字符串，格式支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "end_time",
-                        "string",
-                        "可选, 本地时间字符串，格式支持 YYYY-MM-DD 或 YYYY-MM-DD HH:mm",
-                        false,
-                        None,
-                    ),
-                    param("snapshot_id", "string", "可选, 可复用快照 id", false, None),
-                    param("threshold", "number", "可选, number >= 0", false, Some("0")),
-                    param(
-                        "limit",
-                        "integer",
-                        "可选, 返回结果的最大数量",
-                        false,
-                        Some("20"),
-                    ),
-                ],
-            ),
-            tool(
-                "get_memory_by_title",
-                "通过精确标题检索记忆，可读取完整内容或文档分块。",
-                vec![
-                    param(
-                        "target_owner_key",
-                        "string",
-                        "必需，记忆 owner key，例如 character:<character-id> 或 shared:<shared-id>",
-                        true,
-                        None,
-                    ),
-                    param("title", "string", "必需, 记忆的精确标题", true, None),
-                    param(
-                        "chunk_index",
-                        "integer",
-                        "可选, 读取特定编号的分块",
-                        false,
-                        None,
-                    ),
-                    param(
-                        "chunk_range",
-                        "string",
-                        "可选, 读取分块范围，格式为 起始-结束",
-                        false,
-                        None,
-                    ),
-                    param("query", "string", "可选, 在文档内搜索", false, None),
-                    param("limit", "integer", "可选, 最大分块数量", false, Some("20")),
-                ],
-            ),
-        ],
-    );
-    category.category_footer = "\n注意：图记忆库和 USER.md 可能会在当前回复完成后自动更新。若需要立即管理记忆或更新 USER.md，请直接使用对应工具。".to_string();
-    category
 }
 
 fn adjust_read_file_tool(

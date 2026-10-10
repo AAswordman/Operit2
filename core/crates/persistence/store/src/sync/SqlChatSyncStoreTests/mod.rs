@@ -473,7 +473,7 @@ fn upsertOperation(sequence: i64, content: &str) -> SyncOperation {
         semantics: SyncOperationSemantics::EntityState,
         payload: serde_json::to_value(payload).unwrap(),
         createdAt: sequence,
-        schemaVersion: 6,
+        schemaVersion: CHAT_SYNC_OPERATION_SCHEMA_VERSION,
     }
 }
 
@@ -825,6 +825,9 @@ fn migrates_version_22_messages_to_final_structured_parts() {
                 "#,
             )
             .unwrap();
+        store
+            .executeBatch(include_str!("fixtures/historical-migration-support.sql"))
+            .unwrap();
         store.setUserVersion(22).unwrap();
     }
 
@@ -971,6 +974,12 @@ fn migrates_version_23_message_revisions_to_canonical_visible_parts() {
                 "#,
             )
             .unwrap();
+        store
+            .executeBatch(include_str!("fixtures/historical-migration-support.sql"))
+            .unwrap();
+        store
+            .executeBatch(include_str!("fixtures/version23-sync-variant-rows.sql"))
+            .unwrap();
         store.setUserVersion(23).unwrap();
     }
 
@@ -1005,19 +1014,17 @@ fn migrates_version_25_execution_generation_columns() {
     {
         let store = SqliteStore::open(paths.sqlite_database_path()).unwrap();
         store
+            .executeBatch(include_str!("../../db/fixtures/version27-chat-records.sql"))
+            .unwrap();
+        store
             .executeBatch(
                 r#"
-                CREATE TABLE messages (
-                    messageId INTEGER PRIMARY KEY NOT NULL,
-                    completedRouteGeneration INTEGER NOT NULL
-                );
-                CREATE TABLE sync_sql_message_rows (
-                    opId TEXT PRIMARY KEY NOT NULL,
-                    completedRouteGeneration INTEGER NOT NULL
-                );
-                INSERT INTO messages (messageId, completedRouteGeneration) VALUES (1, 7);
-                INSERT INTO sync_sql_message_rows (opId, completedRouteGeneration)
-                VALUES ('operation-25', 9);
+                ALTER TABLE messages RENAME COLUMN completedExecutionGeneration TO completedRouteGeneration;
+                ALTER TABLE sync_sql_message_rows RENAME COLUMN completedExecutionGeneration TO completedRouteGeneration;
+                UPDATE messages SET completedRouteGeneration = 7 WHERE messageId = 1;
+                UPDATE sync_sql_message_rows SET completedRouteGeneration = 9 WHERE opId = 'v27:1';
+                DROP TABLE token_usage_records;
+                DROP TABLE token_stats_models;
                 "#,
             )
             .unwrap();
@@ -1041,7 +1048,7 @@ fn migrates_version_25_execution_generation_columns() {
         database
             .store()
             .queryScalar::<i64>(
-                "SELECT completedExecutionGeneration FROM sync_sql_message_rows WHERE opId = 'operation-25'",
+                "SELECT completedExecutionGeneration FROM sync_sql_message_rows WHERE opId = 'v27:1'",
                 sqliteParams![],
             )
             .unwrap(),
@@ -1069,7 +1076,10 @@ fn record_message_snapshots_are_merged_into_final_stream_state() {
         .unwrap();
     assert_eq!(operations.len(), 1);
     assert_eq!(operations[0].sequence, 100);
-    assert_eq!(operations[0].schemaVersion, 5);
+    assert_eq!(
+        operations[0].schemaVersion,
+        CHAT_SYNC_OPERATION_SCHEMA_VERSION
+    );
     let payload = exportedPayload(&operations[0]);
     assert_eq!(payload.messageRows.len(), 1);
     assert_eq!(payload.partRows[0].content, "token-100");
@@ -1399,8 +1409,3 @@ fn stress_ultra_many_messages_roundtrip_with_stream_compaction() {
     );
     AppDatabase::closeDatabase();
 }
-
-// Reuse this suite's host installer and mutex for memory search sync regressions.
-mod MemoryRepositoryReadTests;
-
-mod ObjectBoxSyncTests;

@@ -9,7 +9,7 @@ const require = createRequire(new URL("../../workflow/package.json", import.meta
 const { buildSync } = require("esbuild");
 
 /** Reads the exact production source used by the native JavaScript execution boundary. */
-export function nativeToolSource(relative) { return readFileSync(new URL(relative, root), "utf8"); }
+export function nativeToolSource(relative) { return readFileSync(new URL(relative, root), "utf8").replaceAll("\r\n", "\n"); }
 
 /** Extracts the sole runtime prelude without generating or editing any SDK artifact. */
 function executionPrelude() {
@@ -46,6 +46,7 @@ export function nativeToolParameters(participantId) {
     __operit_package_caller_name: "Fixture Speaker",
     __operit_package_chat_id: "fixture.chat",
     __operit_package_caller_participant_id: participantId,
+    __operit_package_caller_owner: "com.operit.character_cards",
     __operit_package_name: "character_memory_tools",
     __operit_toolpkg_runtime_kind: "sandbox",
     __operit_toolpkg_api_version: "2.0.0",

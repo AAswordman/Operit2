@@ -1,3 +1,4 @@
+import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -9,7 +10,7 @@ const complete = { type: "toolpkg.presentation.complete", requestId: "fixture-re
 const cancel = { type: "toolpkg.presentation.cancel", requestId: "fixture-request" };
 
 /** Reads authoritative source files without compiling or replacing the production callbacks. */
-function source(path) { return readFileSync(new URL(path, root), "utf8"); }
+function source(path) { return readFileSync(new URL(path, root), "utf8").replaceAll("\r\n", "\n"); }
 
 /** Extracts the sole production raw JavaScript string from a Rust bridge source. */
 function embedded(path) {
@@ -31,6 +32,9 @@ function json(value) { return JSON.parse(JSON.stringify(value)); }
 /** Creates a clickable fixture with the actual Compose context and dispatch implementation. */
 function compose(component, property, callback) {
   const context = vm.createContext({ module: { exports: {} }, fixtureCallback: callback });
+  for (const file of ["ToolPkgComposeDslCompiler.js", "ToolPkgComposeDslRetained.js", "ToolPkgComposeDslReactive.js"]) {
+    vm.runInContext(source(sdkRoot + "toolpkg/" + file), context);
+  }
   vm.runInContext(embedded(sdkRoot + "toolpkg/ToolPkgComposeDslBridge.rs"), context);
   vm.runInContext(wrappedScreen(`
     /** Creates a generic component with an observable callback result. */
@@ -38,6 +42,7 @@ function compose(component, property, callback) {
       return ctx.UI.${component}({ ${property}: fixtureCallback }, []);
     };
   `), context);
+  composeStreamFixture(context).adapt();
   return context;
 }
 
@@ -64,6 +69,7 @@ function executionHelpers() {
 /** Runs real execution/session/DSL JavaScript while replacing only native transport endpoints, not business or callback results. */
 function nativeTransport(callbackBody) {
   const terminal = [], intermediate = [], traces = [], pending = new Map();
+  const finalResponses = new Map();
   const methods = {
     /** Captures the exact native success payload after the production Promise is awaited. */
     setCallResult(callId, raw) {
@@ -72,7 +78,8 @@ function nativeTransport(callbackBody) {
       assert.notEqual(request, undefined, `Unexpected or duplicate native completion ${callId}`);
       pending.delete(callId);
       terminal.push({ callId, type: "result", raw });
-      request.resolve(JSON.parse(raw));
+      assert.equal(JSON.parse(raw), null);
+      request.resolve(finalResponses.get(callId));
     },
     /** Propagates the production failure payload rather than creating a success result. */
     setCallError(callId, raw) {
@@ -98,9 +105,39 @@ function nativeTransport(callbackBody) {
   });
   vm.runInContext(source("core/crates/plugin/javascript-bridge/src/javascript/JsInitRuntime.script.js"), context);
   context.__operitRuntimePrelude = embedded(sdkRoot + "JsExecutionScriptBuilder.rs");
+  context.__operitNativeHashText =
+    /** Implements the native fingerprint endpoint in this explicitly isolated transport fixture. */
+    function(text) { let hash = 0; for (let index = 0; index < text.length; index++) hash = (Math.imul(hash, 31) + text.charCodeAt(index)) >>> 0; return hash.toString(16); };
+  context.module = { exports: {} };
+  context.exports = context.module.exports;
+  vm.runInContext(source(sdkRoot + "toolpkg/vendor/acorn.js"), context);
+  context.__operitAcorn = context.module.exports;
+  context.module = { exports: {} };
   vm.runInContext(executionHelpers(), context);
+  for (const file of ["ToolPkgComposeDslCompiler.js", "ToolPkgComposeDslRetained.js", "ToolPkgComposeDslReactive.js"]) {
+    vm.runInContext(source(sdkRoot + "toolpkg/" + file), context);
+  }
   vm.runInContext(embedded(sdkRoot + "toolpkg/ToolPkgComposeDslBridge.rs"), context);
-  const script = wrappedScreen(`
+  context.__operitComposeRuntimeSource = wrappedScreen("");
+  const fixture = composeStreamFixture(context, { inspectStorage: false });
+  context.__operitNativeSetCallStructuredResult =
+    /** Completes the command separately from the final response already published on its stream. */
+    function(callId, value) {
+      assert.equal(value, null);
+      const request = pending.get(callId);
+      assert.ok(request);
+      pending.delete(callId);
+      terminal.push({ callId, type: "result", value });
+      request.resolve(finalResponses.get(callId));
+    };
+  context.__operitNativeSendStructuredIntermediate =
+    /** Records the genuine structured sink without converting UI nodes to JSON text. */
+    function(callId, envelope) {
+      const projected = fixture.accept(envelope.phase, envelope.response);
+      if (envelope.phase === "final") finalResponses.set(callId, projected);
+      else intermediate.push({ callId, value: projected });
+    };
+  const script = `
     /** Builds a Row whose real callback travels through native terminal delivery. */
     module.exports.default = function(ctx) {
       return ctx.UI.Row({
@@ -108,7 +145,7 @@ function nativeTransport(callbackBody) {
         onClick: ${callbackBody}
       }, []);
     };
-  `);
+  `;
 
   /** Starts the actual engine entry point and waits for its recorded native terminal message. */
   function invoke(callId, name, params) {
@@ -123,7 +160,7 @@ function nativeTransport(callbackBody) {
       __operit_execution_context_key: "toolpkg_compose:callback-fixture",
       __operit_toolpkg_runtime_kind: "ui",
       ...params,
-    }, script, name, 10, 10000);
+    }, script, name, 10, 10000, true);
     return result;
   }
   return { invoke, terminal, intermediate, traces };
@@ -206,7 +243,7 @@ test("native callback transport delivers an awaited Row V1 result exactly once",
   const transport = nativeTransport(`async function() { await Promise.resolve(); return ${JSON.stringify(complete)}; }`);
   const frame = await transport.invoke("render", "__operit_render_compose_dsl", {});
   const response = await transport.invoke("click", "__operit_dispatch_compose_dsl_action", { actionId: frame.tree.props.onClick.__actionId });
-  assert.deepEqual(response.actionResult, complete);
+  assert.deepEqual(structuredClone(response.actionResult), complete);
   assert.equal(transport.terminal.length, 2);
   assert.deepEqual(transport.terminal.map(
     /** Separates terminal delivery from intermediate renders and unrelated native traces. */

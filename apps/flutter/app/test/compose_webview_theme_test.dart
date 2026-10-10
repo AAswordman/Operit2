@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:webview_all_linux/webview_all_linux.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
+import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 
 /// Verifies native preference delivery and browser-preserving theme updates.
 void main() {
@@ -119,6 +120,85 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
     expect(platform.controller.events.last, 'remove-document-start');
+  });
+  testWidgets('DSL action errors do not dispose or reload the mounted WebView', (
+    tester,
+  ) async {
+    final platform = _ThemeTestPlatform();
+    WebViewPlatform.instance = platform;
+    final actions = <Object?>[];
+    const channel = MethodChannel('operit/webview_theme');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (_) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    final host = ComposeDslWebViewHostContext(
+      packageName: 'regression',
+      routeInstanceId: 'page',
+      executionContextKey: 'webview-error',
+      dispatchAction: (id, [payload]) async {
+        actions.add(payload);
+        return null;
+      },
+      runtimeOptionsProvider: () => {},
+    );
+    const tree = <String, Object?>{
+      'type': 'WebView',
+      'props': {
+        'url': 'https://example.com',
+        'onLifecycleEvent': {'__actionId': 'lifecycle'},
+      },
+      'children': [],
+    };
+
+    /// Drives actual error presentation without replacing the production WebView widget.
+    Future<void> show(String? error) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: buildComposeDslHostForTest(
+              node: tree,
+              hostContext: host,
+              error: error,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await show(null);
+    final browser = tester.element(find.byType(ComposeDslWebView));
+    actions.clear();
+    for (var index = 0; index < 3; index++) {
+      await show('compose action not found: __action_3');
+      expect(find.text('compose action not found: __action_3'), findsOneWidget);
+      expect(tester.element(find.byType(ComposeDslWebView)), same(browser));
+      await show(null);
+      expect(tester.element(find.byType(ComposeDslWebView)), same(browser));
+    }
+    expect(actions, isEmpty);
+    expect(
+      platform.controller.events
+          .where((event) => event == 'load:https://example.com')
+          .length,
+      1,
+    );
+    expect(
+      platform.controller.events,
+      isNot(contains('remove-document-start')),
+    );
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    expect(platform.controller.events.last, 'remove-document-start');
+    expect(actions, isNotEmpty);
+    expect(tester.takeException(), isNull);
   });
 }
 

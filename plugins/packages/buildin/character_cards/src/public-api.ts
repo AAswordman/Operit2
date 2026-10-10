@@ -1,7 +1,10 @@
-import type { ChatConfigurationRequest, ChatConfigurationResult, DomainInput, DomainOutput } from "./api";
-import { parseDomainPayload } from "./domain";
+import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, ChatConfigurationResult, DomainInput, DomainOutput } from "./api";
+import { parseDomainPayload, parseMemoryQueryRequest } from "./domain";
+import { MemoryTools } from "./runtime-tools/memory";
 import { dispatchDomain } from "./service-runtime";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
+
+const memoryQueries = new MemoryTools(dispatchDomain);
 
 /** Resolves this chat's persisted configuration through the sole initialized service. */
 export async function chatConfigurationResolveApi(event: ToolPkg.PublicApiEvent<ChatConfigurationRequest>): Promise<ChatConfigurationResult> {
@@ -32,42 +35,52 @@ export function registerChatConfigurationApis(): void {
   ToolPkg.registerApi({ name: "chat.configuration.binding.delete", function: chatConfigurationBindingDeleteApi });
 }
 
-/** Executes memory.chat.list through the sole private file-backed service. */
+/** Executes participant-bound memory queries through the provider's shared repository and query state. */
+export async function memoryQueryApi(event: ToolPkg.PublicApiEvent<MemoryQueryRequest>): Promise<MemoryQueryResult> {
+  const input = parseMemoryQueryRequest(event.payload);
+  return memoryQueries.execute("query_memory", {
+    query: input.query,
+    limit: input.limit,
+    ...(input.snapshotId === null ? {} : { snapshot_id: input.snapshotId }),
+  }, { chatId: null, participantId: input.participantId, callerName: event.callerPackage });
+}
+
+/** Executes memory.chat.list through the sole private database-backed service. */
 export async function memoryChatListApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.chat.list">>): Promise<DomainOutput<"memory.chat.list">> {
   return dispatchDomain("memory.chat.list", parseDomainPayload("memory.chat.list", event.payload));
 }
 
-/** Executes memory.chat.update through the sole private file-backed service. */
+/** Executes memory.chat.update through the sole private database-backed service. */
 export async function memoryChatUpdateApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.chat.update">>): Promise<DomainOutput<"memory.chat.update">> {
   return dispatchDomain("memory.chat.update", parseDomainPayload("memory.chat.update", event.payload));
 }
 
-/** Executes memory.categorize through the sole private file-backed service. */
+/** Executes memory.categorize through the sole private database-backed service. */
 export async function memoryCategorizeApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.categorize">>): Promise<DomainOutput<"memory.categorize">> {
   return dispatchDomain("memory.categorize", parseDomainPayload("memory.categorize", event.payload));
 }
 
-/** Executes memory.rebuild.start through the sole private file-backed service. */
+/** Executes memory.rebuild.start through the sole private database-backed service. */
 export async function memoryRebuildStartApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.rebuild.start">>): Promise<DomainOutput<"memory.rebuild.start">> {
   return dispatchDomain("memory.rebuild.start", parseDomainPayload("memory.rebuild.start", event.payload));
 }
 
-/** Executes memory.rebuild.progress through the sole private file-backed service. */
+/** Executes memory.rebuild.progress through the sole private database-backed service. */
 export async function memoryRebuildProgressApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.rebuild.progress">>): Promise<DomainOutput<"memory.rebuild.progress">> {
   return dispatchDomain("memory.rebuild.progress", parseDomainPayload("memory.rebuild.progress", event.payload));
 }
 
-/** Executes memory.rebuild.cancel through the sole private file-backed service. */
+/** Executes memory.rebuild.cancel through the sole private database-backed service. */
 export async function memoryRebuildCancelApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.rebuild.cancel">>): Promise<DomainOutput<"memory.rebuild.cancel">> {
   return dispatchDomain("memory.rebuild.cancel", parseDomainPayload("memory.rebuild.cancel", event.payload));
 }
 
-/** Executes memory.embeddings.rebuild through the sole private file-backed service. */
+/** Executes memory.embeddings.rebuild through the sole private database-backed service. */
 export async function memoryEmbeddingsRebuildApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.embeddings.rebuild">>): Promise<DomainOutput<"memory.embeddings.rebuild">> {
   return dispatchDomain("memory.embeddings.rebuild", parseDomainPayload("memory.embeddings.rebuild", event.payload));
 }
 
-/** Executes memory.candidate.enqueue through the sole private file-backed service. */
+/** Executes memory.candidate.enqueue through the sole private database-backed service. */
 export async function memoryCandidateEnqueueApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.candidate.enqueue">>): Promise<DomainOutput<"memory.candidate.enqueue">> {
   return dispatchDomain("memory.candidate.enqueue", parseDomainPayload("memory.candidate.enqueue", event.payload));
 }
@@ -384,6 +397,7 @@ export async function memoryImportApi(event: ToolPkg.PublicApiEvent<DomainInput<
 
 /** Publishes independent typed methods backed by the same service as commands and UI. */
 export function registerDomainApis(): void {
+  ToolPkg.registerApi<MemoryQueryRequest, MemoryQueryResult>({ name: "memory.query", function: memoryQueryApi });
   ToolPkg.registerApi<DomainInput<"memory.searchWithOptions">, DomainOutput<"memory.searchWithOptions">>({ name: "memory.searchWithOptions", function: memorySearchWithOptionsApi });
   ToolPkg.registerApi<DomainInput<"memory.candidate.enqueue">, DomainOutput<"memory.candidate.enqueue">>({ name: "memory.candidate.enqueue", function: memoryCandidateEnqueueApi });
   ToolPkg.registerApi<DomainInput<"memory.embeddings.rebuild">, DomainOutput<"memory.embeddings.rebuild">>({ name: "memory.embeddings.rebuild", function: memoryEmbeddingsRebuildApi });

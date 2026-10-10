@@ -45,7 +45,7 @@ export async function groupEnvironment(t, transport) {
       return { text: response.text, turns: [], finishReason: "stop", inputTokens: 1, outputTokens: 1 };
     },
   };
-  const tools = new Proxy({ Files: disk.files, SoftwareSettings: settings.harness.globals.Tools.SoftwareSettings, Chat: chat }, {
+  const tools = new Proxy({ Files: disk.files, Storage: disk.storage, SoftwareSettings: settings.harness.globals.Tools.SoftwareSettings, Chat: chat }, {
     /** Rejects every unspecified host capability rather than emulating a working SDK. */
     get(target, property) {
       if (!Object.hasOwn(target, property)) throw new Error("Unprovided controlled Tools capability: " + String(property));
@@ -53,7 +53,7 @@ export async function groupEnvironment(t, transport) {
     },
   });
   const globals = { ...disk.globals, Tools: tools };
-  const repository = await loadModule("src/storage/files.ts", globals).FileCharacterRepository.open({
+  const repository = await loadModule("src/storage/database.ts", globals).DatabaseCharacterRepository.open({
     /** Reads only the explicitly supplied complete controlled model directory. */
     listModels: () => tools.SoftwareSettings.listModelSummaries(),
     /** Reads only the explicitly supplied complete controlled voice directory. */

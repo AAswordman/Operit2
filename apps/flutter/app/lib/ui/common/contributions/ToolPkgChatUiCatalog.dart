@@ -17,7 +17,6 @@ class ToolPkgChatUiCatalog {
     const api = 'chat.context.actions';
     final owners = await _owners(api);
     final routes = await _routes();
-    final selectors = <ChatUiChoice>[];
     ChatUiIdentity? identity;
     String? backgroundUri;
     for (final owner in owners) {
@@ -26,18 +25,9 @@ class ToolPkgChatUiCatalog {
         'chat context',
       );
       _fields(data, const <String>{
-        'selectors',
         'identity',
         'backgroundUri',
       }, 'chat context');
-      final ids = <String>{};
-      for (final raw in _list(data['selectors'], 'selectors')) {
-        final choice = _choice(raw, owner, routes);
-        if (!ids.add(choice.id)) {
-          throw const FormatException('Duplicate selector ID.');
-        }
-        selectors.add(choice);
-      }
       final rawIdentity = data['identity'];
       if (rawIdentity != null) {
         if (identity != null) {
@@ -63,11 +53,7 @@ class ToolPkgChatUiCatalog {
         backgroundUri = background;
       }
     }
-    return ChatUiContext(
-      selectors: List<ChatUiChoice>.unmodifiable(selectors),
-      identity: identity,
-      backgroundUri: backgroundUri,
-    );
+    return ChatUiContext(identity: identity, backgroundUri: backgroundUri);
   }
 
   /// Projects only the provided generic history summaries into owner sections.
@@ -171,28 +157,6 @@ class ToolPkgChatUiCatalog {
         methodName: api,
         payload: payload,
       );
-
-  /// Decodes display-only choice metadata while leaving its input opaque.
-  ChatUiChoice _choice(
-    Object? raw,
-    String owner,
-    List<core_proxy.ToolPkgUiRoute> routes,
-  ) {
-    final data = _object(raw, 'selector');
-    _fields(data, const <String>{
-      'id',
-      'title',
-      'icon',
-      'routeId',
-      'input',
-    }, 'selector');
-    return ChatUiChoice(
-      id: _identity(data['id'], 'selector.id'),
-      title: _text(data['title'], 'selector.title'),
-      icon: _nullableText(data['icon'], 'selector.icon'),
-      action: _resolveAction(owner, data['routeId'], data['input'], routes),
-    );
-  }
 
   /// Accepts only the generic route and input fields of a declared presentation.
   ChatUiAction _action(

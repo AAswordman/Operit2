@@ -1,3 +1,4 @@
+import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
@@ -34,7 +35,7 @@ export function keyedNode(tree, key) {
 }
 
 /** Mounts one exact registered Compose handler on the production SDK context and JSON action-result runtime. */
-export function mountRegisteredComposeRoute(plugin, presentation, routeId) {
+export function mountRegisteredComposeRoute(plugin, presentation, routeId, hostState = {}) {
   const routes = plugin.routes.filter(
     /** Requires the exact production route rather than selecting a management handler with similar fields. */
     route => route.id === routeId,
@@ -50,14 +51,20 @@ export function mountRegisteredComposeRoute(plugin, presentation, routeId) {
   const wrapped = sdkScript("ToolPkgComposeDslRuntimeScript.rs", "buildComposeDslRuntimeWrappedScript");
   assert.equal(wrapped.split("{script}").length, 2);
   vm.runInContext(wrapped.replace("{script}", "").replaceAll("{{", "{").replaceAll("}}", "}"), context);
-  const options = { state: { presentation }, packageName: "com.operit.character_cards", toolPkgId: "com.operit.character_cards", uiModuleId: routeId, routeInstanceId: "native-selector-test", executionContextKey: "selector-test" };
+  composeStreamFixture(context).adapt();
+  const options = { state: { ...hostState, presentation }, packageName: "com.operit.character_cards", toolPkgId: "com.operit.character_cards", uiModuleId: routeId, routeInstanceId: "native-selector-test", executionContextKey: "selector-test" };
   const first = module.exports.__operit_render_compose_dsl(options);
   return {
     first,
     /** Rerenders using the actual retained SDK state and controller reference. */
-    render() { return module.exports.__operit_rerender_compose_dsl({}); },
+    render() { return context.__operit_render_compose_dsl({ executionContextKey: options.executionContextKey, __operit_update_inputs: true }); },
     /** Supplies a changed real request to verify the plugin refuses stale or retargeted modal state. */
-    retarget(value) { context.__operit_compose_bundle.ctx.useState("presentation", null)[1](value); return module.exports.__operit_rerender_compose_dsl({}); },
+    retarget(value) { context.__operit_compose_bundle.ctx.useState("presentation", null)[1](value); return context.__operit_render_compose_dsl({ executionContextKey: options.executionContextKey, __operit_update_inputs: true }); },
+    /** Updates explicit host state through the real SDK to test retained callback ownership. */
+    updateHostState(values) {
+      for (const [key, value] of Object.entries(values)) context.__operit_compose_bundle.ctx.useState(key, null)[1](value);
+      return context.__operit_render_compose_dsl({ executionContextKey: options.executionContextKey, __operit_update_inputs: true });
+    },
     /** Dispatches one encoded callback through the actual generic SDK action-result channel. */
     dispatch(action) {
       assert.equal(typeof action.__actionId, "string");

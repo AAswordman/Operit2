@@ -14,7 +14,6 @@
   "addAttachment": "添加附件",
   "attachmentPhoto": "照片",
   "attachmentCamera": "拍照",
-  "attachmentMemory": "记忆",
   "attachmentFile": "文件",
   "attachmentScreenContent": "屏幕内容",
   "attachmentNotifications": "当前通知",
@@ -28,7 +27,6 @@
   "attachmentPackageKindSkill": "技能",
   "attachmentPackageKindMcp": "MCP",
   "attachmentCameraUnavailable": "当前 Flutter 端没有相机采集能力",
-  "attachmentMemoryUnavailable": "当前 Flutter 端没有记忆文件夹选择器",
   "clearSearch": "清空搜索",
   "chatPendingQueueTitle": "待发送消息（{count}）",
   "@chatPendingQueueTitle": {
@@ -459,12 +457,6 @@
   "settingsCategoryLocalModelsTitle": "本地模型",
   "settingsCategoryLocalModelsSubtitle": "下载、引擎、STT / TTS",
   "settingsCategoryLocalModelsDescription": "管理按需安装的本地模型和推理引擎。",
-  "settingsCategoryCharactersTitle": "角色",
-  "settingsCategoryCharactersSubtitle": "角色卡、群组、绑定",
-  "settingsCategoryCharactersDescription": "管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。",
-  "settingsCategoryMemoryTitle": "记忆",
-  "settingsCategoryMemorySubtitle": "记忆图谱、共享记忆库、用户资料",
-  "settingsCategoryMemoryDescription": "管理角色与共享记忆库、记忆图谱可视化、用户资料与自动更新策略。",
   "settingsCategoryToolsTitle": "工具与权限",
   "settingsCategoryToolsSubtitle": "AI 能力、系统授权、扩展",
   "settingsCategoryToolsDescription": "设置 AI 的只读、读写或完整权限，并查看当前设备的系统授权状态。",
@@ -603,7 +595,6 @@
     }
   },
   "settingsTtsCurrentConfigCannotDelete": "当前正在使用的 TTS 配置不能删除",
-  "settingsTtsConfigUsedByCharacter": "该 TTS 配置正在被角色卡使用，不能删除",
   "settingsModelChatAutoGlmWarning": "禁止使用 AutoGLM 作为对话主模型。对话模型和 UI 控制模型是分离的，请选择其他大模型。",
   "settingsModelFunctionChat": "聊天",
   "settingsModelFunctionChatDescription": "主对话回复使用的模型。",
@@ -903,172 +894,6 @@
   "settingsModelTestItemAudio": "音频",
   "settingsModelTestItemVideo": "视频",
   "settingsModelTestItemUnknown": "未知项",
-  "settingsCharactersCreateCard": "新建角色卡",
-  "settingsCharactersEditCard": "编辑角色卡",
-  "settingsCharactersCardName": "角色名称",
-  "settingsCharactersCreateGroup": "新建群组",
-  "settingsCharactersEditGroup": "编辑群组",
-  "settingsCharactersGroupName": "群组名称",
-  "settingsCharactersDescription": "描述",
-  "settingsCharactersCharacterSetting": "角色设定",
-  "settingsCharactersOpeningStatement": "开场白",
-  "settingsCharactersOtherContentChat": "聊天附加内容",
-  "settingsCharactersOtherContentVoice": "语音附加内容",
-  "settingsCharactersAdvancedPrompt": "高级自定义 Prompt",
-  "settingsCharactersMarks": "备注",
-  "settingsCharactersTags": "标签",
-  "settingsCharactersNoTags": "当前没有可选标签。可在标签管理中创建后绑定到角色卡。",
-  "settingsCharactersImport": "导入",
-  "settingsCharactersExport": "导出",
-  "settingsCharactersImportJson": "导入 JSON",
-  "settingsCharactersExportJson": "导出 JSON",
-  "settingsCharactersImportTavernJson": "导入 Tavern JSON",
-  "settingsCharactersExportTavernJson": "导出 Tavern JSON",
-  "settingsCharactersImportCardJson": "导入角色卡 JSON",
-  "settingsCharactersImportCardJsonDone": "已导入角色卡。",
-  "settingsCharactersImportTavernJsonDone": "已导入 Tavern 角色卡。",
-  "settingsCharactersImportGroupJson": "导入群组 JSON",
-  "settingsCharactersImportGroupJsonDone": "已导入群组。",
-  "settingsCharactersImportJsonError": "导入 JSON 失败：{error}",
-  "@settingsCharactersImportJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersImportTavernJsonError": "导入 Tavern JSON 失败：{error}",
-  "@settingsCharactersImportTavernJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersExportJsonError": "导出 JSON 失败：{error}",
-  "@settingsCharactersExportJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersExportTavernJsonError": "导出 Tavern JSON 失败：{error}",
-  "@settingsCharactersExportTavernJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTagsSection": "标签",
-  "settingsCharactersManageTags": "管理标签",
-  "settingsCharactersCreateTag": "新建标签",
-  "settingsCharactersEditTag": "编辑标签",
-  "settingsCharactersDeleteTag": "删除标签",
-  "settingsCharactersDeleteTagMessage": "确定删除“{name}”吗？",
-  "@settingsCharactersDeleteTagMessage": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTagName": "标签名称",
-  "settingsCharactersTagDescription": "标签描述",
-  "settingsCharactersTagPromptContent": "Prompt 内容",
-  "settingsCharactersChatModelBindingMode": "聊天模型绑定模式",
-  "settingsCharactersChatModelConfigId": "聊天模型配置 ID",
-  "settingsCharactersChatModelIndex": "聊天模型序号",
-  "settingsCharactersToolAccess": "工具权限模式",
-  "settingsCharactersChatModelFollowGlobal": "跟随全局模型",
-  "settingsCharactersChatModelFixedConfig": "固定模型配置",
-  "settingsCharactersChatModelConfig": "模型配置",
-  "settingsCharactersToolAccessFollowGlobal": "跟随全局工具权限",
-  "settingsCharactersToolAccessCustom": "自定义角色工具权限",
-  "settingsCharactersToolAccessEmpty": "已启用，但未选择任何工具",
-  "settingsCharactersToolAccessSummaryCounts": "内置 {builtinCount} · 工具包 {packageCount} · 技能 {skillCount} · MCP {mcpCount}",
-  "@settingsCharactersToolAccessSummaryCounts": {
-    "placeholders": {
-      "builtinCount": {
-        "type": "int"
-      },
-      "packageCount": {
-        "type": "int"
-      },
-      "skillCount": {
-        "type": "int"
-      },
-      "mcpCount": {
-        "type": "int"
-      }
-    }
-  },
-  "settingsCharactersToolAccessConfigure": "配置工具白名单",
-  "settingsCharactersToolAccessTitle": "自定义允许使用的工具",
-  "settingsCharactersToolAccessTabBuiltin": "内建工具",
-  "settingsCharactersToolAccessTabPackage": "包",
-  "settingsCharactersToolAccessTabSkill": "Skill",
-  "settingsCharactersToolAccessTabMcp": "MCP",
-  "settingsCharactersToolAccessSearchPlaceholder": "搜索名称、描述或标识",
-  "settingsCharactersToolAccessEmptySearch": "未找到匹配的工具",
-  "settingsCharactersToolAccessRequiresUsePackage": "选择工具包、技能或 MCP 时，需要同时允许内置工具 use_package。",
-  "settingsCharactersToolAccessEmptyBuiltin": "当前没有可配置的内建工具",
-  "settingsCharactersToolAccessEmptyPackages": "当前没有全局可用的包",
-  "settingsCharactersToolAccessEmptySkills": "当前没有对 AI 可见的 Skill",
-  "settingsCharactersToolAccessEmptyMcp": "当前没有已启用的 MCP 服务器",
-  "settingsCharactersBuiltinTools": "允许的内置工具",
-  "settingsCharactersAllowedPackages": "允许的工具包",
-  "settingsCharactersAllowedSkills": "允许的技能",
-  "settingsCharactersAllowedMcpServers": "允许的 MCP 服务",
-  "settingsCharactersGroupMembersTitle": "组内角色",
-    "settingsCharactersOpenMemoryGraph": "查看记忆图谱",
-    "settingsCharactersMemoryGraphTitle": "{profileName} 的记忆图谱",
-    "@settingsCharactersMemoryGraphTitle": {
-      "placeholders": {
-        "profileName": {
-          "type": "String"
-        }
-      }
-    },
-    "settingsCharactersMemoryGraphEmpty": "当前记忆库还没有节点",
-    "settingsCharactersMemoryGraphStats": "{nodes} 个节点 · {edges} 条关系",
-    "@settingsCharactersMemoryGraphStats": {
-      "placeholders": {
-        "nodes": {
-          "type": "int"
-        },
-        "edges": {
-          "type": "int"
-        }
-      }
-    },
-    "settingsCharactersMemoryGraphLink": "记忆关系",
-    "settingsCharactersEditUserMarkdown": "编辑用户资料",
-  "settingsCharactersUserMarkdownTitle": "{profileName} 的用户资料",
-  "@settingsCharactersUserMarkdownTitle": {
-    "placeholders": {
-      "profileName": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersUserMarkdownSaved": "用户资料已保存",
-  "settingsCharactersUserMarkdownContent": "用户资料内容",
-  "settingsCharactersMemoryAutoUpdate": "自动更新记忆库",
-  "settingsCharactersMemoryAutoUpdateDescription": "允许 AI 从对话中整理信息并写入记忆库。",
-  "settingsCharactersPreferenceDescription": "向模型提供用户资料",
-  "settingsCharactersPreferenceDescriptionSubtitle": "聊天时把当前用户资料写入提示词。",
-  "settingsCharactersCardsSection": "角色卡",
-  "settingsCharactersGroupsSection": "群组",
-  "settingsCharactersGroupMembers": "{count} 个成员",
-  "@settingsCharactersGroupMembers": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "settingsToolsPermissionMode": "AI 能力模式",
   "settingsToolsAsk": "询问",
   "settingsToolsExtensions": "扩展管理",
@@ -1449,12 +1274,6 @@
   "settingsAppearanceThemeMode": "当前模式",
   "settingsAppearanceThemeTarget": "主题保存目标",
   "settingsAppearanceThemeTargetGlobal": "全局",
-  "settingsAppearanceThemeTargetCharacter": "当前角色：{name}",
-  "@settingsAppearanceThemeTargetCharacter": {
-    "placeholders": {
-      "name": {}
-    }
-  },
   "settingsAppearanceThemeTargetGroup": "当前群组：{name}",
   "@settingsAppearanceThemeTargetGroup": {
     "placeholders": {
@@ -1693,7 +1512,6 @@
   "settingsDataDetailedStatsSourceToolResult": "工具结果续写",
   "settingsDataDetailedStatsSourceSummary": "摘要生成",
   "settingsDataDetailedStatsSourceTitleGeneration": "标题生成",
-  "settingsDataDetailedStatsSourceMemory": "记忆分析",
   "settingsDataDetailedStatsTotalRequests": "总请求数",
   "settingsDataDetailedStatsCachedInput": "缓存输入",
   "settingsDataDetailedStatsActiveDays": "活跃天数",
@@ -1776,10 +1594,6 @@
   "settingsDataBackupSection": "备份与恢复",
   "settingsDataChatHistoriesBackup": "聊天数据",
   "settingsDataChatHistoriesBackupDescription": "备份全部聊天和消息；恢复时按聊天 ID 更新或新增。",
-  "settingsDataCharacterCardsBackup": "角色卡数据",
-  "settingsDataCharacterCardsBackupDescription": "备份全部角色卡和已引用标签；恢复时按原 ID 更新或新增。",
-  "settingsDataCharacterGroupsBackup": "群组数据",
-  "settingsDataCharacterGroupsBackupDescription": "备份全部群组；恢复时保留组内角色引用和顺序。",
   "settingsDataModelConfigsBackup": "模型配置",
   "settingsDataModelConfigsBackupDescription": "备份全部模型配置，包含模型参数和 API Key 池。",
   "settingsDataBackupCount": "当前 {count} 项",
@@ -2302,5 +2116,23 @@
   "workspaceUndo": "撤销",
   "workspaceRedo": "重做",
   "workspaceInsertSymbol": "插入 {symbol}",
-  "@workspaceInsertSymbol": {"placeholders": {"symbol": {"type": "String"}}}
+  "@workspaceInsertSymbol": {"placeholders": {"symbol": {"type": "String"}}},
+  "settingsAppearanceThemeConfig": "主题配置",
+  "settingsAppearanceThemeConfigCustom": "未绑定的外观",
+  "settingsAppearanceThemeConfigCreate": "新建主题配置",
+  "settingsAppearanceThemeConfigRename": "重命名主题配置",
+  "settingsAppearanceThemeConfigDelete": "删除当前未启用的主题配置",
+  "settingsAppearanceThemeConfigName": "主题名称",
+  "settingsAppearanceThemeConfigNameRequired": "请输入主题名称",
+  "settingsAppearanceThemeConfigCustomHint": "点击 + 新建主题配置，即可在角色卡或群组中绑定。",
+  "settingsAppearanceThemeConfigEditingHint": "修改外观会自动保存到当前主题配置。",
+  "settingsAppearanceThemeConfigFailed": "主题操作失败：{detail}",
+  "@settingsAppearanceThemeConfigFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

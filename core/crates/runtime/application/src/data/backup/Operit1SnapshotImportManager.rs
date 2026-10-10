@@ -43,17 +43,14 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_model::ApiKeyInfo::{ApiKeyAvailabilityStatus, ApiKeyInfo};
-use operit_model::CharacterCard::{
+use super::CharacterPluginLegacyData::{
     CharacterCard, CharacterCardChatModelBindingMode, CharacterCardMemoryBindingMode,
     CharacterCardToolAccessConfig,
 };
-use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
+use super::CharacterPluginLegacyData::{CharacterGroupCard, GroupMemberConfig};
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode;
 use operit_model::FunctionType::FunctionType;
-use operit_model::MemoryExportModel::{
-    MemoryExportData, SerializableLink, SerializableMemory,
-};
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::ModelCatalog::ModelCatalog;
@@ -66,14 +63,14 @@ use operit_model::OperitChatArchive::{
     OperitArchivedChat, OperitArchivedMessage, OperitArchivedMessageVariant, OperitChatArchive,
     ARCHIVE_TYPE, CURRENT_FORMAT_VERSION,
 };
-use operit_model::PromptTag::{PromptTag, TagType};
+use super::CharacterPluginLegacyData::{PromptTag, TagType};
 use operit_model::StandardModelParameters::StandardModelParameters;
 use operit_model::TtsConfig::{
     TtsConfig, TtsHttpHeader, TtsHttpResponsePipelineStep, TtsProviderType,
 };
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::repository::UsageStatisticsStore::{TokenStatsModel, UsageStatisticsStore};
-use operit_util::OperitPaths::sanitizeMemoryOwnerId;
+use super::CharacterPluginLegacyData::sanitizeMemoryOwnerId;
 
 const FORMAT_VERSION: i32 = 1;
 const ENTRY_MANIFEST: &str = "manifest.json";
@@ -153,7 +150,7 @@ pub struct Operit1SnapshotImportResult {
     pub importedMessages: i32,
     pub importedTokenUsageRecords: i32,
     pub importedTokenStatsModels: i32,
-    /// Counts adopted memories, always zero because legacy memory restoration is explicitly unsupported.
+    /// Counts actual memory records adopted by the character plugin.
     pub importedMemories: i32,
     /// Counts adopted memory links, not the number of links present in the source snapshot.
     pub importedMemoryLinks: i32,
@@ -200,7 +197,7 @@ impl Operit1SnapshotImportProgress {
             stage: "completed".to_string(),
             title: "导入完成".to_string(),
             detail: format!(
-                "已迁移 {} 个聊天、{} 条消息、{} 条统计记录和 {} 个资源文件。旧角色、群组和记忆不采用。",
+                "已迁移 {} 个聊天、{} 条消息、{} 条统计记录和 {} 个资源文件。角色卡和记忆已导入插件。",
                 result.importedChats,
                 result.importedMessages,
                 result.importedTokenUsageRecords,
@@ -396,7 +393,7 @@ impl Operit1SnapshotImportManager {
             Ok(imported) => AppLogger::i(
                 "Operit1SnapshotImport",
                 &format!(
-                    "full snapshot import completed chats={} messages={} adoptedMemories={} files={}; legacy role/group/memory data was not adopted",
+                    "full snapshot import completed chats={} messages={} adoptedMemories={} files={}; character and memory records adopted by plugin storage",
                     imported.importedChats,
                     imported.importedMessages,
                     imported.importedMemories,
@@ -442,7 +439,7 @@ impl Operit1SnapshotImportManager {
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "structured_preferences",
             "迁移语音配置",
-            "正在写入 TTS 配置；旧角色卡、提示词和角色组仅保留快照读取，不采用。",
+            "正在写入 TTS 配置；角色卡、提示词、角色组和记忆写入插件存储。",
             0.36,
         ));
         self.importSpeechPreferences(&parsed)?;
@@ -455,28 +452,22 @@ impl Operit1SnapshotImportManager {
         let (importedDatastoreFiles, importedDatastoreKeys) =
             self.importDataStorePreferences(&parsed, &fileImportPlan)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
+            "files",
+            "迁移资源文件",
+            "正在复制工作区、附件和外部资源。",
+            0.60,
+        ));
+        let fileImportResult = self.importSnapshotFiles(&parsed)?;
+        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "chats",
             "迁移聊天记录",
             "正在导入历史会话和消息。",
             0.64,
         ));
-        let (importedChats, importedMessages) =
+        let (importedChats, importedMessages, importedMemories, importedMemoryLinks) =
             self.importChatDatabase(&parsed, &fileImportPlan)?;
         let (importedTokenUsageRecords, importedTokenStatsModels) =
             self.importTokenStatistics(&parsed)?;
-        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
-            "unadopted_legacy_domains",
-            "不采用旧角色与记忆",
-            "快照中的旧角色、群组、记忆数据库与用户文档不恢复到 Core，也不导入插件。",
-            0.78,
-        ));
-        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
-            "files",
-            "迁移资源文件",
-            "正在复制工作区、附件和外部资源。",
-            0.90,
-        ));
-        let fileImportResult = self.importSnapshotFiles(&parsed)?;
         let result = Operit1SnapshotImportResult {
             modelConfig,
             importedDatastoreFiles,
@@ -485,8 +476,8 @@ impl Operit1SnapshotImportManager {
             importedMessages,
             importedTokenUsageRecords,
             importedTokenStatsModels,
-            importedMemories: 0,
-            importedMemoryLinks: 0,
+            importedMemories,
+            importedMemoryLinks,
             importedFiles: fileImportResult.importedFiles,
             importedExternalFiles: fileImportResult.importedExternalFiles,
             importedWorkspaces: fileImportResult.importedWorkspaces,
@@ -679,7 +670,7 @@ impl Operit1SnapshotImportManager {
         &self,
         parsed: &ParsedOperit1Snapshot,
         fileImportPlan: &SnapshotFileImportPlan,
-    ) -> Result<(i32, i32), String> {
+    ) -> Result<(i32, i32, i32, i32), String> {
         self.withStagedOperit1ChatDatabase(parsed, |connection, archiveBridge| {
             let (totalChatCount, totalMessageCount) = operit1ChatDatabaseCounts(connection)?;
             let mut parsedMessageCount = 0usize;
@@ -702,12 +693,14 @@ impl Operit1SnapshotImportManager {
                     );
                 }
             };
-            let archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
+            let mut archive = buildChatArchiveFromOperit1ToOperit2DatabaseBridge(
                 archiveBridge,
                 connection,
                 fileImportPlan,
                 &mut onMessageParsed,
             )?;
+            let (memoryCount, linkCount) = self.importCharactersAndMemory(parsed, fileImportPlan, &archive)?;
+            resolveOperit1ArchiveBindings(&mut archive, self.sqliteHost.clone(), self.storageHost.clone())?;
             let chatCount = archive.chats.len() as i32;
             let messageCount = archive
                 .chats
@@ -754,7 +747,7 @@ impl Operit1SnapshotImportManager {
                     0,
                 );
             }
-            Ok((chatCount, messageCount))
+            Ok((chatCount, messageCount, memoryCount, linkCount))
         })
     }
 
@@ -997,3 +990,5 @@ include!("operit1/Operit1Parsing.rs");
 #[cfg(test)]
 #[path = "operit1/Operit1SnapshotImportTests.rs"]
 mod snapshot_import_tests;
+
+include!("operit1/Operit1CharacterPluginMigration.rs");

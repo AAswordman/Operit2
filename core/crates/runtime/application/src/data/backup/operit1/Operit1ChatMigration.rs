@@ -72,7 +72,10 @@ where
             id: chat.id,
             title: chat.title,
             group: chat.group,
-            pluginExtensions: std::collections::BTreeMap::new(),
+            pluginExtensions: std::collections::BTreeMap::from([(
+                crate::data::backup::CharacterPluginMigration::LEGACY_BINDING_NAMESPACE.to_string(),
+                serde_json::json!({"characterCardName":chat.characterCardName,"characterGroupId":chat.characterGroupId}),
+            )]),
             messages,
             createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,
             updatedAt: epochMillisToLocalDateTimeString(chat.updatedAt)?,
@@ -141,7 +144,10 @@ where
             id: chat.id,
             title: chat.title,
             group: chat.group,
-            pluginExtensions: std::collections::BTreeMap::new(),
+            pluginExtensions: std::collections::BTreeMap::from([(
+                crate::data::backup::CharacterPluginMigration::LEGACY_BINDING_NAMESPACE.to_string(),
+                serde_json::json!({"characterCardName":chat.characterCardName,"characterGroupId":chat.characterGroupId}),
+            )]),
             messages,
             createdAt: epochMillisToLocalDateTimeString(chat.createdAt)?,
             updatedAt: epochMillisToLocalDateTimeString(chat.updatedAt)?,

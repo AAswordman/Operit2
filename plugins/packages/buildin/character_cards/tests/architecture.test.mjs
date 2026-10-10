@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { coreArchitectureViolations, pluginArchitectureViolations } from "./architecture.mjs";
+import { coreArchitectureViolations, flutterArchitectureViolations, pluginArchitectureViolations } from "./architecture.mjs";
 
 /** Rejects dedicated plugin Host/DTO/bridge/import contracts in actual Core and SDK source. */
 test("Core and SDK do not own character-plugin-specific Host DTO bridge or import contracts", () => {
   const violations = coreArchitectureViolations();
   assert.deepEqual(violations, [], `Core architecture cleanup is incomplete:\n${violations.join("\n")}`);
+});
+
+/** Scans all Dart production source so unmounted legacy screens cannot survive plugin extraction. */
+test("Flutter does not retain character or memory business screens stores or generated proxies", () => {
+  const violations = flutterArchitectureViolations();
+  assert.deepEqual(violations, [], `Flutter architecture cleanup is incomplete:\n${violations.join("\n")}`);
 });
 
 /** Keeps missing production globals and withdrawn SDK contracts visible rather than installing test stubs. */

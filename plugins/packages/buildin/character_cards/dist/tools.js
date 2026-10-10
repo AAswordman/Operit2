@@ -6,8 +6,8 @@
     "en": "Character Memory"
   },
   "description": {
-    "zh": "在角色插件自己的文件目录中读写记忆、文档和关系。",
-    "en": "Read and edit memories, documents and relationships in the character plugin files."
+    "zh": "通过角色插件的记录数据库读写记忆和关系，通过文件接口读写文档。",
+    "en": "Read and edit memories and relationships in the character record database, and documents through the file interface."
   },
   "tools": [
     {
@@ -591,6 +591,7 @@ var hostRuntimeParameterNames = [
   "__operit_package_caller_name",
   "__operit_package_chat_id",
   "__operit_package_caller_participant_id",
+  "__operit_package_caller_owner",
   "__operit_package_name",
   "__operit_toolpkg_runtime_kind",
   "__operit_toolpkg_api_version",
@@ -1092,6 +1093,7 @@ var id = shape({ id: required(nonblank) });
 var ownerOnly = shape({ ownerKey: required(owner) });
 var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
+var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
   "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,

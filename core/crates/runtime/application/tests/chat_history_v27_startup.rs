@@ -80,7 +80,13 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
     assert_eq!(history.group.as_deref(), Some("legacy-sidebar"));
     assert_eq!(delegate.chatHistoryManager.loadChatHistory("v27-second".to_string()).unwrap().unwrap().group.as_deref(), Some("old-folder"));
     assert_eq!(history.workspaceId.as_deref(), Some("workspace-kept"));
-    assert!(history.pluginExtensions.is_empty());
+    assert_eq!(
+        history.pluginExtensions.get("com.operit.character_cards.migration"),
+        Some(&serde_json::json!({
+            "characterCardName": "legacy-card",
+            "characterGroupId": "legacy-role-group",
+        }))
+    );
     let messages = delegate.currentChatMessagesSnapshot();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].timestamp, 42);

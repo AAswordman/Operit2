@@ -6,8 +6,8 @@
     "en": "Character Memory"
   },
   "description": {
-    "zh": "在角色插件自己的文件目录中读写记忆、文档和关系。",
-    "en": "Read and edit memories, documents and relationships in the character plugin files."
+    "zh": "通过角色插件的记录数据库读写记忆和关系，通过文件接口读写文档。",
+    "en": "Read and edit memories and relationships in the character record database, and documents through the file interface."
   },
   "tools": [
     {

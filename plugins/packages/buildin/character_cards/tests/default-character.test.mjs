@@ -3,7 +3,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { loadModule, plain } from "./runtime.mjs";
-const state = loadModule("src/storage/state.ts"), drafts = loadModule("src/drafts.ts");
+const state = loadModule("src/storage/state.ts");
 
 test("built-in Operit retains original default content and exact packaged avatar", async () => {
   const card = state.createDefaultCharacter(123);
@@ -19,20 +19,13 @@ test("built-in Operit retains original default content and exact packaged avatar
   assert.equal(createHash("sha256").update(resource).digest("hex"), "29d737505e8322e75fdda1bf24b15377208019dd5a7dd60623cecc0b0056fda9");
 });
 
-test("only the complete untouched placeholder is upgraded; bindings and owner identities survive", () => {
+test("initial state uses the current default without an unreleased JSON upgrade codec", () => {
   const initial = state.createInitialState(123);
-  initial.cards[0] = { ...drafts.createCharacterDraft(), id: "default", name: "默认角色", description: "通用助手", characterSetting: "你是一个乐于助人、诚实且严谨的助手。", isDefault: true, createdAt: 123, updatedAt: 123 };
-  const active = plain(initial.active), owners = plain(initial.owners);
-  assert.equal(state.upgradeUntouchedDefault(initial), true);
-  assert.equal(initial.cards[0].name, "Operit"); assert.equal(initial.cards[0].createdAt, 123);
-  assert.deepEqual(plain(initial.active), active); assert.deepEqual(plain(initial.owners), owners);
-  assert.equal(state.upgradeUntouchedDefault(initial), false);
-  for (const change of [{ name: "用户的角色" }, { otherContentChat: "用户编辑" }, { avatarUri: "/app/data/custom.png" }, { memoryBindingMode: "SHARED", sharedMemoryId: "s1" }, { updatedAt: 124 }]) {
-    const edited = state.createInitialState(123);
-    edited.cards[0] = { ...drafts.createCharacterDraft(), id: "default", name: "默认角色", description: "通用助手", characterSetting: "你是一个乐于助人、诚实且严谨的助手。", isDefault: true, createdAt: 123, updatedAt: 123, ...change };
-    const before = plain(edited);
-    assert.equal(state.upgradeUntouchedDefault(edited), false); assert.deepEqual(plain(edited), before);
-  }
+  state.assertCharacterState(initial);
+  assert.equal(initial.cards[0].name, "Operit");
+  assert.deepEqual(plain(initial.active), { CharacterCard: { id: "default" } });
+  assert.equal(initial.owners[0].ownerKey, "character:default");
+  assert.equal(state.decodeCharacterState, undefined);
 });
 
 test("VFS avatar bytes become portable sources and failed reads can retry", async () => {

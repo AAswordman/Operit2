@@ -37,9 +37,7 @@ use operit_plugin_sdk::javascript::{
     ToolPkgMainRegistrationCapture, ToolPkgTextResourceHost,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
-use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
 use operit_plugin_sdk::toolpkg::ToolPkgRegistrationBridge::buildToolPkgRegistrationBridgeScript;
-use operit_util::stream::Stream::{CollectFuture, Stream};
 use operit_util::AppLogger::AppLogger;
 
 const TAG: &str = "OperitQuickJsEngine";
@@ -73,16 +71,6 @@ pub struct JsEngine {
 }
 
 #[derive(Clone)]
-#[allow(non_snake_case)]
-pub struct JsComposeDslActionEventStream {
-    engine: JsEngine,
-    actionId: String,
-    payload: Option<Value>,
-    runtimeOptions: BTreeMap<String, Value>,
-    envOverrides: BTreeMap<String, String>,
-}
-
-#[derive(Clone)]
 struct JsEngineWorker {
     runtimeHost: Arc<dyn HostJavaScriptRuntimeHost>,
     stateHandle: HostJavaScriptRuntimeStateHandle,
@@ -102,6 +90,11 @@ enum JsAsyncCallback {
 }
 
 type JsAsyncCallbackSink = Arc<dyn Fn(JsAsyncCallback) + Send + Sync>;
+/// Keeps structured storage replies separate from legacy text tool callbacks.
+enum JsCallbackDelivery {
+    Text(JsAsyncCallback),
+    Storage { callbackId: String, result: Value, isError: bool },
+}
 type JsBackgroundWake = Arc<dyn Fn() + Send + Sync>;
 
 /// Identifies the authoritative module-resource owner for a single execution mode.
@@ -202,8 +195,8 @@ impl Drop for JsScriptRequestLease {
 
 struct JsEngineState {
     runtime: Box<dyn HostJavaScriptRuntime>,
-    asyncCallbackSender: mpsc::Sender<JsAsyncCallback>,
-    asyncCallbackReceiver: mpsc::Receiver<JsAsyncCallback>,
+    asyncCallbackSender: mpsc::Sender<JsCallbackDelivery>,
+    asyncCallbackReceiver: mpsc::Receiver<JsCallbackDelivery>,
     backgroundWake: Arc<Mutex<Option<JsBackgroundWake>>>,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
     toolPkgContext: Option<ToolPkgExecutionContext>,
@@ -218,7 +211,7 @@ impl JsEngineWorker {
     fn new(
         executionHost: Option<Arc<dyn JsExecutionHost>>,
         toolPkgContext: Option<ToolPkgExecutionContext>,
-    ) -> Self {
+    ) -> JsExecutionResult<Self> {
         let runtimeHost = defaultHostJavaScriptRuntimeHost();
         let runtimeHostForState = runtimeHost.clone();
         let workerExecutionHost = executionHost.clone();
@@ -239,7 +232,7 @@ impl JsEngineWorker {
                     Ok(Box::new(state))
                 }),
             )
-            .expect("JavaScript runtime state must be created by the Host");
+            .map_err(|error| JsExecutionError::initialization(error.to_string()))?;
         let scheduled = Arc::new(AtomicBool::new(false));
         let requested = Arc::new(AtomicBool::new(false));
         let alive = Arc::new(AtomicBool::new(true));
@@ -321,12 +314,12 @@ impl JsEngineWorker {
         *backgroundWake
             .lock()
             .expect("background wake mutex poisoned") = Some(wake);
-        Self {
+        Ok(Self {
             runtimeHost,
             stateHandle,
             alive,
             executionHost: workerExecutionHost,
-        }
+        })
     }
 
     /// Cancels a submitted call independently of whether its completion future is polled.
@@ -641,28 +634,28 @@ fn executeWithInterrupt<T>(
 
 impl JsEngine {
     /// Creates a JavaScript execution engine backed by a caller-supplied execution host.
-    pub fn new(executionHost: Arc<dyn JsExecutionHost>) -> Self {
-        Self {
-            worker: JsEngineWorker::new(Some(executionHost), None),
-        }
+    pub fn new(executionHost: Arc<dyn JsExecutionHost>) -> JsExecutionResult<Self> {
+        Ok(Self {
+            worker: JsEngineWorker::new(Some(executionHost), None)?,
+        })
     }
 
     /// Creates a JavaScript execution engine bound to one ToolPkg package environment.
     pub fn new_toolpkg_execution_engine(
         executionHost: Arc<dyn JsExecutionHost>,
         context: ToolPkgExecutionContext,
-    ) -> Self {
-        Self {
-            worker: JsEngineWorker::new(Some(executionHost), Some(context)),
-        }
+    ) -> JsExecutionResult<Self> {
+        Ok(Self {
+            worker: JsEngineWorker::new(Some(executionHost), Some(context))?,
+        })
     }
 
     /// Creates a JavaScript engine used only for ToolPkg registration.
     #[allow(non_snake_case)]
-    pub fn new_toolpkg_registration_engine() -> Self {
-        Self {
-            worker: JsEngineWorker::new(None, None),
-        }
+    pub fn new_toolpkg_registration_engine() -> JsExecutionResult<Self> {
+        Ok(Self {
+            worker: JsEngineWorker::new(None, None)?,
+        })
     }
 
     /// Executes a named JavaScript function with serialized parameters.
@@ -861,88 +854,15 @@ impl JsEngine {
         )
     }
 
-    /// Executes a Compose DSL script and returns its rendered event stream.
-    #[allow(non_snake_case)]
-    pub fn execute_compose_dsl_script(
-        &self,
-        script: &str,
-        runtimeOptions: &BTreeMap<String, Value>,
-        envOverrides: &BTreeMap<String, String>,
-        textResources: Arc<ToolPkgTextResources>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-        self.executeComposeDslFunction(
-            &buildComposeDslRuntimeWrappedScript(script),
-            "__operit_render_compose_dsl",
-            runtimeOptions,
-            envOverrides,
-            None,
-            Some(textResources),
-        )
-    }
-
-    /// Executes a Compose DSL render while allowing the host runtime to keep advancing.
-    #[allow(non_snake_case)]
-    pub fn execute_compose_dsl_script_async(
-        &self,
-        script: String,
-        runtimeOptions: BTreeMap<String, Value>,
-        envOverrides: BTreeMap<String, String>,
-        textResources: Arc<ToolPkgTextResources>,
-    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
-        self.executeComposeDslFunctionAsync(
-            buildComposeDslRuntimeWrappedScript(&script),
-            "__operit_render_compose_dsl".to_string(),
-            runtimeOptions,
-            envOverrides,
-            None,
-            Some(textResources),
-        )
-    }
-
-    #[allow(non_snake_case)]
-    pub fn execute_compose_dsl_action(
-        &self,
-        actionId: &str,
-        payload: Option<Value>,
-        runtimeOptions: &BTreeMap<String, Value>,
-        envOverrides: &BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-        let normalizedActionId = actionId.trim();
-        if normalizedActionId.is_empty() {
-            return Box::pin(async {
-                Err(JsExecutionError::invalid_request(
-                    "compose action id is required",
-                ))
-            });
-        }
-        let mut params = runtimeOptions.clone();
-        params.insert(
-            "__action_id".to_string(),
-            Value::String(normalizedActionId.to_string()),
-        );
-        if let Some(payload) = payload {
-            params.insert("__action_payload".to_string(), payload);
-        }
-        self.executeComposeDslFunction(
-            "",
-            "__operit_dispatch_compose_dsl_action",
-            &params,
-            envOverrides,
-            on_intermediate_result,
-            None,
-        )
-    }
-
     /// Dispatches a Compose DSL action while allowing the host runtime to keep advancing.
     #[allow(non_snake_case)]
-    pub fn dispatch_compose_dsl_action_result_async(
+    pub fn dispatch_compose_dsl_action_stream_async(
         &self,
         actionId: String,
         payload: Option<Value>,
         runtimeOptions: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+        on_response: Arc<dyn Fn(Value) + Send + Sync>,
     ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
         let normalizedActionId = actionId.trim().to_string();
         if normalizedActionId.is_empty() {
@@ -962,50 +882,23 @@ impl JsEngine {
             "__operit_dispatch_compose_dsl_action".to_string(),
             params,
             envOverrides,
-            on_intermediate_result,
+            Some(on_response),
             None,
         )
     }
 
-    #[allow(non_snake_case)]
-    pub fn rerender_compose_dsl_tree(
+    /// Sends render commits on the JS thread before asynchronous command completion can be overtaken.
+    pub fn execute_compose_dsl_script_stream_async(
         &self,
-        runtimeOptions: &BTreeMap<String, Value>,
-        envOverrides: &BTreeMap<String, String>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-        self.executeComposeDslFunction(
-            "",
-            "__operit_rerender_compose_dsl",
-            runtimeOptions,
-            envOverrides,
-            None,
-            None,
-        )
-    }
-
-    /// Executes a Compose DSL operation with the resource snapshot owned by its page runtime.
-    #[allow(non_snake_case)]
-    fn executeComposeDslFunction(
-        &self,
-        script: &str,
-        functionName: &str,
-        params: &BTreeMap<String, Value>,
-        envOverrides: &BTreeMap<String, String>,
-        onIntermediateResult: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-        self.worker.execute_script_function_async(
-            script.to_owned(),
-            functionName.to_owned(),
-            params.clone(),
-            envOverrides.clone(),
-            onIntermediateResult,
-            true,
-            Duration::from_secs(TOOLPKG_SCRIPT_TIMEOUT_SECONDS),
-            TOOLPKG_SCRIPT_TIMEOUT_SECONDS,
-            None,
-            textResources,
-            true,
+        script: String,
+        runtimeOptions: BTreeMap<String, Value>,
+        envOverrides: BTreeMap<String, String>,
+        textResources: Arc<ToolPkgTextResources>,
+        onResponse: Arc<dyn Fn(Value) + Send + Sync>,
+    ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
+        self.executeComposeDslFunctionAsync(
+            script, "__operit_render_compose_dsl".into(),
+            runtimeOptions, envOverrides, Some(onResponse), Some(textResources),
         )
     }
 
@@ -1035,83 +928,9 @@ impl JsEngine {
         )
     }
 
-    #[allow(non_snake_case)]
-    pub fn dispatch_compose_dsl_action_async(
-        &self,
-        actionId: &str,
-        payload: Option<Value>,
-        runtimeOptions: BTreeMap<String, Value>,
-        envOverrides: BTreeMap<String, String>,
-    ) -> JsComposeDslActionEventStream {
-        JsComposeDslActionEventStream {
-            engine: self.clone(),
-            actionId: actionId.to_string(),
-            payload,
-            runtimeOptions,
-            envOverrides,
-        }
-    }
 }
 
-impl Stream for JsComposeDslActionEventStream {
-    type Item = Value;
-
-    /// Collects Compose DSL action events without blocking the collector task.
-    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
-        Box::pin(async move {
-            let intermediateEvents = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
-            let intermediateEventsForCallback = intermediateEvents.clone();
-            let result = self
-                .engine
-                .dispatch_compose_dsl_action_result_async(
-                    self.actionId.clone(),
-                    self.payload.clone(),
-                    self.runtimeOptions.clone(),
-                    self.envOverrides.clone(),
-                    Some(Arc::new(move |intermediate| {
-                        intermediateEventsForCallback
-                            .lock()
-                            .expect("compose dsl intermediate event mutex poisoned")
-                            .push(composeDslActionEvent(
-                                "intermediate",
-                                None,
-                                Some(&intermediate),
-                            ));
-                    })),
-                )
-                .await;
-            for event in intermediateEvents
-                .lock()
-                .expect("compose dsl intermediate event mutex poisoned")
-                .iter()
-                .cloned()
-            {
-                collector(event);
-            }
-            match result {
-                Ok(Some(result)) => collector(composeDslActionEvent("final", None, Some(&result))),
-                Ok(None) => {}
-                Err(error) => collector(composeDslActionEvent("error", Some(&error.message), None)),
-            }
-            collector(composeDslActionEvent("complete", None, None));
-        })
-    }
-}
-
-#[allow(non_snake_case)]
-fn composeDslActionEvent(phase: &str, error: Option<&str>, result: Option<&Value>) -> Value {
-    let mut object = serde_json::Map::new();
-    object.insert("phase".to_string(), Value::String(phase.to_string()));
-    if let Some(error) = error {
-        object.insert("error".to_string(), Value::String(error.to_string()));
-    }
-    if let Some(result) = result {
-        object.insert("result".to_string(), result.clone());
-    }
-    Value::Object(object)
-}
-
-/// Validates and converts one Host JavaScript callback argument list.
+/// Validates a native callback argument count before dispatch.
 #[allow(non_snake_case)]
 fn exactHostJavaScriptArguments<const N: usize>(
     functionName: &str,
@@ -1123,6 +942,14 @@ fn exactHostJavaScriptArguments<const N: usize>(
             "{functionName} requires {N} arguments, received {argumentCount}"
         ))
     })
+}
+
+/// Preserves the JavaScript UTF-16 hash and wrapping arithmetic without interpreter work per character.
+fn javaScriptSourceFingerprint(source: &str) -> String {
+    let hash = source.encode_utf16().fold(0_u32, |hash, unit| {
+        hash.wrapping_mul(31).wrapping_add(u32::from(unit))
+    });
+    format!("{hash:x}")
 }
 
 impl JsEngineState {
@@ -1525,7 +1352,7 @@ impl JsEngineState {
                 }
             };
             clearNativeExecutionSession(&callId);
-            ensureRegistrationExecutionSucceeded(&output).map_err(JsExecutionError::runtime)?;
+            ensureRegistrationExecutionSucceeded(&output?).map_err(JsExecutionError::runtime)?;
 
             let capture = self
                 .runtime
@@ -1819,7 +1646,14 @@ impl JsEngineState {
 
     /// Settles one asynchronous result through the owning host Promise registry.
     #[allow(non_snake_case)]
-    fn deliverAsyncCallback(&mut self, callback: JsAsyncCallback) -> Result<(), String> {
+    fn deliverAsyncCallback(&mut self, delivery: JsCallbackDelivery) -> Result<(), String> {
+        let callback = match delivery {
+            JsCallbackDelivery::Storage { callbackId, result, isError } => {
+                return self.runtime.callHostJavaScriptFunction(&callbackId, &[result, Value::Bool(isError)])
+                    .map(|_| ()).map_err(|error| error.to_string());
+            }
+            JsCallbackDelivery::Text(callback) => callback,
+        };
         match callback {
             JsAsyncCallback::Promise {
                 requestId,
@@ -1878,6 +1712,7 @@ impl JsEngineState {
     #[allow(non_snake_case)]
     fn registerHostBindings(&mut self) -> Result<(), String> {
         let syncNames = [
+            "__operitNativeHashText",
             "__operitNativeReadToolPkgTextResource",
             "__operitNativeGetEnvForCall",
             "__operitNativeSetEnv",
@@ -1912,7 +1747,24 @@ impl JsEngineState {
                 .map_err(|error| error.to_string())?;
         }
 
+        let storageHost = self.executionHost.clone();
+        let storageSender = self.asyncCallbackSender.clone();
+        let storageWake = self.backgroundWake.clone();
         let structuredFunctions: Vec<(&str, HostJavaScriptValueCallback)> = vec![
+            ("__operitNativeStorageRequestAsync", Arc::new(move |arguments| {
+                let [callbackId, request]: [Value; 2] = arguments.try_into().map_err(|_| HostError::new("Storage requires callback id and typed request"))?;
+                let callbackId = callbackId.as_str().filter(|id| id.strip_prefix("__operit_storage_").is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()) && suffix.parse::<u64>().is_ok_and(|sequence| sequence > 0)) && id.len() < 128).ok_or_else(|| HostError::new("Invalid storage callback id"))?.to_string();
+                let request: operit_plugin_sdk::js_sdk::storage::StorageRequest = serde_json::from_value(request).map_err(|e| HostError::new(e.to_string()))?;
+                let host = storageHost.clone().ok_or_else(|| HostError::new("Storage execution host is unavailable"))?;
+                let sender = storageSender.clone();
+                let wake = storageWake.clone();
+                defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask("plugin-storage", Box::new(move || Box::pin(async move {
+                    let (result, isError) = match host.request(request).await { Ok(value) => (value, false), Err(error) => (Value::String(error.message), true) };
+                    let _ = sender.send(JsCallbackDelivery::Storage { callbackId, result, isError });
+                    if let Some(wake) = wake.lock().expect("Storage callback wake poisoned").clone() { wake(); }
+                })))?;
+                Ok(())
+            })),
             ("__operitNativeSetCallStructuredResult", Arc::new(|arguments| {
                 let [callId, value]: [Value; 2] = arguments.try_into().map_err(|_| HostError::new("Structured result requires call id and value"))?;
                 let callId = callId.as_str().ok_or_else(|| HostError::new("Structured call id must be a string"))?;
@@ -1934,7 +1786,7 @@ impl JsEngineState {
         let asyncCallbackSender = self.asyncCallbackSender.clone();
         let backgroundWake = self.backgroundWake.clone();
         let asyncCallbackSink: JsAsyncCallbackSink = Arc::new(move |callback| {
-            let _ = asyncCallbackSender.send(callback);
+            let _ = asyncCallbackSender.send(JsCallbackDelivery::Text(callback));
             if let Some(wake) = backgroundWake
                 .lock()
                 .expect("background wake mutex poisoned")
@@ -2529,79 +2381,32 @@ impl JsExecutionEngine for JsEngine {
         )
     }
 
-    /// Executes one Compose DSL render script through this engine.
-    #[allow(non_snake_case)]
-    fn execute_compose_dsl_script(
-        &self,
-        script: &str,
-        runtimeOptions: &BTreeMap<String, Value>,
-        envOverrides: &BTreeMap<String, String>,
-        textResources: Arc<BTreeMap<String, String>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-        JsEngine::execute_compose_dsl_script(
-            self,
-            script,
-            runtimeOptions,
-            envOverrides,
-            textResources,
-        )
-    }
-
-    /// Executes one Compose DSL render through the asynchronous engine contract.
-    #[allow(non_snake_case)]
-    fn execute_compose_dsl_script_async(
-        &self,
-        script: String,
-        runtimeOptions: BTreeMap<String, Value>,
-        envOverrides: BTreeMap<String, String>,
-        textResources: Arc<BTreeMap<String, String>>,
+    /// Streams render responses directly from the retained commit's owning JavaScript call.
+    fn execute_compose_dsl_script_stream_async(
+        &self, script: String, runtime_options: BTreeMap<String, Value>,
+        env_overrides: BTreeMap<String, String>, text_resources: Arc<ToolPkgTextResources>,
+        on_response: Arc<dyn Fn(Value) + Send + Sync>,
     ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
-        JsEngine::execute_compose_dsl_script_async(
-            self,
-            script,
-            runtimeOptions,
-            envOverrides,
-            textResources,
-        )
-    }
-
-    /// Dispatches one Compose DSL action through this engine.
-    #[allow(non_snake_case)]
-    fn dispatch_compose_dsl_action(
-        &self,
-        actionId: &str,
-        payload: Option<Value>,
-        runtimeOptions: &BTreeMap<String, Value>,
-        envOverrides: &BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-        JsEngine::execute_compose_dsl_action(
-            self,
-            actionId,
-            payload,
-            runtimeOptions,
-            envOverrides,
-            on_intermediate_result,
-        )
+        JsEngine::execute_compose_dsl_script_stream_async(self, script, runtime_options, env_overrides, text_resources, on_response)
     }
 
     /// Dispatches one Compose DSL action through the asynchronous engine contract.
     #[allow(non_snake_case)]
-    fn dispatch_compose_dsl_action_result_async(
+    fn dispatch_compose_dsl_action_stream_async(
         &self,
         actionId: String,
         payload: Option<Value>,
         runtimeOptions: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+        on_response: Arc<dyn Fn(Value) + Send + Sync>,
     ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
-        JsEngine::dispatch_compose_dsl_action_result_async(
+        JsEngine::dispatch_compose_dsl_action_stream_async(
             self,
             actionId,
             payload,
             runtimeOptions,
             envOverrides,
-            on_intermediate_result,
+            on_response,
         )
     }
 
@@ -3138,6 +2943,45 @@ fn scopedPluginConfigDirectory(ownerId: String, pluginId: String) -> Result<Stri
     }
     Ok(path)
 }
+/// Resolves pure local storage using the engine's registration or authenticated runtime context.
+#[allow(non_snake_case)]
+fn nativeGetPluginLocalDataDirString(ownerId: String) -> String {
+    let result = currentExecutionHost().and_then(|host| {
+        CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| match current.borrow().as_ref() {
+            Some(params) => {
+                let owner = params.get("toolPkgId").and_then(Value::as_str)
+                    .ok_or("ToolPkg registration local data owner is missing")?;
+                host.registration_plugin_local_data_dir(owner)
+            }
+            None => host.plugin_local_data_dir(&ownerId),
+        })
+    });
+    match result {
+        Ok(path) => serde_json::json!({"success": true, "path": path}).to_string(),
+        Err(error) => buildJsExecutionErrorPayload(&error),
+    }
+}
+
+/// Resolves persistent shared data independently of registration and installation scope.
+#[allow(non_snake_case)]
+fn nativeGetPluginSpaceDataDirString(ownerId: String) -> String {
+    let result = currentExecutionHost().and_then(|host| {
+        CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| match current.borrow().as_ref() {
+            Some(params) => {
+                let owner = params.get("toolPkgId").and_then(Value::as_str)
+                    .ok_or("ToolPkg registration shared data owner is missing")?;
+                host.registration_plugin_space_data_dir(owner)
+            }
+            None => host.plugin_space_data_dir(&ownerId),
+        })
+    });
+    match result {
+        Ok(path) => serde_json::json!({"success": true, "path": path}).to_string(),
+        Err(error) => buildJsExecutionErrorPayload(&error),
+    }
+}
+
+}
 
 /// Returns the execution host bound to the active JavaScript call.
 #[allow(non_snake_case)]
@@ -3186,13 +3030,9 @@ fn clearNativeExecutionSession(callId: &str) {
     });
 }
 
+/// Validates the structured registration result without a JSON text round trip.
 #[allow(non_snake_case)]
-fn ensureRegistrationExecutionSucceeded(output: &str) -> Result<(), String> {
-    let trimmed = output.trim();
-    if trimmed.is_empty() || trimmed == "undefined" {
-        return Ok(());
-    }
-    let value = serde_json::from_str::<Value>(trimmed).map_err(|error| error.to_string())?;
+fn ensureRegistrationExecutionSucceeded(value: &Value) -> Result<(), String> {
     if value
         .get("success")
         .and_then(Value::as_bool)

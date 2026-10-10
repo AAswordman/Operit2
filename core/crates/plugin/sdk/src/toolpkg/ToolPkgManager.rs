@@ -19,14 +19,14 @@ pub type ToolPkgRuntimeChangeListener = Arc<dyn Fn(Vec<ToolPkgContainerRuntime>)
 pub trait ToolPkgExecutionEngineFactory: Send + Sync {
     /// Creates one isolated JavaScript engine without a ToolPkg package environment.
     #[allow(non_snake_case)]
-    fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine>;
+    fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String>;
 
     /// Creates one isolated JavaScript engine for a ToolPkg execution context.
     #[allow(non_snake_case)]
     fn createToolPkgExecutionEngine(
         &self,
         context: ToolPkgExecutionContext,
-    ) -> Arc<dyn JsExecutionEngine>;
+    ) -> Result<Arc<dyn JsExecutionEngine>, String>;
 }
 
 /// Resolves embedded ToolPkg archive bytes owned by the embedding application.
@@ -377,14 +377,14 @@ impl ToolPkgManager {
         &self,
         contextKey: &str,
         containerPackageName: &str,
-    ) -> Arc<dyn JsExecutionEngine> {
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
         self.executionEngineWithLease(contextKey, containerPackageName, false)
     }
 
     /// Acquires one counted lease for a ToolPkg JavaScript execution context.
     #[allow(non_snake_case)]
-    pub fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
-        self.executionEngineWithLease(contextKey, containerPackageName, true);
+    pub fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) -> Result<(), String> {
+        self.executionEngineWithLease(contextKey, containerPackageName, true).map(|_| ())
     }
 
     /// Starts workers without holding the registry lock. Startup authenticates via
@@ -396,51 +396,56 @@ impl ToolPkgManager {
         contextKey: &str,
         containerPackageName: &str,
         acquireLease: bool,
-    ) -> Arc<dyn JsExecutionEngine> {
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
         let normalizedKey = contextKey.trim();
         let normalizedContainer = containerPackageName.trim();
-        assert!(!normalizedKey.is_empty(), "ToolPkg execution context key is required");
-        assert!(!normalizedContainer.is_empty(), "ToolPkg execution container is required");
+        if normalizedKey.is_empty() { return Err("ToolPkg execution context key is required".into()); }
+        if normalizedContainer.is_empty() { return Err("ToolPkg execution container is required".into()); }
         {
             let mut engines = self.toolPkgExecutionEngines.lock()
                 .expect("toolpkg execution engine mutex poisoned");
             if let Some(entry) = engines.get_mut(normalizedKey) {
-                assert_eq!(entry.containerPackageName, normalizedContainer,
-                    "ToolPkg execution context belongs to a different container");
+                if entry.containerPackageName != normalizedContainer { return Err("ToolPkg execution context belongs to a different container".into()); }
                 if acquireLease { entry.activeLeases += 1; }
-                return entry.engine.clone();
+                return Ok(entry.engine.clone());
             }
         }
         let apiVersion = self.getToolPkgContainerRuntime(normalizedContainer)
-            .expect("ToolPkg execution context requires a registered container").apiVersion;
+            .ok_or_else(|| format!("ToolPkg execution context requires a registered container: {normalizedContainer}"))?.apiVersion;
         let created = self.executionEngineFactory.createToolPkgExecutionEngine(ToolPkgExecutionContext {
             context_key: normalizedKey.to_string(),
             container_package_name: normalizedContainer.to_string(),
             api_version: apiVersion,
             text_resource_host: Arc::new(self.clone()),
-        });
+        })?;
         let winner = {
             let mut engines = self.toolPkgExecutionEngines.lock()
                 .expect("toolpkg execution engine mutex poisoned");
             if let Some(entry) = engines.get_mut(normalizedKey) {
-                assert_eq!(entry.containerPackageName, normalizedContainer,
-                    "ToolPkg execution context belongs to a different container");
-                if acquireLease { entry.activeLeases += 1; }
-                Some(entry.engine.clone())
+                if entry.containerPackageName != normalizedContainer {
+                    Err("ToolPkg execution context belongs to a different container".to_string())
+                } else {
+                    if acquireLease { entry.activeLeases += 1; }
+                    Ok(Some(entry.engine.clone()))
+                }
             } else {
                 engines.insert(normalizedKey.to_string(), ToolPkgExecutionEngineEntry {
                     containerPackageName: normalizedContainer.to_string(),
                     engine: created.clone(), activeLeases: usize::from(acquireLease),
                 });
-                None
+                Ok(None)
             }
+        };
+        let winner = match winner {
+            Ok(winner) => winner,
+            Err(error) => { created.destroy(); return Err(error); }
         };
         if let Some(winner) = winner {
             // A racing creator won. Dispose the unused worker outside the lock too.
             created.destroy();
-            winner
+            Ok(winner)
         } else {
-            created
+            Ok(created)
         }
     }
 
@@ -812,7 +817,7 @@ impl ToolPkgManager {
         }
 
         let contextKey = resolveToolPkgExecutionContextKey(&runtime.packageName, &params);
-        let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName);
+        let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName)?;
         Ok((engine, script, params))
     }
 }
@@ -1066,50 +1071,23 @@ mod tests {
             Ok(ToolPkgMainRegistrationCapture::default())
         }
 
-        /// Returns no Compose DSL result for registry tests.
-        fn execute_compose_dsl_script(
-            &self,
-            _script: &str,
-            _runtime_options: &BTreeMap<String, Value>,
-            _env_overrides: &BTreeMap<String, String>,
-            _text_resources: Arc<BTreeMap<String, String>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-            let result = (|| Ok(None))();
-            Box::pin(std::future::ready(result))
-        }
-
-        /// Returns no Compose DSL result asynchronously for registry tests.
-        fn execute_compose_dsl_script_async(
-            &self,
-            _script: String,
-            _runtime_options: BTreeMap<String, Value>,
-            _env_overrides: BTreeMap<String, String>,
-            _text_resources: Arc<BTreeMap<String, String>>,
+        /// Rejects live-session rendering in this recording-only engine.
+        fn execute_compose_dsl_script_stream_async(
+            &self, _script: String, _runtime_options: BTreeMap<String, Value>,
+            _env_overrides: BTreeMap<String, String>, _text_resources: Arc<BTreeMap<String, String>>,
+            _on_response: Arc<dyn Fn(Value) + Send + Sync>,
         ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<Value>>> {
-            Box::pin(async { Ok(None) })
-        }
-
-        /// Returns no Compose DSL action result for registry tests.
-        fn dispatch_compose_dsl_action(
-            &self,
-            _action_id: &str,
-            _payload: Option<Value>,
-            _runtime_options: &BTreeMap<String, Value>,
-            _env_overrides: &BTreeMap<String, String>,
-            _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-            let result = (|| Ok(None))();
-            Box::pin(std::future::ready(result))
+            Box::pin(async { Err(crate::execution_result::JsExecutionError::invalid_request("This recording engine does not execute live Compose sessions")) })
         }
 
         /// Returns no Compose DSL action result asynchronously for registry tests.
-        fn dispatch_compose_dsl_action_result_async(
+        fn dispatch_compose_dsl_action_stream_async(
             &self,
             _action_id: String,
             _payload: Option<Value>,
             _runtime_options: BTreeMap<String, Value>,
             _env_overrides: BTreeMap<String, String>,
-            _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+            _on_intermediate_result: Arc<dyn Fn(Value) + Send + Sync>,
         ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<Value>>> {
             Box::pin(async { Ok(None) })
         }
@@ -1126,13 +1104,14 @@ mod tests {
         engines: Mutex<Vec<Arc<RecordingExecutionEngine>>>,
         contexts: Mutex<Vec<ToolPkgExecutionContext>>,
         onCreate: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+        creationError: Mutex<Option<String>>,
     }
 
     impl ToolPkgExecutionEngineFactory for RecordingExecutionEngineFactory {
         /// Creates one generic recording execution engine.
         #[allow(non_snake_case)]
-        fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
-            Arc::new(RecordingExecutionEngine::default())
+        fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            Ok(Arc::new(RecordingExecutionEngine::default()))
         }
 
         /// Creates one recording execution engine with its ToolPkg context.
@@ -1140,7 +1119,8 @@ mod tests {
         fn createToolPkgExecutionEngine(
             &self,
             context: ToolPkgExecutionContext,
-        ) -> Arc<dyn JsExecutionEngine> {
+        ) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            if let Some(error) = self.creationError.lock().unwrap().clone() { return Err(error); }
             let callback = self.onCreate.lock().unwrap().clone();
             if let Some(callback) = callback { callback(); }
             let engine = Arc::new(RecordingExecutionEngine::default());
@@ -1152,7 +1132,7 @@ mod tests {
                 .lock()
                 .expect("recording engine factory mutex poisoned")
                 .push(engine.clone());
-            engine
+            Ok(engine)
         }
     }
 
@@ -1220,6 +1200,33 @@ mod tests {
         (manager, factory)
     }
 
+    /// Keeps container activation consistent for hooks and execution owners when only a child is enabled.
+    #[test]
+    fn containerActivationIncludesEnabledSubpackageAndRejectsInactiveOwners() {
+        let (mut manager, _) = recordingManager();
+        let owner = "com.operit.daily_life";
+        let child = "daily_life";
+        manager.registerToolPkg(ToolPkgLoadResult {
+            containerPackage: ToolPackage { name: owner.into(), ..ToolPackage::default() },
+            containerRuntime: ToolPkgContainerRuntime {
+                packageName: owner.into(), mainEntry: "dist/main.js".into(),
+                subpackages: vec![ToolPkgSubpackageRuntime {
+                    packageName: child.into(), containerPackageName: owner.into(),
+                    subpackageId: child.into(), ..ToolPkgSubpackageRuntime::default()
+                }],
+                ..ToolPkgContainerRuntime::default()
+            },
+            ..ToolPkgLoadResult::default()
+        });
+        for enabled in [owner, child] {
+            let active = manager.getEnabledToolPkgContainerRuntimes(&[enabled.into()]);
+            assert_eq!(active.len(), 1);
+            assert_eq!(active[0].packageName, owner);
+        }
+        assert!(manager.getEnabledToolPkgContainerRuntimes(&[]).is_empty());
+        assert!(manager.getEnabledToolPkgContainerRuntimes(&["unregistered-child".into()]).is_empty());
+    }
+
     /// Creates a manager whose ToolPkg archive exposes modules for resource snapshot assertions.
     fn snapshotRecordingManager() -> (ToolPkgManager, Arc<RecordingExecutionEngineFactory>) {
         let factory = Arc::new(RecordingExecutionEngineFactory::default());
@@ -1233,11 +1240,10 @@ mod tests {
 
     /// Verifies an opaque context key cannot be reused under a different container owner.
     #[test]
-    #[should_panic(expected = "belongs to a different container")]
     fn rejectsContextOwnershipMismatch() {
         let (manager, _) = recordingManager();
-        manager.getToolPkgExecutionEngine("opaque-main-context", "package_a");
-        manager.getToolPkgExecutionEngine("opaque-main-context", "package_b");
+        manager.getToolPkgExecutionEngine("opaque-main-context", "package_a").unwrap();
+        assert_eq!(manager.getToolPkgExecutionEngine("opaque-main-context", "package_b").err().unwrap(), "ToolPkg execution context belongs to a different container");
     }
 
     /// Verifies each acquired context lease keeps the engine alive until released.
@@ -1501,4 +1507,42 @@ mod tests {
             .expect("shared module must exist")
             .contains("createDefinition"));
     }
+    /// Verifies failed startup creates no cached engine and consumes no context lease.
+    #[test]
+    fn failedInitializationDoesNotRegisterAnEngineOrLease() {
+        let (manager, factory) = recordingManager();
+        *factory.creationError.lock().unwrap() = Some("duplicate tool catalog".into());
+        assert_eq!(manager.acquireToolPkgExecutionEngine("failed-sidebar", "package_a").unwrap_err(), "duplicate tool catalog");
+        assert!(manager.findToolPkgExecutionEngine("failed-sidebar", "package_a").is_none());
+        assert!(factory.engines.lock().unwrap().is_empty());
+        *factory.creationError.lock().unwrap() = None;
+        manager.acquireToolPkgExecutionEngine("failed-sidebar", "package_a").unwrap();
+        manager.releaseToolPkgExecutionEngine("failed-sidebar", "package_a");
+        assert!(manager.findToolPkgExecutionEngine("failed-sidebar", "package_a").is_none());
+        assert!(factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+    }
+
+    /// Verifies a racing different owner rejects the losing engine and disposes it outside the registry lock.
+    #[test]
+    fn concurrentDifferentOwnerDisposesRejectedWorker() {
+        let (manager, factory) = recordingManager();
+        let competing = manager.clone();
+        let weakFactory = Arc::downgrade(&factory);
+        *factory.onCreate.lock().unwrap() = Some(Arc::new(move || {
+            weakFactory.upgrade().unwrap().onCreate.lock().unwrap().take();
+            competing.acquireToolPkgExecutionEngine("raced-sidebar", "package_b").unwrap();
+        }));
+        assert_eq!(manager.acquireToolPkgExecutionEngine("raced-sidebar", "package_a").unwrap_err(),
+            "ToolPkg execution context belongs to a different container");
+        assert_eq!(manager.getToolPkgExecutionEngine("raced-sidebar", "package_a").err().unwrap(),
+            "ToolPkg execution context belongs to a different container");
+        assert!(manager.findToolPkgExecutionEngine("raced-sidebar", "package_b").is_some());
+        let engines = factory.engines.lock().unwrap().clone();
+        assert_eq!(engines.len(), 2);
+        assert!(!engines[0].destroyed.load(Ordering::Acquire));
+        assert!(engines[1].destroyed.load(Ordering::Acquire));
+        manager.releaseToolPkgExecutionEngine("raced-sidebar", "package_b");
+        assert!(engines[0].destroyed.load(Ordering::Acquire));
+    }
+
 }

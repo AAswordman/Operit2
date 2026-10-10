@@ -113,6 +113,12 @@ pub(super) fn tui_core(client: Arc<LocalCoreProxy>) -> TuiCore {
 }
 
 impl TuiCore {
+    /// Gives a persistent session command future its own generated proxy over the same local Core.
+    pub(super) fn composeCommandProxy(&mut self) -> GeneratedCoreProxy<SharedLocalCore> {
+        let client = self.proxy.application().generatedClientMut().0.clone();
+        GeneratedCoreProxy::new(SharedLocalCore(client))
+    }
+
     /// Decodes an ordered StateFlow event without treating embedded stream events as state.
     #[allow(non_snake_case)]
     pub(super) fn decodeStateFlowEvent<T: DeserializeOwned>(
@@ -655,8 +661,6 @@ mod tests {
         let initial = ChatState {
             currentChatId: "handoff-chat".to_string(),
             currentChatTitle: "stable chat title ".repeat(100),
-            currentCharacterCardName: None,
-            currentCharacterCardAvatarUri: None,
             currentWorkspacePath: Some("/workspace/b".to_string()),
             isLoading: true,
             inputProcessingState: InputProcessingState::Connecting {

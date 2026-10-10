@@ -107,7 +107,7 @@ struct RuntimeToolPkgExecutionEngineFactory {
 impl ToolPkgExecutionEngineFactory for RuntimeToolPkgExecutionEngineFactory {
     /// Creates one JavaScript engine without a ToolPkg package environment.
     #[allow(non_snake_case)]
-    fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
+    fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
         self.jsExecutionProvider
             .create_execution_engine(Arc::new(self.toolHandler.clone()))
     }
@@ -117,7 +117,7 @@ impl ToolPkgExecutionEngineFactory for RuntimeToolPkgExecutionEngineFactory {
     fn createToolPkgExecutionEngine(
         &self,
         context: ToolPkgExecutionContext,
-    ) -> Arc<dyn JsExecutionEngine> {
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
         self.jsExecutionProvider
             .create_toolpkg_execution_engine(Arc::new(self.toolHandler.clone()), context)
     }
@@ -388,7 +388,7 @@ impl RuntimePackageManager {
         let script = self.getRegisteredToolPkgMainScript(&runtime.packageName)
             .ok_or_else(|| format!("ToolPkg main script is unavailable: {}", runtime.packageName))?;
         let contextKey = format!("toolpkg_main:{}", runtime.packageName);
-        let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName);
+        let engine = self.getToolPkgExecutionEngine(&contextKey, &runtime.packageName)?;
         let event = operit_plugin_sdk::js_sdk::toolpkg::ToolPkgPublicApiEvent {
             payload,
             callerPackage: "host".to_string(),
@@ -455,9 +455,9 @@ impl RuntimePackageManager {
     /// Acquires a lease outside the proxy's package-manager lock. Worker startup
     /// authenticates against that same manager, so synchronous proxy dispatch
     /// would deadlock while waiting for the worker to finish initialization.
-    pub async fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) {
+    pub async fn acquireToolPkgExecutionEngine(&self, contextKey: &str, containerPackageName: &str) -> Result<(), String> {
         self.toolPkgManager()
-            .acquireToolPkgExecutionEngine(contextKey, containerPackageName);
+            .acquireToolPkgExecutionEngine(contextKey, containerPackageName)
     }
 
     #[allow(non_snake_case)]
@@ -466,7 +466,7 @@ impl RuntimePackageManager {
         &self,
         contextKey: &str,
         containerPackageName: &str,
-    ) -> Arc<dyn JsExecutionEngine> {
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
         self.toolPkgManager()
             .getToolPkgExecutionEngine(contextKey, containerPackageName)
     }
@@ -2942,6 +2942,7 @@ impl RuntimePackageManager {
         result
     }
 
+    /// Merges candidate registrations while preserving explicit conflict diagnostics.
     #[allow(non_snake_case)]
     fn mergePackageScanCandidateResults(
         &self,
@@ -3002,26 +3003,21 @@ impl RuntimePackageManager {
                 }
             }
             if let Some(loadResult) = result.toolPkgLoadResult {
-                if result.phase == "external"
-                    && !Self::prepareExternalToolPkgOverride(
+                if result.phase == "external" {
+                    if let Err(error) = Self::prepareExternalToolPkgOverride(
                         &loadResult,
                         &mut stagedAvailablePackages,
                         &mut stagedToolPkgContainers,
                         &mut stagedToolPkgSubpackages,
-                    )
-                {
-                    stagedToolPkgLoadIssues.push(newToolPkgLoadIssue(
-                        result.sourcePath.clone(),
-                        Some(loadResult.containerPackage.name.clone()),
-                        loadResult.containerRuntime.displayName.resolve(false),
-                        "duplicate_package",
-                        format!(
-                            "A ToolPkg package with name '{}' is already registered",
-                            loadResult.containerPackage.name
-                        ),
-                        "toolpkg",
-                    ));
-                    continue;
+                    ) {
+                        stagedToolPkgLoadIssues.push(newToolPkgLoadIssue(
+                            result.sourcePath.clone(),
+                            Some(loadResult.containerPackage.name.clone()),
+                            loadResult.containerRuntime.displayName.resolve(false),
+                            "duplicate_package", error, "toolpkg",
+                        ));
+                        continue;
+                    }
                 }
                 let packageName = loadResult.containerPackage.name.clone();
                 let displayName = loadResult.containerRuntime.displayName.resolve(false);
@@ -3361,13 +3357,14 @@ impl RuntimePackageManager {
         true
     }
 
+    /// Validates all external names before removing any replaced built-in registrations.
     #[allow(non_snake_case)]
     fn prepareExternalToolPkgOverride(
         loadResult: &ToolPkgLoadResult,
         availablePackagesTarget: &mut BTreeMap<String, ToolPackage>,
         toolPkgContainersTarget: &mut BTreeMap<String, ToolPkgContainerRuntime>,
         toolPkgSubpackageByPackageNameTarget: &mut BTreeMap<String, ToolPkgSubpackageRuntime>,
-    ) -> bool {
+    ) -> Result<(), String> {
         let mut builtInContainersToRemove = BTreeSet::new();
         let mut builtInStandalonePackagesToRemove = BTreeSet::new();
         let mut conflictingNames = Vec::new();
@@ -3382,7 +3379,7 @@ impl RuntimePackageManager {
         for packageName in conflictingNames {
             if let Some(existingContainer) = toolPkgContainersTarget.get(&packageName) {
                 if existingContainer.sourceType != ToolPkgSourceType::ASSET {
-                    return false;
+                    return Err(format!("ToolPkg member '{}' is already registered by '{}' at '{}'", packageName, existingContainer.packageName, existingContainer.sourcePath));
                 }
                 builtInContainersToRemove.insert(existingContainer.packageName.clone());
                 continue;
@@ -3393,10 +3390,10 @@ impl RuntimePackageManager {
                 let Some(ownerContainer) =
                     toolPkgContainersTarget.get(&existingSubpackage.containerPackageName)
                 else {
-                    return false;
+                    return Err(format!("ToolPkg member '{}' has an unregistered owner '{}'", packageName, existingSubpackage.containerPackageName));
                 };
                 if ownerContainer.sourceType != ToolPkgSourceType::ASSET {
-                    return false;
+                    return Err(format!("ToolPkg member '{}' is already registered by '{}' at '{}'", packageName, ownerContainer.packageName, ownerContainer.sourcePath));
                 }
                 builtInContainersToRemove.insert(ownerContainer.packageName.clone());
                 continue;
@@ -3404,7 +3401,7 @@ impl RuntimePackageManager {
 
             if let Some(existingPackage) = availablePackagesTarget.get(&packageName) {
                 if !existingPackage.is_built_in {
-                    return false;
+                    return Err(format!("ToolPkg member '{}' is already registered as an external standalone package", packageName));
                 }
                 builtInStandalonePackagesToRemove.insert(packageName);
             }
@@ -3421,7 +3418,7 @@ impl RuntimePackageManager {
         for packageName in builtInStandalonePackagesToRemove {
             availablePackagesTarget.remove(&packageName);
         }
-        true
+        Ok(())
     }
 
     #[allow(non_snake_case)]
@@ -3468,6 +3465,7 @@ impl RuntimePackageManager {
                 continue;
             }
             let Some(result) = bundledResultsByFileName.get(&record.sourceFileName) else {
+                self.retireBundledExternalImport(&record, &destinationFile)?;
                 packageNamesToRemove.push(packageName);
                 recordsChanged = true;
                 continue;
@@ -3508,6 +3506,29 @@ impl RuntimePackageManager {
         if recordsChanged {
             self.saveBundledExternalImportRecordsLocally(&records)?;
         }
+        Ok(())
+    }
+
+    /// Archives an unchanged managed source that is no longer shipped before retiring its ownership.
+    #[allow(non_snake_case)]
+    fn retireBundledExternalImport(
+        &mut self,
+        record: &BundledExternalImportRecord,
+        destinationFile: &Path,
+    ) -> Result<(), String> {
+        let signature = self.buildFileContentSignature(destinationFile)?;
+        validateRetiredBundledSource(record, &signature)?;
+        let archiveDirectory = self.storePaths.packages_dir().parent()
+            .ok_or("Package storage must have a parent directory")?
+            .join("retired-packages");
+        self.fileSystemHost.makeDirectory(&hostPath(&archiveDirectory), true)
+            .map_err(|error| error.to_string())?;
+        let archive = archiveDirectory.join(format!("{}-{}", record.sourceSignature, record.destinationFileName));
+        self.fileSystemHost.moveFile(&hostPath(destinationFile), &hostPath(&archive))
+            .map_err(|error| error.to_string())?;
+        ExtensionStore::default().retireDevicePackageSource(&record.packageName, &record.destinationFileName)?;
+        self.externalPackageScanCache.remove(&hostPath(destinationFile));
+        AppLogger::i(PACKAGE_MANAGER_LOG_TAG, &format!("Retired bundled package source: {} -> {}", hostPath(destinationFile), hostPath(&archive)));
         Ok(())
     }
 
@@ -5037,12 +5058,12 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn withToolPkgRegistrationEngine<T>(
         &self,
-        operation: impl FnOnce(&dyn JsExecutionEngine) -> T,
-    ) -> T {
+        operation: impl FnOnce(&dyn JsExecutionEngine) -> Result<T, String>,
+    ) -> Result<T, String> {
         // Registration runs package-owned code; per-load ownership prevents one timed-out
         // package from retaining state or blocking registration of the next package.
         let registrationEngine = ToolPkgRegistrationEngineGuard {
-            engine: self.toolPkgExecutionEngineFactory.createExecutionEngine(),
+            engine: self.toolPkgExecutionEngineFactory.createExecutionEngine()?,
         };
         operation(registrationEngine.engine.as_ref())
     }
@@ -5589,5 +5610,50 @@ mod public_api_selection_tests {
         assert_eq!(selectToolPkgPublicApi(&runtime, "read").unwrap_err(), "Duplicate public API: demo/read");
         runtime.publicApis = vec![declaration("read", " ")];
         assert_eq!(selectToolPkgPublicApi(&runtime, "read").unwrap_err(), "Public API handler is empty: demo/read");
+    }
+}
+
+/// Requires the installed bytes to match the recorded bundled source before automatic retirement.
+#[allow(non_snake_case)]
+fn validateRetiredBundledSource(record: &BundledExternalImportRecord, signature: &str) -> Result<(), String> {
+    if signature != record.sourceSignature {
+        return Err(format!("Removed bundled source '{}' was modified locally; resolve its installation explicitly", record.destinationFileName));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod bundled_source_retirement_tests {
+    use super::*;
+
+    /// Verifies duplicate diagnostics identify the actual conflicting member and preserve the original registry.
+    #[test]
+    fn external_subpackage_conflict_reports_its_real_name_without_mutating_registry() {
+        let mut packages = BTreeMap::from([("daily_life".into(), ToolPackage { name: "daily_life".into(), ..Default::default() })]);
+        let mut containers = BTreeMap::new();
+        let mut subpackages = BTreeMap::new();
+        let load = ToolPkgLoadResult {
+            containerPackage: ToolPackage { name: "com.operit.daily_life".into(), ..Default::default() },
+            subpackagePackages: vec![ToolPackage { name: "daily_life".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        assert_eq!(RuntimePackageManager::prepareExternalToolPkgOverride(&load, &mut packages, &mut containers, &mut subpackages).unwrap_err(),
+            "ToolPkg member 'daily_life' is already registered as an external standalone package");
+        assert_eq!(packages.len(), 1);
+        assert!(packages.contains_key("daily_life"));
+        assert!(containers.is_empty());
+        assert!(subpackages.is_empty());
+    }
+
+    /// Verifies package migration only retires the exact managed bytes, preserving customized sources.
+    #[test]
+    fn retirement_requires_recorded_content_signature() {
+        let record = BundledExternalImportRecord {
+            packageName: "daily_life".into(), sourceFileName: "daily_life.js".into(),
+            destinationFileName: "daily_life.js".into(), sourceSignature: "managed-content".into(),
+        };
+        assert!(validateRetiredBundledSource(&record, "managed-content").is_ok());
+        assert_eq!(validateRetiredBundledSource(&record, "user-edit").unwrap_err(),
+            "Removed bundled source 'daily_life.js' was modified locally; resolve its installation explicitly");
     }
 }

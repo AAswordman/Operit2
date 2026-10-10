@@ -100,7 +100,7 @@ impl JsPackageRuntime for PackageManagerJsRuntime {
         &self,
         context_key: &str,
         container_package_name: &str,
-    ) -> Arc<dyn JsExecutionEngine> {
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
         let manager = self
             .package_manager
             .lock()
@@ -296,7 +296,7 @@ pub async fn invokeToolPkgIpc(
             )?);
         }
         let engine = if isMainTarget {
-            manager.getToolPkgExecutionEngine(&targetContextKey, &packageTarget)
+            manager.getToolPkgExecutionEngine(&targetContextKey, &packageTarget)?
         } else {
             manager
                 .findToolPkgExecutionEngine(&targetContextKey, &packageTarget)

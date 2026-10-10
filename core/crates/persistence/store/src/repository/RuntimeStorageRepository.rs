@@ -126,12 +126,6 @@ impl RuntimeStorageRepository {
     }
 
     #[allow(non_snake_case)]
-    /// Returns the runtime storage directory for character avatar assets.
-    pub fn characterAvatarsDirPath(&self) -> String {
-        OperitPaths::RUNTIME_CHARACTER_AVATARS_DIR_PATH.to_string()
-    }
-
-    #[allow(non_snake_case)]
     /// Returns the runtime storage directory path for downloaded browser files.
     pub fn webSessionBrowserDownloadFilesDirPath(&self) -> String {
         OperitPaths::RUNTIME_WEBSESSION_BROWSER_DOWNLOAD_FILES_DIR_PATH.to_string()

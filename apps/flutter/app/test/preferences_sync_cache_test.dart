@@ -217,9 +217,11 @@ void main() {
         fontScale: 1.2,
         bubbleUserRoundedCornersEnabled: false,
       );
-      expect(bridge.calls.last.methodName, 'setPreferences');
+      expect(bridge.calls.last.methodName, 'patchAppearance');
       expect(bridge.calls.last.args, <String, Object?>{
-        'fileName': _userFile,
+        'initialSnapshot': UserPreferencesManager.defaultThemePreferenceSnapshot
+            .toJson(),
+        'removeKeys': <String>[],
         'values': <String, String>{
           'theme_mode': 'light',
           'font_scale': '1.2',
@@ -236,8 +238,8 @@ void main() {
         'custom_user_avatar_uri': 'host:///avatars/user.png',
         'character_theme_retired_theme_mode': 'dark',
       });
-      expect(bridge.preferenceWrites, 1);
-      expect(bridge.preferenceRemovals, 1);
+      expect(bridge.preferenceWrites, 2);
+      expect(bridge.preferenceRemovals, 0);
     },
   );
 
@@ -275,34 +277,6 @@ void main() {
       expect(errors.single, isA<FormatException>());
       await subscription.cancel();
       expect(bridge.activeWatches, 0);
-    },
-  );
-
-  test(
-    'conversation grouping watch applies peer changes and rejects bad modes',
-    () async {
-      final bridge = _PreferenceBridge();
-      final preferences = UserPreferencesManager(
-        clients: GeneratedCoreProxyClients(bridge),
-      );
-      final values = <String?>[];
-      final errors = <Object>[];
-      final subscription = preferences.chatHistoryGroupingModeFlow().listen(
-        values.add,
-        onError: errors.add,
-      );
-      await _drainEvents();
-      bridge.applyPeerPreferences(_userFile, <String, String>{
-        'chat_history_grouping_mode': 'workspace',
-      });
-      bridge.applyPeerPreferences(_userFile, <String, String>{
-        'chat_history_grouping_mode': 'invalid',
-      });
-      bridge.applyPeerPreferences(_userFile, <String, String>{});
-      await _drainEvents();
-      expect(values, <String?>[null, 'workspace', null]);
-      expect(errors.single, isA<FormatException>());
-      await subscription.cancel();
     },
   );
 
@@ -450,6 +424,15 @@ class _PreferenceBridge extends OperitRuntimeBridge {
         nextPreferenceRead = null;
         await wait;
         return encodeCoreLink(<Object?>[0, selected]);
+      case 'patchAppearance':
+        preferenceWrites++;
+        for (final key in (args['removeKeys'] as List).cast<String>()) {
+          _values[_userFile]!.remove(key);
+        }
+        _values[_userFile]!.addAll(
+          (args['values'] as Map).cast<String, String>(),
+        );
+        return encodeCoreLink(<Object?>[0, null]);
       case 'removePreferences':
         preferenceRemovals++;
         for (final key in (args['keys'] as List).cast<String>()) {

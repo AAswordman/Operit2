@@ -1009,7 +1009,16 @@ impl<'a> ToolPkgPackageService<'a> {
         let bytes = self
             .packageManager
             .readToolPkgResourceBytes(&runtime, &uiModule.screen)?;
-        String::from_utf8(bytes).ok()
+        let mut script = String::from_utf8(bytes).ok()?;
+        if let Some(exportName) = &uiModule.screenExport {
+            let exportName = serde_json::to_string(exportName)
+                .expect("registered screen export name must serialize");
+            // Bind the declared entry explicitly instead of guessing a default export from the module.
+            script.push_str(&format!(
+                "\n;Object.defineProperty(module.exports, '__operit_compose_entry_export', {{value: {exportName}}});\n"
+            ));
+        }
+        Some(script)
     }
 
     /// Returns the Compose DSL screen path for one enabled ToolPkg UI module.

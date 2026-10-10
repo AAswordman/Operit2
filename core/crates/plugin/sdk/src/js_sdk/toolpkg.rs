@@ -851,27 +851,6 @@ pub struct ToolPkgPromptTurn {
     /// Carries structured context for later hook stages.
     pub metadata: Option<ToolPkgJsonObject>,
 }
-/// Enumerates supported active prompt type values.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum ToolPkgActivePromptType {
-    /// Identifies a character-card prompt.
-    #[serde(rename = "character_card")]
-    CharacterCard,
-    /// Identifies a character-group prompt.
-    #[serde(rename = "character_group")]
-    CharacterGroup,
-}
-/// Captures the identity of the character prompt active for a hook.
-pub struct ToolPkgActivePromptSnapshot {
-    /// Preserves additional JSON properties supplied with this active prompt snapshot.
-    pub base_json_object: ToolPkgJsonObject,
-    /// Identifies the semantic kind of this value.
-    pub r#type: ToolPkgActivePromptType,
-    /// Identifies this active prompt snapshot within its owning package.
-    pub id: String,
-    /// Provides the stable or user-facing name of this active prompt snapshot.
-    pub name: String,
-}
 /// Identifies the actual chat and selected execution participant without exposing plugin context rules.
 #[allow(non_snake_case)]
 pub struct ToolPkgExecutionContext {
@@ -907,8 +886,6 @@ pub struct ToolPkgToolHookMetadata {
 pub struct ToolPkgHookMetadata {
     /// Preserves additional JSON properties supplied with this hook metadata.
     pub base_json_object: ToolPkgJsonObject,
-    /// Captures the character prompt currently active for this hook.
-    pub activePrompt: Option<ToolPkgActivePromptSnapshot>,
     /// Carries the exact execution participant selected for this prompt request.
     pub executionContext: Option<ToolPkgExecutionContext>,
 }
@@ -2102,19 +2079,22 @@ pub enum ToolPkgNavigationSurface {
     /// The route must be registered by this package; action callbacks are unsupported and params remain opaque JSON.
     #[serde(rename = "chat_sidebar_tabs")]
     ChatSidebarTabs,
+    /// Embeds a package-owned Compose DSL row in the chat input menu above native statistics.
+    #[serde(rename = "chat_input_menu")]
+    ChatInputMenu,
 }
 /// Describes a plugin action exposed through a host navigation surface.
 pub struct ToolPkgNavigationEntryRegistration {
     /// Uniquely identifies this navigation entry registration within the package.
     pub id: String,
-    /// Provides this package's registered UI route; required for chat_attachments and chat_sidebar_tabs.
-    /// Sidebar tabs require a uniquely owned Compose DSL route registered before the navigation entry.
+    /// Provides this package's registered UI route; required for chat_attachments, chat_sidebar_tabs and chat_input_menu.
+    /// Embedded sidebar and input-menu surfaces require one owned Compose DSL route registered before the navigation entry.
     pub route: Option<String>,
     /// Carries opaque plugin-owned route input without host domain interpretation.
     pub params: Option<ToolPkgJsonValue>,
     /// Selects the host navigation surface containing this entry.
     pub surface: ToolPkgNavigationSurface,
-    /// Supplies navigation callbacks on other surfaces; action is unsupported for chat_attachments and chat_sidebar_tabs.
+    /// Supplies navigation callbacks on other surfaces; action is unsupported for chat_attachments, chat_sidebar_tabs and chat_input_menu.
     pub action: Option<ToolPkgNavigationEntryActionHookHandler>,
     /// Provides primary text displayed by the host UI.
     pub title: Option<ToolPkgLocalizedText>,
@@ -3108,6 +3088,10 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
     /// Returns the selected plugin configuration directory during registration and runtime execution.
     /// Registration uses the explicitly selected scope before an installation record exists.
     fn getConfigDir(&self, pluginId: Option<String>) -> String;
+    /// Returns device-local plugin data independent of installation scope during registration and runtime.
+    fn getLocalDataDir(&self) -> String;
+    /// Returns shared plugin data independent of installation scope during registration and runtime.
+    fn getSpaceDataDir(&self) -> String;
 }
 /// Requires the host to implement every global host operation.
 pub trait GlobalHost: Send + Sync {

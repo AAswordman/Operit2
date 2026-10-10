@@ -90,7 +90,7 @@ export interface GraphPointer {
   node: { id: string; start: Point } | null;
 }
 export interface UIState {
-  managementView: "characters" | "memory"; avatarSources: Map<string, string>; snapshot: Snapshot | null; dialogs: Dialog[]; busy: boolean; error: string;
+  managementView: "characters" | "memory"; themeChoices: readonly import("../../src/selection-application").ThemeChoice[] | null; avatarSources: Map<string, string>; snapshot: Snapshot | null; dialogs: Dialog[]; busy: boolean; error: string;
   toastTimer: ReturnType<typeof setTimeout> | null; pointers: Map<number, GraphPointer>; gestureMoved: boolean;
 }
 export type NativeRecord = Card | Group;

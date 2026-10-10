@@ -1102,6 +1102,7 @@ data class ToolPkgUiModuleRuntime(
     val id: String,
     val runtime: String,
     val screen: String,
+    val screenExport: String?,
     val title: LocalizedText,
     val keepAlive: Boolean
 )
@@ -1112,6 +1113,7 @@ fun decodeToolPkgUiModuleRuntime(value: Any?): ToolPkgUiModuleRuntime {
         id = input["id"] as String as String,
         runtime = input["runtime"] as String as String,
         screen = input["screen"] as String as String,
+        screenExport = input["screenExport"]?.let { it as String } as String?,
         title = decodeLocalizedText(input["title"]) as LocalizedText,
         keepAlive = input["keepAlive"] as Boolean as Boolean,
     )
@@ -1122,6 +1124,7 @@ fun ToolPkgUiModuleRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
     "id" to this.id,
     "runtime" to this.runtime,
     "screen" to this.screen,
+    "screenExport" to this.screenExport?.let { it },
     "title" to this.title.toMessagePackValue(),
     "keepAlive" to this.keepAlive,
 )
@@ -1131,6 +1134,7 @@ data class ToolPkgUiRouteRuntime(
     val routeId: String,
     val runtime: String,
     val screen: String,
+    val screenExport: String?,
     val title: LocalizedText,
     val keepAlive: Boolean
 )
@@ -1142,6 +1146,7 @@ fun decodeToolPkgUiRouteRuntime(value: Any?): ToolPkgUiRouteRuntime {
         routeId = input["routeId"] as String as String,
         runtime = input["runtime"] as String as String,
         screen = input["screen"] as String as String,
+        screenExport = input["screenExport"]?.let { it as String } as String?,
         title = decodeLocalizedText(input["title"]) as LocalizedText,
         keepAlive = input["keepAlive"] as Boolean as Boolean,
     )
@@ -1153,6 +1158,7 @@ fun ToolPkgUiRouteRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
     "routeId" to this.routeId,
     "runtime" to this.runtime,
     "screen" to this.screen,
+    "screenExport" to this.screenExport?.let { it },
     "title" to this.title.toMessagePackValue(),
     "keepAlive" to this.keepAlive,
 )

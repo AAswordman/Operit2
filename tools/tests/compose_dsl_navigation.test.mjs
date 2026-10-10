@@ -1,3 +1,4 @@
+import { composeStreamFixture } from './support/compose_stream_fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -26,6 +27,9 @@ function createRuntime(environment = {}) {
     /** Captures every intermediate response to verify commands are emitted once. */
     sendIntermediateResult(value) { events.push(value); },
   });
+  for (const name of ['ToolPkgComposeDslCompiler.js', 'ToolPkgComposeDslRetained.js', 'ToolPkgComposeDslReactive.js']) {
+    vm.runInContext(readFileSync(new URL(name, sourceRoot), 'utf8'), context);
+  }
   vm.runInContext(embeddedScript('ToolPkgComposeDslBridge.rs'), context);
   const wrapper = embeddedScript('ToolPkgComposeDslRuntimeScript.rs')
     .replaceAll('{{', '{').replaceAll('}}', '}')
@@ -41,6 +45,7 @@ function createRuntime(environment = {}) {
       };
     `);
   vm.runInContext(wrapper, context);
+  composeStreamFixture(context, { onResponse(phase, response) { if (phase === 'intermediate') events.push(response); } }).adapt();
   return { context, events, environment };
 }
 
@@ -56,7 +61,7 @@ test('clickable navigation survives an async callback with no return value', asy
   assert.deepEqual(JSON.parse(JSON.stringify(commands)), [{
     route: 'toolpkg:sites:ui:viewer', args: { id: 'doubao' },
   }]);
-  const rerendered = await context.__operit_rerender_compose_dsl({});
+  const rerendered = await context.__operit_render_compose_dsl({ __operit_update_inputs: true });
   assert.equal(rerendered.navigationCommands.length, 0);
 });
 

@@ -1,14 +1,18 @@
 /// Compiles existing UI calls into internal generation scopes without changing plugin source APIs.
 var OperitComposeCompiler = (function() {
+    var childNodes = new WeakMap();
     /// Visits direct ESTree child nodes without traversing locations or primitive properties.
     function children(node) {
+        if (childNodes.has(node)) return childNodes.get(node);
         var result = [];
         Object.keys(node).forEach(function(key) {
             var value = node[key];
             if (Array.isArray(value)) value.forEach(function(item) { if (item && typeof item.type === 'string') result.push(item); });
             else if (value && typeof value.type === 'string') result.push(value);
         });
-        return result.sort(function(a, b) { return a.start - b.start; });
+        result.sort(function(a, b) { return a.start - b.start; });
+        childNodes.set(node, result);
+        return result;
     }
 
     /// Recognizes the existing context.UI.Type call using its parsed member structure.
@@ -148,8 +152,14 @@ var OperitComposeCompiler = (function() {
             return output + 'return ' + emit(plan.statements[plan.statements.length - 1].argument, plan) + ';\n}';
         }
 
-        /// Reconstructs one expression from source ranges, recursively compiling nested UI calls.
+        /// Materializes a source range only when an enclosing rewrite needs its complete text.
         function emit(node, plan) {
+            var rewritten = rewrite(node, plan);
+            return rewritten === null ? source.slice(node.start, node.end) : rewritten;
+        }
+
+        /// Produces replacements only for AST ranges that contain an actual DSL transformation.
+        function rewrite(node, plan) {
             if (node.type === 'FunctionDeclaration' || node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') {
                 var partition = renderFrame(node);
                 if (partition) return emitFrame(node, partition);
@@ -173,13 +183,18 @@ var OperitComposeCompiler = (function() {
                 return 'OperitComposeGeneration.node(' + context + ',' + site + ',' + args + ',' + factory + ')';
             }
             var cursor = node.start;
-            var output = '';
+            var visitedEnd = node.start;
+            var output = null;
             children(node).forEach(function(child) {
-                if (child.start < cursor) return;
-                output += source.slice(cursor, child.start) + emit(child, plan);
+                if (child.start < visitedEnd) return;
+                visitedEnd = child.end;
+                var replacement = rewrite(child, plan);
+                if (replacement === null) return;
+                if (output === null) output = '';
+                output += source.slice(cursor, child.start) + replacement;
                 cursor = child.end;
             });
-            return output + source.slice(cursor, node.end);
+            return output === null ? null : output + source.slice(cursor, node.end);
         }
         return emit(ast);
     }

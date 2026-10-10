@@ -242,6 +242,7 @@ var id = shape({ id: required(nonblank) });
 var ownerOnly = shape({ ownerKey: required(owner) });
 var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
+var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
   "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
@@ -1169,7 +1170,7 @@ function renderSidebarScreen(ctx) {
     { fillMaxWidth: true, height: 80, contentAlignment: "center" },
     ctx.UI.LoadingIndicator({ size: 24 })
   ));
-  const content = [ctx.UI.LazyColumn({ key: "native-sidebar-history", weight: 1, fillMaxWidth: true, paddingBottom: 16, spacing: 0 }, rows)];
+  const content = [ctx.UI.Column({ key: "native-sidebar-history", fillMaxWidth: true, paddingBottom: 16, spacing: 0 }, rows)];
   if (state.dialog !== null) {
     const staged = state.dialog, body = [ctx.UI.Text({ text: { create: "\u65B0\u5EFA\u5206\u7EC4", rename: "\u91CD\u547D\u540D\u5206\u7EC4", delete: "\u5220\u9664\u5206\u7EC4\u53CA\u5176\u5BF9\u8BDD", renameUngrouped: "\u91CD\u547D\u540D\u5206\u7EC4", deleteUngrouped: "\u5220\u9664\u5206\u7EC4\u53CA\u5176\u5BF9\u8BDD", renameChat: "\u7F16\u8F91\u5BF9\u8BDD\u540D\u79F0", deleteChat: "\u5220\u9664\u5BF9\u8BDD", chatActions: "\u804A\u5929\u8BB0\u5F55" }[staged.kind], fontSize: 16, fontWeight: "600" })];
     if (staged.kind === "create" || staged.kind === "rename" || staged.kind === "renameUngrouped" || staged.kind === "renameChat") body.push(ctx.UI.TextField({ key: "sidebar-group-name", value: staged.name, label: staged.kind === "renameChat" ? "\u5BF9\u8BDD\u540D\u79F0" : "\u5206\u7EC4\u540D\u79F0", onValueChange: (name) => update({ dialog: { ...staged, name } }), enabled: !state.busy }));
@@ -1204,7 +1205,7 @@ function renderSidebarScreen(ctx) {
       if (!state.busy) update({ dialog: null });
     } }, ctx.UI.Column({ padding: 20, spacing: 12, width: 320 }, body)));
   }
-  return ctx.UI.Column({ key: "native-character-sidebar", fillMaxSize: true, onLoad: refresh, onInputsChanged: refreshInputs }, content);
+  return ctx.UI.Column({ key: "native-character-sidebar", fillMaxWidth: true, onLoad: refresh, onInputsChanged: refreshInputs }, content);
 }
 
 // src/ui-sidebar.ts

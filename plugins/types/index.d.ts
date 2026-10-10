@@ -104,6 +104,7 @@ import { System as SystemType } from './system';
 import { SoftwareSettings as SoftwareSettingsType } from './software_settings';
 import { UI as UIType } from './ui';
 import { Chat as ChatType } from './chat';
+import { Storage as StorageType } from './storage';
 
 export { Net } from './network';
 export { System } from './system';
@@ -113,6 +114,7 @@ export { ToolPkg } from './toolpkg';
 export { Chat } from './chat';
 export { Edge, Io } from './edge';
 export type { EdgeInterfaceInfo, IoInterfaceInfo, EdgeActionEvent, EdgeEventBatch, EdgeEventPayload, EdgeEventHookEvent, EdgeEventAck } from './edge';
+export * from './storage';
 
 // Export Android utilities
 export {
@@ -248,7 +250,8 @@ declare global {
 
     function getChatId(): string | undefined;
 
-    function getCallerCardId(): string | undefined;
+    /** Returns the opaque execution participant authenticated by the host. */
+    function getCallerParticipantId(): string | undefined;
 
     const OPERIT_DOWNLOAD_DIR: string;
     /**
@@ -285,6 +288,7 @@ declare global {
         Chat: typeof ChatType;
         Edge: typeof EdgeType;
         Io: typeof IoType;
+        Storage: typeof StorageType;
     };
 
     /** Lowercase alias of the existing Core plugin Tools object. */

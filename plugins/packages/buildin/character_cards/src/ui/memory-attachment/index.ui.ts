@@ -1,5 +1,5 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../../../types/compose-dsl";
-import { renderScreen } from "../../host";
+import { renderScreen } from "../../ui-editor";
 import { definition } from "../../definition";
 
 /** Requires the explicit attachment presentation on its independently registered route. */

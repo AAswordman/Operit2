@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'support/compose_session_fixture.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/application/PluginHotReload.dart';
@@ -145,6 +147,159 @@ void main() {
   });
 
   testWidgets(
+    'embedded sidebar content and footer share the outer scroll and resize live',
+    (tester) async {
+      final bridge = _registry();
+      final clients = GeneratedCoreProxyClients(bridge);
+      const footer = Text('Plugin footer');
+      await tester.pumpWidget(
+        _host(bridge, clients: clients, pluginFooter: footer),
+      );
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final launcher = find.byType(ToolPkgUiLauncherScreen);
+      final initialHeight = tester.getSize(launcher).height;
+      final scroll = find.ancestor(
+        of: launcher,
+        matching: find.byType(Scrollable),
+      );
+      expect(scroll, findsOneWidget);
+      final scrollState = tester.state<ScrollableState>(scroll);
+      expect(scrollState.position.maxScrollExtent, 0);
+      final initialFooterTop = tester.getTopLeft(find.text('Plugin footer')).dy;
+      bridge.extraRows = 60;
+      await tester.pumpWidget(
+        _host(
+          bridge,
+          clients: clients,
+          pluginFooter: footer,
+          currentChatId: null,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getSize(launcher).height, greaterThan(initialHeight + 600));
+      expect(scrollState.position.maxScrollExtent, greaterThan(600));
+      expect(
+        tester.getTopLeft(find.text('Plugin footer')).dy,
+        greaterThan(initialFooterTop + 600),
+      );
+      await tester.drag(scroll, const Offset(0, -1200));
+      await tester.pumpAndSettle();
+      expect(scrollState.position.pixels, greaterThan(0));
+      bridge.extraRows = 0;
+      await tester.pumpWidget(
+        _host(bridge, clients: clients, pluginFooter: footer),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getSize(launcher).height, initialHeight);
+      expect(scrollState.position.maxScrollExtent, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'completed action continues delivering detached session commits',
+    (tester) async {
+      final bridge = _registry();
+      await tester.pumpWidget(_host(bridge));
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      await tester.tap(find.text('Preview only'));
+      await tester.pumpAndSettle();
+      final requestId = bridge.compose.commands
+          .lastWhere((command) => command.operation == 'action')
+          .requestId;
+      for (var tick = 1; tick <= 3; tick++) {
+        final tree = Map<String, Object?>.from(
+          (jsonDecode(_render({})) as Map)['tree'] as Map,
+        );
+        ((tree['children'] as List).first as Map)['props'] = {
+          'text': 'Detached tick $tick',
+          'onClick': {'__actionId': 'preview'},
+        };
+        bridge.compose.publishDetachedUpdate(requestId, tree);
+        await tester.pumpAndSettle();
+        expect(find.text('Detached tick $tick'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      }
+      final gate = Completer<void>();
+      bridge.nextActionRead = gate.future;
+      await tester.tap(find.text('Detached tick 3'));
+      await tester.pump();
+      final activeRequestId = bridge.compose.commands.last.requestId;
+      final tree = Map<String, Object?>.from(
+        (jsonDecode(_render({})) as Map)['tree'] as Map,
+      );
+      ((tree['children'] as List).first as Map)['props'] = {
+        'text': 'Active request update',
+      };
+      bridge.compose.publishDetachedUpdate(activeRequestId, tree);
+      await tester.pumpAndSettle();
+      expect(find.text('Active request update'), findsOneWidget);
+      ((tree['children'] as List).first as Map)['props'] = {
+        'text': 'Original timer continues',
+      };
+      bridge.compose.publishDetachedUpdate(requestId, tree);
+      await tester.pumpAndSettle();
+      expect(find.text('Original timer continues'), findsOneWidget);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'native plugin navigation joins the embedded tab outer scroll without another viewport',
+    (tester) async {
+      final bridge = _registry();
+      final entries = List<NavigationEntrySpec>.generate(
+        25,
+        (index) => NavigationEntrySpec(
+          entryId: 'plugin-$index',
+          routeId: 'plugin-route-$index',
+          surface: NavigationSurface.mainSidebarPlugins,
+          title: 'Plugin destination $index',
+          icon: Icons.extension,
+        ),
+      );
+      await tester.pumpWidget(
+        _nativeDrawer(
+          bridge,
+          expanded: true,
+          currentChatId: 'chat-a',
+          onActivated: () {},
+          pluginEntries: entries,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openFirstTab(tester);
+      final launcher = find.byType(ToolPkgUiLauncherScreen);
+      final scroll = find.ancestor(
+        of: launcher,
+        matching: find.byType(Scrollable),
+      );
+      expect(scroll, findsOneWidget);
+      final footerScroll = find.ancestor(
+        of: find.text('Plugin destination 24'),
+        matching: find.byType(Scrollable),
+      );
+      expect(footerScroll, findsOneWidget);
+      expect(tester.state(scroll), same(tester.state(footerScroll)));
+      expect(
+        tester.state<ScrollableState>(scroll).position.maxScrollExtent,
+        greaterThan(0),
+      );
+      await tester.drag(scroll, const Offset(0, -1200));
+      await tester.pumpAndSettle();
+      expect(
+        tester.state<ScrollableState>(scroll).position.pixels,
+        greaterThan(0),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'host input updates preserve pending action ownership and deliver its completed activation',
     (tester) async {
       final bridge = _registry(), activated = <String>[];
@@ -286,9 +441,7 @@ void main() {
       expect(find.byKey(_workspaceKey), findsNothing);
       expect(
         bridge.calls
-            .where(
-              (call) => call.methodName == 'executeToolPkgComposeDslScript',
-            )
+            .where((call) => call.methodName == 'openComposeDslSession')
             .last
             .args,
         containsPair('containerPackageName', 'owner.second'),
@@ -305,7 +458,7 @@ void main() {
       await _openFirstTab(tester);
       final mounted = tester.state(find.byType(ToolPkgUiLauncherScreen));
       final initialRenders = bridge.calls
-          .where((call) => call.methodName == 'executeToolPkgComposeDslScript')
+          .where((call) => call.methodName == 'openComposeDslSession')
           .length;
       final acquisitions = bridge.calls
           .where((call) => call.methodName == 'acquireToolPkgExecutionEngine')
@@ -327,9 +480,7 @@ void main() {
       }
       expect(
         bridge.calls
-            .where(
-              (call) => call.methodName == 'executeToolPkgComposeDslScript',
-            )
+            .where((call) => call.methodName == 'openComposeDslSession')
             .length,
         initialRenders,
       );
@@ -541,6 +692,12 @@ void main() {
       await tester.pumpAndSettle();
       await _openFirstTab(tester);
       final oldElement = tester.element(find.byType(ToolPkgUiLauncherScreen));
+      final initialCommand = bridge.compose.commands.lastWhere(
+        (command) => command.operation == 'render',
+      );
+      expect(initialCommand.runtimeOptions['state'], isA<Map>());
+      expect(initialCommand.runtimeOptions['memo'], isA<Map>());
+      final commandBoundary = bridge.compose.commands.length;
       final chat = _chat('chat-b');
       await tester.pumpWidget(
         _host(
@@ -565,6 +722,18 @@ void main() {
       expect(
         bridge.renderedStates.last['chatSidebar'],
         _launcher(tester).initialState['chatSidebar'],
+      );
+      final laterCommands = bridge.compose.commands.skip(commandBoundary);
+      expect(laterCommands, isNotEmpty);
+      for (final command in laterCommands) {
+        expect(command.runtimeOptions.containsKey('state'), isFalse);
+        expect(command.runtimeOptions.containsKey('memo'), isFalse);
+      }
+      expect(
+        laterCommands
+            .singleWhere((command) => command.operation == 'render')
+            .runtimeOptions['__operit_update_inputs'],
+        isTrue,
       );
     },
   );
@@ -729,6 +898,7 @@ Widget _nativeDrawer(
   required String? currentChatId,
   required VoidCallback onActivated,
   List<core.ChatHistoryListItem> histories = const [],
+  List<NavigationEntrySpec> pluginEntries = const [],
 }) => OperitTheme(
   initialThemePreferenceSnapshot:
       UserPreferencesManager.defaultThemePreferenceSnapshot,
@@ -741,7 +911,7 @@ Widget _nativeDrawer(
       child: expanded
           ? DrawerContent(
               navigationEntries: const [],
-              pluginEntries: const [],
+              pluginEntries: pluginEntries,
               selectedRouteId: 'native-chat',
               appearance: _appearance,
               histories: histories,
@@ -777,7 +947,7 @@ Widget _nativeDrawer(
                   icon: Icons.settings,
                 ),
               ],
-              pluginEntries: const [],
+              pluginEntries: pluginEntries,
               selectedRouteId: 'native-chat',
               appearance: _appearance,
               currentChatId: currentChatId,
@@ -811,6 +981,7 @@ Widget _host(
   void Function(String)? onActivate,
   Future<void> Function(String)? onActivateAsync,
   Widget Function(BuildContext, Widget)? workspaceWithTabsBuilder,
+  Widget? pluginFooter,
 }) => MaterialApp(
   localizationsDelegates: AppLocalizations.localizationsDelegates,
   supportedLocales: AppLocalizations.supportedLocales,
@@ -823,6 +994,7 @@ Widget _host(
         currentChatId: currentChatId,
         activeStreamingChatIds: streamingChatIds,
         workspaceWithTabsBuilder: workspaceWithTabsBuilder,
+        pluginFooter: pluginFooter,
         workspaceBuilder: (_) =>
             const Text('Native workspace', key: _workspaceKey),
         onActivateChat: (chatId) async {
@@ -927,6 +1099,25 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
     required this.chats,
   });
 
+  late final compose = ComposeSessionFixture(
+    render: (state) {
+      renderedStates.add(Map<String, Object?>.from(state));
+      final tree = Map<String, Object?>.from(
+        (jsonDecode(_render(state)) as Map)['tree'] as Map,
+      );
+      for (var index = 0; index < extraRows; index++) {
+        (tree['children'] as List).add({
+          'type': 'Text',
+          'props': {'text': 'Sidebar row $index'},
+          'children': <Object?>[],
+          'slots': <String, Object?>{},
+        });
+      }
+      return tree;
+    },
+    action: _action,
+  );
+
   final List<core.ToolPkgNavigationEntry> entries;
   final List<core.ToolPkgUiRoute> routes;
   final List<core.ChatHistoryListItem> chats;
@@ -940,6 +1131,7 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
   Future<void>? nextActionRead;
   Future<void>? nextCatalogRead;
   Object? createError;
+  int extraRows = 0;
   int catalogReads = 0;
   int historyReads = 0;
 
@@ -999,11 +1191,8 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
       case 'readToolPkgTextResource':
         expect(args['resourcePath'], 'ui/history.js');
         value = 'export default function render() {}';
-      case 'executeToolPkgComposeDslScript':
-        final state =
-            (args['runtimeOptions'] as Map)['state'] as Map<String, Object?>;
-        renderedStates.add(state);
-        value = _render(state);
+      case 'openComposeDslSession':
+        value = compose.open();
       default:
         throw StateError('Unexpected sidebar call: ${request.methodName}');
     }
@@ -1031,8 +1220,8 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
       nextHistoryRead = null;
       return _historyEvents(request, gate);
     }
-    if (request.propertyName == 'dispatchToolPkgComposeDslActionEvents') {
-      return _actionEvents(request);
+    if (request.propertyName == 'updates') {
+      return compose.updates(request);
     }
     throw StateError('Unexpected sidebar watch: ${request.propertyName}');
   }
@@ -1046,33 +1235,24 @@ class _SidebarRegistryBridge extends OperitRuntimeBridge {
     yield _event(request, chats.map((chat) => chat.toJson()).toList());
   }
 
-  /// Delivers action results through the actual launcher dispatch/render callback path.
-  Stream<CoreEvent> _actionEvents(CoreWatchRequest request) async* {
-    final args = request.args as Map<String, Object?>;
+  /// Delivers plugin actions through the retained session result path.
+  Future<Object?> _action(Map<String, Object?> state, String actionId) async {
     final gate = nextActionRead;
     nextActionRead = null;
     await gate;
-    final state =
-        (args['runtimeOptions'] as Map)['state'] as Map<String, Object?>;
-    final Object result = switch (args['actionId']) {
+    return switch (actionId) {
       'preview' => {'preview': true},
       'activate' => {'type': 'toolpkg.chat.activate', 'chatId': 'chat-a'},
       'created' => {'type': 'toolpkg.chat.activate', 'chatId': 'chat-created'},
       'missing' => {'type': 'toolpkg.chat.activate', 'chatId': 'missing-chat'},
       'malformed' => {'type': 'toolpkg.chat.activate', 'chatId': ''},
-      _ => throw StateError('Unexpected sidebar action: ${args['actionId']}'),
+      _ => throw StateError('Unexpected sidebar action: $actionId'),
     };
-    yield _event(
-      request,
-      jsonEncode({'phase': 'final', 'result': _render(state, result: result)}),
-    );
-    yield _event(request, jsonEncode({'phase': 'complete'}));
   }
 
-  /// Rejects push operations outside the sidebar fixture's real contract.
+  /// Submits only production Compose session commands.
   @override
-  Future<CorePushSink> push(CorePushRequest request) =>
-      throw StateError('Unexpected sidebar push');
+  Future<CorePushSink> push(CorePushRequest request) => compose.submit(request);
 
   /// Rejects snapshot API calls because production consumers use generated watch streams.
   @override
@@ -1153,6 +1333,7 @@ core.ToolPkgContainerRuntime _runtime(String owner) =>
           id: 'history-route',
           routeId: 'history-route',
           runtime: 'compose_dsl',
+          screenExport: null,
           screen: 'ui/history.js',
           title: core.LocalizedText(values: {'default': 'History'}),
           keepAlive: false,

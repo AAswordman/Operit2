@@ -15,6 +15,8 @@ pub mod NetworkControlStore;
 #[cfg(feature = "full")]
 #[path = "ObjectBoxStore.rs"]
 pub mod ObjectBoxStore;
+#[path = "PluginStorage.rs"]
+pub mod PluginStorage;
 #[path = "PreferencesDataStore.rs"]
 pub mod PreferencesDataStore;
 #[path = "PreferencesEncryption.rs"]

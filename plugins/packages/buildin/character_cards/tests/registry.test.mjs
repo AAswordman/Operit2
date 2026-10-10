@@ -5,6 +5,18 @@ import { interfaceMembers, loadModule, plain } from "./runtime.mjs";
 
 const roots = ["character", "group", "tag", "active-prompt", "memory"];
 
+/** Keeps input-menu layout out of public display metadata now that the actual DSL route owns rendering. */
+test("chat context projection publishes identity only while its menu renders through DSL", () => {
+  const api = loadModule("src/ui-contributions.ts"), directory = fixture().snapshot;
+  const routes = { editor: "editor-route", selection: "selection-route", execution: "execution-route" };
+  for (const selection of [null, "card:travel", "group:group-one"]) {
+    const context = plain(api.contextActions(routes, { chatId: "explicit-chat", selection }, directory));
+    assert.deepEqual(Object.keys(context).sort(), ["backgroundUri", "identity"]);
+    if (selection === null) assert.equal(context.identity, null);
+    else assert.equal(context.identity.action.routeId, routes.editor);
+  }
+});
+
 /** Builds a real SDK-shaped command event for parser/help checks without business persistence. */
 function commandEvent(name, args) {
   return { event: "core_command", eventName: "core_command", eventPayload: { commandId: name, commandName: name, args, json: true } };
@@ -41,7 +53,7 @@ test("every declared domain method is published as a provider registerApi callba
   };
   const api = loadModule("src/public-api.ts", { ToolPkg: registry });
   api.registerDomainApis();
-  const declared = interfaceMembers("../src/api.ts", "DomainOperations").sort();
+  const declared = [...interfaceMembers("../src/api.ts", "DomainOperations"), "memory.query"].sort();
   const names = definitions.map(
     /** Preserves each stable published method name. */
     definition => definition.name,
@@ -109,26 +121,33 @@ test("one character-and-memory package registers native selection, embedded side
   /** Supplies a distinct native execution-controls screen for its actual route registration. */
   const groupExecutionScreen = () => { throw new Error("Registration tests do not render group controls"); };
   const memoryScreen = () => { throw new Error("Registration tests do not render memory UI"); };
-  assert.equal(api.register({ id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 }, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen, memoryScreen), true);
-  api.installService();
+  /** Supplies the independent embedded input-menu renderer. */
+  const inputMenuScreen = () => { throw new Error("Registration tests do not render input-menu UI"); };
+  assert.equal(api.register({ id: "com.operit.character_cards", title: "角色卡", icon: "Badge", order: 150 }, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen, memoryScreen, inputMenuScreen), true);
+  api.registerUiRequestChannel();
   const managementRoute = "toolpkg:com.operit.character_cards:ui:main";
   const attachmentRoute = "toolpkg:com.operit.character_cards:ui:memory-attachment";
-  assert.equal(routes.length, 6);
+  assert.equal(routes.length, 7);
   assert.deepEqual(plain(routes), [
     { id: "main", route: managementRoute, runtime: "compose_dsl", keepAlive: true, title: { zh: "角色卡", en: "Characters" } },
     { id: "memory-attachment", route: attachmentRoute, runtime: "compose_dsl", keepAlive: false, title: { zh: "记忆附件", en: "Memory attachment" } },
     { id: "chat-sidebar", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", runtime: "compose_dsl", keepAlive: true, title: { zh: "会话侧边栏", en: "Chat sidebar" } },
+    { id: "chat-input-menu", route: "toolpkg:com.operit.character_cards:ui:chat-input-menu", runtime: "compose_dsl", keepAlive: false, title: { zh: "当前角色卡", en: "Current character" } },
     { id: "selection", route: "toolpkg:com.operit.character_cards:ui:selection", runtime: "compose_dsl", keepAlive: false, title: { zh: "切换角色卡", en: "Switch character" } },
     { id: "group-execution", route: "toolpkg:com.operit.character_cards:ui:group-execution", runtime: "compose_dsl", keepAlive: false, title: { zh: "群组执行", en: "Group execution" } },
     { id: "memory", route: "toolpkg:com.operit.character_cards:ui:memory", runtime: "compose_dsl", keepAlive: true, title: { zh: "记忆", en: "Memory" } },
   ]);
   assert.equal(routes[0].screen, screen); assert.equal(routes[1].screen, attachmentScreen);
-  assert.equal(routes[2].screen, sidebarScreen); assert.equal(routes[3].screen, selectionScreen); assert.equal(routes[4].screen, groupExecutionScreen); assert.equal(routes[5].screen, memoryScreen);
+  assert.equal(routes[2].screen, sidebarScreen); assert.equal(routes[3].screen, inputMenuScreen); assert.equal(routes[4].screen, selectionScreen); assert.equal(routes[5].screen, groupExecutionScreen); assert.equal(routes[6].screen, memoryScreen);
   assert.equal(new Set(routes.map(
     /** Requires five independent real screen callbacks, not aliases of the management page. */
     entry => entry.screen,
-  )).size, 6);
-  assert.equal(navigation.length, 5);
+  )).size, 7);
+  assert.equal(navigation.length, 6);
+  assert.deepEqual(plain(navigation.filter(
+    /** Requires exactly one directly embedded input-menu registration. */
+    entry => entry.surface === "chat_input_menu",
+  )), [{ id: "current-character", route: "toolpkg:com.operit.character_cards:ui:chat-input-menu", surface: "chat_input_menu", title: { zh: "当前角色卡", en: "Current character" }, order: 150, params: {} }]);
   assert.deepEqual(plain(navigation.filter(
     /** Validates the single legacy role tab and their exact opaque input on the shared registered sidebar route. */
     entry => entry.surface === "chat_sidebar_tabs",

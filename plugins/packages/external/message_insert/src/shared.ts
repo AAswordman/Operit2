@@ -1,3 +1,5 @@
+import { characterCards } from "./dependencies/character_cards/api";
+
 const SETTINGS_CONFIG_NAME = "settings";
 
 const COMBINED_ATTACHMENT_FILE_NAME_PREFIX = "Time:";
@@ -1184,17 +1186,21 @@ function buildMemorySnapshotId(chatId?: string): string {
   if (!normalized) {
     return "";
   }
-  return normalized.slice(0, 6);
+  return normalized;
 }
 
-function resolveMemoryCallerCardId(
-  activePrompt?: ToolPkg.ActivePromptSnapshot | null
-): string | undefined {
-  if (!activePrompt || activePrompt.type !== "character_card") {
-    return undefined;
+/** Requires the selected participant without interpreting its plugin-owned identity. */
+function resolveMemoryCallerParticipantId(
+  executionContext?: ToolPkg.ExecutionContext | null
+): string {
+  if (executionContext == null || executionContext.participantId === null) {
+    throw new Error("Memory injection requires a selected execution participant");
   }
-  const callerCardId = String(activePrompt.id || "").trim();
-  return callerCardId || undefined;
+  const participantId = executionContext.participantId.trim();
+  if (!participantId) {
+    throw new Error("Memory injection execution participant must not be blank");
+  }
+  return participantId;
 }
 
 function stripMessageForMemorySearch(messageText: string): string {
@@ -1214,16 +1220,17 @@ function buildMemorySearchQuery(messageText: string): string {
   return stripMessageForMemorySearch(messageText);
 }
 
+/** Queries the character plugin for memories owned by the selected participant. */
 async function buildMemoryContent(
   messageText: string,
   chatId?: string,
-  activePrompt?: ToolPkg.ActivePromptSnapshot | null
+  executionContext?: ToolPkg.ExecutionContext | null
 ): Promise<string> {
   const text = resolveExtraInfoI18n();
   const settings = await loadSettings();
   const reuseSnapshot = !settings.allowRepeatedMemorySearch;
   const snapshotId = reuseSnapshot ? buildMemorySnapshotId(chatId) : "";
-  const callerCardId = resolveMemoryCallerCardId(activePrompt);
+  const participantId = resolveMemoryCallerParticipantId(executionContext);
   if (reuseSnapshot && !snapshotId) {
     throw new Error(text.memorySnapshotUnavailable);
   }
@@ -1244,14 +1251,14 @@ async function buildMemoryContent(
     return lines.join("\n");
   }
 
-  const result = await toolCall("query_memory", {
+  const result = await characterCards.memory.query({
+    participantId,
     query: searchQuery,
     limit: settings.memoryLimit,
-    ...(reuseSnapshot ? { snapshot_id: snapshotId } : {}),
-    ...(callerCardId ? { caller_card_id: callerCardId } : {}),
+    snapshotId: reuseSnapshot ? snapshotId : null,
   });
 
-  const memories = Array.isArray(result?.memories) ? result.memories : [];
+  const memories = result.memories;
   lines.push(`${text.memoryResultCountLabel}: ${memories.length}`);
 
   if (!memories.length) {
@@ -1259,24 +1266,26 @@ async function buildMemoryContent(
     return lines.join("\n");
   }
 
-  memories.forEach((memory: any, index: number) => {
-    const tags = Array.isArray(memory?.tags)
-      ? memory.tags.map((item: unknown) => collapseInlineWhitespace(item, 40)).filter(Boolean)
-      : [];
+  /** Formats complete typed matches returned by the prerequisite memory API. */
+  memories.forEach((memory, index) => {
+    const tags = memory.tags.map(
+      /** Formats tag names from the typed public memory match. */
+      item => collapseInlineWhitespace(item, 40)
+    );
 
     lines.push(
       `#${index + 1}`,
-      `${text.memoryTitleLabel}: ${collapseInlineWhitespace(memory?.title, 80)}`,
-      `${text.memoryContentLabel}: ${collapseInlineWhitespace(memory?.content, 220)}`,
-      `${text.memorySourceLabel}: ${collapseInlineWhitespace(memory?.source, 60)}`,
-      `${text.memoryCreatedAtLabel}: ${collapseInlineWhitespace(memory?.createdAt, 40)}`
+      `${text.memoryTitleLabel}: ${collapseInlineWhitespace(memory.title, 80)}`,
+      `${text.memoryContentLabel}: ${collapseInlineWhitespace(memory.content, 220)}`,
+      `${text.memorySourceLabel}: ${collapseInlineWhitespace(memory.source, 60)}`,
+      `${text.memoryCreatedAtLabel}: ${collapseInlineWhitespace(memory.createdAt, 40)}`
     );
 
     if (tags.length) {
       lines.push(`${text.memoryTagsLabel}: ${tags.join(", ")}`);
     }
 
-    if (String(memory?.chunkInfo || "").trim()) {
+    if (memory.chunkInfo !== null) {
       lines.push(
         `${text.memoryChunkInfoLabel}: ${collapseInlineWhitespace(memory.chunkInfo, 80)}`
       );
@@ -1286,10 +1295,11 @@ async function buildMemoryContent(
   return lines.join("\n");
 }
 
+/** Appends enabled attachments while retaining the exact prompt execution context. */
 export async function appendExtraInfoToMessage(
   messageText: string,
   chatId?: string,
-  activePrompt?: ToolPkg.ActivePromptSnapshot | null
+  executionContext?: ToolPkg.ExecutionContext | null
 ): Promise<string | null> {
   if (!stripMessageForMemorySearch(messageText)) {
     logExtraInfoInjectionInfo("append.skipped", "reason=empty_message");
@@ -1299,7 +1309,7 @@ export async function appendExtraInfoToMessage(
   const tags = await buildExtraInfoAttachmentTags(
     messageText,
     chatId,
-    activePrompt
+    executionContext
   );
   if (!tags.length) {
     logExtraInfoInjectionInfo("append.skipped", "reason=no_attachment_tags");
@@ -1314,10 +1324,11 @@ export async function appendExtraInfoToMessage(
   return result;
 }
 
+/** Builds enabled attachment content within the configured injection deadline. */
 export async function buildExtraInfoAttachmentTags(
   messageText: string,
   chatId?: string,
-  activePrompt?: ToolPkg.ActivePromptSnapshot | null
+  executionContext?: ToolPkg.ExecutionContext | null
 ): Promise<string[]> {
   const settings = await loadSettings();
   if (!settings.masterEnabled || containsExtraInfoAttachment(messageText)) {
@@ -1429,7 +1440,7 @@ export async function buildExtraInfoAttachmentTags(
       buildOptionalContent(
         "memory",
         resolveExtraInfoI18n().attachmentMemoryTitle,
-        () => buildMemoryContent(messageText, chatId, activePrompt),
+        () => buildMemoryContent(messageText, chatId, executionContext),
         deadlineAt
       )
     );

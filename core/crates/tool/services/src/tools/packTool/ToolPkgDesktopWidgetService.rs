@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use operit_plugin_sdk::toolpkg::ToolPkgComposeDslParser::{ToolPkgComposeDslParser, ToolPkgComposeDslRenderResult};
+use operit_util::stream::ReverseStream::ReverseStream;
+use super::ToolPkgComposeDslSession::{ToolPkgComposeDslSession, ToolPkgComposeDslCommand, ToolPkgComposeDslEventStream};
+use super::ToolPkgComposeDslNodeStore::ToolPkgComposeDslNodeStore;
 use operit_plugin_sdk::toolpkg::ToolPkgPackageModels::ToolPkgDesktopWidget;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,7 +15,7 @@ use super::RuntimePackageManager::RuntimePackageManager;
 #[allow(non_snake_case)]
 pub struct ToolPkgDesktopWidgetSnapshot {
     pub widget: ToolPkgDesktopWidget,
-    pub renderResult: ToolPkgComposeDslRenderResult,
+    pub renderUpdate: crate::tools::packTool::ToolPkgComposeDslSession::ToolPkgComposeDslNodeUpdate,
 }
 
 static NEXT_RENDER_ID: AtomicU64 = AtomicU64::new(1);
@@ -72,7 +74,7 @@ pub(super) async fn render(
         "toolpkg_widget:{}",
         json!([package_name, widget_id, instance_id, render_id])
     );
-    let mut options: BTreeMap<String, Value> = BTreeMap::from([
+    let options: BTreeMap<String, Value> = BTreeMap::from([
         ("packageName".into(), json!(package_name)),
         ("toolPkgId".into(), json!(widget.toolPkgId)),
         ("uiModuleId".into(), json!(route.uiModuleId)),
@@ -80,79 +82,49 @@ pub(super) async fn render(
         ("executionContextKey".into(), json!(context_key)),
         ("__operit_script_screen".into(), json!(route.screen)),
         ("moduleSpec".into(), json!(route.moduleSpec)),
-        ("state".into(), json!({})),
-        ("memo".into(), json!({})),
     ]);
-    manager.acquireToolPkgExecutionEngine(&context_key, package_name).await;
+    manager.acquireToolPkgExecutionEngine(&context_key, package_name).await?;
     let _owner = ExecutionOwner {
         manager,
         context_key: context_key.clone(),
         package_name: package_name.into(),
     };
-    let engine = manager.getToolPkgExecutionEngine(&context_key, package_name);
-    let initial = engine
-        .execute_compose_dsl_script_async(script, options.clone(), BTreeMap::new(), resources)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut result = decode_render(initial)?;
-    let on_load =
-        ToolPkgComposeDslParser::extractActionId(result.pointer("/tree/props/onLoad").cloned());
-    if let Some(action_id) = on_load {
-        options.insert(
-            "state".into(),
-            result
-                .get("state")
-                .ok_or("Desktop widget render result is missing state")?
-                .clone(),
-        );
-        options.insert(
-            "memo".into(),
-            result
-                .get("memo")
-                .ok_or("Desktop widget render result is missing memo")?
-                .clone(),
-        );
-        let loaded = engine
-            .dispatch_compose_dsl_action_result_async(
-                action_id,
-                None,
-                options,
-                BTreeMap::new(),
-                None,
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-        result = decode_render(loaded)?;
-    }
-    Ok(ToolPkgDesktopWidgetSnapshot { widget, renderResult: serde_json::from_value(result).map_err(|error| error.to_string())? })
+    let session = ToolPkgComposeDslSession::resolve(&manager.openComposeDslSession(&context_key, package_name)?)?;
+    let mut updates = session.updates()?;
+    let (mut sender, commands) = ReverseStream::channel();
+    let rendering = async {
+        let work = async {
+            let mut store = ToolPkgComposeDslNodeStore::default();
+            sender.send(ToolPkgComposeDslCommand {
+                requestId: "render".into(), operation: "render".into(), script: Some(script),
+                actionId: None, payload: None, runtimeOptions: options.clone(), envOverrides: BTreeMap::new(),
+            }).await?;
+            collect_command(&mut updates, &mut store, "render").await?;
+            let on_load = store.root()?.props.get("onLoad").and_then(|value| value.get("__actionId")).and_then(Value::as_str).map(str::to_string);
+            if let Some(action_id) = on_load {
+                sender.send(ToolPkgComposeDslCommand {
+                    requestId: "load".into(), operation: "action".into(), script: None,
+                    actionId: Some(action_id), payload: None, runtimeOptions: options, envOverrides: BTreeMap::new(),
+                }).await?;
+                collect_command(&mut updates, &mut store, "load").await?;
+            }
+            Ok::<_, String>(ToolPkgDesktopWidgetSnapshot { widget, renderUpdate: store.snapshot()? })
+        }.await;
+        sender.close();
+        work
+    };
+    let (submission, snapshot) = tokio::join!(session.submit(commands), rendering);
+    submission?;
+    snapshot
 }
 
-/// Rejects failed or malformed renders instead of presenting an older widget snapshot.
-fn decode_render(raw: Option<Value>) -> Result<Value, String> {
-    let raw = raw.ok_or("Desktop widget returned no render result")?;
-    let value = raw;
-    if value.get("success").and_then(Value::as_bool) == Some(false) {
-        return Err(format!("Desktop widget render failed: {value}"));
-    }
-    if !value.get("tree").is_some_and(Value::is_object) {
-        return Err("Desktop widget render result is missing its tree".into());
-    }
-    Ok(value)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::decode_render;
-
-    /// Ensures refresh failures cannot masquerade as usable widget content.
-    #[test]
-    fn rejects_failed_and_missing_trees() {
-        assert!(decode_render(None).is_err());
-        assert!(decode_render(Some(serde_json::json!({"success": false, "tree": {}}))).is_err());
-        assert!(decode_render(Some(serde_json::json!({"success": true}))).is_err());
-        assert!(decode_render(Some(
-            serde_json::json!({"tree": {"type": "Text", "props": {}, "children": []}})
-        ))
-        .is_ok());
+/// Collects one command's commits through the same session stream used by interactive hosts.
+async fn collect_command(updates: &mut ToolPkgComposeDslEventStream, store: &mut ToolPkgComposeDslNodeStore, request: &str) -> Result<(), String> {
+    loop {
+        let event = updates.recv().await.ok_or("Desktop widget Compose session closed before completion")?;
+        if let Some(error) = event.error { return Err(error); }
+        if !event.navigationCommands.is_empty() { return Err("Desktop widget rendering cannot navigate".into()); }
+        if let Some(update) = event.update { store.apply(update)?; }
+        if event.requestId == request && event.phase == "complete" { return Ok(()); }
     }
 }

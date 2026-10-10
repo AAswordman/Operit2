@@ -23,6 +23,25 @@ Widget buildComposeDslLayoutForTest({
   );
 }
 
+/// Applies the production retained store and renderer for isolated first-frame measurements.
+@visibleForTesting
+Widget buildRetainedComposeDslLayoutForTest({
+  required core_proxy.ToolPkgComposeDslNodeUpdate update,
+  required ComposeDslWebViewHostContext hostContext,
+  required void Function(VoidCallback dispose) registerDispose,
+}) {
+  final store = _ComposeDslNodeStore();
+  store.apply(update);
+  registerDispose(store.dispose);
+  return _ComposeDslRenderer(
+    node: store.root,
+    onAction: hostContext.dispatchAction,
+    onTextInput: (id, text) async => null,
+    webViewHostContext: hostContext,
+    splitMarkdownContent: (_) async => [],
+  );
+}
+
 class _ComposeDslRenderer extends StatefulWidget {
   /// Creates the compose dsl renderer instance.
   const _ComposeDslRenderer({

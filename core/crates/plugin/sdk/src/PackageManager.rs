@@ -550,52 +550,23 @@ mod tests {
             Ok(ToolPkgMainRegistrationCapture::default())
         }
 
-        /// Returns the supplied Compose DSL script.
-        #[allow(non_snake_case)]
-        fn execute_compose_dsl_script(
-            &self,
-            script: &str,
-            _runtimeOptions: &BTreeMap<String, Value>,
-            _envOverrides: &BTreeMap<String, String>,
-            _textResources: Arc<BTreeMap<String, String>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-            let result = (|| Ok(Some(Value::String(script.to_string()))))();
-            Box::pin(std::future::ready(result))
-        }
-
-        /// Returns the supplied Compose DSL script asynchronously for tests.
-        fn execute_compose_dsl_script_async(
-            &self,
-            script: String,
-            _runtime_options: BTreeMap<String, Value>,
-            _env_overrides: BTreeMap<String, String>,
-            _text_resources: Arc<BTreeMap<String, String>>,
-        ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
-            Box::pin(async move { Ok(Some(Value::String(script))) })
-        }
-
-        /// Returns the dispatched action id.
-        #[allow(non_snake_case)]
-        fn dispatch_compose_dsl_action(
-            &self,
-            actionId: &str,
-            _payload: Option<Value>,
-            _runtimeOptions: &BTreeMap<String, Value>,
-            _envOverrides: &BTreeMap<String, String>,
-            _onIntermediateResult: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-        ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<Option<Value>>> {
-            let result = (|| Ok(Some(Value::String(actionId.to_string()))))();
-            Box::pin(std::future::ready(result))
+        /// Rejects live-session rendering in this recording-only engine.
+        fn execute_compose_dsl_script_stream_async(
+            &self, _script: String, _runtime_options: BTreeMap<String, Value>,
+            _env_overrides: BTreeMap<String, String>, _text_resources: Arc<BTreeMap<String, String>>,
+            _on_response: Arc<dyn Fn(Value) + Send + Sync>,
+        ) -> crate::javascript::JsExecutionFuture<JsExecutionResult<Option<Value>>> {
+            Box::pin(async { Err(crate::execution_result::JsExecutionError::invalid_request("This recording engine does not execute live Compose sessions")) })
         }
 
         /// Returns the dispatched action id asynchronously for tests.
-        fn dispatch_compose_dsl_action_result_async(
+        fn dispatch_compose_dsl_action_stream_async(
             &self,
             actionId: String,
             _payload: Option<Value>,
             _runtimeOptions: BTreeMap<String, Value>,
             _envOverrides: BTreeMap<String, String>,
-            _on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+            _on_intermediate_result: Arc<dyn Fn(Value) + Send + Sync>,
         ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>> {
             Box::pin(async move { Ok(Some(Value::String(actionId))) })
         }
@@ -610,8 +581,8 @@ mod tests {
     impl ToolPkgExecutionEngineFactory for TestExecutionEngineFactory {
         /// Creates one generic test JavaScript engine.
         #[allow(non_snake_case)]
-        fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
-            Arc::new(TestExecutionEngine)
+        fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            Ok(Arc::new(TestExecutionEngine))
         }
 
         /// Creates one ToolPkg test JavaScript engine.
@@ -619,8 +590,8 @@ mod tests {
         fn createToolPkgExecutionEngine(
             &self,
             _context: ToolPkgExecutionContext,
-        ) -> Arc<dyn JsExecutionEngine> {
-            Arc::new(TestExecutionEngine)
+        ) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            Ok(Arc::new(TestExecutionEngine))
         }
     }
 

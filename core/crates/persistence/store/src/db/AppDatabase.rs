@@ -1299,7 +1299,7 @@ pub fn createSyncTables(store: &SqliteStore) -> Result<(), SqliteStoreError> {
     )
 }
 
-/// Removes plugin role-binding columns, but NEVER native folder membership.
+/// Stages legacy role bindings before removing their columns for the centralized plugin migration.
 /// Native "group" values in chats and historical sync rows survive 27 -> 28.
 fn MIGRATION_27_28(database: &AppDatabase) -> Result<(), SqliteStoreError> {
     database.store.transaction(|transaction| {
@@ -1313,14 +1313,16 @@ fn MIGRATION_27_28(database: &AppDatabase) -> Result<(), SqliteStoreError> {
 /// Returns the physical record-schema upgrade with the version update strictly last.
 fn migration27To28Statements() -> &'static [&'static str] {
     &[
+        "ALTER TABLE chats ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE sync_sql_chat_rows ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
+        "UPDATE chats SET pluginExtensions=json_object('com.operit.character_cards.migration',json_object('characterCardName',characterCardName,'characterGroupId',characterGroupId))",
+        "UPDATE sync_sql_chat_rows SET pluginExtensions=json_object('com.operit.character_cards.migration',json_object('characterCardName',characterCardName,'characterGroupId',characterGroupId))",
         "ALTER TABLE chats DROP COLUMN characterCardName",
         "ALTER TABLE chats DROP COLUMN characterGroupId",
         "ALTER TABLE sync_sql_chat_rows DROP COLUMN characterCardName",
         "ALTER TABLE sync_sql_chat_rows DROP COLUMN characterGroupId",
-        "ALTER TABLE chats ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
         "ALTER TABLE messages ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
         "ALTER TABLE message_variants ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
-        "ALTER TABLE sync_sql_chat_rows ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
         "ALTER TABLE sync_sql_message_rows ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
         "ALTER TABLE sync_sql_message_variant_rows ADD COLUMN pluginExtensions TEXT NOT NULL DEFAULT '{}'",
         "UPDATE sync_sql_operations SET schemaVersion = 7 WHERE domain = 'chat' AND schemaVersion = 6",

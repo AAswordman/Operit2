@@ -16,6 +16,7 @@ import '../../../theme/OperitTheme.dart';
 import '../../../theme/OperitThemeAssets.dart';
 import '../components/SettingsControlStyles.dart';
 import 'ChatAppearancePreview.dart';
+import 'ThemeConfigurationControl.dart';
 
 enum _AppearanceSettingsTab { theme, background, bubbles, interaction }
 
@@ -40,6 +41,7 @@ class AppearanceSettingsPanel extends StatelessWidget {
       length: _appearanceSettingsTabs.length,
       child: Column(
         children: <Widget>[
+          const ThemeConfigurationControl(),
           const _AppearanceHeaderBar(),
           Expanded(
             child: TabBarView(

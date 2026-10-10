@@ -54,6 +54,9 @@ pub struct ToolPkgUiModuleRuntime {
     pub id: String,
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
     pub keepAlive: bool,
@@ -66,6 +69,9 @@ pub struct ToolPkgUiRouteRuntime {
     pub routeId: String,
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
     pub keepAlive: bool,
@@ -233,6 +239,9 @@ pub struct ToolPkgRegisteredUiModule {
     #[serde(default)]
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     #[serde(default)]
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
@@ -248,6 +257,9 @@ pub struct ToolPkgRegisteredUiRoute {
     #[serde(default)]
     pub runtime: String,
     pub screen: String,
+    /// Identifies the exact exported function captured from a registered screen reference.
+    #[serde(rename = "screenExport", default, skip_serializing_if = "Option::is_none")]
+    pub screenExport: Option<String>,
     #[serde(default)]
     pub title: LocalizedText,
     #[serde(rename = "keepAlive")]
@@ -1092,6 +1104,7 @@ impl ToolPkgArchiveParser {
                 routeId: buildToolPkgRouteId(&manifest.toolpkgId, &module.id),
                 runtime: module.runtime.clone(),
                 screen: module.screen.clone(),
+                screenExport: module.screenExport.clone(),
                 title: module.title.clone(),
                 keepAlive: module.keepAlive,
             });
@@ -1157,6 +1170,7 @@ impl ToolPkgArchiveParser {
                 id: id.clone(),
                 runtime: runtimeName.clone(),
                 screen: normalizedScreenPath.clone(),
+                screenExport: module.screenExport.clone(),
                 title: module.title.clone(),
                 keepAlive: module.keepAlive,
             });
@@ -1165,6 +1179,7 @@ impl ToolPkgArchiveParser {
                 routeId,
                 runtime: runtimeName,
                 screen: normalizedScreenPath,
+                screenExport: module.screenExport.clone(),
                 title: module.title.clone(),
                 keepAlive: module.keepAlive,
             });
@@ -2136,12 +2151,16 @@ fn normalizeRequirements(
     Ok(normalized)
 }
 
-/// Identifies the provider required by every admitted v1 compatibility contract.
+/// Identifies the workflow provider required by admitted v1 contracts.
 const V1_WORKFLOW_PREREQUISITE: &str = "com.operit.workflow";
-/// Identifies the first workflow plugin release exposing the compatibility API.
+/// Identifies the first workflow release exposing the compatibility API.
 const V1_WORKFLOW_MIN_VERSION: &str = "0.2.0";
+/// Identifies the role and memory provider required by admitted v1 contracts.
+const V1_CHARACTER_PREREQUISITE: &str = "com.operit.character_cards";
+/// Identifies the role provider release exposing the domain APIs used by v1.
+const V1_CHARACTER_MIN_VERSION: &str = "0.1.0";
 
-/// Adds the v1 compatibility prerequisite without changing the original manifest or relaxing explicit bounds.
+/// Adds explicit compatibility providers without relaxing authored version bounds.
 #[allow(non_snake_case)]
 fn applyCompatibilityRequirements(
     apiVersion: ToolPkgApiVersion,
@@ -2151,32 +2170,37 @@ fn applyCompatibilityRequirements(
     if apiVersion.major != 1 {
         return Ok(());
     }
-    if packageId.trim().eq_ignore_ascii_case(V1_WORKFLOW_PREREQUISITE) {
-        return Err("The workflow compatibility provider must not itself use the v1 contract".to_string());
-    }
-    let minimum = ToolPkgApiVersion::parse(V1_WORKFLOW_MIN_VERSION)?;
-    match requirements.iter_mut().find(|item| item.id.eq_ignore_ascii_case(V1_WORKFLOW_PREREQUISITE)) {
-        Some(requirement) => {
-            let effectiveMinimum = match requirement.minVersion.as_deref() {
-                Some(value) => ToolPkgApiVersion::parse(value)?.max(minimum),
-                None => minimum,
-            };
-            if let Some(maximum) = requirement.maxVersion.as_deref() {
-                if ToolPkgApiVersion::parse(maximum)? < effectiveMinimum {
-                    return Err(format!(
-                        "v1 workflow prerequisite version bounds conflict: >= {effectiveMinimum}, <= {maximum}"
-                    ));
-                }
-            }
-            requirement.id = V1_WORKFLOW_PREREQUISITE.to_string();
-            requirement.minVersion = Some(effectiveMinimum.to_string());
+    for (provider, minimumVersion) in [
+        (V1_WORKFLOW_PREREQUISITE, V1_WORKFLOW_MIN_VERSION),
+        (V1_CHARACTER_PREREQUISITE, V1_CHARACTER_MIN_VERSION),
+    ] {
+        if packageId.trim().eq_ignore_ascii_case(provider) {
+            return Err(format!("The compatibility provider {provider} must not itself use the v1 contract"));
         }
-        None => requirements.push(ToolPkgManifestRequirement {
-            id: V1_WORKFLOW_PREREQUISITE.to_string(),
-            description: "Required by the ToolPkg v1 compatibility contract".to_string(),
-            minVersion: Some(V1_WORKFLOW_MIN_VERSION.to_string()),
-            maxVersion: None,
-        }),
+        let minimum = ToolPkgApiVersion::parse(minimumVersion)?;
+        match requirements.iter_mut().find(|item| item.id.eq_ignore_ascii_case(provider)) {
+            Some(requirement) => {
+                let effectiveMinimum = match requirement.minVersion.as_deref() {
+                    Some(value) => ToolPkgApiVersion::parse(value)?.max(minimum),
+                    None => minimum,
+                };
+                if let Some(maximum) = requirement.maxVersion.as_deref() {
+                    if ToolPkgApiVersion::parse(maximum)? < effectiveMinimum {
+                        return Err(format!(
+                            "v1 compatibility prerequisite {provider} version bounds conflict: >= {effectiveMinimum}, <= {maximum}"
+                        ));
+                    }
+                }
+                requirement.id = provider.to_string();
+                requirement.minVersion = Some(effectiveMinimum.to_string());
+            }
+            None => requirements.push(ToolPkgManifestRequirement {
+                id: provider.to_string(),
+                description: "Required by the ToolPkg v1 compatibility contract".to_string(),
+                minVersion: Some(minimumVersion.to_string()),
+                maxVersion: None,
+            }),
+        }
     }
     Ok(())
 }
@@ -2548,9 +2572,11 @@ mod api_compatibility_tests {
             if version == "2.0.0" {
                 assert!(requirements.is_empty());
             } else {
-                assert_eq!(requirements.len(), 1);
+                assert_eq!(requirements.len(), 2);
                 assert_eq!(requirements[0].id, V1_WORKFLOW_PREREQUISITE);
                 assert_eq!(requirements[0].minVersion.as_deref(), Some(V1_WORKFLOW_MIN_VERSION));
+                assert_eq!(requirements[1].id, V1_CHARACTER_PREREQUISITE);
+                assert_eq!(requirements[1].minVersion.as_deref(), Some(V1_CHARACTER_MIN_VERSION));
             }
         }
     }
@@ -2568,7 +2594,7 @@ mod api_compatibility_tests {
             }];
             applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
             applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
-            assert_eq!(requirements.len(), 1);
+            assert_eq!(requirements.len(), 2);
             assert_eq!(requirements[0].minVersion.as_deref(), Some(effective));
             assert_eq!(requirements[0].maxVersion.as_deref(), Some("0.4.0"));
             assert_eq!(requirements[0].description, "Author requirement");
@@ -2580,6 +2606,34 @@ mod api_compatibility_tests {
         }];
         assert!(applyCompatibilityRequirements(version, "consumer", &mut requirements).is_err());
         assert!(applyCompatibilityRequirements(version, V1_WORKFLOW_PREREQUISITE, &mut Vec::new()).is_err());
+    }
+
+    /// Preserves role-provider bounds, canonicalizes its identity, and rejects incompatible requirements.
+    #[test]
+    fn merges_v1_character_prerequisite_without_duplicates() {
+        let version = ToolPkgApiVersion::parse("1.0.0").unwrap();
+        for (declared, effective) in [(None, "0.1.0"), (Some("0.0.1"), "0.1.0"), (Some("0.3.0"), "0.3.0")] {
+            let mut requirements = vec![ToolPkgManifestRequirement {
+                id: "COM.OPERIT.CHARACTER_CARDS".to_string(),
+                description: "Author role requirement".to_string(),
+                minVersion: declared.map(str::to_string),
+                maxVersion: Some("0.4.0".to_string()),
+            }];
+            applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
+            applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
+            assert_eq!(requirements.len(), 2);
+            assert_eq!(requirements[0].id, V1_CHARACTER_PREREQUISITE);
+            assert_eq!(requirements[0].minVersion.as_deref(), Some(effective));
+            assert_eq!(requirements[0].maxVersion.as_deref(), Some("0.4.0"));
+            assert_eq!(requirements[0].description, "Author role requirement");
+        }
+        let mut requirements = vec![ToolPkgManifestRequirement {
+            id: V1_CHARACTER_PREREQUISITE.to_string(),
+            maxVersion: Some("0.0.1".to_string()),
+            ..Default::default()
+        }];
+        assert!(applyCompatibilityRequirements(version, "consumer", &mut requirements).is_err());
+        assert!(applyCompatibilityRequirements(version, V1_CHARACTER_PREREQUISITE, &mut Vec::new()).is_err());
     }
 
     /// Keeps the existing current-contract default explicit and rejects undeclared future contracts.

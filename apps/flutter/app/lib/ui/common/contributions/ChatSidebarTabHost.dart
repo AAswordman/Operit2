@@ -361,6 +361,7 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
     return _embedded(tab, generation);
   }
 
+  /// Embeds the plugin tree with its natural content height.
   Widget _embedded(_SidebarTab tab, int generation) {
     return ToolPkgUiLauncherScreen(
       key: ValueKey('sidebar-route:${tab.id}:$generation'),
@@ -369,6 +370,7 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
       initialRouteId: tab.route.routeId,
       embeddedScreenPath: tab.route.screen,
       showLauncherChrome: false,
+      showLoadingIndicator: false,
       initialModuleSpec: tab.route.moduleSpec,
       initialState: <String, Object?>{
         'input': tab.entry.params,
@@ -491,31 +493,32 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
         child: workspaceWithTabs(context, tabs),
       );
     }
+    final children = <Widget>[
+      if (widget.headerBuilder != null)
+        widget.headerBuilder!(context, tabs)
+      else
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Align(alignment: Alignment.centerRight, child: tabs),
+        ),
+      if (_actionError != null) _error(_actionError!),
+      if (workspaceSelected)
+        Expanded(child: widget.workspaceBuilder(context))
+      else if (_catalogError != null)
+        _error(_catalogError!)
+      else if (!_catalogLoading)
+        _content(_tabs, selectedId),
+      if (!workspaceSelected && widget.pluginFooter != null)
+        widget.pluginFooter!,
+    ];
     return Material(
       type: MaterialType.transparency,
-      child: Column(
-        children: <Widget>[
-          if (widget.headerBuilder != null)
-            widget.headerBuilder!(context, tabs)
-          else
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Align(alignment: Alignment.centerRight, child: tabs),
+      child: workspaceSelected
+          ? Column(children: children)
+          : SingleChildScrollView(
+              key: ValueKey('sidebar-scroll:$selectedId'),
+              child: Column(mainAxisSize: MainAxisSize.min, children: children),
             ),
-          if (_actionError != null) _error(_actionError!),
-          Expanded(
-            child: workspaceSelected
-                ? widget.workspaceBuilder(context)
-                : _catalogError != null
-                ? _error(_catalogError!)
-                : _catalogLoading
-                ? const Center(child: M3LoadingIndicator())
-                : _content(_tabs, selectedId),
-          ),
-          if (!workspaceSelected && widget.pluginFooter != null)
-            widget.pluginFooter!,
-        ],
-      ),
     );
   }
 

@@ -47,7 +47,7 @@ test("registered API command and Web IPC share actual file-backed character reco
   const viaApi = await plugin.api("character.get", { id: created.id });
   assert.equal(viaApi.description, "实际命令修改"); assert.equal(viaApi.otherContentVoice, created.otherContentVoice);
   assert.deepEqual(plain(await plugin.web({ action: "getCharacter", id: created.id })), plain(viaApi));
-  const file = path.join(disk.directory, "character-memory", "state.json"), state = JSON.parse(await readFile(file, "utf8"));
+  const file = path.join(disk.directory, "character-memory", "state.json"), state = JSON.parse(await disk.stateBytes().toString("utf8"));
   assert.deepEqual(state.cards.find(
     /** Locates the actual generated identity in the independently read authoritative bytes. */
     card => card.id === created.id,
@@ -59,9 +59,9 @@ test("registered API command and Web IPC share actual file-backed character reco
 
 /** Executes actual retained initialization errors through all entrypoints without a successful domain Host or fixture. */
 test("registered API command and Web IPC preserve a bad-file initialization failure without partial writes", async t => {
-  const disk = await createDiskHarness(t), files = loadModule("src/storage/files.ts", disk.globals);
-  await files.FileCharacterRepository.open();
-  const file = path.join(disk.directory, "character-memory", "state.json"); await writeFile(file, "{broken", "utf8");
+  const disk = await createDiskHarness(t), files = loadModule("src/storage/database.ts", disk.globals);
+  await files.DatabaseCharacterRepository.open();
+  disk.storage.inspect(sql => sql.prepare("UPDATE records SET value=? WHERE collection='cards' AND key='default'").run("{broken"));
   disk.clearCalls(); const plugin = openPlugin(disk); let original;
   await assert.rejects(plugin.api("character.list", {}),
     /** Captures the actual rejected initialization error from the real provider path. */
@@ -73,8 +73,8 @@ test("registered API command and Web IPC preserve a bad-file initialization fail
   );
   const command = await plugin.command("character", ["list"]);
   assert.equal(command.json.ok, false); assert.equal(command.json.error.code, "domain_operation_failed");
-  assert.equal(command.json.error.message, original.message);
-  assert.equal(await readFile(file, "utf8"), "{broken");
+  assert.equal(command.json.error.message, String(original));
+  assert.equal(disk.storage.inspect(sql => sql.prepare("SELECT value FROM records WHERE collection='cards' AND key='default'").get().value), "{broken");
   assert.equal(disk.calls.filter(
     /** Rejects any repair or new-install publication during bad-file provider calls. */
     call => call.method === "write" || call.method === "move" || call.method === "mkdir",
@@ -87,7 +87,7 @@ test("registered management Web IPC preserves a full file-backed snapshot with e
   assert.equal(settings.calls.length, 0, "Registration must not read configured directories");
   assert.equal(disk.calls.length, 0, "Registration must not open plugin files");
   const managementRoute = "toolpkg:com.operit.character_cards:ui:main", attachmentRoute = "toolpkg:com.operit.character_cards:ui:memory-attachment";
-  assert.equal(plugin.routes.length, 6);
+  assert.equal(plugin.routes.length, 7);
   assert.deepEqual(plain(plugin.routes.map(
     /** Inspects the actual route identities and lifetimes without rendering either screen or synthesizing a host. */
     route => ({ id: route.id, route: route.route, runtime: route.runtime, keepAlive: route.keepAlive }),
@@ -95,6 +95,7 @@ test("registered management Web IPC preserves a full file-backed snapshot with e
     { id: "main", route: managementRoute, runtime: "compose_dsl", keepAlive: true },
     { id: "memory-attachment", route: attachmentRoute, runtime: "compose_dsl", keepAlive: false },
     { id: "chat-sidebar", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", runtime: "compose_dsl", keepAlive: true },
+    { id: "chat-input-menu", route: "toolpkg:com.operit.character_cards:ui:chat-input-menu", runtime: "compose_dsl", keepAlive: false },
     { id: "selection", route: "toolpkg:com.operit.character_cards:ui:selection", runtime: "compose_dsl", keepAlive: false },
     { id: "group-execution", route: "toolpkg:com.operit.character_cards:ui:group-execution", runtime: "compose_dsl", keepAlive: false },
     { id: "memory", route: "toolpkg:com.operit.character_cards:ui:memory", runtime: "compose_dsl", keepAlive: true },
@@ -105,8 +106,8 @@ test("registered management Web IPC preserves a full file-backed snapshot with e
   assert.equal(new Set(plugin.routes.map(
     /** Requires actual independent screen identity rather than accepting a reused editor callback. */
     entry => entry.screen,
-  )).size, 6);
-  assert.equal(plugin.navigation.length, 5);
+   )).size, 7);
+  assert.equal(plugin.navigation.length, 6);
   const sidebar = plugin.navigation.filter(
     /** Requires one actual sidebar entry rather than accepting any route that happens to match it. */
     entry => entry.surface === "main_sidebar_plugins",
@@ -122,7 +123,7 @@ test("registered management Web IPC preserves a full file-backed snapshot with e
   const snapshot = await plugin.web({ action: "snapshot" });
   assert.ok(Array.isArray(snapshot.cards)); assert.ok(Array.isArray(snapshot.models)); assert.ok(Array.isArray(snapshot.ttsConfigs));
   assert.ok(snapshot.cards.length > 0);
-  const file = path.join(disk.directory, "character-memory", "state.json"), state = JSON.parse(await readFile(file, "utf8"));
+  const file = path.join(disk.directory, "character-memory", "state.json"), state = JSON.parse(await disk.stateBytes().toString("utf8"));
   assertDirectoryCalls(settings, snapshotDirectoryMethods);
   assertCompleteSnapshot(snapshot, state);
   settings.clearCalls(); disk.clearCalls();
@@ -143,12 +144,8 @@ test("actual Web card save commits the complete staged tag change set once", asy
   const updated = await plugin.api("tag.create", { values: { name: "保留标签", description: "", promptContent: "旧提示", tagType: "TONE" } });
   const before = path.join(disk.directory, "character-memory", "state.json"); disk.clearCalls();
   const snapshot = await plugin.web({ action: "saveCharacter", create: false, card: { ...plain(card), description: "Web 更新", ttsConfigId: directoryInput.ttsConfigs[0].id, attachedTagIds: ["draft-created", updated.id] }, tagChanges: { created: [{ draftId: "draft-created", values: { name: "新标签", description: "新描述", promptContent: "新提示", tagType: "CUSTOM" } }], updated: [{ id: updated.id, name: updated.name, description: "修改描述", promptContent: "修改提示", tagType: updated.tagType }], deleted: [removed.id] } });
-  const publications = disk.calls.filter(
-    /** Counts only the exact authoritative snapshot destination; owner USER.md files are distinct publications. */
-    call => call.method === "move" && path.resolve(call.args[1]) === before,
-  );
-  assert.equal(publications.length, 1);
-  const state = JSON.parse(await readFile(before, "utf8"));
+  assert.equal(disk.calls.filter(call => call.method === "storage.commit").length, 1);
+  const state = JSON.parse(await disk.stateBytes().toString("utf8"));
   assert.deepEqual(state.cards, plain(snapshot.cards)); assert.deepEqual(state.tags, plain(snapshot.tags));
   assertCompleteSnapshot(snapshot, state);
   assertDirectoryCalls(settings, ["listTtsConfigs", ...snapshotDirectoryMethods]);
@@ -182,16 +179,16 @@ test("actual Web card save commits the complete staged tag change set once", asy
 test("IO-only file entrypoints reject undeclared SoftwareSettings instead of supplying an empty snapshot", async t => {
   const disk = await createDiskHarness(t), plugin = openPlugin(disk);
   await plugin.api("character.list", {});
-  const file = path.join(disk.directory, "character-memory", "state.json"), before = await readFile(file);
+  const file = path.join(disk.directory, "character-memory", "state.json"), before = await disk.stateBytes();
   disk.clearCalls();
   assert.throws(
     /** Requires the original unmodified Tools proxy to reject the undeclared capability directly. */
     () => disk.globals.Tools.SoftwareSettings,
-    { message: "Disk harness permits Tools.Files IO only: SoftwareSettings" },
+    { message: "Disk harness permits Files and Storage only: SoftwareSettings" },
   );
-  await assert.rejects(plugin.web({ action: "snapshot" }), { message: "Disk harness permits Tools.Files IO only: SoftwareSettings" });
-  await assert.rejects(plugin.api("snapshot", {}), { message: "Disk harness permits Tools.Files IO only: SoftwareSettings" });
-  assertNoMutations(disk); assert.deepEqual(await readFile(file), before);
+  await assert.rejects(plugin.web({ action: "snapshot" }), { message: "Disk harness permits Files and Storage only: SoftwareSettings" });
+  await assert.rejects(plugin.api("snapshot", {}), { message: "Disk harness permits Files and Storage only: SoftwareSettings" });
+  assertNoMutations(disk); assert.deepEqual(await disk.stateBytes(), before);
 });
 
 /** Keeps the explicit directory fixture narrow and immutable without treating it as native-host evidence. */
@@ -234,7 +231,7 @@ for (const method of snapshotDirectoryMethods) {
     const updated = await plugin.api("tag.create", { values: { name: "错误前保留标签", description: "保留描述", promptContent: "保留提示", tagType: "TONE" } });
     const removed = await plugin.api("tag.create", { values: { name: "错误前删除标签", description: "删除前描述", promptContent: "删除前提示", tagType: "CUSTOM" } });
     assert.equal(card.ttsConfigId, null, "The injected failure must occur in the full snapshot after tag/card staging");
-    const file = path.join(disk.directory, "character-memory", "state.json"), before = await readFile(file), state = JSON.parse(before.toString("utf8"));
+    const file = path.join(disk.directory, "character-memory", "state.json"), before = await disk.stateBytes(), state = JSON.parse(before.toString("utf8"));
     const original = new Error("Explicit test directory read failure: " + method);
 
     /** Requires the supplied original rejection, all real callback attempts and unchanged authoritative disk bytes. */
@@ -245,7 +242,7 @@ for (const method of snapshotDirectoryMethods) {
         error => error === original,
       );
       assertDirectoryCalls(settings, snapshotDirectoryMethods);
-      assertNoMutations(disk); assert.deepEqual(await readFile(file), before);
+      assertNoMutations(disk); assert.deepEqual(await disk.stateBytes(), before);
     }
 
     await rejectsWithoutPublication(
@@ -287,7 +284,7 @@ test("independently evaluated main API connects lazy directory readers without c
   const globals = {
     ...disk.globals,
     Tools: {
-      Files: disk.files,
+      Files: disk.files, Storage: disk.storage,
       SoftwareSettings: {
         /** Records the real directory read attempt and rejects instead of simulating production success. */
         async listModelSummaries() { calls.push("listModelSummaries"); throw failure; },
@@ -331,8 +328,13 @@ test("fresh exported chat UI APIs retain package routes without replaying regist
   const event = { callerPackage: "host", payload: { chatId: null } };
   const menu = plain(await fresh.chatContextActionsApi(event));
   const registeredRouteIds = registered.routes.map(route => "toolpkg:com.operit.character_cards:ui:" + route.id);
-  assert.ok(menu.selectors.length > 0);
-  for (const selector of menu.selectors) assert.ok(registeredRouteIds.includes(selector.routeId), selector.routeId);
+  assert.equal(Object.hasOwn(menu, "selectors"), false);
+  const menuEntries = registered.navigation.filter(
+    /** Requires the single registered DSL surface rather than host-projected selector metadata. */
+    entry => entry.surface === "chat_input_menu",
+  );
+  assert.equal(menuEntries.length, 1);
+  assert.ok(registeredRouteIds.includes(menuEntries[0].route));
   const sections = plain(await fresh.chatListSectionsApi({ callerPackage: "host", payload: { chats: [] } }));
   assert.ok(Array.isArray(sections.sections));
 });

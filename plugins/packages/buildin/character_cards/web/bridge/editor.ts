@@ -1,5 +1,6 @@
 import type { Snapshot } from "../../src/model";
 import { createTtsFeature } from "../features/characters/bindings/tts";
+import { assertThemeChoices } from "../../src/selection-application";
 import { createThemeFeature } from "../features/characters/bindings/theme";
 import { createToolPolicyFeature } from "../features/characters/bindings/tool-policy";
 import { createCharactersActionsFeature } from "../features/characters/actions";
@@ -121,7 +122,10 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
   const graph = createGraphActionsFeature(context), profile = createProfileFeature(context), transfers = createCharactersTransfersFeature(context);
   const themePicker = createThemeFeature(context,
     /** Reads independent theme choices through the existing package request channel. */
-    () => context.request({ action: "listThemeChoices" }),
+    async () => {
+      const choices = await context.request({ action: "listThemeChoices" });
+      assertThemeChoices(choices); state.themeChoices = choices; return choices;
+    },
   );
   const events = createEditorEvents(context, [...screens.features, themePicker, createTtsFeature(context), createToolPolicyFeature(context), createPreviewFeature(context), createDialogActions(context), createCharactersActionsFeature(context), createCharactersTagsActionsFeature(context), createGroupsActionsFeature(context), createMemoryLibraryActionsFeature(context), createMemoryItemActionsFeature(context), createMemoryLinkActionsFeature(context), transfers, graph, profile, createMemoryControlsFeature(context)]);
   const gestures = createGraphGestures(context);
@@ -150,8 +154,13 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
   async function initialize(view: "characters" | "memory" = "characters"): Promise<void> {
     state.managementView = view;
     state.busy = true;
-    try { state.snapshot = await request({ action: "snapshot" }); await loadAvatars(); }
+    try { await loadCatalogs(); await loadAvatars(); }
     finally { state.busy = false; renderMain(); }
+  }
+  /** Loads the real record and independent theme catalogs before presenting a binding editor. */
+  async function loadCatalogs(): Promise<void> {
+    const [records, choices] = await Promise.all([request({ action: "snapshot" }), request({ action: "listThemeChoices" })]);
+    assertThemeChoices(choices); state.snapshot = records; state.themeChoices = choices;
   }
   /** Presents a startup failure without substituting records or transports. */
   function showStartupError(error: unknown): void { app.innerHTML = `<div class="scroll"><h1>角色卡插件未能加载</h1><p role="alert">${escapeHtml(String(error))}</p></div>`; }
@@ -159,7 +168,7 @@ state, app, dialogsRoot, snapshot, topDialog, pushDialog, popDialog, request, re
   async function initializeScreen(input: PresentedScreen, receiver: ScreenReceiver): Promise<void> {
     state.busy = true;
     try {
-      state.snapshot = await request({ action: "snapshot" });
+      await loadCatalogs();
       await loadAvatars();
       await screens.enter(input, receiver);
     } finally { state.busy = false; renderMain(); }

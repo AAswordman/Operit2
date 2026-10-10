@@ -618,6 +618,8 @@ pub struct SdkToolPkgUiModuleRuntime {
     pub runtime: String,
     #[serde(rename = "screen")]
     pub screen: String,
+    #[serde(rename = "screenExport")]
+    pub screenExport: Option<String>,
     #[serde(rename = "title")]
     pub title: SdkLocalizedText,
     #[serde(rename = "keepAlive")]
@@ -635,6 +637,8 @@ pub struct SdkToolPkgUiRouteRuntime {
     pub runtime: String,
     #[serde(rename = "screen")]
     pub screen: String,
+    #[serde(rename = "screenExport")]
+    pub screenExport: Option<String>,
     #[serde(rename = "title")]
     pub title: SdkLocalizedText,
     #[serde(rename = "keepAlive")]

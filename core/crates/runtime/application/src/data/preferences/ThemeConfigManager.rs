@@ -12,7 +12,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::ThemePreferenceSnapshot::{
-    assertThemePreferenceSnapshot, validateThemePreferenceSnapshot, writeThemePreferenceSnapshot,
+    assertThemePreferenceSnapshot, readThemePreferenceSnapshot, validateThemePreferenceKeys,
+    validateThemePreferenceSnapshot, writeThemePreferenceSnapshot,
 };
 
 const THEME_CONFIGS_KEY: &str = "theme_configs";
@@ -126,6 +127,26 @@ impl ThemeConfigManager {
         })
     }
 
+    /// Renames a saved theme in one transaction while preserving its latest appearance and selection.
+    pub fn rename(
+        &self,
+        id: String,
+        name: String,
+    ) -> Result<ThemeConfig, PreferencesDataStoreError> {
+        self.dataStore.try_edit_result(|preferences| {
+            let mut state = readState(preferences)?;
+            let index = findConfigIndex(&state, &id)?;
+            let mut config = state.configs[index].clone();
+            config.name = name;
+            config.updatedAt =
+                tryCurrentTimeMillis().map_err(PreferencesDataStoreError::Message)?;
+            validateConfig(&config)?;
+            state.configs[index] = config.clone();
+            writeState(preferences, &state)?;
+            Ok(config)
+        })
+    }
+
     /// Deletes an inactive named theme and rejects deletion of the active selection.
     pub fn delete(&self, id: String) -> Result<(), PreferencesDataStoreError> {
         self.dataStore.try_edit_result(|preferences| {
@@ -175,26 +196,42 @@ impl ThemeConfigManager {
         snapshot: BTreeMap<String, Value>,
     ) -> Result<Option<ThemeConfig>, PreferencesDataStoreError> {
         validateThemePreferenceSnapshot(&snapshot)?;
+        self.dataStore
+            .try_edit_result(|preferences| commitAppearance(preferences, &snapshot))
+    }
+
+    /// Atomically edits ordinary appearance and its active named configuration without losing independent changes.
+    pub fn patchAppearance(
+        &self,
+        initialSnapshot: BTreeMap<String, Value>,
+        values: BTreeMap<String, String>,
+        removeKeys: Vec<String>,
+    ) -> Result<Option<ThemeConfig>, PreferencesDataStoreError> {
+        validateThemePreferenceSnapshot(&initialSnapshot)?;
+        validateThemePreferenceKeys(
+            values
+                .keys()
+                .map(String::as_str)
+                .chain(removeKeys.iter().map(String::as_str)),
+        )?;
+        if removeKeys.iter().any(|key| values.contains_key(key)) {
+            return Err(PreferencesDataStoreError::Message(
+                "An appearance key cannot be set and removed in the same edit".to_string(),
+            ));
+        }
         self.dataStore.try_edit_result(|preferences| {
-            let mut state = readState(preferences)?;
-            let updated = match state.activeThemeConfigId.clone() {
-                Some(id) => {
-                    let index = findConfigIndex(&state, &id)?;
-                    let config = ThemeConfig {
-                        snapshot: snapshot.clone(),
-                        updatedAt: tryCurrentTimeMillis()
-                            .map_err(PreferencesDataStoreError::Message)?,
-                        ..state.configs[index].clone()
-                    };
-                    validateConfig(&config)?;
-                    state.configs[index] = config.clone();
-                    Some(config)
-                }
-                None => None,
-            };
-            writeThemePreferenceSnapshot(preferences, &snapshot)?;
-            writeState(preferences, &state)?;
-            Ok(updated)
+            let mut changed = preferences.clone();
+            for key in &removeKeys {
+                changed.remove(&stringPreferencesKey(key));
+            }
+            for (key, value) in &values {
+                changed.set(&stringPreferencesKey(key), value.clone());
+            }
+            if values.contains_key("theme_mode") {
+                changed.remove(&stringPreferencesKey("use_system_theme"));
+            }
+            let snapshot = readThemePreferenceSnapshot(&changed, &initialSnapshot)?;
+            commitAppearance(preferences, &snapshot)
         })
     }
 
@@ -211,6 +248,31 @@ impl ThemeConfigManager {
             writeState(preferences, &state)
         })
     }
+}
+
+/// Commits a complete appearance and updates the active saved theme in the same preference transaction.
+fn commitAppearance(
+    preferences: &mut Preferences,
+    snapshot: &BTreeMap<String, Value>,
+) -> Result<Option<ThemeConfig>, PreferencesDataStoreError> {
+    let mut state = readState(preferences)?;
+    let updated = match state.activeThemeConfigId.clone() {
+        Some(id) => {
+            let index = findConfigIndex(&state, &id)?;
+            let config = ThemeConfig {
+                snapshot: snapshot.clone(),
+                updatedAt: tryCurrentTimeMillis().map_err(PreferencesDataStoreError::Message)?,
+                ..state.configs[index].clone()
+            };
+            validateConfig(&config)?;
+            state.configs[index] = config.clone();
+            Some(config)
+        }
+        None => None,
+    };
+    writeThemePreferenceSnapshot(preferences, snapshot)?;
+    writeState(preferences, &state)?;
+    Ok(updated)
 }
 
 /// Decodes and validates one committed catalog together with its active ordinary appearance.

@@ -3,6 +3,7 @@
 pub mod AtomicCounter;
 pub mod FileSystemResource;
 pub mod HostManager;
+pub mod PluginStorage;
 pub mod HttpServer;
 pub mod PluginSdkIpc;
 pub mod Tcp;

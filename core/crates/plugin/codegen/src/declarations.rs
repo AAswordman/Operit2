@@ -23,74 +23,94 @@ struct ModuleSpec {
     rust_file: &'static str,
     additional_rust_file: Option<&'static str>,
     ts_file: &'static str,
+    nullable_wire_fields: bool,
 }
 
 const MODULES: &[ModuleSpec] = &[
     ModuleSpec { rust_file: "js_sdk/edge.rs", additional_rust_file: None, ts_file: "edge.d.ts" },
     ModuleSpec {
+        rust_file: "js_sdk/storage.rs",
+        additional_rust_file: Some("../../../foundation/host-api/src/PluginStorage.rs"),
+        ts_file: "storage.generated.d.ts",
+        nullable_wire_fields: true,
+    },
+    ModuleSpec {
         rust_file: "js_sdk/results.rs",
         additional_rust_file: None,
         ts_file: "results.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/core.rs",
         additional_rust_file: None,
         ts_file: "core.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/tool_types.rs",
         additional_rust_file: None,
         ts_file: "tool-types.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/files.rs",
         additional_rust_file: None,
         ts_file: "files.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/network.rs",
         additional_rust_file: None,
         ts_file: "network.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/system.rs",
         additional_rust_file: None,
         ts_file: "system.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/software_settings.rs",
         additional_rust_file: None,
         ts_file: "software_settings.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/ui.rs",
         additional_rust_file: None,
         ts_file: "ui.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/chat.rs",
         additional_rust_file: None,
         ts_file: "chat.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/compose_dsl.rs",
         additional_rust_file: None,
         ts_file: "compose-dsl.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/compose_dsl_material3_generated.rs",
         additional_rust_file: None,
         ts_file: "compose-dsl.material3.generated.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/material_icons.rs",
         additional_rust_file: None,
         ts_file: "material-icons.d.ts",
+        nullable_wire_fields: false,
     },
     ModuleSpec {
         rust_file: "js_sdk/toolpkg.rs",
         additional_rust_file: None,
         ts_file: "toolpkg.d.ts",
+        nullable_wire_fields: false,
     },
 ];
 
@@ -127,7 +147,7 @@ fn writeDeclarationWhenChanged(path: &Path, source: &str) -> Result<(), Box<dyn 
     }
 }
 
-/// Checks that committed TypeScript declarations exactly match the Rust SDK source.
+/// Checks declaration content while normalizing Git checkout line endings.
 pub fn check_declaration_tree(
     source_root: &Path,
     declaration_root: &Path,
@@ -136,7 +156,7 @@ pub fn check_declaration_tree(
     let mut mismatched_files = Vec::new();
     for declaration in &generated {
         let committed = fs::read_to_string(declaration_root.join(&declaration.file_name))?;
-        if committed != declaration.source {
+        if committed.replace("\r\n", "\n") != declaration.source.replace("\r\n", "\n") {
             mismatched_files.push(declaration.file_name.as_str());
         }
     }
@@ -266,6 +286,7 @@ struct EmitContext<'a> {
     root_traits: Vec<&'a ItemTrait>,
     type_catalog: TypeCatalog,
     current_file: &'static str,
+    nullable_wire_fields: bool,
     imports: RefCell<BTreeMap<&'static str, BTreeSet<String>>>,
 }
 
@@ -280,6 +301,7 @@ impl<'a> EmitContext<'a> {
             root_traits: Vec::new(),
             type_catalog,
             current_file: spec.ts_file,
+            nullable_wire_fields: spec.nullable_wire_fields,
             imports: RefCell::new(BTreeMap::new()),
         };
         let mut grouped = BTreeMap::<String, DeclarationGroup<'a>>::new();
@@ -603,7 +625,7 @@ impl<'a> EmitContext<'a> {
                 output.push_str("readonly ");
             }
             output.push_str(&field_name(field));
-            if is_optional_field(&field.ty) {
+            if is_optional_field(&field.ty) && !self.nullable_wire_fields {
                 output.push('?');
             }
             output.push_str(": ");
@@ -876,6 +898,9 @@ impl<'a> EmitContext<'a> {
     fn emit_field_type(&self, field_type: &Type, scope: &[String]) -> String {
         if let Some((name, inner)) = single_type_argument(field_type) {
             match name.as_str() {
+                "Option" if self.nullable_wire_fields => {
+                    return format!("{} | null", self.emit_type(inner, scope));
+                }
                 "Option" => return self.emit_type(inner, scope),
                 "JsOptional" => return format!("{} | null", self.emit_type(inner, scope)),
                 _ => {}
@@ -994,7 +1019,10 @@ impl<'a> EmitContext<'a> {
             ),
             "JsNullable" => format!("{} | null", self.emit_first_argument(arguments, scope)),
             "JsFuture" => format!("Promise<{}>", self.emit_first_argument(arguments, scope)),
-            "JsAsyncIterable" => format!("AsyncIterable<{}>", self.emit_first_argument(arguments, scope)),
+            "JsAsyncIterable" => format!(
+                "AsyncIterable<{}>",
+                self.emit_first_argument(arguments, scope)
+            ),
             "Arc" | "Box" | "Pin" => self.emit_first_argument(arguments, scope),
             "BTreeMap" | "HashMap" => format!(
                 "Record<{}, {}>",
@@ -1115,7 +1143,7 @@ impl<'a> EmitContext<'a> {
                 continue;
             }
             output.push_str(&field_name(field));
-            if is_optional_field(&field.ty) {
+            if is_optional_field(&field.ty) && !self.nullable_wire_fields {
                 output.push('?');
             }
             output.push_str(": ");
@@ -1131,7 +1159,7 @@ impl<'a> EmitContext<'a> {
         item.variants
             .iter()
             .map(|variant| {
-                if matches!(variant.fields, Fields::Unit) {
+                if matches!(variant.fields, Fields::Unit) && serde_tag(&item.attrs).is_none() {
                     match variant.ident.to_string().as_str() {
                         "Null" => return "null".to_string(),
                         "Undefined" => return "undefined".to_string(),
@@ -1146,9 +1174,16 @@ impl<'a> EmitContext<'a> {
                             Some(tag) => format!("{{ {tag}: {name:?}; }}"),
                             None => format!("{name:?}"),
                         }
-                    },
+                    }
                     Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
-                        self.emit_union_member(&fields.unnamed[0].ty, scope)
+                        let value = self.emit_union_member(&fields.unnamed[0].ty, scope);
+                        match (serde_tag(&item.attrs), serde_content(&item.attrs)) {
+                            (Some(tag), Some(content)) => format!(
+                                "{{ {tag}: {:?}; {content}: {value}; }}",
+                                renamed_identifier(&variant.attrs, &variant.ident.to_string())
+                            ),
+                            _ => value,
+                        }
                     }
                     Fields::Unnamed(fields) => format!(
                         "[{}]",
@@ -1169,7 +1204,7 @@ impl<'a> EmitContext<'a> {
                         }
                         for field in &fields.named {
                             value.push_str(&field_name(field));
-                            if is_optional_field(&field.ty) {
+                            if is_optional_field(&field.ty) && !self.nullable_wire_fields {
                                 value.push('?');
                             }
                             value.push_str(": ");
@@ -1435,6 +1470,7 @@ fn infer_declaration(item: ItemRef<'_>, ts_file: &str) -> Option<(Vec<String>, S
             "SoftwareSettingsHost" => Some(vec!["SoftwareSettings".to_string()]),
             "UIHost" => Some(vec!["UI".to_string()]),
             "ChatHost" => Some(vec!["Chat".to_string()]),
+            "StorageHost" => Some(vec!["Storage".to_string()]),
             "NativeInterfaceHost" => Some(vec!["NativeInterface".to_string()]),
             "GlobalHost" => Some(vec!["global".to_string()]),
             _ => None,
@@ -1672,6 +1708,29 @@ fn serde_tag(attrs: &[Attribute]) -> Option<String> {
     None
 }
 
+/// Reads the payload field of an adjacently tagged serde enum.
+fn serde_content(attrs: &[Attribute]) -> Option<String> {
+    for attribute in attrs {
+        if !attribute.path().is_ident("serde") {
+            continue;
+        }
+        let mut content = None;
+        let _ = attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("content") {
+                let value: LitStr = meta.value()?.parse()?;
+                content = Some(value.value());
+            } else if meta.input.peek(syn::Token![=]) {
+                let _: syn::Expr = meta.value()?.parse()?;
+            }
+            Ok(())
+        });
+        if content.is_some() {
+            return content;
+        }
+    }
+    None
+}
+
 /// Reports whether serde flatten metadata exists on a Rust field.
 fn has_serde_flatten(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attribute| {
@@ -1790,9 +1849,13 @@ mod tests {
             rust_file: "js_sdk/chat.rs",
             additional_rust_file: None,
             ts_file: "chat.d.ts",
+            nullable_wire_fields: false,
         };
         let context = EmitContext::new(&[], &spec, TypeCatalog::new());
-        assert_eq!(context.emit_enum_union(&item, &[]), "{ kind: \"chat\"; chatId: string; } | { kind: \"message\"; chatId: string; messageTimestamp: number; variantIndex: number; }");
+        assert_eq!(
+            context.emit_enum_union(&item, &[]),
+            "{ kind: \"chat\"; chatId: string; } | { kind: \"message\"; chatId: string; messageTimestamp: number; variantIndex: number; }"
+        );
     }
 
     /// Preserves unit-variant discriminators and the exact public async iterable return shape.
@@ -1807,11 +1870,48 @@ mod tests {
                 Execute { participantId: Option<String> },
             }
         };
-        let spec = ModuleSpec { rust_file: "js_sdk/chat.rs", additional_rust_file: None, ts_file: "chat.d.ts" };
+        let spec = ModuleSpec {
+            rust_file: "js_sdk/chat.rs",
+            additional_rust_file: None,
+            ts_file: "chat.d.ts",
+            nullable_wire_fields: false,
+        };
         let context = EmitContext::new(&[], &spec, TypeCatalog::new());
-        assert_eq!(context.emit_enum_union(&item, &[]), "{ kind: \"record_only\"; } | { kind: \"execute\"; participantId?: string; }");
+        assert_eq!(
+            context.emit_enum_union(&item, &[]),
+            "{ kind: \"record_only\"; } | { kind: \"execute\"; participantId?: string; }"
+        );
         let stream: Type = syn::parse_quote! { JsAsyncIterable<String> };
         assert_eq!(context.emit_type(&stream, &[]), "AsyncIterable<string>");
+    }
+
+    /// Preserves tagged SQL scalars and required nullable fields in the Host storage contract.
+    #[test]
+    fn emits_storage_wire_schema_without_scalar_or_null_coercion() {
+        let spec = ModuleSpec {
+            rust_file: "js_sdk/storage.rs",
+            additional_rust_file: None,
+            ts_file: "storage.generated.d.ts",
+            nullable_wire_fields: true,
+        };
+        let context = EmitContext::new(&[], &spec, TypeCatalog::new());
+        let item: ItemEnum = syn::parse_quote! {
+            #[serde(tag = "kind", content = "value")]
+            pub enum SqlValue {
+                #[serde(rename = "null")] Null,
+                #[serde(rename = "integer")] Integer(String),
+                #[serde(rename = "blob")] Blob(Vec<u8>),
+            }
+        };
+        assert_eq!(
+            context.emit_enum_union(&item, &[]),
+            "{ kind: \"null\"; } | { kind: \"integer\"; value: string; } | { kind: \"blob\"; value: number[]; }"
+        );
+        let item: ItemStruct = syn::parse_quote! { pub struct Mutation { #[serde(rename = "expectedVersion")] expected_version: Option<String> } };
+        assert_eq!(
+            context.emit_inline_struct(&item, &[]),
+            "{ expectedVersion: string | null; }"
+        );
     }
 
     /// Verifies that ordinary Rust composition fields retain interface and open-object semantics.

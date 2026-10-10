@@ -625,3 +625,27 @@ fn configuration_path_does_not_change_after_registration() {
     register_package_owner(&store, "first_import", &["first_import"]);
     assert_eq!(store.configPath("first_import").unwrap(), path);
 }
+
+/// Verifies retiring managed code preserves configuration and business data and requires archival first.
+#[test]
+fn retired_device_package_keeps_data_and_requires_archived_source() {
+    let host = Arc::new(MemoryStorage::default());
+    let store = ExtensionStore::new(host.clone());
+    let source = "runtime/extensions/device/packages/daily_life.js";
+    host.writeBytes(source, b"legacy-bundled-code").unwrap();
+    store.registerDevice("package", "daily_life", "daily_life.js", json!({
+        "builtin": false, "installationId": "00000000000000000000000000000001", "members": ["daily_life"], "enabledNames": ["daily_life"],
+        "disabledNames": [], "order": 0, "subpackageStates": {}
+    })).unwrap();
+    let config = format!("{}/reminders.json", ExtensionStore::configPathForScope("daily_life", "device").unwrap());
+    let data = format!("{}/memory.db", ExtensionStore::dataPathForScope("daily_life", "device").unwrap());
+    host.writeBytes(&config, b"configuration").unwrap();
+    host.writeBytes(&data, b"business-data").unwrap();
+    assert!(store.retireDevicePackageSource("daily_life", "daily_life.js").is_err());
+    assert!(store.retireDevicePackageSource("daily_life", "other.js").is_err());
+    host.delete(source, false).unwrap();
+    store.retireDevicePackageSource("daily_life", "daily_life.js").unwrap();
+    assert!(store.record("package", "daily_life").is_err());
+    assert_eq!(host.readBytes(&config).unwrap(), b"configuration");
+    assert_eq!(host.readBytes(&data).unwrap(), b"business-data");
+}

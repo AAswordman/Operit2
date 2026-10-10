@@ -11,7 +11,7 @@ const context = chats => ({ input: { view: 'characters' }, chatSidebar: { chats,
 /** Exercises real registration, file initialization and catalog projection; only extension IO is adapted. */
 function sidebarPlugin(disk, readExtension) {
   return openPlugin({ ...disk, globals: { ...disk.globals, Tools: {
-    Files: disk.files, Chat: { readExtension },
+    Files: disk.files, Storage: disk.storage, Chat: { readExtension },
     // The sidebar must work without these unrelated management-page dependencies.
     SoftwareSettings: new Proxy({}, { get(_target, name) { throw new Error('Sidebar requested unrelated directory: ' + String(name)); } }),
   } } });

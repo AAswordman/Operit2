@@ -35,7 +35,6 @@ pub enum ToolResultData {
     NotificationData(NotificationData),
     LocationData(LocationData),
     DeviceInfoResultData(DeviceInfoResultData),
-    MemoryQueryResultData(MemoryQueryResultData),
     ChatServiceStartResultData(ChatServiceStartResultData),
     ChatCreationResultData(ChatCreationResultData),
     ChatListResultData(ChatListResultData),
@@ -47,7 +46,6 @@ pub enum ToolResultData {
     MessageSendResultData(MessageSendResultData),
     ChatCallResultData(ChatCallResultData),
     ChatMessagesResultData(ChatMessagesResultData),
-    CharacterCardListResultData(CharacterCardListResultData),
     VisitWebResultData(VisitWebResultData),
     TerminalInfoResultData(TerminalInfoResultData),
     TerminalCommandResultData(TerminalCommandResultData),
@@ -67,8 +65,6 @@ pub enum ToolResultData {
     BluetoothBleNotificationData(BluetoothBleNotificationData),
     FindFilesResultData(FindFilesResultData),
     GrepResultData(GrepResultData),
-    MemoryLinkResultData(MemoryLinkResultData),
-    MemoryLinkQueryResultData(MemoryLinkQueryResultData),
 }
 
 impl ToolResultData {
@@ -107,7 +103,6 @@ impl ToolResultData {
             Self::NotificationData(data) => data.toString(),
             Self::LocationData(data) => data.toString(),
             Self::DeviceInfoResultData(data) => data.toString(),
-            Self::MemoryQueryResultData(data) => data.toString(),
             Self::ChatServiceStartResultData(data) => {
                 if data.isConnected {
                     "Chat service started and connected successfully".to_string()
@@ -142,7 +137,6 @@ impl ToolResultData {
                     data.messages.len()
                 )
             }
-            Self::CharacterCardListResultData(data) => data.toString(),
             Self::VisitWebResultData(data) => data.toString(),
             Self::TerminalInfoResultData(data) => data.toString(),
             Self::TerminalCommandResultData(data) => data.toString(),
@@ -162,8 +156,6 @@ impl ToolResultData {
             Self::BluetoothBleNotificationData(data) => data.toString(),
             Self::FindFilesResultData(data) => data.toString(),
             Self::GrepResultData(data) => data.toString(),
-            Self::MemoryLinkResultData(data) => data.toString(),
-            Self::MemoryLinkQueryResultData(data) => data.toString(),
         }
     }
 }
@@ -811,37 +803,6 @@ pub struct DeviceInfoResultData {
     pub additionalInfo: BTreeMap<String, String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
-/// Describes one stored memory together with ownership, provenance, tags, and chunk metadata.
-pub struct MemoryInfo {
-    pub ownerKey: String,
-    pub title: String,
-    pub content: String,
-    pub source: String,
-    pub tags: Vec<String>,
-    pub createdAt: String,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    pub chunkInfo: JsOptional<String>,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    pub chunkIndices: JsOptional<Vec<i32>>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Contains matched memories and snapshot metadata used to suppress previously returned matches.
-pub struct MemoryQueryResultData {
-    ///Queried memories
-    #[serde(rename = "memories")]
-    pub memories: Vec<MemoryInfo>,
-    #[serde(default, skip_serializing_if = "JsOptional::is_undefined")]
-    ///Snapshot id for de-duplicated follow-up or parallel queries; may be auto-generated or caller-specified
-    #[serde(rename = "snapshotId")]
-    pub snapshotId: JsOptional<String>,
-    ///Whether this call created a new snapshot, including when a caller-specified id was created on first use
-    #[serde(rename = "snapshotCreated")]
-    pub snapshotCreated: Option<bool>,
-    ///Number of matched memories excluded because they were already seen in the snapshot
-    #[serde(rename = "excludedBySnapshotCount")]
-    pub excludedBySnapshotCount: Option<i32>,
-}
-#[derive(Clone, Serialize, Deserialize)]
 /// Reports whether the chat service connected and when the connection was established.
 pub struct ChatServiceStartResultData {
     ///Whether the service is connected
@@ -1126,30 +1087,6 @@ pub struct ChatMessagesResultData {
     /// Contains the inclusive last message index for a range query.
     #[serde(rename = "end", skip_serializing_if = "Option::is_none")]
     pub end: Option<i32>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Describes a character card, including its default status and lifecycle timestamps.
-pub struct CharacterCardInfo {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "description")]
-    pub description: String,
-    #[serde(rename = "isDefault")]
-    pub isDefault: bool,
-    #[serde(rename = "createdAt")]
-    pub createdAt: i64,
-    #[serde(rename = "updatedAt")]
-    pub updatedAt: i64,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Contains the character cards available to the chat service.
-pub struct CharacterCardListResultData {
-    #[serde(rename = "totalCount")]
-    pub totalCount: usize,
-    #[serde(rename = "cards")]
-    pub cards: Vec<CharacterCardInfo>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 /// Reports the primary terminal identity and available terminal implementations.
@@ -1576,45 +1513,6 @@ pub struct GrepResultData {
     #[serde(rename = "filesSearched")]
     pub filesSearched: i32,
 }
-#[derive(Clone, Serialize, Deserialize)]
-/// Describes a newly created weighted relationship between two memories.
-pub struct MemoryLinkResultData {
-    ///The title of the source memory
-    #[serde(rename = "sourceTitle")]
-    pub sourceTitle: String,
-    ///The title of the target memory
-    #[serde(rename = "targetTitle")]
-    pub targetTitle: String,
-    ///The type of link (e.g., "related", "causes", "explains", "part_of")
-    #[serde(rename = "linkType")]
-    pub linkType: String,
-    ///The strength of the link (0.0-1.0)
-    #[serde(rename = "weight")]
-    pub weight: f32,
-    ///Optional description of the link
-    #[serde(rename = "description")]
-    pub description: String,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Describes a weighted relationship between two stored memories.
-pub struct LinkInfo {
-    pub linkId: i64,
-    pub sourceTitle: String,
-    pub targetTitle: String,
-    pub linkType: String,
-    pub weight: f32,
-    pub description: String,
-}
-#[derive(Clone, Serialize, Deserialize)]
-/// Contains the weighted memory relationships returned by a link query.
-pub struct MemoryLinkQueryResultData {
-    ///Number of links returned
-    #[serde(rename = "totalCount")]
-    pub totalCount: i32,
-    ///Queried links
-    #[serde(rename = "links")]
-    pub links: Vec<LinkInfo>,
-}
 impl SleepResultData {
     /// Formats the actual sleep duration in milliseconds.
     #[allow(non_snake_case)]
@@ -2026,55 +1924,6 @@ impl DeviceInfoResultData {
         sb
     }
 }
-impl MemoryQueryResultData {
-    #[allow(non_snake_case)]
-    /// Formats snapshot de-duplication metadata followed by the matched memory records.
-    pub fn toString(&self) -> String {
-        let mut snapshotSummary = Vec::new();
-        if let Some(snapshotId) = self
-            .snapshotId
-            .as_value()
-            .filter(|value| !value.trim().is_empty())
-        {
-            snapshotSummary.push(format!("Snapshot ID: {snapshotId}"));
-        }
-        if self.snapshotCreated.is_some_and(|created| created) {
-            snapshotSummary.push("Snapshot created: true".to_string());
-        }
-        if let Some(excluded_count) = self.excludedBySnapshotCount.filter(|count| *count > 0) {
-            snapshotSummary.push(format!("Excluded by snapshot: {excluded_count}"));
-        }
-        let snapshotSummary = snapshotSummary.join("\n");
-        if self.memories.is_empty() {
-            return if snapshotSummary.trim().is_empty() {
-                "No relevant memories found.".to_string()
-            } else {
-                format!("{snapshotSummary}\nNo relevant memories found.")
-            };
-        }
-        let memoryText = self
-            .memories
-            .iter()
-            .map(|memory| {
-                format!(
-                    "Owner: {}\nTitle: {}\nContent: {}\nSource: {}\nTags: {}\nCreated: {}",
-                    memory.ownerKey,
-                    memory.title,
-                    memory.content,
-                    memory.source,
-                    memory.tags.join(", "),
-                    memory.createdAt
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n---\n");
-        if snapshotSummary.trim().is_empty() {
-            memoryText
-        } else {
-            format!("{snapshotSummary}\n---\n{memoryText}")
-        }
-    }
-}
 impl ChatListResultData {
     #[allow(non_snake_case)]
     /// Formats workspace conversation summaries, current status, and token statistics.
@@ -2172,30 +2021,6 @@ impl MessageSendResultData {
                 )
             }
         }
-    }
-}
-impl CharacterCardListResultData {
-    /// Formats character card metadata and marks the default card.
-    #[allow(non_snake_case)]
-    pub fn toString(&self) -> String {
-        let mut sb = String::new();
-        sb.push_str(&format!("Character Cards ({} total):\n", self.totalCount));
-        if self.cards.is_empty() {
-            sb.push_str("No cards\n");
-        } else {
-            for card in &self.cards {
-                let defaultMarker = if card.isDefault { " [Default]" } else { "" };
-                sb.push_str(&format!("ID: {}{}\n", card.id, defaultMarker));
-                sb.push_str(&format!("Name: {}\n", card.name));
-                if !card.description.trim().is_empty() {
-                    sb.push_str(&format!("Description: {}\n", card.description));
-                }
-                sb.push_str(&format!("Created: {}\n", card.createdAt));
-                sb.push_str(&format!("Updated: {}\n", card.updatedAt));
-                sb.push_str("---\n");
-            }
-        }
-        sb.trim().to_string()
     }
 }
 impl TerminalInfoResultData {
@@ -2637,37 +2462,6 @@ impl GrepResultData {
             }
         }
         sb
-    }
-}
-impl MemoryLinkResultData {
-    #[allow(non_snake_case)]
-    /// Formats the source, target, relationship type, and strength of the created memory link.
-    pub fn toString(&self) -> String {
-        format!(
-            "Successfully linked memory: '{}' -> '{}' (Type: {}, Strength: {})",
-            self.sourceTitle, self.targetTitle, self.linkType, self.weight
-        )
-    }
-}
-impl MemoryLinkQueryResultData {
-    #[allow(non_snake_case)]
-    /// Formats each queried memory link with identifiers, relationship metadata, and description.
-    pub fn toString(&self) -> String {
-        if self.links.is_empty() {
-            return "No memory links found.".to_string();
-        }
-        let mut sb = String::new();
-        sb.push_str(&format!("Memory Links ({}):\n", self.totalCount));
-        for link in &self.links {
-            sb.push_str(&format!(
-                "- #{}: '{}' -> '{}' (Type: {}, Weight: {})\n",
-                link.linkId, link.sourceTitle, link.targetTitle, link.linkType, link.weight
-            ));
-            if !link.description.trim().is_empty() {
-                sb.push_str(&format!("  Description: {}\n", link.description));
-            }
-        }
-        sb.trim().to_string()
     }
 }
 impl VisitWebResultData {

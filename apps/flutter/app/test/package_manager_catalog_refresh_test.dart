@@ -233,6 +233,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
       core_proxy.ToolPkgUiModuleRuntime(
         id: 'main',
         runtime: 'compose_dsl',
+        screenExport: null,
         screen: 'ui/main.js',
         title: core_proxy.LocalizedText(
           values: <String, String>{'default': 'Main route'},
@@ -245,6 +246,7 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
         id: 'main',
         routeId: 'main',
         runtime: 'compose_dsl',
+        screenExport: null,
         screen: 'ui/main.js',
         title: core_proxy.LocalizedText(
           values: <String, String>{'default': 'Main route'},

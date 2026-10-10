@@ -34,6 +34,7 @@ operit-tools = { path = "../../tool/services", default-features = false }
 operit-util = { path = "../../foundation/util" }
 reqwest.workspace = true
 regex.workspace = true
+roxmltree = "0.21"
 rmp-serde = "1"
 serde.workspace = true
 serde_bytes = "0.11"

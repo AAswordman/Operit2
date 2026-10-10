@@ -22,7 +22,7 @@ export async function selectorEnvironment(t, configurationSettings = {}, runtime
       };
     },
   };
-  const tools = { Files: disk.files, Chat: chat, SoftwareSettings: {
+  const tools = { Files: disk.files, Storage: disk.storage, Chat: chat, SoftwareSettings: {
     /** Provides the labelled readonly real SDK-shaped model catalog, not character storage or CRUD. */
     async listModelSummaries() { directoryCalls.push("models"); return plain(readonly.models); },
     /** Provides the labelled readonly TTS input required by the actual snapshot operation. */

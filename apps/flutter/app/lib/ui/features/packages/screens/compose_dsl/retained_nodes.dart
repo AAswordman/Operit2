@@ -69,10 +69,9 @@ class _ComposeDslNodeStore {
 
 /// Correlates a command's completion and side effects without one subscription per action.
 class _ComposeDslPendingCommand {
-  /// Records the page generation and detached-event lifetime for one request.
-  _ComposeDslPendingCommand(this.generation, {required this.keepDetachedEvents});
+  /// Records unfinished action ownership across host input updates.
+  _ComposeDslPendingCommand(this.generation);
   final int generation;
-  final bool keepDetachedEvents;
   final Completer<void> completion = Completer<void>();
   Object? actionResult;
   final List<({String routeId, Map<String, Object?> args})> navigationCommands = [];

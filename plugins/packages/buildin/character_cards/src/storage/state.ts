@@ -8,15 +8,6 @@ import { assertCard, assertConversationGroups, assertGroup, assertInteger, asser
 export function createDefaultCharacter(now: number): Card {
   return { ...createCharacterDraft(), ...operitDefaultContent, id: "default", isDefault: true, createdAt: now, updatedAt: now };
 }
-/** Recognizes only the complete untouched placeholder from the pre-alignment built-in seed. */
-export function upgradeUntouchedDefault(state: CharacterState): boolean {
-  const card = state.cards.find(item => item.id === "default" && item.isDefault);
-  if (card === undefined || card.createdAt !== card.updatedAt) return false;
-  const placeholder = { ...createCharacterDraft(), id: "default", name: "默认角色", description: "通用助手", characterSetting: "你是一个乐于助人、诚实且严谨的助手。", isDefault: true, createdAt: card.createdAt, updatedAt: card.updatedAt };
-  for (const key of Object.keys(placeholder) as (keyof Card)[]) if (JSON.stringify(card[key]) !== JSON.stringify(placeholder[key])) return false;
-  Object.assign(card, operitDefaultContent);
-  return true;
-}
 /** Resolves this plugin's real owner document path without permitting identity traversal. */
 export function userDocumentPath(ownerKey: string): string { return "owners/" + encodeURIComponent(ownerKey) + "/USER.md"; }
 /** Creates a genuine empty memory space when its owning character or library is created. */
@@ -48,10 +39,10 @@ function identities(records: unknown[], label: string): Set<string> {
   }
   return ids;
 }
-/** Validates every record and cross-record reference before reads or file publication. */
+/** Validates every record and cross-record reference before reads or record publication. */
 export function assertCharacterState(value: unknown): asserts value is CharacterState {
   assertObject(value, "character state");
-  if (value.version !== 3) throw new Error("Unsupported character state file version");
+  if (value.version !== 3) throw new Error("Unsupported character database version");
   const fields = new Set(["version", "nextId", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
   for (const key of Object.keys(value)) if (!fields.has(key)) throw new Error("Unsupported character state field: " + key);
   const nextId = BigInt(requireDecimal(value.nextId, "nextId", true));
@@ -196,9 +187,3 @@ export function assertMemorySpace(value: unknown): asserts value is MemorySpace 
     if (embeddingKeys.has(key)) throw new Error("Duplicate stored embedding input"); embeddingKeys.add(key);
   }
 }
-/** Parses only the plugin's own explicit schema without legacy codecs or default substitution. */
-export function decodeCharacterState(content: string): CharacterState {
-  assertString(content, "state file content"); const value: unknown = JSON.parse(content); assertCharacterState(value); return value;
-}
-/** Copies a validated operation snapshot without sharing mutable nested domain records. */
-export function copyState(state: CharacterState): CharacterState { return decodeCharacterState(JSON.stringify(state)); }

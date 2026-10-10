@@ -182,12 +182,6 @@ abstract class AppLocalizations {
   /// **'Camera'**
   String get attachmentCamera;
 
-  /// No description provided for @attachmentMemory.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory'**
-  String get attachmentMemory;
-
   /// No description provided for @attachmentFile.
   ///
   /// In en, this message translates to:
@@ -265,12 +259,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Camera capture is not available in the Flutter client'**
   String get attachmentCameraUnavailable;
-
-  /// No description provided for @attachmentMemoryUnavailable.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory folder selection is not available in the Flutter client'**
-  String get attachmentMemoryUnavailable;
 
   /// No description provided for @clearSearch.
   ///
@@ -1808,42 +1796,6 @@ abstract class AppLocalizations {
   /// **'Manage local models and inference engines installed on demand.'**
   String get settingsCategoryLocalModelsDescription;
 
-  /// No description provided for @settingsCategoryCharactersTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Characters'**
-  String get settingsCategoryCharactersTitle;
-
-  /// No description provided for @settingsCategoryCharactersSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Cards, groups, bindings'**
-  String get settingsCategoryCharactersSubtitle;
-
-  /// No description provided for @settingsCategoryCharactersDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.'**
-  String get settingsCategoryCharactersDescription;
-
-  /// No description provided for @settingsCategoryMemoryTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory'**
-  String get settingsCategoryMemoryTitle;
-
-  /// No description provided for @settingsCategoryMemorySubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory graph, shared stores, user profile'**
-  String get settingsCategoryMemorySubtitle;
-
-  /// No description provided for @settingsCategoryMemoryDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Manage character and shared memory stores, memory graph visualization, user profiles, and auto-update behavior.'**
-  String get settingsCategoryMemoryDescription;
-
   /// No description provided for @settingsCategoryToolsTitle.
   ///
   /// In en, this message translates to:
@@ -2227,12 +2179,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The TTS configuration currently in use cannot be deleted.'**
   String get settingsTtsCurrentConfigCannotDelete;
-
-  /// No description provided for @settingsTtsConfigUsedByCharacter.
-  ///
-  /// In en, this message translates to:
-  /// **'This TTS configuration is used by a character card and cannot be deleted.'**
-  String get settingsTtsConfigUsedByCharacter;
 
   /// No description provided for @settingsModelChatAutoGlmWarning.
   ///
@@ -3572,515 +3518,6 @@ abstract class AppLocalizations {
   /// **'Unknown item'**
   String get settingsModelTestItemUnknown;
 
-  /// No description provided for @settingsCharactersCreateCard.
-  ///
-  /// In en, this message translates to:
-  /// **'New character card'**
-  String get settingsCharactersCreateCard;
-
-  /// No description provided for @settingsCharactersEditCard.
-  ///
-  /// In en, this message translates to:
-  /// **'Edit character card'**
-  String get settingsCharactersEditCard;
-
-  /// No description provided for @settingsCharactersCardName.
-  ///
-  /// In en, this message translates to:
-  /// **'Character name'**
-  String get settingsCharactersCardName;
-
-  /// No description provided for @settingsCharactersCreateGroup.
-  ///
-  /// In en, this message translates to:
-  /// **'New group'**
-  String get settingsCharactersCreateGroup;
-
-  /// No description provided for @settingsCharactersEditGroup.
-  ///
-  /// In en, this message translates to:
-  /// **'Edit group'**
-  String get settingsCharactersEditGroup;
-
-  /// No description provided for @settingsCharactersGroupName.
-  ///
-  /// In en, this message translates to:
-  /// **'Group name'**
-  String get settingsCharactersGroupName;
-
-  /// No description provided for @settingsCharactersDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Description'**
-  String get settingsCharactersDescription;
-
-  /// No description provided for @settingsCharactersCharacterSetting.
-  ///
-  /// In en, this message translates to:
-  /// **'Character setting'**
-  String get settingsCharactersCharacterSetting;
-
-  /// No description provided for @settingsCharactersOpeningStatement.
-  ///
-  /// In en, this message translates to:
-  /// **'Opening statement'**
-  String get settingsCharactersOpeningStatement;
-
-  /// No description provided for @settingsCharactersOtherContentChat.
-  ///
-  /// In en, this message translates to:
-  /// **'Extra chat content'**
-  String get settingsCharactersOtherContentChat;
-
-  /// No description provided for @settingsCharactersOtherContentVoice.
-  ///
-  /// In en, this message translates to:
-  /// **'Extra voice content'**
-  String get settingsCharactersOtherContentVoice;
-
-  /// No description provided for @settingsCharactersAdvancedPrompt.
-  ///
-  /// In en, this message translates to:
-  /// **'Advanced custom prompt'**
-  String get settingsCharactersAdvancedPrompt;
-
-  /// No description provided for @settingsCharactersMarks.
-  ///
-  /// In en, this message translates to:
-  /// **'Notes'**
-  String get settingsCharactersMarks;
-
-  /// No description provided for @settingsCharactersTags.
-  ///
-  /// In en, this message translates to:
-  /// **'Tags'**
-  String get settingsCharactersTags;
-
-  /// No description provided for @settingsCharactersNoTags.
-  ///
-  /// In en, this message translates to:
-  /// **'No tags available. Create one in tag management, then bind it to this character card.'**
-  String get settingsCharactersNoTags;
-
-  /// No description provided for @settingsCharactersImport.
-  ///
-  /// In en, this message translates to:
-  /// **'Import'**
-  String get settingsCharactersImport;
-
-  /// No description provided for @settingsCharactersExport.
-  ///
-  /// In en, this message translates to:
-  /// **'Export'**
-  String get settingsCharactersExport;
-
-  /// No description provided for @settingsCharactersImportJson.
-  ///
-  /// In en, this message translates to:
-  /// **'Import JSON'**
-  String get settingsCharactersImportJson;
-
-  /// No description provided for @settingsCharactersExportJson.
-  ///
-  /// In en, this message translates to:
-  /// **'Export JSON'**
-  String get settingsCharactersExportJson;
-
-  /// No description provided for @settingsCharactersImportTavernJson.
-  ///
-  /// In en, this message translates to:
-  /// **'Import Tavern JSON'**
-  String get settingsCharactersImportTavernJson;
-
-  /// No description provided for @settingsCharactersExportTavernJson.
-  ///
-  /// In en, this message translates to:
-  /// **'Export Tavern JSON'**
-  String get settingsCharactersExportTavernJson;
-
-  /// No description provided for @settingsCharactersImportCardJson.
-  ///
-  /// In en, this message translates to:
-  /// **'Import character card JSON'**
-  String get settingsCharactersImportCardJson;
-
-  /// No description provided for @settingsCharactersImportCardJsonDone.
-  ///
-  /// In en, this message translates to:
-  /// **'Character card imported.'**
-  String get settingsCharactersImportCardJsonDone;
-
-  /// No description provided for @settingsCharactersImportTavernJsonDone.
-  ///
-  /// In en, this message translates to:
-  /// **'Tavern character card imported.'**
-  String get settingsCharactersImportTavernJsonDone;
-
-  /// No description provided for @settingsCharactersImportGroupJson.
-  ///
-  /// In en, this message translates to:
-  /// **'Import group JSON'**
-  String get settingsCharactersImportGroupJson;
-
-  /// No description provided for @settingsCharactersImportGroupJsonDone.
-  ///
-  /// In en, this message translates to:
-  /// **'Group imported.'**
-  String get settingsCharactersImportGroupJsonDone;
-
-  /// No description provided for @settingsCharactersImportJsonError.
-  ///
-  /// In en, this message translates to:
-  /// **'JSON import failed: {error}'**
-  String settingsCharactersImportJsonError(String error);
-
-  /// No description provided for @settingsCharactersImportTavernJsonError.
-  ///
-  /// In en, this message translates to:
-  /// **'Tavern JSON import failed: {error}'**
-  String settingsCharactersImportTavernJsonError(String error);
-
-  /// No description provided for @settingsCharactersExportJsonError.
-  ///
-  /// In en, this message translates to:
-  /// **'JSON export failed: {error}'**
-  String settingsCharactersExportJsonError(String error);
-
-  /// No description provided for @settingsCharactersExportTavernJsonError.
-  ///
-  /// In en, this message translates to:
-  /// **'Tavern JSON export failed: {error}'**
-  String settingsCharactersExportTavernJsonError(String error);
-
-  /// No description provided for @settingsCharactersTagsSection.
-  ///
-  /// In en, this message translates to:
-  /// **'Tags'**
-  String get settingsCharactersTagsSection;
-
-  /// No description provided for @settingsCharactersManageTags.
-  ///
-  /// In en, this message translates to:
-  /// **'Manage tags'**
-  String get settingsCharactersManageTags;
-
-  /// No description provided for @settingsCharactersCreateTag.
-  ///
-  /// In en, this message translates to:
-  /// **'New tag'**
-  String get settingsCharactersCreateTag;
-
-  /// No description provided for @settingsCharactersEditTag.
-  ///
-  /// In en, this message translates to:
-  /// **'Edit tag'**
-  String get settingsCharactersEditTag;
-
-  /// No description provided for @settingsCharactersDeleteTag.
-  ///
-  /// In en, this message translates to:
-  /// **'Delete tag'**
-  String get settingsCharactersDeleteTag;
-
-  /// No description provided for @settingsCharactersDeleteTagMessage.
-  ///
-  /// In en, this message translates to:
-  /// **'Delete “{name}”?'**
-  String settingsCharactersDeleteTagMessage(String name);
-
-  /// No description provided for @settingsCharactersTagName.
-  ///
-  /// In en, this message translates to:
-  /// **'Tag name'**
-  String get settingsCharactersTagName;
-
-  /// No description provided for @settingsCharactersTagDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Tag description'**
-  String get settingsCharactersTagDescription;
-
-  /// No description provided for @settingsCharactersTagPromptContent.
-  ///
-  /// In en, this message translates to:
-  /// **'Prompt content'**
-  String get settingsCharactersTagPromptContent;
-
-  /// No description provided for @settingsCharactersChatModelBindingMode.
-  ///
-  /// In en, this message translates to:
-  /// **'Chat model binding mode'**
-  String get settingsCharactersChatModelBindingMode;
-
-  /// No description provided for @settingsCharactersChatModelConfigId.
-  ///
-  /// In en, this message translates to:
-  /// **'Chat model config ID'**
-  String get settingsCharactersChatModelConfigId;
-
-  /// No description provided for @settingsCharactersChatModelIndex.
-  ///
-  /// In en, this message translates to:
-  /// **'Chat model index'**
-  String get settingsCharactersChatModelIndex;
-
-  /// No description provided for @settingsCharactersToolAccess.
-  ///
-  /// In en, this message translates to:
-  /// **'Tool permission mode'**
-  String get settingsCharactersToolAccess;
-
-  /// No description provided for @settingsCharactersChatModelFollowGlobal.
-  ///
-  /// In en, this message translates to:
-  /// **'Follow global model'**
-  String get settingsCharactersChatModelFollowGlobal;
-
-  /// No description provided for @settingsCharactersChatModelFixedConfig.
-  ///
-  /// In en, this message translates to:
-  /// **'Use fixed model config'**
-  String get settingsCharactersChatModelFixedConfig;
-
-  /// No description provided for @settingsCharactersChatModelConfig.
-  ///
-  /// In en, this message translates to:
-  /// **'Model config'**
-  String get settingsCharactersChatModelConfig;
-
-  /// No description provided for @settingsCharactersToolAccessFollowGlobal.
-  ///
-  /// In en, this message translates to:
-  /// **'Follow global tool permissions'**
-  String get settingsCharactersToolAccessFollowGlobal;
-
-  /// No description provided for @settingsCharactersToolAccessCustom.
-  ///
-  /// In en, this message translates to:
-  /// **'Custom character tool permissions'**
-  String get settingsCharactersToolAccessCustom;
-
-  /// No description provided for @settingsCharactersToolAccessEmpty.
-  ///
-  /// In en, this message translates to:
-  /// **'Enabled with no selected tools'**
-  String get settingsCharactersToolAccessEmpty;
-
-  /// No description provided for @settingsCharactersToolAccessSummaryCounts.
-  ///
-  /// In en, this message translates to:
-  /// **'Built-in {builtinCount} · packages {packageCount} · skills {skillCount} · MCP {mcpCount}'**
-  String settingsCharactersToolAccessSummaryCounts(
-    int builtinCount,
-    int packageCount,
-    int skillCount,
-    int mcpCount,
-  );
-
-  /// No description provided for @settingsCharactersToolAccessConfigure.
-  ///
-  /// In en, this message translates to:
-  /// **'Configure tool allowlist'**
-  String get settingsCharactersToolAccessConfigure;
-
-  /// No description provided for @settingsCharactersToolAccessTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Custom Allowed Tools'**
-  String get settingsCharactersToolAccessTitle;
-
-  /// No description provided for @settingsCharactersToolAccessTabBuiltin.
-  ///
-  /// In en, this message translates to:
-  /// **'Built-ins'**
-  String get settingsCharactersToolAccessTabBuiltin;
-
-  /// No description provided for @settingsCharactersToolAccessTabPackage.
-  ///
-  /// In en, this message translates to:
-  /// **'Packages'**
-  String get settingsCharactersToolAccessTabPackage;
-
-  /// No description provided for @settingsCharactersToolAccessTabSkill.
-  ///
-  /// In en, this message translates to:
-  /// **'Skill'**
-  String get settingsCharactersToolAccessTabSkill;
-
-  /// No description provided for @settingsCharactersToolAccessTabMcp.
-  ///
-  /// In en, this message translates to:
-  /// **'MCP'**
-  String get settingsCharactersToolAccessTabMcp;
-
-  /// No description provided for @settingsCharactersToolAccessSearchPlaceholder.
-  ///
-  /// In en, this message translates to:
-  /// **'Search name, description, or ID'**
-  String get settingsCharactersToolAccessSearchPlaceholder;
-
-  /// No description provided for @settingsCharactersToolAccessEmptySearch.
-  ///
-  /// In en, this message translates to:
-  /// **'No matching tools found'**
-  String get settingsCharactersToolAccessEmptySearch;
-
-  /// No description provided for @settingsCharactersToolAccessRequiresUsePackage.
-  ///
-  /// In en, this message translates to:
-  /// **'Selecting packages, skills, or MCP also requires allowing the built-in use_package tool.'**
-  String get settingsCharactersToolAccessRequiresUsePackage;
-
-  /// No description provided for @settingsCharactersToolAccessEmptyBuiltin.
-  ///
-  /// In en, this message translates to:
-  /// **'No built-in tools are available for configuration'**
-  String get settingsCharactersToolAccessEmptyBuiltin;
-
-  /// No description provided for @settingsCharactersToolAccessEmptyPackages.
-  ///
-  /// In en, this message translates to:
-  /// **'No globally available packages right now'**
-  String get settingsCharactersToolAccessEmptyPackages;
-
-  /// No description provided for @settingsCharactersToolAccessEmptySkills.
-  ///
-  /// In en, this message translates to:
-  /// **'No AI-visible skills are available right now'**
-  String get settingsCharactersToolAccessEmptySkills;
-
-  /// No description provided for @settingsCharactersToolAccessEmptyMcp.
-  ///
-  /// In en, this message translates to:
-  /// **'No enabled MCP servers are available right now'**
-  String get settingsCharactersToolAccessEmptyMcp;
-
-  /// No description provided for @settingsCharactersBuiltinTools.
-  ///
-  /// In en, this message translates to:
-  /// **'Allowed built-in tools'**
-  String get settingsCharactersBuiltinTools;
-
-  /// No description provided for @settingsCharactersAllowedPackages.
-  ///
-  /// In en, this message translates to:
-  /// **'Allowed packages'**
-  String get settingsCharactersAllowedPackages;
-
-  /// No description provided for @settingsCharactersAllowedSkills.
-  ///
-  /// In en, this message translates to:
-  /// **'Allowed skills'**
-  String get settingsCharactersAllowedSkills;
-
-  /// No description provided for @settingsCharactersAllowedMcpServers.
-  ///
-  /// In en, this message translates to:
-  /// **'Allowed MCP servers'**
-  String get settingsCharactersAllowedMcpServers;
-
-  /// No description provided for @settingsCharactersGroupMembersTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Group characters'**
-  String get settingsCharactersGroupMembersTitle;
-
-  /// No description provided for @settingsCharactersOpenMemoryGraph.
-  ///
-  /// In en, this message translates to:
-  /// **'View memory graph'**
-  String get settingsCharactersOpenMemoryGraph;
-
-  /// No description provided for @settingsCharactersMemoryGraphTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'{profileName}\'s memory graph'**
-  String settingsCharactersMemoryGraphTitle(String profileName);
-
-  /// No description provided for @settingsCharactersMemoryGraphEmpty.
-  ///
-  /// In en, this message translates to:
-  /// **'No memory nodes yet'**
-  String get settingsCharactersMemoryGraphEmpty;
-
-  /// No description provided for @settingsCharactersMemoryGraphStats.
-  ///
-  /// In en, this message translates to:
-  /// **'{nodes} nodes · {edges} links'**
-  String settingsCharactersMemoryGraphStats(int nodes, int edges);
-
-  /// No description provided for @settingsCharactersMemoryGraphLink.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory link'**
-  String get settingsCharactersMemoryGraphLink;
-
-  /// No description provided for @settingsCharactersEditUserMarkdown.
-  ///
-  /// In en, this message translates to:
-  /// **'Edit user profile'**
-  String get settingsCharactersEditUserMarkdown;
-
-  /// No description provided for @settingsCharactersUserMarkdownTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'{profileName}\'s user profile'**
-  String settingsCharactersUserMarkdownTitle(String profileName);
-
-  /// No description provided for @settingsCharactersUserMarkdownSaved.
-  ///
-  /// In en, this message translates to:
-  /// **'User profile saved'**
-  String get settingsCharactersUserMarkdownSaved;
-
-  /// No description provided for @settingsCharactersUserMarkdownContent.
-  ///
-  /// In en, this message translates to:
-  /// **'User profile content'**
-  String get settingsCharactersUserMarkdownContent;
-
-  /// No description provided for @settingsCharactersMemoryAutoUpdate.
-  ///
-  /// In en, this message translates to:
-  /// **'Auto-update memory stores'**
-  String get settingsCharactersMemoryAutoUpdate;
-
-  /// No description provided for @settingsCharactersMemoryAutoUpdateDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Allow AI to organize conversation info into memory stores.'**
-  String get settingsCharactersMemoryAutoUpdateDescription;
-
-  /// No description provided for @settingsCharactersPreferenceDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Provide user profile to model'**
-  String get settingsCharactersPreferenceDescription;
-
-  /// No description provided for @settingsCharactersPreferenceDescriptionSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Include the current user profile in chat prompts.'**
-  String get settingsCharactersPreferenceDescriptionSubtitle;
-
-  /// No description provided for @settingsCharactersCardsSection.
-  ///
-  /// In en, this message translates to:
-  /// **'Character cards'**
-  String get settingsCharactersCardsSection;
-
-  /// No description provided for @settingsCharactersGroupsSection.
-  ///
-  /// In en, this message translates to:
-  /// **'Groups'**
-  String get settingsCharactersGroupsSection;
-
-  /// No description provided for @settingsCharactersGroupMembers.
-  ///
-  /// In en, this message translates to:
-  /// **'{count} members'**
-  String settingsCharactersGroupMembers(int count);
-
   /// No description provided for @settingsToolsPermissionMode.
   ///
   /// In en, this message translates to:
@@ -5245,12 +4682,6 @@ abstract class AppLocalizations {
   /// **'Global'**
   String get settingsAppearanceThemeTargetGlobal;
 
-  /// No description provided for @settingsAppearanceThemeTargetCharacter.
-  ///
-  /// In en, this message translates to:
-  /// **'Current character: {name}'**
-  String settingsAppearanceThemeTargetCharacter(Object name);
-
   /// No description provided for @settingsAppearanceThemeTargetGroup.
   ///
   /// In en, this message translates to:
@@ -6379,12 +5810,6 @@ abstract class AppLocalizations {
   /// **'Title generation'**
   String get settingsDataDetailedStatsSourceTitleGeneration;
 
-  /// No description provided for @settingsDataDetailedStatsSourceMemory.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory analysis'**
-  String get settingsDataDetailedStatsSourceMemory;
-
   /// No description provided for @settingsDataDetailedStatsTotalRequests.
   ///
   /// In en, this message translates to:
@@ -6609,30 +6034,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Back up all chats and messages. Restore updates or creates chats by chat ID.'**
   String get settingsDataChatHistoriesBackupDescription;
-
-  /// No description provided for @settingsDataCharacterCardsBackup.
-  ///
-  /// In en, this message translates to:
-  /// **'Character card data'**
-  String get settingsDataCharacterCardsBackup;
-
-  /// No description provided for @settingsDataCharacterCardsBackupDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Back up all character cards and referenced tags. Restore updates or creates items by original ID.'**
-  String get settingsDataCharacterCardsBackupDescription;
-
-  /// No description provided for @settingsDataCharacterGroupsBackup.
-  ///
-  /// In en, this message translates to:
-  /// **'Group data'**
-  String get settingsDataCharacterGroupsBackup;
-
-  /// No description provided for @settingsDataCharacterGroupsBackupDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Back up all groups. Restore keeps member references and ordering.'**
-  String get settingsDataCharacterGroupsBackupDescription;
 
   /// No description provided for @settingsDataModelConfigsBackup.
   ///
@@ -7890,6 +7291,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Insert {symbol}'**
   String workspaceInsertSymbol(String symbol);
+
+  /// No description provided for @settingsAppearanceThemeConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme configuration'**
+  String get settingsAppearanceThemeConfig;
+
+  /// No description provided for @settingsAppearanceThemeConfigCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Unbound appearance'**
+  String get settingsAppearanceThemeConfigCustom;
+
+  /// No description provided for @settingsAppearanceThemeConfigCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'New theme configuration'**
+  String get settingsAppearanceThemeConfigCreate;
+
+  /// No description provided for @settingsAppearanceThemeConfigRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename theme configuration'**
+  String get settingsAppearanceThemeConfigRename;
+
+  /// No description provided for @settingsAppearanceThemeConfigDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete an inactive theme configuration'**
+  String get settingsAppearanceThemeConfigDelete;
+
+  /// No description provided for @settingsAppearanceThemeConfigName.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme name'**
+  String get settingsAppearanceThemeConfigName;
+
+  /// No description provided for @settingsAppearanceThemeConfigNameRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a theme name'**
+  String get settingsAppearanceThemeConfigNameRequired;
+
+  /// No description provided for @settingsAppearanceThemeConfigCustomHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Click + to create a theme configuration and bind it to a character or group.'**
+  String get settingsAppearanceThemeConfigCustomHint;
+
+  /// No description provided for @settingsAppearanceThemeConfigEditingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Appearance changes are saved to the selected theme configuration.'**
+  String get settingsAppearanceThemeConfigEditingHint;
+
+  /// No description provided for @settingsAppearanceThemeConfigFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme operation failed: {detail}'**
+  String settingsAppearanceThemeConfigFailed(String detail);
 }
 
 class _AppLocalizationsDelegate

@@ -737,8 +737,6 @@ impl OperitTui {
                 ChatState {
                     currentChatId: active_chat_id.clone(),
                     currentChatTitle: String::new(),
-                    currentCharacterCardName: None,
-                    currentCharacterCardAvatarUri: None,
                     currentWorkspacePath: None,
                     isLoading: false,
                     inputProcessingState: InputProcessingState::Error {

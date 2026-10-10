@@ -202,7 +202,7 @@ test("tag management stages edits and deletion without writing until character s
   assert.deepEqual(before.map(
     /** Records the finite actions performed before character save. */
     call => call.action,
-  ), ["snapshot"]);
+  ), ["snapshot", "listThemeChoices"]);
   await editor.getByRole("button", { name: "取消", exact: true }).click();
   await openCharacter(ui.page);
   assert.equal(await editor.getByRole("button", { name: "新标签", exact: true }).count(), 0);
@@ -479,9 +479,11 @@ function plain(value) { return JSON.parse(JSON.stringify(value)); }
 async function fileBackedPlugin(t, bundle, uiScripts = undefined) {
   const disk = await createDiskHarness(t), readonly = fixture(), native = createNativeChatHost(new Map([["chat-dom", { extension: null }]])), hostCalls = native.calls, records = native.records;
   const apis = new Map(), channels = new Map(), commands = new Map(), routes = [], navigation = [], appHooks = [], messageHooks = [], hostHooks = [], chatLifecycleHooks = [], toolLifecycleHooks = [], toolPromptHooks = [];
-  const tools = { Files: disk.files, SoftwareSettings: {
+  const tools = { Files: disk.files, Storage: disk.storage, SoftwareSettings: {
     /** Supplies only the explicitly labelled readonly model directory required by the actual service. */
     async listModelSummaries() { return plain(readonly.snapshot.models); },
+    /** Declares this isolated host's empty saved-theme catalog without fabricating a role binding or successful apply. */
+    async listThemeConfigs() { return []; },
     /** Supplies only the explicitly labelled readonly TTS directory, not business records or persistence. */
     async listTtsConfigs() { return plain(readonly.snapshot.ttsConfigs); },
     /** Supplies the complete labelled readonly tool catalog without faking a store or CRUD response. */
@@ -733,7 +735,7 @@ test("theme picker DOM searches exact independent IDs, cancels without writes, a
   await editor.getByRole("button", { name: "选择主题配置", exact: true }).click();
   picker = ui.page.getByRole("dialog", { name: "选择主题配置", exact: true });
   await picker.getByRole("button", { name: "选择主题 测试夜间主题", exact: true }).click();
-  assert.match(await editor.textContent(), /独立主题配置 ID：independent-theme-two/);
+  assert.match(await editor.textContent(), /测试夜间主题/);
   assert.equal(await ui.page.evaluate(
     /** Confirms the chooser has edited only its local draft, not the saved isolated fixture record. */
     () => window.testRecords.cards.find(value => value.id === "travel").themeConfigId,
@@ -762,7 +764,7 @@ test("group theme picker DOM saves its own reference without changing members or
   await editor.getByRole("button", { name: "选择主题配置", exact: true }).click();
   const picker = ui.page.getByRole("dialog", { name: "选择主题配置", exact: true });
   await picker.getByRole("button", { name: "选择主题 测试独立主题", exact: true }).click();
-  assert.match(await editor.textContent(), /独立主题配置 ID：independent-theme-one/);
+  assert.match(await editor.textContent(), /测试独立主题/);
   await editor.getByRole("button", { name: "保存", exact: true }).click();
   await ui.page.waitForFunction(
     /** Waits for the fully declared group response rather than emulating a group repository in the browser. */
@@ -794,7 +796,7 @@ test("theme picker directory rejection stays in the same editor and performs zer
     /** Audits exact directory attempts and zero mutations after the failed reader and explicit cancellation. */
     () => window.testCalls,
   );
-  assert.equal(calls.filter(value => value.action === "listThemeChoices").length, 1);
+  assert.equal(calls.filter(value => value.action === "listThemeChoices").length, 2);
   assert.equal(calls.filter(value => value.action === "saveCharacter" || value.action === "activate" || value.action === "writeChatBinding").length, 0);
   await ui.context.close();
 });
@@ -819,7 +821,7 @@ test("character settings remove the whole page title and retain theme binding", 
   await editor.getByRole("button", { name: "保存", exact: true }).click();
   await ui.page.getByRole("button", { name: "编辑 原有角色编辑", exact: true }).waitFor();
   const calls = await ui.page.evaluate(() => window.testCalls);
-  assert.equal(calls.filter(call => call.action === "listThemeChoices").length, 0);
+  assert.equal(calls.filter(call => call.action === "listThemeChoices").length, 1);
   assert.equal(calls.find(call => call.action === "saveCharacter").card.themeConfigId, "saved-independent-theme");
   await ui.context.close();
 });
@@ -847,7 +849,7 @@ test("group settings retain theme picker, fields and members without duplicate r
   const saved = calls.find(call => call.action === "saveGroup");
   assert.equal(saved.group.themeConfigId, "saved-group-theme");
   assert.deepEqual(saved.group.members, data.snapshot.groups[0].members);
-  assert.equal(calls.filter(call => call.action === "listThemeChoices").length, 0);
+  assert.equal(calls.filter(call => call.action === "listThemeChoices").length, 1);
   await ui.context.close();
 });
 
@@ -857,7 +859,7 @@ test("deleted theme and TTS references remain visible in picker DOM and cancella
   const ui = await page(1100, 950, data); await openCharacter(ui.page);
   const editor = ui.page.getByRole("dialog", { name: "编辑角色卡", exact: true });
   await editor.getByRole("tab", { name: "绑定", exact: true }).click();
-  assert.match(await editor.getByRole("alert").textContent(), /已绑定 TTS 配置不存在：deleted-tts/);
+  assert.match(await editor.getByRole("alert").filter({ hasText: "已绑定 TTS" }).textContent(), /已绑定 TTS 配置不存在：deleted-tts/);
   await editor.getByRole("button", { name: "选择主题配置", exact: true }).click();
   const theme = ui.page.getByRole("dialog", { name: "选择主题配置", exact: true });
   assert.match(await theme.getByRole("alert").textContent(), /已绑定主题配置不存在：deleted-theme/);
@@ -947,8 +949,8 @@ test("current plugin routes connect selector preview and memory attachment to th
   /** Cancels a staged selection and verifies both persisted chat and global identities. */
   await t.test("selector cancellation never changes the stored binding or global active prompt", async s => {
     const menu = await plugin.api("chat.context.actions", { chatId: "chat-dom" });
-    assert.equal(menu.selectors[0].routeId, "toolpkg:com.operit.character_cards:ui:selection");
-    const ui = mountRegisteredSelector(plugin, { requestId: "selector-cancel", input: menu.selectors[0].input }); await ui.load();
+    assert.equal(Object.hasOwn(menu, "selectors"), false);
+    const ui = mountRegisteredSelector(plugin, { requestId: "selector-cancel", input: { mode: "select", chatId: "chat-dom", kind: "card", selected: null } }); await ui.load();
     assert.equal(keyedNode(ui.render().tree, "card:" + card.id).type, "Row");
     const before = plain(plugin.records.get("chat-dom").extension), count = plugin.hostCalls.length;
     const cancelled = await ui.dispatch(keyedNode(ui.render().tree, "selector-close").props.onClick);
@@ -960,24 +962,22 @@ test("current plugin routes connect selector preview and memory attachment to th
   /** Commits through actual main IPC and rejects a second completion before any repeated write. */
   await t.test("card selector commits actual main IPC before emitting the opaque V1 value exactly once", async s => {
     const menu = await plugin.api("chat.context.actions", { chatId: "chat-dom" });
-    assert.equal(menu.selectors[0].routeId, "toolpkg:com.operit.character_cards:ui:selection");
-    const ui = mountRegisteredSelector(plugin, { requestId: "selector-card", input: menu.selectors[0].input }); await ui.load();
+    assert.equal(Object.hasOwn(menu, "selectors"), false);
+    const ui = mountRegisteredSelector(plugin, { requestId: "selector-card", input: { mode: "select", chatId: "chat-dom", kind: "card", selected: null } }); await ui.load();
     const row = keyedNode(ui.render().tree, "card:" + card.id), committed = await ui.dispatch(row.props.onClick);
     assert.deepEqual(plain(committed.actionResult), { type: "toolpkg.presentation.complete", requestId: "selector-card", value: { selection: "card:" + card.id, contextKey: "card:" + card.id } });
-    const file = path.join(plugin.disk.directory, "character-memory/state.json"), before = await readFile(file);
+    const file = path.join(plugin.disk.directory, "character-memory/state.json"), before = await plugin.disk.stateBytes();
     const stored = JSON.parse(before.toString("utf8")), binding = plain(plugin.records.get("chat-dom").extension), count = plugin.hostCalls.length;
     assert.equal(Object.hasOwn(stored, "chatBindings"), false, "Bindings belong to the native record namespace, not plugin files");
     assert.deepEqual(binding, { version: 1, selection: "card:" + card.id });
     await assert.rejects(ui.dispatch(row.props.onClick), /already finished/);
     assert.equal(plugin.hostCalls.length, count, "Repeated native action must not issue another extension read or write");
-    assert.deepEqual(plugin.records.get("chat-dom").extension, binding); assert.deepEqual(await readFile(file), before);
+    assert.deepEqual(plugin.records.get("chat-dom").extension, binding); assert.deepEqual(await plugin.disk.stateBytes(), before);
     assert.deepEqual(await plugin.api("activePrompt.get", {}), active);
   });
   /** Confirms a real group binding while preserving the global active identity. */
   await t.test("group selector persists its actual identity without globally activating it", async s => {
-    const menu = await plugin.api("chat.context.actions", { chatId: "chat-dom" });
-    assert.equal(menu.selectors[1].routeId, "toolpkg:com.operit.character_cards:ui:selection");
-    const ui = mountRegisteredSelector(plugin, { requestId: "selector-group", input: menu.selectors[1].input }); await ui.load();
+    const ui = mountRegisteredSelector(plugin, { requestId: "selector-group", input: { mode: "select", chatId: "chat-dom", kind: "group", selected: null } }); await ui.load();
     const committed = await ui.dispatch(keyedNode(ui.render().tree, "group:" + group.id).props.onClick);
     assert.deepEqual(plain(committed.actionResult), { type: "toolpkg.presentation.complete", requestId: "selector-group", value: { selection: "group:" + group.id, contextKey: "group:" + group.id } });
     assert.deepEqual(plugin.records.get("chat-dom").extension, { version: 1, selection: "group:" + group.id });
@@ -1027,13 +1027,13 @@ test("current plugin routes connect selector preview and memory attachment to th
   await t.test("attachment cancellation returns explicit V1 cancel and does not mutate native files", async s => {
     const ui = await registeredPage(s, plugin, "memory-attachment", { requestId: "attachment-cancel", input: { mode: "memory-attachment", ownerKey, folderPath: "附件根" } }, origin);
     await ui.page.getByLabel("记忆附件正文", { exact: true }).waitFor();
-    const file = path.join(plugin.disk.directory, "character-memory/state.json"), before = await readFile(file);
+    const file = path.join(plugin.disk.directory, "character-memory/state.json"), before = await plugin.disk.stateBytes();
     await ui.page.getByRole("button", { name: "取消", exact: true }).click();
     await ui.page.getByText("当前视图已结束。", { exact: true }).waitFor();
     assert.deepEqual(ui.completed, [{ type: "toolpkg.presentation.cancel", requestId: "attachment-cancel" }]);
-    assert.deepEqual(await readFile(file), before);
+    assert.deepEqual(await plugin.disk.stateBytes(), before);
     await assert.rejects(async () => ui.bridge.completeScreen([{ mode: "memory-attachment", ownerKey, folderPath: "附件根", content: "Invalid post-cancel content" }]), /already finished/);
-    assert.deepEqual(await readFile(file), before); assert.deepEqual(ui.errors, []);
+    assert.deepEqual(await plugin.disk.stateBytes(), before); assert.deepEqual(ui.errors, []);
   });
   /** Enforces caller scope in the actual plugin adapter before permitting any terminal result. */
   await t.test("locked attachment input cannot navigate outside its scope or complete another owner or folder", async s => {

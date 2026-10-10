@@ -14,7 +14,6 @@
   "addAttachment": "Add attachment",
   "attachmentPhoto": "Photo",
   "attachmentCamera": "Camera",
-  "attachmentMemory": "Memory",
   "attachmentFile": "File",
   "attachmentScreenContent": "Screen content",
   "attachmentNotifications": "Current notifications",
@@ -28,7 +27,6 @@
   "attachmentPackageKindSkill": "Skill",
   "attachmentPackageKindMcp": "MCP",
   "attachmentCameraUnavailable": "Camera capture is not available in the Flutter client",
-  "attachmentMemoryUnavailable": "Memory folder selection is not available in the Flutter client",
   "clearSearch": "Clear search",
   "chatPendingQueueTitle": "Queued messages ({count})",
   "@chatPendingQueueTitle": {
@@ -459,12 +457,6 @@
   "settingsCategoryLocalModelsTitle": "Local Models",
   "settingsCategoryLocalModelsSubtitle": "Downloads, engines, STT / TTS",
   "settingsCategoryLocalModelsDescription": "Manage local models and inference engines installed on demand.",
-  "settingsCategoryCharactersTitle": "Characters",
-  "settingsCategoryCharactersSubtitle": "Cards, groups, bindings",
-  "settingsCategoryCharactersDescription": "Manage character cards, groups, active roles, and role-level model, memory, and tool bindings.",
-  "settingsCategoryMemoryTitle": "Memory",
-  "settingsCategoryMemorySubtitle": "Memory graph, shared stores, user profile",
-  "settingsCategoryMemoryDescription": "Manage character and shared memory stores, memory graph visualization, user profiles, and auto-update behavior.",
   "settingsCategoryToolsTitle": "Tools & Permissions",
   "settingsCategoryToolsSubtitle": "AI capability, system authorization, extensions",
   "settingsCategoryToolsDescription": "Set AI read-only, read-write, or full access, and review the current device system authorization status.",
@@ -610,7 +602,6 @@
     }
   },
   "settingsTtsCurrentConfigCannotDelete": "The TTS configuration currently in use cannot be deleted.",
-  "settingsTtsConfigUsedByCharacter": "This TTS configuration is used by a character card and cannot be deleted.",
   "settingsModelChatAutoGlmWarning": "AutoGLM cannot be used as the main chat model. Chat and UI control use separate model assignments; choose another large model.",
   "settingsModelFunctionChat": "Chat",
   "settingsModelFunctionChatDescription": "Model used for main conversation replies.",
@@ -910,172 +901,6 @@
   "settingsModelTestItemAudio": "Audio",
   "settingsModelTestItemVideo": "Video",
   "settingsModelTestItemUnknown": "Unknown item",
-  "settingsCharactersCreateCard": "New character card",
-  "settingsCharactersEditCard": "Edit character card",
-  "settingsCharactersCardName": "Character name",
-  "settingsCharactersCreateGroup": "New group",
-  "settingsCharactersEditGroup": "Edit group",
-  "settingsCharactersGroupName": "Group name",
-  "settingsCharactersDescription": "Description",
-  "settingsCharactersCharacterSetting": "Character setting",
-  "settingsCharactersOpeningStatement": "Opening statement",
-  "settingsCharactersOtherContentChat": "Extra chat content",
-  "settingsCharactersOtherContentVoice": "Extra voice content",
-  "settingsCharactersAdvancedPrompt": "Advanced custom prompt",
-  "settingsCharactersMarks": "Notes",
-  "settingsCharactersTags": "Tags",
-  "settingsCharactersNoTags": "No tags available. Create one in tag management, then bind it to this character card.",
-  "settingsCharactersImport": "Import",
-  "settingsCharactersExport": "Export",
-  "settingsCharactersImportJson": "Import JSON",
-  "settingsCharactersExportJson": "Export JSON",
-  "settingsCharactersImportTavernJson": "Import Tavern JSON",
-  "settingsCharactersExportTavernJson": "Export Tavern JSON",
-  "settingsCharactersImportCardJson": "Import character card JSON",
-  "settingsCharactersImportCardJsonDone": "Character card imported.",
-  "settingsCharactersImportTavernJsonDone": "Tavern character card imported.",
-  "settingsCharactersImportGroupJson": "Import group JSON",
-  "settingsCharactersImportGroupJsonDone": "Group imported.",
-  "settingsCharactersImportJsonError": "JSON import failed: {error}",
-  "@settingsCharactersImportJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersImportTavernJsonError": "Tavern JSON import failed: {error}",
-  "@settingsCharactersImportTavernJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersExportJsonError": "JSON export failed: {error}",
-  "@settingsCharactersExportJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersExportTavernJsonError": "Tavern JSON export failed: {error}",
-  "@settingsCharactersExportTavernJsonError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTagsSection": "Tags",
-  "settingsCharactersManageTags": "Manage tags",
-  "settingsCharactersCreateTag": "New tag",
-  "settingsCharactersEditTag": "Edit tag",
-  "settingsCharactersDeleteTag": "Delete tag",
-  "settingsCharactersDeleteTagMessage": "Delete “{name}”?",
-  "@settingsCharactersDeleteTagMessage": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersTagName": "Tag name",
-  "settingsCharactersTagDescription": "Tag description",
-  "settingsCharactersTagPromptContent": "Prompt content",
-  "settingsCharactersChatModelBindingMode": "Chat model binding mode",
-  "settingsCharactersChatModelConfigId": "Chat model config ID",
-  "settingsCharactersChatModelIndex": "Chat model index",
-  "settingsCharactersToolAccess": "Tool permission mode",
-  "settingsCharactersChatModelFollowGlobal": "Follow global model",
-  "settingsCharactersChatModelFixedConfig": "Use fixed model config",
-  "settingsCharactersChatModelConfig": "Model config",
-  "settingsCharactersToolAccessFollowGlobal": "Follow global tool permissions",
-  "settingsCharactersToolAccessCustom": "Custom character tool permissions",
-  "settingsCharactersToolAccessEmpty": "Enabled with no selected tools",
-  "settingsCharactersToolAccessSummaryCounts": "Built-in {builtinCount} · packages {packageCount} · skills {skillCount} · MCP {mcpCount}",
-  "@settingsCharactersToolAccessSummaryCounts": {
-    "placeholders": {
-      "builtinCount": {
-        "type": "int"
-      },
-      "packageCount": {
-        "type": "int"
-      },
-      "skillCount": {
-        "type": "int"
-      },
-      "mcpCount": {
-        "type": "int"
-      }
-    }
-  },
-  "settingsCharactersToolAccessConfigure": "Configure tool allowlist",
-  "settingsCharactersToolAccessTitle": "Custom Allowed Tools",
-  "settingsCharactersToolAccessTabBuiltin": "Built-ins",
-  "settingsCharactersToolAccessTabPackage": "Packages",
-  "settingsCharactersToolAccessTabSkill": "Skill",
-  "settingsCharactersToolAccessTabMcp": "MCP",
-  "settingsCharactersToolAccessSearchPlaceholder": "Search name, description, or ID",
-  "settingsCharactersToolAccessEmptySearch": "No matching tools found",
-  "settingsCharactersToolAccessRequiresUsePackage": "Selecting packages, skills, or MCP also requires allowing the built-in use_package tool.",
-  "settingsCharactersToolAccessEmptyBuiltin": "No built-in tools are available for configuration",
-  "settingsCharactersToolAccessEmptyPackages": "No globally available packages right now",
-  "settingsCharactersToolAccessEmptySkills": "No AI-visible skills are available right now",
-  "settingsCharactersToolAccessEmptyMcp": "No enabled MCP servers are available right now",
-  "settingsCharactersBuiltinTools": "Allowed built-in tools",
-  "settingsCharactersAllowedPackages": "Allowed packages",
-  "settingsCharactersAllowedSkills": "Allowed skills",
-  "settingsCharactersAllowedMcpServers": "Allowed MCP servers",
-  "settingsCharactersGroupMembersTitle": "Group characters",
-    "settingsCharactersOpenMemoryGraph": "View memory graph",
-    "settingsCharactersMemoryGraphTitle": "{profileName}'s memory graph",
-    "@settingsCharactersMemoryGraphTitle": {
-      "placeholders": {
-        "profileName": {
-          "type": "String"
-        }
-      }
-    },
-    "settingsCharactersMemoryGraphEmpty": "No memory nodes yet",
-    "settingsCharactersMemoryGraphStats": "{nodes} nodes · {edges} links",
-    "@settingsCharactersMemoryGraphStats": {
-      "placeholders": {
-        "nodes": {
-          "type": "int"
-        },
-        "edges": {
-          "type": "int"
-        }
-      }
-    },
-    "settingsCharactersMemoryGraphLink": "Memory link",
-    "settingsCharactersEditUserMarkdown": "Edit user profile",
-  "settingsCharactersUserMarkdownTitle": "{profileName}'s user profile",
-  "@settingsCharactersUserMarkdownTitle": {
-    "placeholders": {
-      "profileName": {
-        "type": "String"
-      }
-    }
-  },
-  "settingsCharactersUserMarkdownSaved": "User profile saved",
-  "settingsCharactersUserMarkdownContent": "User profile content",
-  "settingsCharactersMemoryAutoUpdate": "Auto-update memory stores",
-  "settingsCharactersMemoryAutoUpdateDescription": "Allow AI to organize conversation info into memory stores.",
-  "settingsCharactersPreferenceDescription": "Provide user profile to model",
-  "settingsCharactersPreferenceDescriptionSubtitle": "Include the current user profile in chat prompts.",
-  "settingsCharactersCardsSection": "Character cards",
-  "settingsCharactersGroupsSection": "Groups",
-  "settingsCharactersGroupMembers": "{count} members",
-  "@settingsCharactersGroupMembers": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "settingsToolsPermissionMode": "AI capability mode",
   "settingsToolsAsk": "Ask",
   "settingsToolsExtensions": "Extension management",
@@ -1456,12 +1281,6 @@
   "settingsAppearanceThemeMode": "Current mode",
   "settingsAppearanceThemeTarget": "Theme save target",
   "settingsAppearanceThemeTargetGlobal": "Global",
-  "settingsAppearanceThemeTargetCharacter": "Current character: {name}",
-  "@settingsAppearanceThemeTargetCharacter": {
-    "placeholders": {
-      "name": {}
-    }
-  },
   "settingsAppearanceThemeTargetGroup": "Current group: {name}",
   "@settingsAppearanceThemeTargetGroup": {
     "placeholders": {
@@ -1700,7 +1519,6 @@
   "settingsDataDetailedStatsSourceToolResult": "Tool-result response",
   "settingsDataDetailedStatsSourceSummary": "Summary generation",
   "settingsDataDetailedStatsSourceTitleGeneration": "Title generation",
-  "settingsDataDetailedStatsSourceMemory": "Memory analysis",
   "settingsDataDetailedStatsTotalRequests": "Total requests",
   "settingsDataDetailedStatsCachedInput": "Cached input",
   "settingsDataDetailedStatsActiveDays": "Active days",
@@ -1783,10 +1601,6 @@
   "settingsDataBackupSection": "Backup & restore",
   "settingsDataChatHistoriesBackup": "Chat data",
   "settingsDataChatHistoriesBackupDescription": "Back up all chats and messages. Restore updates or creates chats by chat ID.",
-  "settingsDataCharacterCardsBackup": "Character card data",
-  "settingsDataCharacterCardsBackupDescription": "Back up all character cards and referenced tags. Restore updates or creates items by original ID.",
-  "settingsDataCharacterGroupsBackup": "Group data",
-  "settingsDataCharacterGroupsBackupDescription": "Back up all groups. Restore keeps member references and ordering.",
   "settingsDataModelConfigsBackup": "Model settings",
   "settingsDataModelConfigsBackupDescription": "Back up all model settings, including model parameters and API key pools.",
   "settingsDataBackupCount": "{count} items",
@@ -2309,5 +2123,23 @@
   "workspaceUndo": "Undo",
   "workspaceRedo": "Redo",
   "workspaceInsertSymbol": "Insert {symbol}",
-  "@workspaceInsertSymbol": {"placeholders": {"symbol": {"type": "String"}}}
+  "@workspaceInsertSymbol": {"placeholders": {"symbol": {"type": "String"}}},
+  "settingsAppearanceThemeConfig": "Theme configuration",
+  "settingsAppearanceThemeConfigCustom": "Unbound appearance",
+  "settingsAppearanceThemeConfigCreate": "New theme configuration",
+  "settingsAppearanceThemeConfigRename": "Rename theme configuration",
+  "settingsAppearanceThemeConfigDelete": "Delete an inactive theme configuration",
+  "settingsAppearanceThemeConfigName": "Theme name",
+  "settingsAppearanceThemeConfigNameRequired": "Enter a theme name",
+  "settingsAppearanceThemeConfigCustomHint": "Click + to create a theme configuration and bind it to a character or group.",
+  "settingsAppearanceThemeConfigEditingHint": "Appearance changes are saved to the selected theme configuration.",
+  "settingsAppearanceThemeConfigFailed": "Theme operation failed: {detail}",
+  "@settingsAppearanceThemeConfigFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

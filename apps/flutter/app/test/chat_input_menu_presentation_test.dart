@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'support/compose_session_fixture.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
@@ -54,11 +56,7 @@ void main() {
         clients: GeneratedCoreProxyClients(bridge),
       );
       final context = await catalog.loadContext(chatId: null);
-      expect(context.selectors, hasLength(2));
-      expect(
-        context.selectors.map((item) => item.action.route.containerPackageName),
-        ['example.selector', 'example.other'],
-      );
+      expect(context.identity?.title, 'Published identity');
       final invocations = bridge.calls.where(
         (call) => call.methodName == 'invokeToolPkgPublicApi',
       );
@@ -90,6 +88,79 @@ void main() {
         bridge.calls.where((call) => call.methodName == 'getActivePrompt'),
         isEmpty,
       );
+    },
+  );
+
+  /// Verifies the actual two-line selector row, placement and registered tap route.
+  testWidgets(
+    'input menu embeds each registered DSL row without decoding display metadata',
+    (tester) async {
+      final bridge = _ContextBridge(
+        currentChatId: 'chat-a',
+        publishIdentity: true,
+      );
+      addTearDown(bridge.close);
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose example.selector'), findsOneWidget);
+      expect(find.text('DSL participant'), findsNWidgets(2));
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'invokeToolPkgPublicApi',
+        ),
+        isEmpty,
+      );
+      expect(find.text('Published identity'), findsNothing);
+      expect(
+        tester.getTopLeft(find.text('Choose example.selector')).dy,
+        lessThan(tester.getTopLeft(find.text('DSL participant').first).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text('DSL participant').first).dy,
+        lessThan(tester.getTopLeft(find.text('统计')).dy),
+      );
+      await tester.tap(find.text('Choose example.selector'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.byType(ToolPkgUiLauncherScreen), findsOneWidget);
+      expect(bridge.renderStates.single['chatId'], 'chat-a');
+      await _removeHost(tester);
+    },
+  );
+
+  testWidgets(
+    'embedded menu grows and shrinks with DSL content inside the outer scroll',
+    (tester) async {
+      final bridge = _ContextBridge(
+        currentChatId: 'chat-a',
+        publishIdentity: true,
+      );
+      addTearDown(bridge.close);
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+      final launcher = find.byType(ToolPkgUiLauncherScreen).first;
+      final initialHeight = tester.getSize(launcher).height;
+      final outerScroll = find.ancestor(
+        of: launcher,
+        matching: find.byType(Scrollable),
+      );
+      expect(outerScroll, findsOneWidget);
+      bridge.menuExtraLines = 30;
+      bridge.select('chat-b');
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(launcher).height, greaterThan(initialHeight + 300));
+      expect(
+        tester.state<ScrollableState>(outerScroll).position.maxScrollExtent,
+        greaterThan(0),
+      );
+      bridge.menuExtraLines = 0;
+      bridge.select('chat-a');
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(launcher).height, initialHeight);
+      expect(tester.takeException(), isNull);
+      await _removeHost(tester);
     },
   );
 
@@ -367,7 +438,8 @@ void main() {
       bridge.routes.clear();
       await tester.tap(find.text('Choose example.selector'));
       await tester.pumpAndSettle();
-      expect(find.byType(ToolPkgUiLauncherScreen), findsNothing);
+      expect(find.byType(Dialog), findsNothing);
+      expect(bridge.renderStates, isEmpty);
       expect(find.textContaining('插件操作失败：'), findsOneWidget);
       expect(bridge.configurationCalls, isEmpty);
       await _removeHost(tester);
@@ -468,15 +540,6 @@ Map<String, Object?> _contextActions(
   String owner, {
   required bool publishIdentity,
 }) => {
-  'selectors': [
-    {
-      'id': 'selector',
-      'title': 'Choose $owner',
-      'icon': null,
-      'routeId': 'selector-route',
-      'input': _opaqueInput(owner),
-    },
-  ],
   'identity': publishIdentity && owner == 'example.selector'
       ? {
           'title': 'Published identity',
@@ -493,6 +556,31 @@ class _ContextBridge extends OperitRuntimeBridge {
   _ContextBridge({required this.currentChatId, required this.publishIdentity})
     : routes = [_route('example.selector'), _route('example.other')];
 
+  late final compose = ComposeSessionFixture(
+    render: (state) {
+      if (state.containsKey('presentation')) {
+        renderStates.add(Map<String, Object?>.from(state));
+      }
+      final tree = Map<String, Object?>.from(
+        (jsonDecode(_render(state)) as Map)['tree'] as Map,
+      );
+      if (!state.containsKey('presentation')) {
+        final column = (tree['children'] as List).single as Map;
+        for (var index = 0; index < menuExtraLines; index++) {
+          (column['children'] as List).add({
+            'type': 'Text',
+            'props': {'text': 'Menu line $index'},
+            'children': <Object?>[],
+            'slots': <String, Object?>{},
+          });
+        }
+      }
+      return tree;
+    },
+    action: _action,
+  );
+
+  int menuExtraLines = 0;
   String? currentChatId;
   final bool publishIdentity;
   final List<core_proxy.ToolPkgUiRoute> routes;
@@ -519,7 +607,10 @@ class _ContextBridge extends OperitRuntimeBridge {
   }
 
   /// Releases the fixture's long-lived selected-chat stream after host disposal.
-  Future<void> close() => _selections.close();
+  Future<void> close() async {
+    await _selections.close();
+    await compose.close();
+  }
 
   /// Handles only actual catalog, native menu, render and configuration methods.
   @override
@@ -565,7 +656,22 @@ class _ContextBridge extends OperitRuntimeBridge {
           publishIdentity: publishIdentity,
         );
       case 'getToolPkgNavigationEntries':
-        value = const [];
+        value = [
+          for (final owner in ['example.selector', 'example.other'])
+            core_proxy.ToolPkgNavigationEntry(
+              containerPackageName: owner,
+              toolPkgId: owner,
+              entryId: 'input-menu',
+              routeId: 'selector-route',
+              params: _opaqueInput(owner),
+              surface: 'chat_input_menu',
+              title: 'Registration title',
+              description: '',
+              action: null,
+              icon: null,
+              order: 0,
+            ).toJson(),
+        ];
       case 'getToolPkgUiRoutes':
         value = routes.map((route) => route.toJson()).toList();
       case 'getToolPkgContainerRuntime':
@@ -575,11 +681,8 @@ class _ContextBridge extends OperitRuntimeBridge {
         value = null;
       case 'readToolPkgTextResource':
         value = 'export default function render() {}';
-      case 'executeToolPkgComposeDslScript':
-        final state =
-            (args['runtimeOptions'] as Map)['state'] as Map<String, Object?>;
-        renderStates.add(Map<String, Object?>.from(state));
-        value = _render(state);
+      case 'openComposeDslSession':
+        value = compose.open();
       case 'chatConfiguration':
         if (!durableCommitted) {
           throw StateError('Configuration read before durable commit');
@@ -602,10 +705,9 @@ class _ContextBridge extends OperitRuntimeBridge {
     return encodeCoreLink([0, value]);
   }
 
-  /// Rejects uploads because input selection is not an attachment workflow.
+  /// Submits only production Compose session commands.
   @override
-  Future<CorePushSink> push(CorePushRequest request) =>
-      throw StateError('Unexpected push');
+  Future<CorePushSink> push(CorePushRequest request) => compose.submit(request);
 
   /// Rejects snapshot-based alternate bindings explicitly.
   @override
@@ -628,104 +730,144 @@ class _ContextBridge extends OperitRuntimeBridge {
         controller.add(_event(request, currentChatId));
       });
     }
-    if (request.propertyName == 'dispatchToolPkgComposeDslActionEvents') {
-      return _dispatchAction(request);
+    if (request.propertyName == 'updates') {
+      return compose.updates(request);
     }
     throw StateError('Unexpected watch: ${request.propertyName}');
   }
 
-  /// Emits completion only after the simulated plugin durable commit has finished.
-  Stream<CoreEvent> _dispatchAction(CoreWatchRequest request) async* {
-    final args = request.args as Map<String, Object?>;
-    final state =
-        (args['runtimeOptions'] as Map)['state'] as Map<String, Object?>;
+  /// Resolves plugin actions after the simulated durable commit has finished.
+  Future<Object?> _action(Map<String, Object?> state, String actionId) async {
+    if (actionId == 'present') {
+      return {
+        'type': 'toolpkg.ui.present',
+        'routeId': 'selector-route',
+        'input': state['input'],
+      };
+    }
     final requestId = (state['presentation'] as Map)['requestId'];
-    Object? result;
-    switch (args['actionId']) {
+    switch (actionId) {
       case 'commit':
         await commitGate?.future;
         durableCommitted = true;
         events.add('durable.commit');
-        result = {
+        return {
           'type': ContributionPresentationResult.completeType,
           'requestId': requestId,
           'value': true,
         };
       case 'cancel':
-        result = {
+        return {
           'type': ContributionPresentationResult.cancelType,
           'requestId': requestId,
         };
       case 'wrong':
-        result = {
+        return {
           'type': ContributionPresentationResult.completeType,
           'requestId': 'unowned-request',
           'value': true,
         };
       case 'ordinary':
-        result = {'preview': true};
+        return {'preview': true};
       default:
-        throw StateError('Unexpected action: ${args['actionId']}');
+        throw StateError('Unexpected action: $actionId');
     }
-    yield _event(request, {
-      'phase': 'final',
-      'result': _render(state, result: result),
-    });
-    yield _event(request, {'phase': 'complete'});
   }
 }
 
 /// Renders an actual embedded DSL dialog with explicit V1 cancellation and actions.
-String _render(Map<String, Object?> state, {Object? result}) => jsonEncode({
-  'success': true,
-  'tree': {
-    'type': 'Dialog',
-    'props': {
-      'closeOnDismissRequest': false,
-      'properties': {'dismissOnBackPress': true, 'dismissOnClickOutside': true},
-      'onDismissRequest': {'__actionId': 'cancel'},
-    },
-    'children': [
-      {
-        'type': 'Column',
-        'props': {'width': 360, 'height': 320},
+String _render(Map<String, Object?> state, {Object? result}) {
+  if (!state.containsKey('presentation')) {
+    return jsonEncode({
+      'success': true,
+      'tree': {
+        'type': 'Row',
+        'props': {
+          'fillMaxWidth': true,
+          'onClick': {'__actionId': 'present'},
+        },
         'children': [
-          for (final entry in <String, String>{
-            'commit': 'Commit choice',
-            'cancel': 'Cancel choice',
-            'wrong': 'Wrong request',
-            'ordinary': 'Ordinary preview',
-          }.entries)
-            {
-              'type': 'Button',
-              'props': {
-                'text': entry.value,
-                'onClick': {'__actionId': entry.key},
+          {
+            'type': 'Column',
+            'props': {},
+            'children': [
+              {
+                'type': 'Text',
+                'props': {
+                  'text': 'Choose ${(state['input'] as Map)['plugin-note']}',
+                },
+                'children': [],
+                'slots': {},
               },
-              'children': <Object?>[],
-              'slots': <String, Object?>{},
-            },
+              {
+                'type': 'Text',
+                'props': {'text': 'DSL participant'},
+                'children': [],
+                'slots': {},
+              },
+            ],
+            'slots': {},
+          },
         ],
-        'slots': <String, Object?>{},
+        'slots': {},
       },
-    ],
-    'slots': <String, Object?>{},
-  },
-  'state': state,
-  'memo': <String, Object?>{},
-  'actionResult': result,
-});
+      'state': state,
+      'memo': {},
+      'actionResult': result,
+    });
+  }
+  return jsonEncode({
+    'success': true,
+    'tree': {
+      'type': 'Dialog',
+      'props': {
+        'closeOnDismissRequest': false,
+        'properties': {
+          'dismissOnBackPress': true,
+          'dismissOnClickOutside': true,
+        },
+        'onDismissRequest': {'__actionId': 'cancel'},
+      },
+      'children': [
+        {
+          'type': 'Column',
+          'props': {'width': 360, 'height': 320},
+          'children': [
+            for (final entry in <String, String>{
+              'commit': 'Commit choice',
+              'cancel': 'Cancel choice',
+              'wrong': 'Wrong request',
+              'ordinary': 'Ordinary preview',
+            }.entries)
+              {
+                'type': 'Button',
+                'props': {
+                  'text': entry.value,
+                  'onClick': {'__actionId': entry.key},
+                },
+                'children': <Object?>[],
+                'slots': <String, Object?>{},
+              },
+          ],
+          'slots': <String, Object?>{},
+        },
+      ],
+      'slots': <String, Object?>{},
+    },
+    'state': state,
+    'memo': <String, Object?>{},
+    'actionResult': result,
+  });
+}
 
-/// Encodes a real selected-chat snapshot or serialized DSL action event.
+/// Encodes an authoritative selected-chat watch value.
 CoreEvent _event(CoreWatchRequest request, Object? value) => CoreEvent.raw(
   requestId: request.requestId,
   target: request.target,
   propertyName: request.propertyName,
   kind: 'Changed',
   decodeValue: decodeCoreLink<Object?>,
-  valueBytes: encodeCoreLink(
-    request.propertyName == 'currentChatIdFlow' ? value : jsonEncode(value),
-  ),
+  valueBytes: encodeCoreLink(value),
 );
 
 /// Creates complete registered container metadata for the existing embedded launcher.
@@ -761,6 +903,7 @@ core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
           id: 'selector-route',
           routeId: 'selector-route',
           runtime: 'compose_dsl',
+          screenExport: null,
           screen: 'ui/selector.js',
           title: core_proxy.LocalizedText(values: {'default': 'Selection'}),
           keepAlive: false,

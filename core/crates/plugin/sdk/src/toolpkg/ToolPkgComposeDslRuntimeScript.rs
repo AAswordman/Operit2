@@ -11,28 +11,30 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
             }}
 
             /// Keeps navigation queued during intermediate renders until the action completes.
-            function __operit_wrap_compose_response(__bundle, __tree, __actionResult, __includeNavigation = true) {{
+            function __operit_wrap_compose_response(__bundle, __tree, __actionResult, __includeNavigation, __responseSink) {{
                 var __response = {{
-                    state: __bundle.state,
-                    memo: __bundle.memo,
                     navigationCommands: __includeNavigation ? __bundle.takeNavigationCommands() : []
                 }};
                 if (typeof __tree !== 'undefined') {{
-                    var __update = __bundle.composition.commit(__tree);
-                    if (__bundle.retainedDelivery) {{
-                        __response.update = __update;
-                    }} else {{
-                        __response.tree = __tree;
-                    }}
+                    __response.update = __bundle.composition.commit(__tree);
                 }}
                 if (typeof __actionResult !== 'undefined') {{
                     __response.actionResult = __actionResult;
                 }}
-                return __response;
+                __responseSink.sendComposeResponse(__includeNavigation ? 'final' : 'intermediate', __response);
+                return null;
+            }}
+
+            /// Resolves an explicit session sink before any retained commit can be generated.
+            function __operit_require_compose_response_sink(__runtime) {{
+                if (!__runtime || typeof __runtime.sendComposeResponse !== 'function') {{
+                    throw new Error('Compose stream command requires its call-owned response sink');
+                }}
+                return __runtime;
             }}
 
             /// Builds a response while preserving the caller's navigation delivery policy.
-            function __operit_build_compose_response(__bundle, __entry, __actionResult, __includeNavigation = true) {{
+            function __operit_build_compose_response(__bundle, __entry, __actionResult, __includeNavigation, __responseSink) {{
                 var __tree = OperitComposeReactive.render(__bundle.ctx, __entry);
                 if (__operit_is_promise(__tree)) {{
                     return __tree.then(function(__resolvedTree) {{
@@ -40,14 +42,25 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                             __bundle,
                             __resolvedTree,
                             __actionResult,
-                            __includeNavigation
+                            __includeNavigation,
+                            __responseSink
                         );
                     }});
                 }}
-                return __operit_wrap_compose_response(__bundle, __tree, __actionResult, __includeNavigation);
+                return __operit_wrap_compose_response(__bundle, __tree, __actionResult, __includeNavigation, __responseSink);
             }}
 
+            /// Resolves a registered entry exactly before handling standalone screen-module conventions.
             function __operitResolveComposeEntry() {{
+                if (typeof module !== 'undefined' && module && module.exports &&
+                    Object.prototype.hasOwnProperty.call(module.exports, '__operit_compose_entry_export')) {{
+                    var __exportName = module.exports.__operit_compose_entry_export;
+                    var __registeredEntry = module.exports[__exportName];
+                    if (typeof __registeredEntry !== 'function') {{
+                        throw new Error('Registered compose_dsl screen export is not a function: ' + __exportName);
+                    }}
+                    return __registeredEntry;
+                }}
                 try {{
                     if (typeof module !== 'undefined' && module && module.exports) {{
                         if (typeof module.exports.default === 'function') {{
@@ -96,13 +109,20 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                 if (__activeCallRuntime) {{
                     __options.__operit_call_runtime = __activeCallRuntime;
                 }}
-                // Input updates reuse the live context. Serialized memo is only a
-                // snapshot and cannot restore in-flight promises or listener ownership.
-                if (__options.__operit_update_inputs === true && __root.__operit_compose_bundle &&
+                var __previous = __root.__operit_compose_bundle;
+                var __sameContext = __previous && __previous.executionContextKey ===
+                    String(__options.executionContextKey || __options.__operit_compose_execution_context_key || '');
+                // Input updates preserve live refs and async ownership only within the same context.
+                if (__options.__operit_update_inputs === true && __sameContext &&
                     typeof __root.__operit_compose_entry === 'function') {{
-                    return __operit_rerender_compose_dsl(__options);
+                    return __operit_refresh_compose_inputs(__options);
                 }}
-                var __bundle = OperitComposeDslRuntime.createContext(__options);
+                var __reuse = !!__sameContext;
+                var __bundle = __reuse ? __previous : OperitComposeDslRuntime.createContext(__options);
+                if (__reuse || __options.__operit_update_inputs === true) {{
+                    __bundle.updateRuntimeOptions(__options);
+                }}
+                if (__reuse) OperitComposeReactive.environmentChanged(__bundle.ctx);
                 var __entry = __operitResolveComposeEntry();
                 if (typeof __entry !== 'function') {{
                     throw new Error(
@@ -114,10 +134,10 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                 }}
                 __root.__operit_compose_bundle = __bundle;
                 __root.__operit_compose_entry = __entry;
-                return __operit_build_compose_response(__bundle, __entry);
+                return __operit_build_compose_response(__bundle, __entry, undefined, true, __operit_require_compose_response_sink(__activeCallRuntime));
             }}
 
-            function __operit_rerender_compose_dsl(__runtimeOptions) {{
+            function __operit_refresh_compose_inputs(__runtimeOptions) {{
                 var __root = typeof globalThis !== 'undefined'
                     ? globalThis
                     : (typeof window !== 'undefined' ? window : this);
@@ -142,7 +162,7 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                 if (__activeCallRuntime && typeof __bundle.setCallRuntime === 'function') {{
                     __bundle.setCallRuntime(__activeCallRuntime);
                 }}
-                return __operit_build_compose_response(__bundle, __entry);
+                return __operit_build_compose_response(__bundle, __entry, undefined, true, __operit_require_compose_response_sink(__activeCallRuntime));
             }}
 
             function __operit_dispatch_compose_dsl_action(__actionRequest) {{
@@ -166,6 +186,7 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                     __actionRequest && typeof __actionRequest === 'object'
                         ? __actionRequest
                         : {{}};
+                var __responseSink = __operit_require_compose_response_sink(__activeCallRuntime);
                 var __runtimeOptions = Object.assign({{}}, __request);
                 if (__activeCallRuntime) {{
                     __runtimeOptions.__operit_call_runtime = __activeCallRuntime;
@@ -194,28 +215,13 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                         __payload.__noRender === true ||
                         __payload.__local === true);
 
-                /// Serializes after the render callback stack unwinds.
-                function __operit_send_intermediate_result(__value) {{
-                    if (
-                        !__composeActionCallRuntime ||
-                        typeof __composeActionCallRuntime.sendIntermediateResult !== 'function'
-                    ) {{
-                        return;
-                    }}
-                    return Promise.resolve().then(function() {{
-                        __composeActionCallRuntime.sendIntermediateResult(__value);
-                    }});
-                }}
-
                 var __actionSettled = false;
+                var __actionFinalizing = false;
+                var __intermediateRenderTask = Promise.resolve();
+                var __intermediateRenderError = null;
                 var __intermediateRenderQueued = false;
                 var __intermediateRenderInFlight = false;
                 var __unsubscribeStateChange = null;
-                var __composeActionCallRuntime =
-                    typeof __root.__operit_call_runtime_ref === 'object' &&
-                    __root.__operit_call_runtime_ref
-                        ? __root.__operit_call_runtime_ref
-                        : null;
                 var __composeActionCallId = String(
                     typeof __operitCurrentCallId === 'string' ? __operitCurrentCallId : ''
                 );
@@ -230,9 +236,10 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                     }}
                 }}
 
+                /// Allows detached work while preventing intermediate revisions from overtaking finalization.
                 function __operit_can_render_intermediate() {{
                     if (!__actionSettled) {{
-                        return true;
+                        return !__actionFinalizing;
                     }}
                     var __callId = __composeActionCallId;
                     var __callState =
@@ -258,62 +265,60 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                     }}
                 }}
 
+                /// Delivers every started commit before the final response can be generated.
                 function __operit_render_and_send_intermediate() {{
                     if (!__operit_can_render_intermediate()) {{
                         return null;
                     }}
-                    try {{
-                        var __intermediateResponse = __operit_build_compose_response(__bundle, __entry, undefined, false);
-                        if (__operit_is_promise(__intermediateResponse)) {{
-                            return __intermediateResponse.then(function(__resolvedIntermediate) {{
-                                if (__operit_can_render_intermediate()) {{
-                                    return __operit_send_intermediate_result(__resolvedIntermediate);
-                                }}
-                            }});
-                        }}
-                        return __operit_send_intermediate_result(__intermediateResponse);
-                    }} catch (__intermediateError) {{
-                        try {{
-                            console.warn('compose intermediate render failed:', __intermediateError);
-                        }} catch (__ignore) {{
-                        }}
-                    }}
-                    return null;
+                    return __operit_build_compose_response(__bundle, __entry, undefined, false, __responseSink);
                 }}
 
+                /// Owns the in-flight render and delivery task so finalization can await it.
                 function __operit_process_intermediate_queue() {{
                     if (!__operit_can_render_intermediate() || __intermediateRenderInFlight || !__intermediateRenderQueued) {{
-                        return;
+                        return __intermediateRenderTask;
                     }}
                     __intermediateRenderQueued = false;
                     __intermediateRenderInFlight = true;
-                    var __renderResult = __operit_render_and_send_intermediate();
-                    if (__operit_is_promise(__renderResult)) {{
-                        __renderResult.then(
-                            function() {{}},
-                            function() {{}}
-                        ).then(function() {{
-                            __intermediateRenderInFlight = false;
-                            if (__intermediateRenderQueued && __operit_can_render_intermediate()) {{
-                                __operit_process_intermediate_queue();
-                            }}
-                        }});
-                        return;
+                    var __renderResponse;
+                    try {{
+                        __renderResponse = __operit_render_and_send_intermediate();
+                    }} catch (__renderError) {{
+                        __renderResponse = Promise.reject(__renderError);
                     }}
-                    __intermediateRenderInFlight = false;
-                    if (__intermediateRenderQueued && __operit_can_render_intermediate()) {{
-                        __operit_process_intermediate_queue();
+                    __intermediateRenderTask = Promise.resolve(__renderResponse).then(function() {{
+                        __intermediateRenderInFlight = false;
+                        if (__intermediateRenderQueued && __operit_can_render_intermediate()) {{
+                            return __operit_process_intermediate_queue();
+                        }}
+                    }}, function(__renderError) {{
+                        __intermediateRenderInFlight = false;
+                        throw __renderError;
+                    }});
+                    __intermediateRenderTask.catch(__operit_record_intermediate_error);
+                    return __intermediateRenderTask;
+                }}
+
+                /// Preserves render failures for the final response and reports errors from detached work.
+                function __operit_record_intermediate_error(__renderError) {{
+                    if (__intermediateRenderError !== null) {{ return; }}
+                    __intermediateRenderError = __renderError;
+                    __intermediateRenderQueued = false;
+                    if (__actionSettled) {{
+                        __responseSink.reportError(String(__renderError && __renderError.message || __renderError));
+                        __operit_finalize_detached_state_listener();
                     }}
                 }}
 
+                /// Observes scheduled work while the action owns its result and error.
                 function __operit_schedule_intermediate_render() {{
                     if (!__operit_can_render_intermediate()) {{
                         return;
                     }}
                     __intermediateRenderQueued = true;
                     Promise.resolve().then(function() {{
-                        __operit_process_intermediate_queue();
-                    }});
+                        return __operit_process_intermediate_queue();
+                    }}).catch(__operit_record_intermediate_error);
                 }}
 
                 function __operit_flush_state_changes() {{
@@ -334,19 +339,29 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                     return Promise.resolve();
                 }}
 
+                /// Stops new intermediate work and drains committed delivery before producing the final revision.
                 function __operit_build_final_response(__actionResult) {{
                     return __operit_flush_state_changes().then(function() {{
+                        __actionFinalizing = true;
+                        __intermediateRenderQueued = false;
+                        return __intermediateRenderTask;
+                    }}).then(function() {{
+                        if (__intermediateRenderError) {{ throw __intermediateRenderError; }}
                         if (__noRender) {{
                             return __operit_wrap_compose_response(
                                 __bundle,
                                 undefined,
-                                __actionResult
+                                __actionResult,
+                                true,
+                                __responseSink
                             );
                         }}
                         return __operit_build_compose_response(
                             __bundle,
                             __entry,
-                            __actionResult
+                            __actionResult,
+                            true,
+                            __responseSink
                         );
                     }});
                 }}
@@ -374,6 +389,9 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                         return __operit_build_final_response(__resolvedActionResult).then(function(__finalResponse) {{
                             __operit_finalize_action();
                             return __finalResponse;
+                        }}, function(__finalError) {{
+                            __operit_finalize_action();
+                            throw __finalError;
                         }});
                     }}, function(__actionError) {{
                         __operit_finalize_action();
@@ -383,18 +401,19 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                 return __operit_build_final_response(__maybePromise).then(function(__finalResponse) {{
                     __operit_finalize_action();
                     return __finalResponse;
+                }}, function(__finalError) {{
+                    __operit_finalize_action();
+                    throw __finalError;
                 }});
             }}
 
             if (typeof exports !== 'undefined' && exports) {{
                 exports.__operit_render_compose_dsl = __operit_render_compose_dsl;
-                exports.__operit_rerender_compose_dsl = __operit_rerender_compose_dsl;
                 exports.__operit_dispatch_compose_dsl_action =
                     __operit_dispatch_compose_dsl_action;
             }}
             if (typeof module !== 'undefined' && module && module.exports) {{
                 module.exports.__operit_render_compose_dsl = __operit_render_compose_dsl;
-                module.exports.__operit_rerender_compose_dsl = __operit_rerender_compose_dsl;
                 module.exports.__operit_dispatch_compose_dsl_action =
                     __operit_dispatch_compose_dsl_action;
             }}
@@ -402,7 +421,6 @@ pub fn buildComposeDslRuntimeWrappedScript(script: &str) -> String {
                 ? globalThis
                 : (typeof window !== 'undefined' ? window : this);
             __root.__operit_render_compose_dsl = __operit_render_compose_dsl;
-            __root.__operit_rerender_compose_dsl = __operit_rerender_compose_dsl;
             __root.__operit_dispatch_compose_dsl_action =
                 __operit_dispatch_compose_dsl_action;
         }})();

@@ -125,7 +125,7 @@ export async function createMemoryJobsHarness(testContext) {
       const outcome = outcomes.shift();
       switch (outcome.kind) {
         case "error": throw outcome.error;
-        case "error-and-status-write": disk.failNext("write", outcome.statusError); throw outcome.error;
+        case "error-and-status-write": disk.failNext("storage.commit", outcome.statusError); throw outcome.error;
         case "output": return { text: outcome.text, turns: [{ kind: "ASSISTANT", content: outcome.text, metadata: { fixture: "controlled" } }],
           finishReason: "stop", metadata: { fixture: "controlled-chat-ai" }, receivedAt: SOURCE_TIME + 5000,
           /** Formats only the explicitly queued controlled response. */
@@ -135,7 +135,7 @@ export async function createMemoryJobsHarness(testContext) {
       }
     },
   });
-  const tools = strictCapability("Tools", { Files: disk.files, Chat: controlledChat });
+  const tools = strictCapability("Tools", { Files: disk.files, Storage: disk.storage, Chat: controlledChat });
   const statePath = path.join(disk.directory, "character-memory", "state.json");
 
   /** Opens a fresh production main module against the same real disk after the previous runtime is retired. */
@@ -188,9 +188,9 @@ export async function createMemoryJobsHarness(testContext) {
   return {
     disk, tools, modelCalls, rangeCalls, findCalls, extensionCalls, statePath, openRuntime,
     /** Reads native authoritative bytes independently of retained plugin memory. */
-    readStateText() { return readFile(statePath, "utf8"); },
+    readStateText() { return disk.stateBytes().toString("utf8"); },
     /** Parses native state bytes without repairing them or supplying missing records. */
-    async readState() { return JSON.parse(await readFile(statePath, "utf8")); },
+    async readState() { return JSON.parse(await disk.stateBytes().toString("utf8")); },
     /** Queues one explicitly supplied controlled JSON response, including the documented no-facts object. */
     queueAnalysis(value) { assert.notEqual(value, undefined); outcomes.push({ kind: "output", text: JSON.stringify(value) }); },
     /** Queues an exact error object whose identity must survive the production job pipeline. */

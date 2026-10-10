@@ -41,10 +41,17 @@ impl SqliteStore {
     /// Opens a runtime-hosted SQLite database and enables foreign keys.
     pub fn open(path: PathBuf) -> Result<Self, SqliteStoreError> {
         let storagePath = runtimeStoragePath(&path);
-        let mut connection = defaultRuntimeSqliteHost().openSqliteDatabase(&storagePath)?;
+        let mut store = Self::openWithHost(defaultRuntimeSqliteHost(), &storagePath)?;
+        store.path = path;
+        Ok(store)
+    }
+
+    /// Opens an explicitly validated host path without platform-specific filesystem access.
+    pub fn openWithHost(host: Arc<dyn operit_host_api::RuntimeSqliteHost>, storagePath: &str) -> Result<Self, SqliteStoreError> {
+        let mut connection = host.openSqliteDatabase(storagePath)?;
         connection.execute("PRAGMA foreign_keys = ON", Vec::new())?;
         Ok(Self {
-            path,
+            path: PathBuf::from(storagePath),
             connection: Arc::new(Mutex::new(connection)),
             observers: Arc::new(Mutex::new(Vec::new())),
             executionLeases: Arc::new(Mutex::new(

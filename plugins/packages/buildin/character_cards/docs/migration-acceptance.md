@@ -1,72 +1,84 @@
-# Plugin-owned character and memory file acceptance
+# Character and memory storage migration
 
-## Decision and scope
+The unreleased plugin JSON backend is removed. Released Core v27 data and Operit1
+snapshots are adopted by one removable migration boundary in Core:
+`data/backup/CharacterPluginMigration.rs`. Production business operations remain in
+the plugin, using generic `Tools.Storage.objects` and `Tools.Files` APIs.
 
-**Existing users' character/memory data is not compatible and is not migrated.**
-The plugin directory's files are the only authoritative character/memory source.
-Legacy-data compatibility, int64 migration, old preference import, and old SQLite
-migration are deliberately unsupported, not completed work or pending release gates.
-Manual interchange/import/export is evaluated against the current plugin contract.
+`CharacterPluginLegacyData.rs` contains only the released source record layouts,
+settings/profile readers and source directory encoding. These types are private to
+the backup module. Core no longer exports character/memory models, repositories,
+search/graph algorithms, extraction schedulers, ObjectBox writers or synchronization,
+native memory tool descriptions, or dedicated SDK result and active-prompt types.
+Missing optional source settings retain the defaults declared by that released schema;
+malformed source fields remain errors. Reading a source USER.md never creates or
+rewrites the old profile file.
 
-This document does not approve a new SDK, storage wrapper, or provider framework.
-It records evidence required from the actual implementation. Node IO adaptation,
-browser fixtures, source checks, declarations, or unexecuted Rust tests must never
-be described as live application or host integration.
+## Persistence contract
 
-## Acceptance matrix
+The database is `characters.sqlite` under the stable Space plugin data directory.
+Collections contain separate card, group, tag, shared-store, owner, memory, chunk,
+link, autosave-candidate and embedding records. Metadata holds the active selection,
+next decimal-string identity and migration state. Ordinary domain writes use one
+atomic changed-record commit with exact-version guards. Reads use bounded pages;
+operation sessions currently assemble a validated snapshot in memory.
 
-| Area | Required evidence | Current evidence boundary |
-| --- | --- | --- |
-| First initialization | Actual repository opens a real new temporary plugin directory and persists its declared initial records | Pending production file repository |
-| Restart/reopen | A newly loaded service/runtime reads saved files from the same directory, including identities and edited fields | Pending actual disk test |
-| Bad files | Corrupt JSON, wrong schema, and malformed records explicitly fail without overwriting bytes or returning an empty library | Pending actual disk test |
-| IO errors | Read/write/publish failures propagate, preserve the authoritative file, and do not publish partial mutations | Pending actual disk test; negative dependency tests are not persistence |
-| Card and tags | All staged creates/updates/deletes and card bindings publish once; failed commit publishes neither | Pending actual service/file commit test |
-| Ownership | Character and shared namespaces remain isolated; unknown owners fail without creating another store | Pure grammar covered; actual disk ownership pending |
-| Complete records | Current card/group/tag/store/memory/document/chunk/link fields survive writes and reopen | Pure record/codec checks only |
-| Documents and links | Chunk content/ordering, document paths, UUID endpoints, types, weights, and relationship descriptions persist | Browser/pure shapes only; actual disk pending |
-| Settings and USER.md | Complete owner settings/search weights and profile text persist independently and reopen correctly | Browser request scope only; actual disk pending |
-| Same service | Registered command/API/Web IPC mutations and reads share one actual file-backed service | Static imports checked; real entrypoints pending |
-| UI production path | Real menu/sidebar/popup/chat binding/attachment entry opens current typed views and saves through that service | Isolated views and route captures are not production launch |
-| Provider errors | Unknown/disabled providers and dependency failures produce explicit actual-path errors | Routing static/catalog cases only; no application runtime execution |
-| Extraction | Named mounted managers, chat ownership/background policy, AI memory consumers, and builtin tools no longer own this domain | Failing architecture assertions remain visible |
-| Legacy user data | No automatic reads/import of existing Core character or memory data | Unsupported and not migrated by decision |
+USER.md remains an actual editable file. Writes stage a sibling before the record
+commit and publish after it. Record transactions and external file publication have
+separate failure boundaries. Original failures remain visible and stop subsequent
+operations on the same repository instance.
 
-## Explicit mounted-path audit
+## Migration and deletion sequence
 
-Checks follow named `mod` declarations and real calls rather than treating the
-entire repository's retained source as active. Required inspected paths include:
+1. Database 27→28 stages old card names and group IDs in a temporary extension
+   namespace before removing those columns, preserving native conversation folders.
+2. Startup reads the four dedicated preference stores, owner settings, USER.md and
+   legacy memory SQLite tables through established store/Host structures.
+3. The common writer checks references, records an in-progress marker and writes
+   bounded batches through the production plugin storage dispatcher. Numeric source
+   identities become exact decimal strings. Referenced legacy resources are copied
+   into plugin ownership and their Files API paths are updated.
+4. Each written record, document and resource is read back and verified. Completion
+   is recorded only after all batches are stored. The plugin refuses incomplete data.
+5. Core resolves staged bindings in both current chats and historical sync chat rows.
+6. Cleanup validates every exact source path, removes migrated owner directories and
+   dedicated preferences, removes empty owner parent directories, and records cleanup
+   completion. Reopening continues incomplete cleanup without importing completed
+   source data again. Unrelated paths and directories remain outside the cleanup set.
 
-- ProviderRuntimeSupportService and ToolRuntimeSupportService manager consumption;
-- exported provider/tool runtime domain traits and DTOs;
-- OperitApplication startup and MemoryManagementService background controls;
-- ChatServiceCore and MessageCoordinationDelegate manager/owner consumers;
-- ChatMemoryOwnerResolver;
-- mounted provider EnhancedAIService character prompt/USER.md/autosave calls;
-- mounted MemoryLibrary repository/search policy and MemoryAutoSaveScheduler calls;
-- StandardMemoryTools and ToolRegistration public/internal builtin executors;
-- plugin canonical dedicated SDK/global dependencies and all command/API/IPC imports.
+Released automatic memory candidates store a reply-completion history cutoff, not
+the message creation timestamp. Core and Operit1 share one conversion: the final
+persisted message at or before that cutoff supplies the actual assistant timestamp
+and selected variant. Selected-user candidates retain exact timestamp matching.
+An empty or ambiguous source range, an incorrect sender or an invalid variant is an
+explicit migration error; candidates are never discarded or assigned invented versions.
 
-## Disk-harness boundary
+The synchronization service no longer requests the retired ObjectBox domain, and
+Core no longer applies its former character/memory operations.
 
-Use a real temporary directory and the real plugin repository. Adapt only existing
-host file calls to Node fs, confine every path to that directory, inspect actual
-file bytes, and reopen a new runtime. Do not implement domain records, first-start
-policy, commits, owner resolution, or caches in the harness. Predetermined browser
-responses belong only to isolated UI tests. Successful harness IO alone is not a
-passing repository or host integration test.
+## Evidence boundaries
 
-## Reproduction and reporting
+| Check | What it establishes |
+| --- | --- |
+| Strict host/browser checks | Current sources agree with actual declarations without relaxed TypeScript settings |
+| Node repository/service tests | Current plugin operations use a generic real SQLite/filesystem adapter; edits commit changed records, preserve exact identities and original errors, and survive reopen |
+| Rust migration tests | The production object storage dispatcher and native Hosts execute paged adoption, verify documents/resources, reject unsafe cleanup and resume interruption |
+| Rust DB migration tests | Actual 27→28 upgrades preserve records, source bindings, schema and transaction rollback at each statement boundary |
+| Operit1 source tests | Real Room 10/20/21 readers preserve native folders and stage legacy associations; settings XML and schema scalar semantics are explicitly parsed |
+| Package checks | Current generated bundle/source/archive bytes agree |
 
-From the repository root:
+These checks do not establish a complete Flutter launch, live application activation,
+or successful import of a user-supplied ObjectBox snapshot. Synthetic or source-only
+checks must be reported separately from executed Rust Host behavior.
+
+## Commands
 
 ```powershell
-node --test plugins/packages/buildin/character_cards/tests/*.test.mjs
 node plugins/packages/buildin/character_cards/scripts/check.mjs
-node core/crates/command/core/scripts/check-routing.mjs
+node --test plugins/packages/buildin/character_cards/tests/storage-persistence.test.mjs
+node --test plugins/packages/buildin/character_cards/tests/operit1-snapshot.test.mjs
+cargo test -p operit-runtime CharacterPluginMigration --lib --manifest-path core/Cargo.toml
+cargo test -p operit-store migration_tests --lib --manifest-path core/Cargo.toml
+node plugins/packages/buildin/character_cards/scripts/build.mjs
 git diff --check
 ```
-
-Report test counts including failures/skips, strict host and browser results
-separately, and exact failure paths. No Rust/Flutter compilation or live host
-persistence is claimed. Do not erase architecture failures to make pure UI green.

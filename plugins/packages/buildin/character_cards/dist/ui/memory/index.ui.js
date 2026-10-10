@@ -412,6 +412,7 @@ var id = shape({ id: required(nonblank) });
 var ownerOnly = shape({ ownerKey: required(owner) });
 var contentOnly = shape({ content: required(text2) });
 var format = enumeration("operit", "tavern");
+var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
   "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text2), folderPath: required(nullable(text2)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
@@ -605,7 +606,7 @@ function createUiScreenSession(presentation) {
   };
 }
 
-// src/host.ts
+// src/ui-editor.ts
 function webArguments(value, expected) {
   if (value.length !== 1 || !Array.isArray(value[0]) || value[0].length !== expected) throw new Error(`CharacterMemoryHost expects ${expected} arguments`);
   return value[0];

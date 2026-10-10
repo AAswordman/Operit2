@@ -58,6 +58,7 @@ pub struct AIToolHandler {
     executorAvailability: Arc<tokio::sync::Notify>,
     /// Contains only the immutable package identity bound by the JavaScript engine.
     pub(super) authenticatedExtensionOwner: Option<String>,
+    pub(super) storageSession: operit_store::PluginStorage::PluginStorageSession,
 }
 
 /// Returns a taken executor on normal completion, cancellation or panic unwinding.
@@ -153,6 +154,20 @@ impl AIToolHandler {
         PathMapper::joinVfsPath("/app/data", relative)
     }
 
+    /// Creates persistent local plugin data through the filesystem Host and returns its public VFS path.
+    fn createPackageDataDirectory(&self, owner_id: &str, scope: &str) -> Result<String, String> {
+        let path = operit_store::ExtensionStore::ExtensionStore::dataPathForScope(owner_id, scope)?;
+        let directory = RuntimeStorePaths::default().runtime_storage_path(&path);
+        self.getContext()
+            .fileSystemHost
+            .as_ref()
+            .ok_or("FileSystemHost is required for local plugin data")?
+            .makeDirectory(&directory.to_string_lossy(), true)
+            .map_err(|error| error.to_string())?;
+        let relative = path.strip_prefix("runtime/").ok_or("Local plugin data is outside runtime storage")?;
+        PathMapper::joinVfsPath("/app/data", relative)
+    }
+
     fn truncateLogValue(value: &str, maxChars: usize) -> String {
         let mut truncated = String::new();
         for character in value.chars().take(maxChars) {
@@ -199,6 +214,7 @@ impl AIToolHandler {
             })),
             executorAvailability: Arc::new(tokio::sync::Notify::new()),
             authenticatedExtensionOwner: None,
+            storageSession: operit_store::PluginStorage::PluginStorageSession::default(),
         }
     }
 
@@ -1337,7 +1353,9 @@ impl JsExecutionHost for AIToolHandler {
                     context.container_package_name
                 )
             })?;
-        if !registry.isPackageEnabled(&context.container_package_name) {
+        if !registry.getEnabledToolPkgContainerRuntimes().iter()
+            .any(|runtime| runtime.packageName == context.container_package_name)
+        {
             return Err(format!(
                 "ToolPkg extension owner is disabled: {}",
                 context.container_package_name
@@ -1345,6 +1363,7 @@ impl JsExecutionHost for AIToolHandler {
         }
         let mut host = self.clone();
         host.authenticatedExtensionOwner = Some(context.container_package_name.clone());
+        host.storageSession = operit_store::PluginStorage::PluginStorageSession::default();
         Ok(Arc::new(host))
     }
 
@@ -1528,6 +1547,28 @@ impl JsExecutionHost for AIToolHandler {
         scope: ToolPkgConfigScope,
     ) -> Result<String, String> {
         self.createPackageConfigDirectory(owner_id, plugin_id, scope.as_str())
+    }
+
+    /// Resolves the current package container for its persistent device-local data directory.
+    fn plugin_local_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        let owner = operit_store::ExtensionStore::ExtensionStore::default().packageOwner(owner_id)?;
+        self.createPackageDataDirectory(&owner.id, "device")
+    }
+
+    /// Creates registration-local data using the owner validated by the engine without package manager locks.
+    fn registration_plugin_local_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        self.createPackageDataDirectory(owner_id, "device")
+    }
+
+    /// Resolves the current package's shared data without changing its installation scope.
+    fn plugin_space_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        let owner = operit_store::ExtensionStore::ExtensionStore::default().packageOwner(owner_id)?;
+        self.createPackageDataDirectory(&owner.id, "space")
+    }
+
+    /// Creates shared data for registration without accessing installed package state.
+    fn registration_plugin_space_data_dir(&self, owner_id: &str) -> Result<String, String> {
+        self.createPackageDataDirectory(owner_id, "space")
     }
 
     /// Reads one ToolPkg text resource.

@@ -219,8 +219,9 @@ test('apply, active update and ordinary save commit the full snapshot and named 
   assert.match(apply, /writeThemePreferenceSnapshot\(preferences, &config\.snapshot\)\?/);
   assert.match(apply, /state\.activeThemeConfigId = Some\(config\.id\.clone\(\)\)/);
   assert.match(body(manager, 'update'), /state\.activeThemeConfigId\.as_deref\(\) == Some\(id\.as_str\(\)\)[\s\S]*writeThemePreferenceSnapshot/);
-  assert.match(body(manager, 'saveAppearance'), /findConfigIndex\(&state, &id\)\?[\s\S]*snapshot: snapshot\.clone\(\)[\s\S]*state\.configs\[index\] = config\.clone\(\)/);
-  assert.match(body(manager, 'saveAppearance'), /writeThemePreferenceSnapshot\(preferences, &snapshot\)\?/);
+  assert.match(body(manager, 'saveAppearance'), /commitAppearance\(preferences, &snapshot\)/);
+  assert.match(body(manager, 'commitAppearance'), /findConfigIndex\(&state, &id\)\?[\s\S]*snapshot: snapshot\.clone\(\)[\s\S]*state\.configs\[index\] = config\.clone\(\)/);
+  assert.match(body(manager, 'commitAppearance'), /writeThemePreferenceSnapshot\(preferences, snapshot\)\?/);
   assert.equal([...manager.matchAll(/const\s+[A-Z_]+_KEY:/g)].length, 2);
   assert.doesNotMatch(manager, /active_snapshot|activeSnapshot|role_theme|group_theme/);
 });

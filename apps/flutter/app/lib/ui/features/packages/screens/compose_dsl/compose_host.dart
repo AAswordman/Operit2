@@ -55,8 +55,7 @@ class _ComposeHostState extends State<_ComposeHost> {
     final title = widget.dialogTitle;
     final tree = widget.renderResult?.tree;
     final rootIsDialog = tree?.type == 'Dialog' || tree?.type == 'AlertDialog';
-    if (title == null ||
-        (!widget.loading && widget.error == null && rootIsDialog)) {
+    if (title == null || (!widget.loading && rootIsDialog)) {
       return content;
     }
     return AlertDialog(
@@ -83,31 +82,39 @@ class _ComposeHostState extends State<_ComposeHost> {
     if (widget.loading) {
       return const SizedBox.shrink();
     }
-    if (widget.error != null) {
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              widget.error!,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+    final error = widget.error;
+    final errorView = error == null
+        ? null
+        : Material(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                error,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+              ),
             ),
-          ),
-        ),
-      );
-    }
+          );
     if (tree == null) {
-      return const _NoUiView();
+      return errorView == null ? const _NoUiView() : Center(child: errorView);
     }
-    return _ComposeDslRenderer(
-      node: tree,
-      onAction: widget.onAction,
-      onTextInput: widget.onTextInput,
-      webViewHostContext: widget.webViewHostContext,
-      splitMarkdownContent: widget.splitMarkdownContent,
-      embedDialog: widget.dialogTitle != null,
+    // Keep the mounted renderer in a stable slot while reporting action failures.
+    // Removing it would fire disposal callbacks, whose commits can mount it again.
+    return Stack(
+      children: [
+        _ComposeDslRenderer(
+          node: tree,
+          onAction: widget.onAction,
+          onTextInput: widget.onTextInput,
+          webViewHostContext: widget.webViewHostContext,
+          splitMarkdownContent: widget.splitMarkdownContent,
+          embedDialog: widget.dialogTitle != null,
+        ),
+        if (errorView != null)
+          Positioned(top: 0, left: 0, right: 0, child: errorView),
+      ],
     );
   }
 
@@ -142,4 +149,26 @@ class _ComposeHostState extends State<_ComposeHost> {
       await widget.onAction(rootOnLoadActionId, null);
     });
   }
+}
+
+/// Exposes error presentation with the production host lifecycle for widget regression tests.
+@visibleForTesting
+Widget buildComposeDslHostForTest({
+  required Map<String, Object?> node,
+  required ComposeDslWebViewHostContext hostContext,
+  String? error,
+}) {
+  final tree = _ComposeDslNode.parse(node);
+  if (tree == null)
+    throw const FormatException('A Compose host requires a valid node');
+  return _ComposeHost(
+    loading: false,
+    error: error,
+    renderResult: _ComposeDslRenderResult(tree: tree, actionResult: null),
+    showLoadingIndicator: false,
+    onAction: hostContext.dispatchAction,
+    onTextInput: (id, text) => hostContext.dispatchAction(id, text),
+    webViewHostContext: hostContext,
+    splitMarkdownContent: (_) async => [],
+  );
 }

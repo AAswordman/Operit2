@@ -1,7 +1,9 @@
+import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { buildMainScript, buildUiScreenScripts } from "../scripts/build.mjs";
 import { packageRuntime, sdkScript } from "./package-runtime.mjs";
@@ -31,9 +33,13 @@ function registeredPackage(modules, registrationOnly = false) {
 function renderRoute(modules, route, state) {
   const runtime = packageRuntime(modules);
   runtime.context.module = { exports: runtime.load(route.screen) };
+  for (const script of ["ToolPkgComposeDslCompiler.js", "ToolPkgComposeDslRetained.js", "ToolPkgComposeDslReactive.js"]) {
+    vm.runInContext(readFileSync(new URL("../../../../../core/crates/plugin/sdk/src/toolpkg/" + script, import.meta.url), "utf8"), runtime.context);
+  }
   vm.runInContext(sdkScript("ToolPkgComposeDslBridge.rs"), runtime.context);
   const wrapper = sdkScript("ToolPkgComposeDslRuntimeScript.rs").replaceAll("{{", "{").replaceAll("}}", "}").replace("{script}", "");
   vm.runInContext(wrapper, runtime.context);
+  composeStreamFixture(runtime.context).adapt();
   return runtime.context.__operit_render_compose_dsl({ state, moduleSpec: route });
 }
 
@@ -41,11 +47,11 @@ function renderRoute(modules, route, state) {
 function nodes(node) { return [node, ...node.children.flatMap(nodes)]; }
 
 /** Reproduces the native path-only registration boundary instead of directly calling main.screen in-process. */
-test("registered Compose routes retain six independent executable module paths", async () => {
+test("registered Compose routes retain seven independent executable module paths", async () => {
   const modules = { "dist/main.js": await buildMainScript(), ...await buildUiScreenScripts() };
   const plugin = registeredPackage(modules);
-  assert.equal(plugin.routes.length, 6);
-  assert.equal(new Set(plugin.routes.map(route => route.screen )).size, 6,
+  assert.equal(plugin.routes.length, 7);
+  assert.equal(new Set(plugin.routes.map(route => route.screen )).size, 7,
     "Path-only SDK registration must not collapse distinct named main exports to dist/main.js");
   for (const route of plugin.routes) {
     assert.equal(route.screen, `dist/ui/${route.id}/index.ui.js`);
@@ -64,6 +70,7 @@ test("the SDK Compose wrapper renders every serialized character route with its 
     memory: { state: {}, type: "Box", text: "正在加载记忆…" },
     "memory-attachment": { state: { presentation: { requestId: "attachment-route-test", input: { mode: "memory-attachment", ownerKey: null, folderPath: null } } }, type: "Box", text: "正在加载角色卡…" },
     "chat-sidebar": { state: { input: { view: "characters" }, chatSidebar: { chats: [], currentChatId: null, activeStreamingChatIds: [] } }, type: "Column", key: "native-character-sidebar" },
+    "chat-input-menu": { state: { chatId: null, input: {} }, type: "Box", key: "current-character-loading" },
     selection: { state: { presentation: { requestId: "selection-route-test", input: { mode: "select", kind: "all", selected: null, chatId: null } } }, type: "Dialog", key: "character-selection" },
     "group-execution": { state: { presentation: { requestId: "group-route-test", input: { mode: "group-execution", chatId: "explicit-chat-test" } } }, type: "Dialog", key: "group-execution-dialog" },
   };
@@ -85,7 +92,7 @@ test("installed and Core production archives contain the executable registered s
   assert.equal(Buffer.compare(packaged, production), 0, "Core must install the rebuilt package archive");
   const modules = unzipSync(packaged), plugin = registeredPackage(modules);
   const currentScreens = await buildUiScreenScripts();
-  assert.equal(new Set(plugin.routes.map(route => route.screen )).size, 6);
+  assert.equal(new Set(plugin.routes.map(route => route.screen )).size, 7);
   for (const route of plugin.routes) {
     assert.ok(Object.hasOwn(currentScreens, route.screen), "Undeclared installed screen: " + route.screen);
     const installed = await readFile(new URL("../" + route.screen, import.meta.url));
@@ -98,8 +105,8 @@ test("installed and Core production archives contain the executable registered s
 /** Exercises the engine's real registration-only placeholders without evaluating or even supplying UI bundles. */
 test("registration-only main resolves independent UI placeholders without evaluating screens", async () => {
   const plugin = registeredPackage({ "dist/main.js": await buildMainScript() }, true);
-  assert.equal(plugin.routes.length, 6);
-  assert.equal(new Set(plugin.routes.map(route => route.screen )).size, 6);
+  assert.equal(plugin.routes.length, 7);
+  assert.equal(new Set(plugin.routes.map(route => route.screen )).size, 7);
   for (const route of plugin.routes) assert.equal(route.screen, `dist/ui/${route.id}/index.ui.js`);
 });
 
@@ -116,7 +123,7 @@ test("UI bundles omit the file repository and memory job backend", async () => {
   const screens = await buildUiScreenScripts();
   for (const [screen, bytes] of Object.entries(screens)) {
     const script = Buffer.from(bytes).toString("utf8");
-    assert.doesNotMatch(script, /FileCharacterRepository|MemoryJobRunner|function createServiceRuntime/, screen);
+    assert.doesNotMatch(script, /DatabaseCharacterRepository|MemoryJobRunner|function createServiceRuntime/, screen);
   }
   assert.ok(screens["dist/ui/chat-sidebar/index.ui.js"].length < 100_000,
     "Keep the native sidebar lightweight instead of bundling the management backend");

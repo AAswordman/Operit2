@@ -176,6 +176,18 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
         scope: ToolPkgConfigScope,
     ) -> Result<String, String>;
 
+    /// Creates stable device-local data for the current installed package container.
+    fn plugin_local_data_dir(&self, owner_id: &str) -> Result<String, String>;
+
+    /// Creates stable device-local data for the owner selected before registration.
+    fn registration_plugin_local_data_dir(&self, owner_id: &str) -> Result<String, String>;
+
+    /// Creates persistent shared data independently of the package's installation scope.
+    fn plugin_space_data_dir(&self, owner_id: &str) -> Result<String, String>;
+
+    /// Creates persistent shared data for the package selected before registration.
+    fn registration_plugin_space_data_dir(&self, owner_id: &str) -> Result<String, String>;
+
     /// Reads one UTF-8 ToolPkg resource.
     fn read_toolpkg_text_resource(
         &self,
@@ -245,14 +257,14 @@ pub trait JsExecutionProvider: Send + Sync {
     fn create_execution_engine(
         &self,
         execution_host: Arc<dyn JsExecutionHost>,
-    ) -> Arc<dyn JsExecutionEngine>;
+    ) -> Result<Arc<dyn JsExecutionEngine>, String>;
 
     /// Creates one JavaScript engine bound to a ToolPkg package environment.
     fn create_toolpkg_execution_engine(
         &self,
         execution_host: Arc<dyn JsExecutionHost>,
         context: ToolPkgExecutionContext,
-    ) -> Arc<dyn JsExecutionEngine>;
+    ) -> Result<Arc<dyn JsExecutionEngine>, String>;
 
     /// Creates one package executor bound to caller-owned runtime contracts.
     fn create_package_executor(
@@ -345,7 +357,7 @@ pub trait JsPackageRuntime: Send + Sync {
         &self,
         context_key: &str,
         container_package_name: &str,
-    ) -> Arc<dyn JsExecutionEngine>;
+    ) -> Result<Arc<dyn JsExecutionEngine>, String>;
 }
 
 /// Captured metadata emitted by a package's main registration script.
@@ -480,42 +492,24 @@ pub trait JsExecutionEngine: Send + Sync {
         text_resources: Option<Arc<BTreeMap<String, String>>>,
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture>;
 
-    /// Executes one Compose DSL render script with its immutable package text resources.
-    fn execute_compose_dsl_script(
-        &self,
-        script: &str,
-        runtime_options: &BTreeMap<String, Value>,
-        env_overrides: &BTreeMap<String, String>,
-        text_resources: Arc<BTreeMap<String, String>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>>;
-
-    /// Executes one Compose DSL render without blocking the caller runtime.
-    fn execute_compose_dsl_script_async(
+    /// Executes a streamed render with a synchronous sink for every generated retained commit.
+    fn execute_compose_dsl_script_stream_async(
         &self,
         script: String,
         runtime_options: BTreeMap<String, Value>,
         env_overrides: BTreeMap<String, String>,
         text_resources: Arc<BTreeMap<String, String>>,
+        on_response: Arc<dyn Fn(Value) + Send + Sync>,
     ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>>;
 
-    /// Dispatches one Compose DSL action and emits intermediate render events.
-    fn dispatch_compose_dsl_action(
-        &self,
-        action_id: &str,
-        payload: Option<Value>,
-        runtime_options: &BTreeMap<String, Value>,
-        env_overrides: &BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
-    ) -> JsExecutionCompletion<JsExecutionResult<Option<Value>>>;
-
     /// Dispatches one Compose DSL action without blocking the caller runtime.
-    fn dispatch_compose_dsl_action_result_async(
+    fn dispatch_compose_dsl_action_stream_async(
         &self,
         action_id: String,
         payload: Option<Value>,
         runtime_options: BTreeMap<String, Value>,
         env_overrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+        on_intermediate_result: Arc<dyn Fn(Value) + Send + Sync>,
     ) -> JsExecutionFuture<JsExecutionResult<Option<Value>>>;
 
     /// Destroys any engine resources owned by this handle.

@@ -270,31 +270,32 @@ fn parseCapturedRegistration(
     if registration.chatLifecycleHooks.len() > 1 {
         return Err(format!("Duplicate chat lifecycle hook owner: {toolPkgId}"));
     }
-    validateSidebarTabRoutes(&registration, toolPkgId)?;
+    validateEmbeddedRoutes(&registration, toolPkgId)?;
     Ok(registration)
 }
 
-/// Requires sidebar tabs to reference exactly one package-owned Compose DSL route in the actual captured registration.
+/// Requires embedded surfaces to reference exactly one package-owned Compose DSL route in the captured registration.
 #[allow(non_snake_case)]
-fn validateSidebarTabRoutes(registration: &ToolPkgMainRegistration, toolPkgId: &str) -> Result<(), String> {
+fn validateEmbeddedRoutes(registration: &ToolPkgMainRegistration, toolPkgId: &str) -> Result<(), String> {
     let routes = registration.uiRoutes.iter().map(|route| (route.routeId.clone(), route.runtime.as_str()))
         .chain(registration.toolboxUiModules.iter().map(|module| (buildToolPkgRouteId(toolPkgId, module.id.trim()), module.runtime.as_str())))
         .collect::<Vec<_>>();
     for (index, entry) in registration.navigationEntries.iter().enumerate() {
-        if entry.surface != TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS { continue; }
-        let routeId = entry.routeId.as_deref().ok_or_else(|| format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is required for chat_sidebar_tabs"))?;
+        if entry.surface != TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS && entry.surface != TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU { continue; }
+        let surface = &entry.surface;
+        let routeId = entry.routeId.as_deref().ok_or_else(|| format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is required for {surface}"))?;
         if !routeId.starts_with(&format!("toolpkg:{toolPkgId}:ui:")) {
-            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must belong to this package for chat_sidebar_tabs: {routeId}"));
+            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must belong to this package for {surface}: {routeId}"));
         }
         let matching = routes.iter().filter(|(route, _)| route == routeId).collect::<Vec<_>>();
         if matching.is_empty() {
             return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route not found: {routeId}"));
         }
         if matching.len() != 1 {
-            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is duplicated for chat_sidebar_tabs: {routeId}"));
+            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route is duplicated for {surface}: {routeId}"));
         }
         if matching[0].1 != TOOLPKG_RUNTIME_COMPOSE_DSL {
-            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must use compose_dsl for chat_sidebar_tabs: {routeId}"));
+            return Err(format!("{TOOLPKG_REGISTRATION_NAVIGATION_ENTRY}[{index}].route must use compose_dsl for {surface}: {routeId}"));
         }
     }
     Ok(())
@@ -395,7 +396,11 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiModule {
     /// Validates the identifier and screen path of a UI module registration.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
-        requireNotBlank(&self.screen, "screen", registryName, index)
+        requireNotBlank(&self.screen, "screen", registryName, index)?;
+        if let Some(exportName) = &self.screenExport {
+            requireNotBlank(exportName, "screenExport", registryName, index)?;
+        }
+        Ok(())
     }
 }
 
@@ -417,6 +422,9 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredUiRoute {
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireNotBlank(&self.screen, "screen", registryName, index)?;
+        if let Some(exportName) = &self.screenExport {
+            requireNotBlank(exportName, "screenExport", registryName, index)?;
+        }
         requireNotBlank(&self.routeId, "route", registryName, index)
     }
 }
@@ -441,13 +449,13 @@ impl ValidateToolPkgRegistration for ToolPkgRegisteredNavigationEntry {
         }
     }
 
-    /// Validates exact surfaces and requires attachment and sidebar-tab routes without action callbacks.
+    /// Validates exact surfaces and requires embedded UI routes without native action callbacks.
     fn validate(&self, registryName: &str, index: usize) -> Result<(), String> {
         requireNotBlank(&self.id, "id", registryName, index)?;
         requireToolPkgNavigationSurface(&self.surface).map_err(|error| {
             format!("{registryName}[{index}].surface {error}")
         })?;
-        if self.surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || self.surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS {
+        if self.surface == TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS || self.surface == TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS || self.surface == TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU {
             if self.action.is_some() {
                 return Err(format!("{registryName}[{index}].action is unsupported for {}", self.surface));
             }

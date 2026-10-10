@@ -23,7 +23,7 @@ test("character management retains only original section and row actions", () =>
 test("role editor binding tab retains model, theme, TTS, memory and tool sections", () => {
   const { snapshot } = fixture(), card = snapshot.cards[1];
   card.themeConfigId = "retained-theme-reference";
-  const body = character.characterBody({ card, tab: 2, tags: snapshot.tags, ttsBindingEnabled: false }, snapshot, new Map());
+  const body = character.characterBody({ card, tab: 2, tags: snapshot.tags, ttsBindingEnabled: false }, snapshot, new Map(), fixture().themeChoices);
   assert.equal([...body.matchAll(/<section class="binding"/g)].length, 5);
   assert.deepEqual([...body.matchAll(/role="switch"[^>]*aria-label="([^"]+)"/g)].map(match => match[1]), ["聊天模型", "TTS 配置", "记忆绑定", "工具访问"]);
   assert.match(body, /主题配置/);
@@ -46,7 +46,7 @@ test("group tile drops extra preview, edit, description and member-name badge", 
 test("group editor retains theme controls but omits notices and ordering actions", () => {
   const { snapshot } = fixture(), group = snapshot.groups[0];
   group.themeConfigId = "retained-group-theme";
-  const body = groups.groupBody({ group }, snapshot);
+  const body = groups.groupBody({ group }, snapshot, fixture().themeChoices);
   assert.equal([...body.matchAll(/class="field[ "]/g)].length, 2);
   assert.equal([...body.matchAll(/type="checkbox"/g)].length, snapshot.cards.length);
   assert.match(body, /data-action="select-theme"/);

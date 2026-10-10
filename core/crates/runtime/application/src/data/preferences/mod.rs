@@ -22,8 +22,6 @@ pub mod FunctionalConfigManager;
 pub mod GitHubAuthBus;
 #[path = "GitHubAuthPreferences.rs"]
 pub mod GitHubAuthPreferences;
-#[path = "MemorySearchSettingsPreferences.rs"]
-pub mod MemorySearchSettingsPreferences;
 #[path = "ModelConfigManager.rs"]
 pub mod ModelConfigManager;
 #[path = "PreferenceStorageManager.rs"]
@@ -59,7 +57,6 @@ pub use FreeUsagePreferences::*;
 pub use FunctionalConfigManager::*;
 pub use GitHubAuthBus::*;
 pub use GitHubAuthPreferences::*;
-pub use MemorySearchSettingsPreferences::*;
 pub use ModelConfigManager::*;
 pub use PreferenceStorageManager::*;
 pub use PromptVersionManager::*;

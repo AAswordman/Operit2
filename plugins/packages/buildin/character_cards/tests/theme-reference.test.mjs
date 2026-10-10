@@ -11,7 +11,7 @@ const codec = loadModule("src/serialization.ts"), backup = loadModule("src/backu
 /** Creates a complete intentional new character with a single-direction independent configuration reference. */
 function character(themeConfigId) { return { ...plain(drafts.createCharacterDraft()), name: "Independent theme role", themeConfigId }; }
 /** Opens actual temporary plugin files without implementing a theme directory or a successful configuration apply. */
-async function repository(disk) { return loadModule("src/storage/files.ts", disk.globals).FileCharacterRepository.open(); }
+async function repository(disk) { return loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open(); }
 
 /** Null explicitly leaves the separate configuration unchanged; a new draft must not select any theme. */
 test("new plugin character draft explicitly contains a required nullable independent themeConfigId", () => {
@@ -64,9 +64,9 @@ test("actual plugin files preserve themeConfigId and reject old incomplete recor
     session => session.getCharacter(saved.id),
   );
   assert.equal(retained.themeConfigId, "independent-theme-one");
-  const stored = JSON.parse(await readFile(file, "utf8")); delete stored.cards[1].themeConfigId;
-  const malformed = JSON.stringify(stored); await writeFile(file, malformed); disk.clearCalls();
-  await assert.rejects(repository(disk), /themeConfigId/); assert.equal(await readFile(file, "utf8"), malformed);
+  const stored = JSON.parse(await disk.stateBytes().toString("utf8")); delete stored.cards.find(card => card.id === saved.id).themeConfigId;
+  const malformed = JSON.stringify(stored); disk.replaceState(stored); disk.clearCalls();
+  await assert.rejects(repository(disk), /themeConfigId/); assert.equal(await disk.stateBytes().toString("utf8"), malformed);
   assert.equal(disk.calls.filter(
     /** Confirms failed reads cannot manufacture a new field or publish any implicit migration. */
     call => ["write", "move", "mkdir"].indexOf(call.method) >= 0,

@@ -237,6 +237,7 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                             ? options.__operit_call_runtime
                             : null,
                     actionStore: {},
+                    webViewInterfaces: new Map(),
                     navigationCommands: [],
                     actionCounter: 0,
                     stateChangeListeners: [],
@@ -429,10 +430,39 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                         if (!object || typeof object !== 'object' || Array.isArray(object)) {
                             throw new Error('webview controller addJavascriptInterface requires an object');
                         }
+                        var interfaces = runtime.webViewInterfaces.get(controllerKey);
+                        if (!interfaces) {
+                            interfaces = new Map();
+                            runtime.webViewInterfaces.set(controllerKey, interfaces);
+                        }
+                        var previous = interfaces.get(interfaceName);
+                        var methods = new Map();
+                        var references = Object.create(null);
+                        Object.keys(object).forEach(
+                            /** Gives interface methods controller ownership, not transient UI-node ownership. */
+                            function(method) {
+                                var handler = object[method];
+                                if (typeof handler !== 'function') return;
+                                var id = previous && previous.get(method);
+                                if (!id) { runtime.actionCounter += 1; id = '__action_' + runtime.actionCounter; }
+                                methods.set(method, { id: id, handler: handler });
+                                references[method] = { __actionId: id };
+                            }
+                        );
                         invokeControllerCommand('addJavascriptInterface', {
                             name: interfaceName,
-                            object: object
+                            object: references
                         });
+                        var owned = new Map();
+                        methods.forEach(
+                            /** Publishes callbacks after the Host has accepted the interface descriptor. */
+                            function(method, name) { runtime.actionStore[method.id] = method.handler; owned.set(name, method.id); }
+                        );
+                        if (previous) previous.forEach(
+                            /** Releases only methods removed by this explicit interface replacement. */
+                            function(id, name) { if (!owned.has(name)) delete runtime.actionStore[id]; }
+                        );
+                        interfaces.set(interfaceName, owned);
                     });
                     defineMethod(controller, 'removeJavascriptInterface', function(name) {
                         var interfaceName = String(name || '').trim();
@@ -442,6 +472,16 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                         invokeControllerCommand('removeJavascriptInterface', {
                             name: interfaceName
                         });
+                        var interfaces = runtime.webViewInterfaces.get(controllerKey);
+                        var methods = interfaces && interfaces.get(interfaceName);
+                        if (methods) {
+                            methods.forEach(
+                                /** Releases interface-owned actions when the plugin explicitly unregisters it. */
+                                function(id) { delete runtime.actionStore[id]; }
+                            );
+                            interfaces.delete(interfaceName);
+                            if (interfaces.size === 0) runtime.webViewInterfaces.delete(controllerKey);
+                        }
                     });
                     return controller;
                 }
@@ -662,7 +702,13 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     if (!next || typeof next !== 'object') return;
                     if (next.__operit_update_inputs === true) {
                         var input = cloneObject(next.__operit_input_state);
-                        Object.keys(input).forEach(function(key) { runtime.stateStore[key] = input[key]; });
+                        Object.keys(input).forEach(
+                            /// Publishes host writes through the same dependency index as useState setters.
+                            function(key) {
+                                runtime.stateStore[key] = input[key];
+                                OperitComposeReactive.stateChanged(runtime.ctx, key);
+                            }
+                        );
                     }
                     if (next.theme !== undefined) themeSnapshot = readThemeSnapshot(next.theme);
                     if (next.__operit_call_runtime) runtime.callRuntime = next.__operit_call_runtime;
@@ -671,17 +717,10 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                 OperitComposeGeneration.attach(ctx);
                 OperitComposeReactive.attach(ctx);
                 runtime.composition = OperitComposeRetained.create(runtime);
-                runtime.retainedDelivery = options.__operit_compose_retained_session === true;
                 /// Transfers each navigation request to exactly one render response.
                 runtime.takeNavigationCommands = function() {
                     return runtime.navigationCommands.splice(0);
                 };
-                Object.defineProperty(runtime, 'state', {
-                    get: function() { return cloneObject(runtime.stateStore); }
-                });
-                Object.defineProperty(runtime, 'memo', {
-                    get: function() { return cloneObject(runtime.memoStore); }
-                });
                 runtime.invokeAction = function(actionId, payload) {
                     var handler = runtime.actionStore[String(actionId || '').trim()];
                     if (typeof handler !== 'function') {

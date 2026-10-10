@@ -221,12 +221,6 @@ fn render_dart_clients(
                 format!("{:?}", object.object_id)
             ));
         }
-        if object.schema_key == "repository.memoryRepository" {
-            output.push_str(&format!(
-                "  /// Returns the generated proxy for one memory owner.\n  {class_name} repositoryMemoryRepositoryForOwner(String ownerKey) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': ownerKey}});\n",
-                format!("{:?}", object.object_id)
-            ));
-        }
     }
     for namespace in namespace_prefixes.iter().filter(|path| {
         !path.contains('.') && !objects.iter().any(|object| object.schema_key == **path)

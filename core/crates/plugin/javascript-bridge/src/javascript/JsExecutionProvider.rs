@@ -34,8 +34,10 @@ struct QuickJsExecutionEngineFactory {
 impl ToolPkgExecutionEngineFactory for QuickJsExecutionEngineFactory {
     /// Creates one QuickJS engine without a ToolPkg package environment.
     #[allow(non_snake_case)]
-    fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
-        Arc::new(JsEngine::new(self.execution_host.clone()))
+    fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
+        JsEngine::new(self.execution_host.clone())
+            .map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>)
+            .map_err(|error| error.to_string())
     }
 
     /// Creates one QuickJS engine bound to the supplied execution host.
@@ -43,11 +45,13 @@ impl ToolPkgExecutionEngineFactory for QuickJsExecutionEngineFactory {
     fn createToolPkgExecutionEngine(
         &self,
         context: ToolPkgExecutionContext,
-    ) -> Arc<dyn JsExecutionEngine> {
-        Arc::new(JsEngine::new_toolpkg_execution_engine(
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
+        JsEngine::new_toolpkg_execution_engine(
             self.execution_host.clone(),
             context,
-        ))
+        )
+            .map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -56,8 +60,10 @@ impl JsExecutionProvider for QuickJsExecutionProvider {
     fn create_execution_engine(
         &self,
         execution_host: Arc<dyn JsExecutionHost>,
-    ) -> Arc<dyn JsExecutionEngine> {
-        Arc::new(JsEngine::new(execution_host))
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
+        JsEngine::new(execution_host)
+            .map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>)
+            .map_err(|error| error.to_string())
     }
 
     /// Creates one QuickJS engine bound to a ToolPkg package environment.
@@ -65,11 +71,13 @@ impl JsExecutionProvider for QuickJsExecutionProvider {
         &self,
         execution_host: Arc<dyn JsExecutionHost>,
         context: ToolPkgExecutionContext,
-    ) -> Arc<dyn JsExecutionEngine> {
-        Arc::new(JsEngine::new_toolpkg_execution_engine(
+    ) -> Result<Arc<dyn JsExecutionEngine>, String> {
+        JsEngine::new_toolpkg_execution_engine(
             execution_host,
             context,
-        ))
+        )
+            .map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>)
+            .map_err(|error| error.to_string())
     }
 
     /// Creates one package executor bound to caller-owned runtime contracts.

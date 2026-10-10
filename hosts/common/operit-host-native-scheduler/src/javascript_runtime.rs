@@ -20,6 +20,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
+// Keep the engine limit below the reserved worker stack to leave room for Rust/Host calls.
+const JAVASCRIPT_STATE_THREAD_STACK_BYTES: usize = 16 * 1024 * 1024;
+const JAVASCRIPT_STATE_ENGINE_STACK_BYTES: usize = 4 * 1024 * 1024;
+
+thread_local! {
+    /// Identifies threads whose stack reservation is controlled by this Host.
+    static IS_JAVASCRIPT_STATE_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 enum NativeJavaScriptStateRequest {
     Execute {
         task: HostJavaScriptRuntimeStateTask,
@@ -269,6 +278,11 @@ impl HostJavaScriptRuntimeHost for NativeHostJavaScriptRuntimeHost {
     /// Creates one native QuickJS runtime on its owning thread.
     fn createHostJavaScriptRuntime(&self) -> HostResult<Box<dyn HostJavaScriptRuntime>> {
         let runtime = Runtime::new().map_err(|error| HostError::new(error.to_string()))?;
+        // Only managed workers have the known 16 MiB reservation; caller-owned threads
+        // retain QuickJS's default bound rather than assuming their available stack.
+        if IS_JAVASCRIPT_STATE_THREAD.get() {
+            runtime.set_max_stack_size(JAVASCRIPT_STATE_ENGINE_STACK_BYTES);
+        }
         let context = Context::full(&runtime).map_err(|error| HostError::new(error.to_string()))?;
         Ok(Box::new(NativeHostJavaScriptRuntime {
             runtime,
@@ -290,8 +304,9 @@ impl HostJavaScriptRuntimeHost for NativeHostJavaScriptRuntimeHost {
         let (createdSender, createdReceiver) = mpsc::channel::<HostResult<()>>();
         std::thread::Builder::new()
             .name(format!("{taskName}-{stateId}"))
-            .stack_size(16 * 1024 * 1024)
+            .stack_size(JAVASCRIPT_STATE_THREAD_STACK_BYTES)
             .spawn(move || {
+                IS_JAVASCRIPT_STATE_THREAD.set(true);
                 let mut state = match factory() {
                     Ok(state) => {
                         let _ = createdSender.send(Ok(()));

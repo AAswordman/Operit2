@@ -244,7 +244,6 @@ class _ClaudeSettingsBridge extends OperitRuntimeBridge {
         result = model.toJson();
       case 'getAllTtsConfigs':
       case 'getAllSttConfigs':
-      case 'getAllCharacterCards':
         result = <Object?>[];
       case 'getCurrentTtsConfigId':
       case 'getSelectedSttConfigId':

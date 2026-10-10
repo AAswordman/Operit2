@@ -5491,9 +5491,18 @@
   // Called at the start of the parse and after every token. Skips
   // whitespace and comments, and.
 
+  var commonWhitespaceRun = /[\x09-\x0d \u00a0\u2028\u2029]+/y;
+
+  /// Reads whitespace spans in bulk when no line-location counters are requested.
   pp.skipSpace = function() {
     loop: while (this.pos < this.input.length) {
       var ch = this.input.charCodeAt(this.pos);
+      if (!this.options.locations && (ch === 32 || ch >= 9 && ch <= 13 || ch === 160 || ch === 8232 || ch === 8233)) {
+        commonWhitespaceRun.lastIndex = this.pos;
+        commonWhitespaceRun.test(this.input);
+        this.pos = commonWhitespaceRun.lastIndex;
+        continue
+      }
       switch (ch) {
       case 32: case 160: // ' '
         ++this.pos;
@@ -5928,7 +5937,13 @@
     return code
   };
 
+  // Native sticky runs preserve token boundaries while avoiding interpreted per-character scans.
+  var singleQuotedStringRun = /[^'\\\r\n\u2028\u2029]+/y;
+  var doubleQuotedStringRun = /[^"\\\r\n\u2028\u2029]+/y;
+
+  /// Reads unchanged string chunks in bulk and retains Acorn's escape and line validation.
   pp.readString = function(quote) {
+    var plainCharacters = quote === 34 ? doubleQuotedStringRun : singleQuotedStringRun;
     var out = "", chunkStart = ++this.pos;
     for (;;) {
       if (this.pos >= this.input.length) { this.raise(this.start, "Unterminated string constant"); }
@@ -5947,7 +5962,9 @@
         }
       } else {
         if (isNewLine(ch)) { this.raise(this.start, "Unterminated string constant"); }
-        ++this.pos;
+        plainCharacters.lastIndex = this.pos;
+        plainCharacters.test(this.input);
+        this.pos = plainCharacters.lastIndex;
       }
     }
     out += this.input.slice(chunkStart, this.pos++);
@@ -6132,12 +6149,23 @@
   // Incrementally adds only escaped chars, adding other chunks as-is
   // as a micro-optimization.
 
+  var asciiIdentifierRun = /[a-zA-Z0-9_$]+/y;
+
+  /// Reads ASCII identifier spans in bulk while preserving Unicode and escape validation.
   pp.readWord1 = function() {
     this.containsEsc = false;
     var word = "", first = true, chunkStart = this.pos;
     var astral = this.options.ecmaVersion >= 6;
     while (this.pos < this.input.length) {
-      var ch = this.fullCharCodeAtPos();
+      var ch = this.input.charCodeAt(this.pos);
+      if (ch < 128 && isIdentifierChar(ch, false)) {
+        asciiIdentifierRun.lastIndex = this.pos;
+        asciiIdentifierRun.test(this.input);
+        this.pos = asciiIdentifierRun.lastIndex;
+        first = false;
+        continue
+      }
+      ch = this.fullCharCodeAtPos();
       if (isIdentifierChar(ch, astral)) {
         this.pos += ch <= 0xffff ? 1 : 2;
       } else if (ch === 92) { // "\"
@@ -6166,7 +6194,7 @@
   pp.readWord = function() {
     var word = this.readWord1();
     var type = types$1.name;
-    if (this.keywords.test(word)) {
+    if (keywords[word] !== undefined && this.keywords.test(word)) {
       type = keywords[word];
     }
     return this.finishToken(type, word)

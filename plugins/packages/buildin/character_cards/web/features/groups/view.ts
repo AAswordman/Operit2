@@ -1,3 +1,4 @@
+import type { ThemeChoice } from "../../../src/selection-application";
 import type { GroupValues, Snapshot } from "../../../src/model";
 import type { GroupDialog } from "../../bridge/contracts";
 import { button, escapeHtml, field, icon } from "../../shared/ui/html";
@@ -12,12 +13,12 @@ export function groupTile(group: GroupValues, snapshot: Snapshot): string {
 }
 
 /** Builds group membership editing without changing Core member identities. */
-export function groupBody(dialog: GroupDialog, snapshot: Snapshot): string {
+export function groupBody(dialog: GroupDialog, snapshot: Snapshot, themes: readonly ThemeChoice[]): string {
   let members = "";
   for (const card of snapshot.cards) {
     let index = -1;
     for (let i = 0; i < dialog.group.members.length; i++) if (dialog.group.members[i].characterCardId === card.id) index = i;
     members += `<label class="checkbox-row"><input type="checkbox" data-member="${escapeHtml(card.id)}" ${index >= 0 ? "checked" : ""}><span class="avatar">${icon("person")}</span><span class="grow">${escapeHtml(card.name)}</span></label>`;
   }
-  return field("群组名称 *", "name", dialog.group.name) + field("描述", "description", dialog.group.description, 3) + themeReferenceSection(dialog.group.themeConfigId) + `<div class="tag-head">组内角色</div><div class="members-list">${members}</div>`;
+  return field("群组名称 *", "name", dialog.group.name) + field("描述", "description", dialog.group.description, 3) + themeReferenceSection(dialog.group.themeConfigId, themes) + `<div class="tag-head">组内角色</div><div class="members-list">${members}</div>`;
 }

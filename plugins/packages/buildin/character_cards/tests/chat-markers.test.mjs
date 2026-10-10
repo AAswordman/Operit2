@@ -92,8 +92,8 @@ test("historical resolver uses only its supplied message snapshot even when chat
 
 /** Exercises the actual file service with a creation draft and strictly disallowed host chat capabilities. */
 test("draft resolver consumes supplied chatExtension and returns a complete persisted-domain send snapshot without querying a nonexistent chat", async t => {
-  const disk = await createDiskHarness(t), calls = [], files = loadModule("src/storage/files.ts", disk.globals);
-  const repository = await files.FileCharacterRepository.open(controlledDirectories(calls));
+  const disk = await createDiskHarness(t), calls = [], files = loadModule("src/storage/database.ts", disk.globals);
+  const repository = await files.DatabaseCharacterRepository.open(controlledDirectories(calls));
   const service = loadModule("src/service.ts", disk.globals).createCharacterCardsService(repository);
   const result = plain(await service.dispatchDomain("chat.configuration.resolve", request({ version: 1, selection: "card:default" }, null)));
   assert.equal(result.contextKey, "card:default"); assert.equal(result.profile.id, "default"); assert.equal(result.participants.length, 1);

@@ -41,6 +41,9 @@ impl RuntimeFileSyncStore {
     #[allow(non_snake_case)]
     pub fn writeBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
+            return Err("Registered database files require record-level storage operations".into());
+        }
         if storagePath.starts_with("workspaces/") {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
                 .track(|| self.storageHost.writeBytes(storagePath, content).map_err(|e| e.to_string()));
@@ -55,6 +58,9 @@ impl RuntimeFileSyncStore {
     /// Records observed bytes without rewriting an externally edited workspace file.
     pub(crate) fn recordSnapshot(&self, storagePath: &str, content: &[u8]) -> Result<RuntimeFileSyncReference, String> {
         requireSpaceFile(storagePath)?;
+        if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
+            return Err("Registered database files require record-level storage operations".into());
+        }
         let reference = self.storeBlob(content)?;
         let deviceId = self
             .syncOperationStore
@@ -80,6 +86,9 @@ impl RuntimeFileSyncStore {
     #[allow(non_snake_case)]
     pub fn appendBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
+            return Err("Registered database files require record-level storage operations".into());
+        }
         let mut next = if self
             .storageHost
             .exists(storagePath)
@@ -98,6 +107,9 @@ impl RuntimeFileSyncStore {
     /// Deletes a Space file and records a synchronized tombstone.
     pub fn delete(&self, storagePath: &str) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
+            return Err("Registered database files require record-level storage operations".into());
+        }
         if storagePath.starts_with("workspaces/") {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
                 .track(|| {
@@ -122,6 +134,9 @@ impl RuntimeFileSyncStore {
     /// Records an observed deletion without deleting a possibly recreated local file.
     pub(crate) fn recordDeletion(&self, storagePath: &str) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
+            return Err("Registered database files require record-level storage operations".into());
+        }
         let deviceId = self
             .syncOperationStore
             .localDeviceId()
@@ -180,6 +195,7 @@ impl RuntimeFileSyncStore {
         path: &str,
         files: &mut std::collections::BTreeMap<String, Vec<u8>>,
     ) -> Result<(), String> {
+        if crate::PluginStorage::ownsFile(self.storageHost.clone(),path).map_err(|e|e.to_string())? {return Ok(());}
         if !self.storageHost.exists(path).map_err(|e| e.to_string())? {
             return Ok(());
         }
@@ -219,6 +235,9 @@ impl RuntimeFileSyncStore {
         payload: serde_json::Value,
     ) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if crate::PluginStorage::ownsFile(storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
+            return Err("Registered database files require record-level storage operations".into());
+        }
         let syncRootPath = syncRootPath.into();
         if storagePath.starts_with("workspaces/") {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(storageHost, syncRootPath)

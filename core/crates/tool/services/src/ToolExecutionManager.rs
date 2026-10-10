@@ -21,6 +21,7 @@ const CLI_SEARCH_TOOL_NAME: &str = SEARCH_TOOL_NAME;
 const PACKAGE_CALLER_NAME_PARAM: &str = "__operit_package_caller_name";
 const PACKAGE_CHAT_ID_PARAM: &str = "__operit_package_chat_id";
 const PACKAGE_CALLER_PARTICIPANT_ID_PARAM: &str = "__operit_package_caller_participant_id";
+const PACKAGE_CALLER_OWNER_PARAM: &str = "__operit_package_caller_owner";
 
 tokio::task_local! {
     static TOOL_RUNTIME_CONTEXT: ToolRuntimeContext;
@@ -514,6 +515,13 @@ impl ToolExecutionManager {
             &mut updatedParams,
             PACKAGE_CALLER_PARTICIPANT_ID_PARAM,
             callerParticipantId,
+        );
+
+        let context = Self::currentToolRuntimeContext();
+        Self::setPackageContextParameter(
+            &mut updatedParams,
+            PACKAGE_CALLER_OWNER_PARAM,
+            context.as_ref().map(|context| context.extensionOwner.as_str()),
         );
 
         ToolInvocation {

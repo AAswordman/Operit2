@@ -1,3 +1,4 @@
+import { composeStreamFixture } from '../tests/support/compose_stream_fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -26,7 +27,7 @@ function mount(count = 100, screenSource = null) {
     },
     __operit_call_runtime_ref: {
       /** Captures structured intermediate values as the host callback would receive them. */
-      sendIntermediateResult(value) { events.push(value); },
+      sendComposeResponse(phase, value) { events.push(value); },
     },
   });
   context.exports = context.module.exports;
@@ -106,7 +107,8 @@ function mount(count = 100, screenSource = null) {
     revision = update.revision;
   }
 
-  const initial = context.__operit_render_compose_dsl({ __operit_compose_retained_session: true });
+  composeStreamFixture(context, { projectTree: false, inspectStorage: false, onResponse(phase, value) { if (phase === "intermediate") events.push(value); } }).adapt();
+  const initial = context.__operit_render_compose_dsl({});
   apply(initial);
 
   /** Dispatches the existing callback API and consumes intermediate updates before final completion. */

@@ -11,6 +11,13 @@ const coreScopes = [
   "core/crates/plugin/javascript-bridge/src",
   "plugins/types/chat.d.ts", "plugins/types/index.d.ts", "plugins/types/toolpkg.d.ts",
 ];
+const coreBusinessScopes = [
+  "core/crates/foundation/model/src", "core/crates/foundation/util/src/OperitPaths.rs",
+  "core/crates/persistence/store/src", "core/crates/provider/services/src/chat",
+  "core/crates/runtime/application/src/core", "core/crates/runtime/application/src/data/preferences",
+  "core/crates/runtime/application/src/services", "apps/cli/src",
+];
+const retiredBusiness = /\b(?:ObjectBoxStore|Memory(?:Repository|SearchSettingsPreferences|Library|AutoSaveScheduler|Window|SettingsRepository|AutoSaveCandidateRepository|Graph|GraphNode|GraphEdge|ExportData|ExportModel|SearchDebugInfo|AutoSaveStatus|RebuildProgress|QueryResultData|LinkResultData|LinkQueryResultData)|UserMarkdownRepository|Character(?:Card|GroupCard|CardChatStats|GroupChatStats|CardInfo|CardListResultData)|PromptTag|TavernCharacter(?:Card|Data)|ToolPkgActivePrompt(?:Type|Snapshot))\b/;
 const dedicatedNames = /\bCharacterCards(?:Host|Bridge|Runtime|Dto|DTO|Import|Character|Group|Tag|ActivePrompt|Memory|Model|Tts|Tool|Chat|Graph)[A-Za-z0-9_]*\b|\bCharacterCards[A-Za-z0-9_]*(?:Host|Bridge|Runtime|Dto|DTO|Import)[A-Za-z0-9_]*\b|\bcharacter_cards_(?:host|bridge|dto|runtime|import)[A-Za-z0-9_]*\b/;
 const dedicatedModule = /(?:^|\/)(?:CharacterCards(?:Host|Bridge|Runtime|Dto|DTO|Import)[A-Za-z0-9_]*|character_cards_(?:host|bridge|dto|runtime|import)[A-Za-z0-9_]*)\.(?:rs|ts|js|mjs)$/;
 const retiredFramework = /\b(?:HostProvider|PluginDataStore|SurfaceContribution)\b|\bToolPkg\.(?:data|sources)\b/;
@@ -22,7 +29,7 @@ function sourceFiles(directory) {
   for (const entry of readdirSync(path.join(repository, directory), { withFileTypes: true })) {
     const relative = `${directory}/${entry.name}`;
     if (entry.isDirectory()) result.push(...sourceFiles(relative));
-    else if (entry.isFile() && /\.(?:rs|ts|js|mjs)$/.test(entry.name)) result.push(relative);
+    else if (entry.isFile() && /\.(?:rs|ts|js|mjs|dart)$/.test(entry.name)) result.push(relative);
   }
   return result.sort();
 }
@@ -40,8 +47,28 @@ export function coreArchitectureViolations() {
       if (match !== null) violations.push(`${file}: forbidden character-plugin-specific host/DTO/runtime contract ${match[0]}`);
       if (dedicatedModule.test(file)) violations.push(`${file}: dedicated Core module must be removed`);
       if (retiredFramework.test(text)) violations.push(`${file}: withdrawn provider/storage framework remains in production source`);
-      if (pluginSourceImport.test(text)) violations.push(`${file}: directly imports character-plugin business source`);
+      if (pluginSourceImport.test(text.replace(/\/\*[\s\S]*?\*\//g, ""))) violations.push(`${file}: directly imports character-plugin business source`);
     }
+  }
+  for (const scope of [...coreScopes, ...coreBusinessScopes]) {
+    const files = /\.(?:rs|ts)$/.test(scope) ? [scope] : sourceFiles(scope);
+    for (const file of files) {
+      // Published v1 JavaScript adapters preserve their existing protocol names.
+      if (file.startsWith("core/crates/plugin/sdk/src/compat/v1/") && file.endsWith(".js")) continue;
+      const match = retiredBusiness.exec(source(file));
+      if (match !== null) violations.push(`${file}: retired character/memory business belongs only in the migration boundary: ${match[0]}`);
+    }
+  }
+  return violations;
+}
+
+/** Rejects retired business in every Flutter production file, including unmounted screens and generated proxies. */
+export function flutterArchitectureViolations() {
+  const violations = [];
+  const retiredFlutter = /\b(?:CharacterAvatar(?:Image|Store)?|MemoryGraph(?:Canvas|Controller|Screen)?|GeneratedRepositoryMemoryRepositoryCoreProxy|repositoryMemoryRepositoryForOwner|characterAvatarsDirPath|chatHistoryGroupingModeFlow|loadChatHistoryGroupingMode|saveChatHistoryGroupingMode|CHAT_HISTORY_GROUPING_CHARACTER|CHAT_HISTORY_GROUPING_WORKSPACE|_KEY_CHAT_HISTORY_GROUPING_MODE)\b/;
+  for (const file of sourceFiles("apps/flutter/app/lib").filter(file => file.endsWith(".dart"))) {
+    const text = source(file), match = retiredBusiness.exec(text) ?? retiredFlutter.exec(text);
+    if (match !== null) violations.push(`${file}: retired character/memory business must be removed from Flutter: ${match[0]}`);
   }
   return violations;
 }
@@ -63,5 +90,5 @@ export function pluginArchitectureViolations() {
 
 /** Returns every real architecture violation without introducing a replacement production dependency. */
 export function architectureViolations() {
-  return [...coreArchitectureViolations(), ...pluginArchitectureViolations(), ...mountedBusinessViolations(), ...uiProductionViolations()];
+  return [...coreArchitectureViolations(), ...flutterArchitectureViolations(), ...pluginArchitectureViolations(), ...mountedBusinessViolations(), ...uiProductionViolations()];
 }

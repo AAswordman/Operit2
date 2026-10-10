@@ -1,3 +1,7 @@
+#[path = "CharacterPluginLegacyData.rs"]
+pub(crate) mod CharacterPluginLegacyData;
+#[path = "CharacterPluginMigration.rs"]
+pub(crate) mod CharacterPluginMigration;
 #[path = "Operit1LmdbReader.rs"]
 pub(crate) mod Operit1LmdbReader;
 #[path = "Operit1RoomSchemaMigration.rs"]

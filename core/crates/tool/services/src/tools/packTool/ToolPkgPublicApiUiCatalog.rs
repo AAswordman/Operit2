@@ -50,7 +50,7 @@ fn registered_owner(runtime: &ToolPkgContainerRuntime, api_name: &str) -> Result
     Ok(true)
 }
 
-/// Discovers real enabled owners in catalog order and rejects unknown, disabled, duplicate, or malformed exports.
+/// Enumerates enabled publications; an empty match set is valid, while malformed catalogs remain errors.
 pub(super) fn discover_public_api_owners(
     api_name: &str,
     registered: &[ToolPkgContainerRuntime],
@@ -77,11 +77,6 @@ pub(super) fn discover_public_api_owners(
             ));
         }
     }
-    if declared.is_empty() {
-        return Err(format!(
-            "Public API not found in registered ToolPkg catalog: {api_name}"
-        ));
-    }
     let mut owners = Vec::new();
     let mut selected = BTreeSet::new();
     for runtime in enabled {
@@ -104,12 +99,6 @@ pub(super) fn discover_public_api_owners(
             containerPackageName: runtime.packageName.clone(),
             apiName: api_name.to_string(),
         });
-    }
-    if owners.is_empty() {
-        return Err(format!(
-            "ToolPkg public API owners are disabled: {api_name} ({})",
-            declared.keys().cloned().collect::<Vec<_>>().join(", ")
-        ));
     }
     Ok(owners)
 }
@@ -174,28 +163,22 @@ mod tests {
             .len(),
             1
         );
-        for name in [
-            "Arbitrary.extension.method",
-            "missing",
-            "",
-            " arbitrary.extension.method",
-        ] {
+        for name in ["Arbitrary.extension.method", "missing"] {
+            assert!(discover_public_api_owners(name, &[owner.clone()], &[owner.clone()]).unwrap().is_empty());
+        }
+        for name in ["", " arbitrary.extension.method"] {
             assert!(discover_public_api_owners(name, &[owner.clone()], &[owner.clone()]).is_err());
         }
     }
 
-    /// Reports a known disabled publication explicitly and never returns a success-shaped empty directory.
+    /// Allows the chat shell to discover zero optional contributions without inventing an owner.
     #[test]
-    fn rejects_disabled_only_and_unknown_owners() {
-        let owner = runtime("disabled", "sample.ui");
-        assert_eq!(
-            discover_public_api_owners("sample.ui", &[owner], &[]).unwrap_err(),
-            "ToolPkg public API owners are disabled: sample.ui (disabled)"
-        );
-        assert_eq!(
-            discover_public_api_owners("sample.ui", &[], &[]).unwrap_err(),
-            "Public API not found in registered ToolPkg catalog: sample.ui"
-        );
+    fn enumerates_empty_uninstalled_and_disabled_contributions() {
+        let owner = runtime("disabled", "chat.context.actions");
+        assert!(discover_public_api_owners("chat.context.actions", &[owner], &[]).unwrap().is_empty());
+        assert!(discover_public_api_owners("chat.context.actions", &[], &[]).unwrap().is_empty());
+        let legacy = ToolPkgContainerRuntime { packageName: "legacy".into(), ..Default::default() };
+        assert!(discover_public_api_owners("chat.context.actions", &[legacy.clone()], &[legacy]).unwrap().is_empty());
     }
 
     /// Rejects two methods with the same exact name before either handler can be selected.

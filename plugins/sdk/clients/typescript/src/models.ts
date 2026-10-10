@@ -1144,6 +1144,7 @@ export interface ToolPkgUiModuleRuntime {
   readonly id: string;
   readonly runtime: string;
   readonly screen: string;
+  readonly screenExport: string | null;
   readonly title: LocalizedText;
   readonly keepAlive: boolean;
 }
@@ -1154,6 +1155,7 @@ export function decodeToolPkgUiModuleRuntime(value: unknown): ToolPkgUiModuleRun
     id: input['id'] as string,
     runtime: input['runtime'] as string,
     screen: input['screen'] as string,
+    screenExport: input['screenExport'] == null ? null : input['screenExport'] as string | null,
     title: decodeLocalizedText(input['title']) as LocalizedText,
     keepAlive: input['keepAlive'] as boolean,
   };
@@ -1165,6 +1167,7 @@ export function encodeToolPkgUiModuleRuntime(value: ToolPkgUiModuleRuntime): Rec
     'id': value.id,
     'runtime': value.runtime,
     'screen': value.screen,
+    'screenExport': value.screenExport === null ? null : value.screenExport,
     'title': encodeLocalizedText(value.title),
     'keepAlive': value.keepAlive,
   };
@@ -1175,6 +1178,7 @@ export interface ToolPkgUiRouteRuntime {
   readonly routeId: string;
   readonly runtime: string;
   readonly screen: string;
+  readonly screenExport: string | null;
   readonly title: LocalizedText;
   readonly keepAlive: boolean;
 }
@@ -1186,6 +1190,7 @@ export function decodeToolPkgUiRouteRuntime(value: unknown): ToolPkgUiRouteRunti
     routeId: input['routeId'] as string,
     runtime: input['runtime'] as string,
     screen: input['screen'] as string,
+    screenExport: input['screenExport'] == null ? null : input['screenExport'] as string | null,
     title: decodeLocalizedText(input['title']) as LocalizedText,
     keepAlive: input['keepAlive'] as boolean,
   };
@@ -1198,6 +1203,7 @@ export function encodeToolPkgUiRouteRuntime(value: ToolPkgUiRouteRuntime): Recor
     'routeId': value.routeId,
     'runtime': value.runtime,
     'screen': value.screen,
+    'screenExport': value.screenExport === null ? null : value.screenExport,
     'title': encodeLocalizedText(value.title),
     'keepAlive': value.keepAlive,
   };

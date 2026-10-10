@@ -173,7 +173,7 @@ export function reconcileSidebarCatalog(catalog: SidebarCatalog, current: Curren
     : {view: "groups", scopes: projected.map(value => value.scope)};
 }
 
-/** Reads the actual sidebar catalog from namespace extensions and the same file-backed service used by every other plugin surface. */
+/** Reads the actual sidebar catalog from namespace extensions and the same database-backed service used by every other plugin surface. */
 export async function readSidebarCatalog(value: CurrentSidebar): Promise<SidebarCatalog> {
   const current = parseCurrentSidebar(value), service = await getService();
   const directory = await service.sidebarDirectory();

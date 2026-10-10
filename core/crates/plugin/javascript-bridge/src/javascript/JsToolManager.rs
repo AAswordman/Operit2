@@ -17,6 +17,7 @@ use operit_plugin_sdk::toolpkg::ToolPkgManager::ToolPkgExecutionEngineFactory;
 pub struct JsToolManager {
     packageRuntime: Arc<dyn JsPackageRuntime>,
     enginePool: Arc<Mutex<Vec<Arc<dyn JsExecutionEngine>>>>,
+    executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     enginePermits: Arc<Semaphore>,
 }
 
@@ -49,12 +50,10 @@ impl JsToolManager {
         packageRuntime: Arc<dyn JsPackageRuntime>,
         executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     ) -> Self {
-        let engines = (0..MAX_CONCURRENT_ENGINES)
-            .map(|_| executionEngineFactory.createExecutionEngine())
-            .collect::<Vec<_>>();
         Self {
             packageRuntime,
-            enginePool: Arc::new(Mutex::new(engines)),
+            enginePool: Arc::new(Mutex::new(Vec::new())),
+            executionEngineFactory,
             enginePermits: Arc::new(Semaphore::new(MAX_CONCURRENT_ENGINES)),
         }
     }
@@ -63,20 +62,24 @@ impl JsToolManager {
     #[allow(non_snake_case)]
     async fn withEngine<T>(
         &self,
-        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<T>,
-    ) -> T {
+        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<JsExecutionResult<T>>,
+    ) -> JsExecutionResult<T> {
         let permit = self
             .enginePermits
             .clone()
             .acquire_owned()
             .await
             .expect("JsToolManager engine semaphore must remain open");
-        let engine = self
+        let idleEngine = self
             .enginePool
             .lock()
             .expect("JsToolManager engine pool mutex poisoned")
-            .pop()
-            .expect("an acquired engine permit must own a pool entry");
+            .pop();
+        let engine = match idleEngine {
+            Some(engine) => engine,
+            None => self.executionEngineFactory.createExecutionEngine()
+                .map_err(JsExecutionError::initialization)?,
+        };
         let lease = JsEngineLease {
             engine,
             pool: self.enginePool.clone(),
@@ -90,13 +93,14 @@ impl JsToolManager {
     async fn withExecutionEngineForPackage<T>(
         &self,
         selection: &JsPackageToolSelection,
-        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<T>,
-    ) -> T {
+        block: impl FnOnce(Arc<dyn JsExecutionEngine>) -> JsExecutionCompletion<JsExecutionResult<T>>,
+    ) -> JsExecutionResult<T> {
         if let Some(runtime) = selection.toolpkg_runtime.as_ref() {
             let contextKey = format!("toolpkg_main:{}", runtime.containerPackageName);
             let engine = self
                 .packageRuntime
-                .toolpkg_execution_engine(&contextKey, &runtime.containerPackageName);
+                .toolpkg_execution_engine(&contextKey, &runtime.containerPackageName)
+                .map_err(JsExecutionError::initialization)?;
             return block(engine).await;
         }
         self.withEngine(block).await
@@ -150,6 +154,7 @@ impl JsToolManager {
             "__operit_package_caller_name",
             "__operit_package_chat_id",
             "__operit_package_caller_participant_id",
+            "__operit_package_caller_owner",
         ] {
             let value = runtimeParams
                 .get(key)
@@ -250,6 +255,7 @@ impl JsToolManager {
                     "__operit_package_caller_name"
                         | "__operit_package_chat_id"
                         | "__operit_package_caller_participant_id"
+                        | "__operit_package_caller_owner"
                 ) =>
                 {
                     "string"
@@ -548,6 +554,26 @@ mod tests {
             Err("Plugin configuration is not part of this test".to_string())
         }
 
+        /// Rejects local data access in manager fixtures that do not provide storage.
+        fn plugin_local_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Local plugin data is not part of this test".to_string())
+        }
+
+        /// Rejects registration-local data access in manager fixtures that do not provide storage.
+        fn registration_plugin_local_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Local plugin data is not part of this test".to_string())
+        }
+
+        /// Rejects shared data access in manager fixtures without installed storage.
+        fn plugin_space_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Shared plugin data is not part of this test".to_string())
+        }
+
+        /// Rejects registration-shared data access in manager fixtures without installed storage.
+        fn registration_plugin_space_data_dir(&self, _owner_id: &str) -> Result<String, String> {
+            Err("Shared plugin data is not part of this test".to_string())
+        }
+
         /// Rejects ToolPkg text resource access in manager tests.
         fn read_toolpkg_text_resource(
             &self,
@@ -644,8 +670,8 @@ mod tests {
     impl ToolPkgExecutionEngineFactory for TestExecutionEngineFactory {
         /// Creates a generic isolated JavaScript engine for manager tests.
         #[allow(non_snake_case)]
-        fn createExecutionEngine(&self) -> Arc<dyn JsExecutionEngine> {
-            Arc::new(JsEngine::new(Arc::new(TestJsExecutionHost)))
+        fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            JsEngine::new(Arc::new(TestJsExecutionHost)).map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>).map_err(|error| error.to_string())
         }
 
         /// Creates a ToolPkg JavaScript engine with its bound package context.
@@ -653,11 +679,11 @@ mod tests {
         fn createToolPkgExecutionEngine(
             &self,
             context: ToolPkgExecutionContext,
-        ) -> Arc<dyn JsExecutionEngine> {
-            Arc::new(JsEngine::new_toolpkg_execution_engine(
+        ) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            JsEngine::new_toolpkg_execution_engine(
                 Arc::new(TestJsExecutionHost),
                 context,
-            ))
+            ).map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>).map_err(|error| error.to_string())
         }
     }
 
@@ -1187,7 +1213,7 @@ mod tests {
     fn load_downloaded_toolpkg(downloaded_bytes: Vec<u8>) -> ToolPkgLoadResult {
         let source_path = "/marketplace/downloaded/market_flow_toolpkg.toolpkg";
         let host = DownloadedToolPkgFileSystemHost::new(source_path, downloaded_bytes);
-        let registration_engine = JsEngine::new(Arc::new(TestJsExecutionHost));
+        let registration_engine = JsEngine::new(Arc::new(TestJsExecutionHost)).expect("registration fixture must initialize");
         let load_errors = Mutex::new(Vec::<String>::new());
         let load_result = ToolPkgLoader::loadToolPkgFromExternalFile(
             &host,
@@ -1299,7 +1325,7 @@ mod tests {
             &self,
             context_key: &str,
             container_package_name: &str,
-        ) -> Arc<dyn JsExecutionEngine> {
+        ) -> Result<Arc<dyn JsExecutionEngine>, String> {
             self.package_manager
                 .lock()
                 .expect("test package manager mutex poisoned")
@@ -1501,7 +1527,7 @@ mod tests {
         "#;
         let (manager, package_runtime) = toolpkg_manager(script);
         let engine =
-            package_runtime.toolpkg_execution_engine("toolpkg_main:test_toolpkg", "test_toolpkg");
+            package_runtime.toolpkg_execution_engine("toolpkg_main:test_toolpkg", "test_toolpkg").expect("fixture engine must initialize");
         let seed_script = r#"
             exports.seed = function(_params) {
                 globalThis.__toolpkg_engine_marker = "same-engine";

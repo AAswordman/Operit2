@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { createDiskHarness } from "./disk-files.mjs";
 import { selectorEnvironment } from "./selector-environment.mjs";
 import { keyedNode, mountRegisteredSelector } from "./selector-render.mjs";
 import { createSelectionSettingsFixture } from "./selection-settings-fixture.mjs";
@@ -20,7 +21,7 @@ function writes(runtime) {
 }
 
 /** Reads the actual published plugin file rather than a test-provided active selection. */
-function stateBytes(runtime) { return readFile(path.join(runtime.disk.directory, "character-memory", "state.json")); }
+function stateBytes(runtime) { return runtime.disk.stateBytes(); }
 
 /** Builds an explicit selector presentation with a real global-null or native-chat target. */
 function presentation(requestId, chatId, kind = "card") { return { requestId, input: { mode: "select", chatId, kind, selected: null } }; }
@@ -299,7 +300,7 @@ test("registered selector cancellation never writes selection or applies Theme a
 /** A real file publication error cannot be reported as a successful selection or trigger independent preference mutations. */
 test("registered file selection commit failure preserves the original IO rejection and makes zero apply calls", async t => {
   const { runtime, settings, card } = await environment(t), original = new Error("Controlled selection file move failure"), before = await stateBytes(runtime);
-  runtime.disk.failNext("move", original);
+  runtime.disk.failNext("storage.commit", original);
   await assert.rejects(runtime.api("activePrompt.setCard", { id: card.id }),
     /** Preserves the actual original IO error identity through the registered provider and central coordinator. */
     failure => failure === original,
@@ -326,4 +327,23 @@ test("actual registered before-create hook never applies configs for explicit, s
     assert.deepEqual(plain(initialized), { extension: { version: 1, selection: "card:" + card.id } });
   }
   assert.deepEqual(settings.calls, []); assert.deepEqual(runtime.calls, []);
+});
+
+/** Executes the same main module as an ordinary engine owner without invoking the registration-only export. */
+test("execution runtime can read named themes before registerToolPkg is invoked", async t => {
+  const disk = await createDiskHarness(t), settings = createSelectionSettingsFixture(), channels = new Map();
+  loadModule("src/main.ts", {
+    ...disk.globals,
+    Tools: { ...disk.globals.Tools, SoftwareSettings: settings.settings },
+    ToolPkg: { ...disk.globals.ToolPkg, ipc: {
+      /** Retains the real main-module handler without invoking package registration or emulating business operations. */
+      on(name, handler) { assert.equal(channels.has(name), false); channels.set(name, handler); },
+    } },
+  });
+  assert.deepEqual(settings.calls, []); assert.deepEqual(disk.calls, []);
+  const choices = await channels.get("character-memory.request")({ action: "listThemeChoices" });
+  assert.deepEqual(plain(choices), [...settings.themes.values()].map(
+    /** Compares exact public catalog names and IDs without inventing plugin configuration state. */
+    config => ({ id: config.id, label: config.name }),
+  ));
 });

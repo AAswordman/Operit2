@@ -182,8 +182,6 @@ fn pluginExclusive(extensions: &std::collections::BTreeMap<String, serde_json::V
 pub struct ChatState {
     pub currentChatId: String,
     pub currentChatTitle: String,
-    pub currentCharacterCardName: Option<String>,
-    pub currentCharacterCardAvatarUri: Option<String>,
     pub currentWorkspacePath: Option<String>,
     pub isLoading: bool,
     pub inputProcessingState: InputProcessingState,
@@ -2871,14 +2869,7 @@ impl ChatServiceCore {
                         .unwrap_or_else(ChatExecutionState::idle)
                 }
             });
-        let chatHistoriesFlow = combine2(
-            &self.chatHistoryDelegate.chatHistoriesFlow(),
-            &self
-                .chatHistoryDelegate
-                .chatConfigurationsFlow
-                .asStateFlow(),
-            |histories, configurations| (histories.clone(), configurations.clone()),
-        );
+        let chatHistoriesFlow = self.chatHistoryDelegate.chatHistoriesFlow();
         let pendingQueueStateFlow = self.pendingQueueStateFlow().asStateFlow();
         let toolPermissionRequestsFlow = chatToolPermissionRequestsFlow(selectedChatId.clone());
         combine5(
@@ -2893,14 +2884,8 @@ impl ChatServiceCore {
                   pendingQueuesByChatId,
                   toolPermissionRequests| {
                 let currentChat = chatHistories
-                    .0
                     .iter()
                     .find(|chat| chat.id == selectedChatId);
-                let profile = chatHistories
-                    .1
-                    .get(&selectedChatId)
-                    .and_then(|configuration| configuration.identity.as_ref());
-                let currentCharacterCardName = profile.map(|identity| identity.title.clone());
                 let pendingQueueState = pendingQueuesByChatId.get(&selectedChatId);
                 let pendingQueueMessages = pendingQueueState
                     .map(|state| state.messages.clone())
@@ -2913,9 +2898,6 @@ impl ChatServiceCore {
                     currentChatTitle: currentChat
                         .map(|chat| chat.title.clone())
                         .unwrap_or_default(),
-                    currentCharacterCardAvatarUri: profile
-                        .and_then(|profile| profile.avatarUri.clone()),
-                    currentCharacterCardName,
                     currentWorkspacePath: currentChat
                         .and_then(|chat| chat.workspacePrimaryPath.clone()),
                     isLoading: executionState.isLoading,

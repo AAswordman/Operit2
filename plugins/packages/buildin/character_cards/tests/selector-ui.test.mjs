@@ -14,7 +14,7 @@ function writes(runtime) { return runtime.calls.filter(
   call => call.method === "writeExtension",
 ); }
 /** Reads genuine file-owned state for cancellation and persistence assertions independently from the service. */
-async function stateBytes(runtime) { return readFile(path.join(runtime.disk.directory, "character-memory", "state.json")); }
+async function stateBytes(runtime) { return runtime.disk.stateBytes(); }
 /** Opens one actually registered SDK-rendered selector and loads its actual records through main IPC. */
 async function ready(runtime, input) { const ui = mountRegisteredSelector(runtime, input); await ui.load(); return ui; }
 
@@ -22,6 +22,9 @@ async function ready(runtime, input) { const ui = mountRegisteredSelector(runtim
 test("registered native selector loads real records, avatars, current checks and one 360x420 modal", async t => {
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "Native role", description: "Actual saved description", avatarUri: "runtime/data/user_assets/character_avatars/native.png" } });
   await runtime.api("chat.configuration.binding.write", { chatId: "selector-chat", selection: "card:" + card.id });
+  const menu = await runtime.api("chat.context.actions", { chatId: "selector-chat" });
+  assert.equal(Object.hasOwn(menu, "selectors"), false);
+  assert.equal(menu.identity.action.input.mode, "preview");
   const ui = mountRegisteredSelector(runtime, presentation("native-shape", "selector-chat", "card", { CharacterCard: { id: "default" } }));
   assert.equal(ui.first.tree.type, "Dialog"); assert.equal(composeNodes(ui.first.tree,
     /** Checks genuine native loading rather than a static text marker. */
@@ -97,8 +100,8 @@ test("native group selector shows genuine groups and commits the selected group 
 test("native null-chat selector persists real global active without writing a chat namespace", async t => {
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "First-create active choice" } });
   const menu = await runtime.api("chat.context.actions", { chatId: null });
-  assert.equal(menu.selectors[0].routeId, "toolpkg:com.operit.character_cards:ui:selection"); assert.equal(menu.selectors[0].input.chatId, null);
-  runtime.calls.length = 0; const ui = await ready(runtime, { requestId: "native-global", input: menu.selectors[0].input });
+  assert.equal(Object.hasOwn(menu, "selectors"), false);
+  runtime.calls.length = 0; const ui = await ready(runtime, presentation("native-global", null));
   const response = await ui.dispatch(keyedNode(ui.render().tree, "card:" + card.id).props.onClick);
   assert.deepEqual(plain(response.actionResult), { type: "toolpkg.presentation.complete", requestId: "native-global", value: { selection: "card:" + card.id, contextKey: "card:" + card.id } });
   assert.deepEqual(plain(await runtime.api("activePrompt.get", {})), { CharacterCard: { id: card.id } });
@@ -111,8 +114,8 @@ test("native null-chat selector persists real global active without writing a ch
 test("unbound existing chat menu stays reachable with null identity and an initially unchecked native selector", async t => {
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "Explicit user binds unowned chat" } });
   const active = plain(await runtime.api("activePrompt.get", {})); const menu = await runtime.api("chat.context.actions", { chatId: "selector-chat" });
-  assert.equal(menu.identity, null); assert.equal(menu.selectors.length, 2); assert.equal(menu.selectors[0].input.selected, null); assert.equal(menu.selectors[1].input.selected, null);
-  const ui = await ready(runtime, { requestId: "native-unbound", input: menu.selectors[0].input });
+  assert.equal(menu.identity, null); assert.equal(Object.hasOwn(menu, "selectors"), false);
+  const ui = await ready(runtime, presentation("native-unbound", "selector-chat"));
   assert.equal(composeNodes(ui.render().tree,
     /** Only an actual namespace marker may supply the check; global active cannot check an unbound chat row. */
     node => node.type === "Icon" && node.props.name === "Check",

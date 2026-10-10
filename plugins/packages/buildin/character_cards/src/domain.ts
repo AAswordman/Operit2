@@ -1,7 +1,7 @@
 import { requireChatSelection } from "./chat-bindings";
 import { decodeChatMarker, decodeMessageMarker, encodeMessageMarker, markerObject } from "./chat-markers";
 import { resolveChatDisplay } from "./group-execution/display";
-import type { ChatConfigurationExecutionResult, ChatConfigurationRequest, ChatConfigurationResult, ChatParticipantProfile, CharacterRecord, DomainInput, DomainOperation, DomainOutput, SnapshotRecord } from "./api";
+import type { MemoryQueryRequest, JsonValue, ChatConfigurationExecutionResult, ChatConfigurationRequest, ChatConfigurationResult, ChatParticipantProfile, CharacterRecord, DomainInput, DomainOperation, DomainOutput, SnapshotRecord } from "./api";
 export type { DomainInput, DomainOperation, DomainOutput, DomainOperations } from "./api";
 
 type Validator = (value: unknown, path: string) => void;
@@ -139,6 +139,14 @@ const id = shape({ id: required(nonblank) });
 const ownerOnly = shape({ ownerKey: required(owner) });
 const contentOnly = shape({ content: required(text) });
 const format = enumeration("operit", "tavern");
+const memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
+
+/** Validates the public query envelope without retaining caller-selected runtime context or private tool parameters. */
+export function parseMemoryQueryRequest(payload: unknown): MemoryQueryRequest {
+  memoryQueryRequest(payload, "memory.query");
+  return payload as MemoryQueryRequest;
+}
+
 const validators: Record<DomainOperation, Validator> = {
   "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
@@ -245,7 +253,7 @@ export function parseTagChanges(value: unknown): DomainInput<"tag.update">["chan
   return value as DomainInput<"tag.update">["changes"];
 }
 /** Converts a domain result into SDK JSON without dropping unsupported values. */
-export function jsonValue(value: unknown, path = "result"): ToolPkg.JsonValue {
+export function jsonValue(value: unknown, path = "result"): JsonValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") { number(value, path); return value; }
   if (Array.isArray(value)) {
@@ -253,7 +261,7 @@ export function jsonValue(value: unknown, path = "result"): ToolPkg.JsonValue {
     return value.map((item, index) => jsonValue(item, `${path}[${index}]`));
   }
   const object = record(value, path);
-  const result: ToolPkg.JsonObject = {};
+  const result: Record<string, JsonValue> = {};
   for (const key of Object.keys(object)) result[key] = jsonValue(object[key], `${path}.${key}`);
   return result;
 }

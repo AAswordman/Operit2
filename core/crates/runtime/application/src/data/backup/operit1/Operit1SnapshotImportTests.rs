@@ -134,6 +134,8 @@ fn completeSnapshotFixture(version: i32) -> Arc<SnapshotFixture> {
             ("memory_space_default", "{\"id\":\"default\",\"name\":\"Legacy memories\",\"sourceOnlyField\":true}"),
             ("character_card_theme_card-1_custom_ai_avatar_uri", "file:///data/user/0/com.ai.assistance.operit/files/avatar.png")
         ], &[])),
+        ("payload/shared_prefs/memory_search_settings_default.xml", br#"<map><int name="auto_save_interval_minutes" value="17"/><long name="next_auto_save_run_at_ms" value="1720000000001"/><string name="memory_extraction_custom_rules">A &amp; B</string><int name="score_mode" value="2"/><float name="vector_weight" value="3.5"/></map>"#.to_vec()),
+        ("payload/shared_prefs/cloud_embedding_settings_default.xml", br#"<map><boolean name="enabled" value="true"/><string name="endpoint">https://embedding.invalid</string><string name="api_key">actual-source-key</string><string name="model">source-model</string></map>"#.to_vec()),
         (ENTRY_DATABASE, std::fs::read(&databasePath).expect("real SQLite bytes must be readable")),
         (ENTRY_OBJECTBOX_DEFAULT_DATA, b"opaque source memory database: not decoded or adopted".to_vec()),
         ("payload/files/memory-space-profiles/default/user.md", b"Legacy user document".to_vec()),
@@ -173,16 +175,17 @@ fn verifySourceProjection(version: i32, expectedPinned: bool) {
     assert_eq!(chat.parentChatId.as_deref(), Some("parent-chat"));
     assert!(chat.locked);
     assert_eq!(chat.pinned, expectedPinned);
-    assert!(chat.pluginExtensions.is_empty());
+    assert_eq!(chat.pluginExtensions[crate::data::backup::CharacterPluginMigration::LEGACY_BINDING_NAMESPACE], serde_json::json!({"characterCardName":"legacy-card","characterGroupId":if version == 10 { None } else { Some("legacy-group") }}));
     assert_eq!(chat.messages.len(), 1);
     assert!(chat.messages[0].baseMessage.pluginExtensions.is_empty());
     assert_eq!(chat.messages[0].baseMessage.roleName, "Historical role text");
     assert_eq!(chat.messages[0].baseMessage.parts[0].content, "Preserved user history");
     let target = serde_json::to_value(chat).unwrap();
-    for key in ["group", "characterCardName", "characterGroupId", "activePrompt"] {
+    for key in ["characterCardName", "characterGroupId", "activePrompt"] {
         assert!(target.get(key).is_none(), "legacy source binding must not enter target: {key}");
     }
-    assert_eq!(target["pluginExtensions"], serde_json::json!({}));
+    assert_eq!(target["group"], "legacy-folder");
+    assert!(target["pluginExtensions"].get(crate::data::backup::CharacterPluginMigration::LEGACY_BINDING_NAMESPACE).is_some());
     let preview = parsed.preview(operit1ChatDatabaseCounts(&mut connection).unwrap()).unwrap();
     assert_eq!((preview.chatCount, preview.messageCount), (1, 1));
     assert_eq!(preview.modelConfig.chatModelId.as_deref(), Some("model"));
@@ -287,4 +290,41 @@ fn memory_copy_exclusion_is_scoped_to_declared_legacy_storage_directories() {
     for entry in ["payload/files/workspace/demo/USER.md", "payload/external_files/USER.md", "payload/files/objectbox_notes.txt", "payload/files/normal/memory-notes.md"] {
         assert!(!isOperit1LegacyMemoryEntry(entry));
     }
+}
+
+/// Parses actual source XML rather than resetting custom memory configuration during adoption.
+#[test]
+fn memory_settings_xml_retains_declared_preferences() {
+    let fixture = completeSnapshotFixture(20);
+    let parsed = ParsedOperit1Snapshot::fromSource(fixture).unwrap();
+    let profiles = buildOperit1MemorySpaces(&parsed).unwrap();
+    let (settings, search) = readOperit1MemorySettings(&parsed, &profiles["default"]).unwrap();
+    assert_eq!(settings.autoSaveIntervalMinutes, 17);
+    assert_eq!(settings.nextAutoSaveRunAtMs, 1720000000001);
+    assert_eq!(settings.memoryExtractionCustomRules, "A & B");
+    assert!(settings.cloudEmbeddingEnabled);
+    assert_eq!(settings.cloudEmbeddingEndpoint, "https://embedding.invalid");
+    assert_eq!(settings.cloudEmbeddingApiKey, "actual-source-key");
+    assert_eq!(settings.cloudEmbeddingModel, "source-model");
+    assert_eq!(search.scoreMode, crate::data::backup::CharacterPluginLegacyData::MemoryScoreMode::SEMANTIC_FIRST);
+    assert_eq!(search.vectorWeight, 3.5);
+}
+
+/// Tests the real binary table reader's int64 fields, encoded scalar zeros and corrupt offsets.
+#[test]
+fn objectbox_table_preserves_long_ids_and_explicit_scalar_defaults() {
+    let mut bytes = vec![0u8; 32];
+    bytes[0..4].copy_from_slice(&16u32.to_le_bytes());
+    bytes[4..6].copy_from_slice(&6u16.to_le_bytes());
+    bytes[6..8].copy_from_slice(&16u16.to_le_bytes());
+    bytes[8..10].copy_from_slice(&8u16.to_le_bytes());
+    bytes[16..20].copy_from_slice(&12i32.to_le_bytes());
+    bytes[24..32].copy_from_slice(&9007199254740993i64.to_le_bytes());
+    let table = FlatObjectBoxTable::new(&bytes).unwrap();
+    assert_eq!(table.requiredI64(0, "id").unwrap(), 9007199254740993);
+    assert_eq!(table.scalarI32(2, "chunkIndex").unwrap(), 0);
+    assert!(!table.scalarBool(13).unwrap());
+    bytes[8..10].copy_from_slice(&40u16.to_le_bytes());
+    let broken = FlatObjectBoxTable::new(&bytes).unwrap();
+    assert!(broken.scalarI32(0, "chunkIndex").is_err());
 }

@@ -9,12 +9,12 @@ mean the application is connected or the original feature has been fully extract
 
 ## Compose route entries
 
-Each of the five UI routes has its own default-exported entry at
+Each of the seven UI routes has its own default-exported entry at
 `src/ui/<route-id>/index.ui.ts`, built as `dist/ui/<route-id>/index.ui.js`.
 The main bundle keeps these imports external and does not re-export the screen
 functions: the SDK serializes a screen's module path, not its named export, and
 root export tagging would otherwise overwrite the independently loaded module
-identity. The build includes all five executable screen modules in the `.toolpkg`
+identity. The build includes all seven executable screen modules in the `.toolpkg`
 archive alongside the main provider and memory tools.
 
 The route regression tests execute the actual JavaScript registration and Compose
@@ -25,6 +25,19 @@ and dialogs; it does not instantiate a WebView. The obsolete browser sidebar sou
 registration and packaging entry have been removed. Role categories contain their
 conversation groups, so this package contributes only the legacy Characters tab;
 the native Workspace tab remains owned by Flutter. These are Node/script checks, not a live native-host acceptance result.
+
+## Chat input menu
+
+The package registers one `chat_input_menu` navigation entry pointing to
+`src/ui/chat-input-menu/index.ui.ts`. Flutter embeds that Compose DSL module
+above its native statistics section. The TS renderer owns the avatar, current
+character label, name, spacing and click action; the public chat-context API
+contains only identity and background data.
+
+The row emits `{type: "toolpkg.ui.present", routeId, input}` to open the existing
+registered selector. The host validates the requesting package and route, keeps
+opaque input unchanged, and uses its existing chat lifecycle guard and
+presentation completion refresh. Character menu fields are drawn by TS.
 
 ## Character settings scope
 
@@ -58,37 +71,30 @@ input-submit hook. Installed production archives also remain different from
 current source until packaging is explicitly performed. Neither gap is described
 as completed integration.
 
-## Data policy: new plugin-owned files only
+## Storage and released-data migration
 
-**The plugin does not adopt or migrate old user character and memory data.** The
-plugin must not read old Core managers, preference stores, or SQLite memory tables
-to populate its library. Lossless legacy migration is not an acceptance requirement.
-Explicit character interchange/import/export is a separate feature; it does not
-mean that old application data is imported automatically or remains compatible.
+`Tools.Storage.objects` owns the plugin's `characters.sqlite` database in the stable
+Space data directory returned by `ToolPkg.getSpaceDataDir()`. Each domain record has
+its own collection/key and exact version; commits publish changed records, not an
+entire JSON library. Current operation sessions still load paged records into a
+validated domain snapshot. USER.md remains a real file for editing and attachment.
+Its staged publication and the SQLite transaction have separate failure boundaries.
 
-This does **not** remove support for reading a complete Operit1 snapshot. A legal
-snapshot may contain old cards, groups and memory. The existing full-snapshot
-reader must accept those source entries; restoration deliberately declines to
-adopt them into Core or this plugin while keeping the general model/TTS/chat/
-workspace import paths. Imported chats and messages remain explicitly unassociated
-(empty plugin extension namespaces), not secretly bound to a default card. Zero
-adopted-memory counters do not mean the source contained no memory. See
-`docs/operit1-restore-boundary.md` for the exact policy, current SQLite query checks,
-and the **unexecuted Rust/full-import verification boundary**.
+The unreleased plugin's former `state.json` format is removed without a compatibility
+reader. Released application data takes a distinct migration path: Core's centralized
+`data/backup/CharacterPluginMigration.rs` reads old preferences and SQLite records,
+uses the production generic Host object store, verifies the copied documents and
+resources, resolves saved chat associations, and deletes migrated legacy owners and
+the four dedicated preference files. An interrupted migration blocks plugin reads;
+completed imports and cleanup have durable markers.
 
-The plugin's own directory files are the sole authoritative source for its cards,
-groups, tags, active prompt, shared stores, owner-scoped memories, document/chunk
-records, links, settings/search configuration, and USER.md. The existing reusable
-host file API supplies IO; domain paths, record validation, and persistence logic
-belong to the plugin. No new storage or provider framework is approved by this
-acceptance document.
-
-First initialization of a genuinely new directory must be tested separately from
-opening existing files. Malformed files, invalid records, inaccessible files, and
-failed writes must report explicit errors, never recreate or replace an existing
-library as if it were a successful fresh start. A card and its staged tag changes
-must publish as one commit. Reopening the same directory in a new runtime must read
-back saved data, not a process-local cache or fixture.
+Operit1 snapshot restore uses the same writer directly. It adopts characters,
+groups, prompt tags, memory profiles, USER.md, memories, properties, document chunks,
+links, pending extraction tasks and declared memory preferences. Source Room schemas
+remain explicit; chat name/group bindings resolve to plugin selection markers before
+Core chat import. Historical message send profiles are not reconstructed. Derived
+binary embedding vectors are not imported into the plugin's endpoint/model/text cache.
+See `docs/migration-acceptance.md` and `docs/operit1-restore-boundary.md` for evidence.
 
 ## Ownership boundary
 
@@ -118,55 +124,32 @@ The Web/build worker owns `scripts/build.mjs` and the archive.
 
 ## Verification and evidence limits
 
-- Pure domain/codec tests verify current complete-record fields, decimal-string
-  IDs, owner grammar, staged changes, interchange formats, and explicit errors.
-  They do not establish file persistence or application integration.
-- Registry and static entrypoint checks inspect actual registrations, SDK
-  declarations, and the command/API/IPC service call graph. Capturing definitions
-  is not live registration or a production UI launch.
-- Isolated browser fixtures verify only Material view behavior, request/response
-  shapes, error states, and actual SVG click/pan/drag gestures. Their finite import
-  response is not a working importer or repository.
-- A temporary-directory disk harness replaces **only file IO** with real Node
-  filesystem operations. Repository tests must execute the actual plugin repository
-  and service. Harness self-tests alone are not repository acceptance, and even a
-  passing repository test is **not host-runtime integration**.
-- Architecture checks fail on dedicated production dependencies and explicit old
-  mounted paths, including EnhancedAIService, MemoryLibrary, and the autosave
-  scheduler. Retained unmounted reference files are not blanket violations.
-- `check.mjs` performs strict no-emit host/browser checking with actual declarations,
-  test type contracts, architecture checks, and the routing owner's static checker.
-  It does not hide SDK imports or ID-contract mismatches.
+Strict host/browser TypeScript checks run through `scripts/check.mjs`. Repository
+and service tests use current plugin code and a generic Node SQLite/file Host adapter;
+that adapter implements storage semantics rather than character business operations.
+It is distinct from production Rust Host integration.
 
-No Rust or Flutter compilation, live package activation, actual host filesystem
-execution, scheduler lifecycle, or cross-platform UI integration has been verified
-by this worker. The production file backend and its entrypoint wiring still need
-real acceptance; an unfinished implementation is never replaced by a successful
-mock Host or store.
+Rust migration tests use the production `PluginStorageSession`, SQLite and native
+storage Hosts. Database migration tests exercise actual schema upgrades, every
+transaction failure boundary and complete persisted rows. Operit1 tests cover real
+Room source databases and structured settings; they do not constitute a complete
+application launch or a full import of a user-supplied ObjectBox archive.
 
-## Remaining acceptance
+Production artifacts are generated by `scripts/build.mjs`; packaging checks compare
+current source, installed bundle and Core archive bytes. Flutter UI and application
+startup require their own integration acceptance.
 
-See `docs/migration-acceptance.md` for the file-backend acceptance matrix. The
-filename describes feature extraction, **not old-user data migration**. Open items
-include actual disk initialization/reopen/corruption tests, single-commit card/tag
-writes, owner/document/link/settings/USER.md persistence, production menu/sidebar/
-popup/chat binding/attachment routes, and removal of mounted old domain consumers.
-Resource selection, disabled owner controls, rebuilds, backups, document workflows,
-and categorization must be reported as gaps until their actual path is supported.
-Do not describe this package as usable, 1:1, or complete while these remain open.
-`docs/mounted-theme-workspace-follow-up.md` records separately confirmed live theme/
-workspace manager consumers; a passing sidebar checker does not cover these chains.
+## Public dependency client
 
-## Repeatable checks
+`manifest.json` publishes the self-contained client `src/api.ts`. Consumers
+copy that file into their own source tree, import it locally and declare
+`com.operit.character_cards >= 0.1.0` in `requires`, following
+`plugins/docs/PUBLIC_API.md`. Public calls use `ToolPkg.callDependency`.
 
-From the repository root, without Rust or Flutter compilation:
-
-```powershell
-node --test plugins/packages/buildin/character_cards/tests/*.test.mjs
-node plugins/packages/buildin/character_cards/scripts/check.mjs
-node core/crates/command/core/scripts/check-routing.mjs
-git diff --check
-```
-
-For a browser-only strict check, use `node plugins/packages/buildin/character_cards/scripts/check.mjs --web`.
-It must not be presented as a passing full host/architecture check.
+`characterCards.memory.query({ participantId, query, limit, snapshotId })`
+resolves the explicit participant's actual memory binding and reuses the
+plugin's existing query implementation. Results contain complete typed
+matches and document chunks; snapshots remain in the provider's main runtime.
+A `null` snapshot ID requests a fresh query. An explicit snapshot ID retains
+owner-scoped deduplication across calls. The extra information injection
+plugin consumes this method through an exact local SDK copy.

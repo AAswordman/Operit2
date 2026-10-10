@@ -849,29 +849,6 @@ export namespace ToolPkg {
   }
 
   /**
-   * Enumerates supported active prompt type values.
-   */
-  export type ActivePromptType = "character_card" | "character_group";
-
-  /**
-   * Captures the identity of the character prompt active for a hook.
-   */
-  export interface ActivePromptSnapshot extends JsonObject {
-    /**
-     * Identifies the semantic kind of this value.
-     */
-    type: ActivePromptType;
-    /**
-     * Identifies this active prompt snapshot within its owning package.
-     */
-    id: string;
-    /**
-     * Provides the stable or user-facing name of this active prompt snapshot.
-     */
-    name: string;
-  }
-
-  /**
    * Identifies the actual chat and selected execution participant without exposing plugin context rules.
    */
   export interface ExecutionContext extends JsonObject {
@@ -921,10 +898,6 @@ export namespace ToolPkg {
    * Carries contextual metadata shared across prompt hooks.
    */
   export interface HookMetadata extends JsonObject {
-    /**
-     * Captures the character prompt currently active for this hook.
-     */
-    activePrompt?: ActivePromptSnapshot;
     /**
      * Carries the exact execution participant selected for this prompt request.
      */
@@ -2695,7 +2668,7 @@ export namespace ToolPkg {
   /**
    * Enumerates supported navigation surface values.
    */
-  export type NavigationSurface = "toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs";
+  export type NavigationSurface = "toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs" | "chat_input_menu";
 
   /**
    * Describes a plugin action exposed through a host navigation surface.
@@ -2706,8 +2679,8 @@ export namespace ToolPkg {
      */
     id: string;
     /**
-     * Provides this package's registered UI route; required for chat_attachments and chat_sidebar_tabs.
-     * Sidebar tabs require a uniquely owned Compose DSL route registered before the navigation entry.
+     * Provides this package's registered UI route; required for chat_attachments, chat_sidebar_tabs and chat_input_menu.
+     * Embedded sidebar and input-menu surfaces require one owned Compose DSL route registered before the navigation entry.
      */
     route?: string;
     /**
@@ -2719,7 +2692,7 @@ export namespace ToolPkg {
      */
     surface: NavigationSurface;
     /**
-     * Supplies navigation callbacks on other surfaces; action is unsupported for chat_attachments and chat_sidebar_tabs.
+     * Supplies navigation callbacks on other surfaces; action is unsupported for chat_attachments, chat_sidebar_tabs and chat_input_menu.
      */
     action?: NavigationEntryActionHookHandler;
     /**
@@ -4040,6 +4013,14 @@ export namespace ToolPkg {
      * Registration uses the explicitly selected scope before an installation record exists.
      */
     getConfigDir(pluginId?: string): string;
+    /**
+     * Returns device-local plugin data independent of installation scope during registration and runtime.
+     */
+    getLocalDataDir(): string;
+    /**
+     * Returns shared plugin data independent of installation scope during registration and runtime.
+     */
+    getSpaceDataDir(): string;
   }
 
   /**

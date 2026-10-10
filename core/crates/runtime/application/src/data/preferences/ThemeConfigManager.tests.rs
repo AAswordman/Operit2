@@ -559,6 +559,9 @@ fn actual_runtime_hosts_isolate_catalogs_and_selection() {
 /// Emits one coherent state per shared commit and no state for rejected mutations.
 #[test]
 fn watch_observes_cross_context_commits_once() {
+    operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(
+        ThemeObserverScheduler,
+    ));
     let fixture = StoreFixture::new();
     let observed = Arc::new(Mutex::new(Vec::new()));
     let observedForCallback = observed.clone();
@@ -629,4 +632,188 @@ fn apply_clears_only_obsolete_ordinary_theme_override() {
         ordinary.get(&stringPreferencesKey("app_language")),
         Some(&"en".to_string())
     );
+}
+
+/// Keeps partial edits, saved configuration and ordinary appearance in a single real preference commit.
+#[test]
+fn partial_appearance_edits_update_only_the_active_named_configuration() {
+    let fixture = StoreFixture::new();
+    let manager = fixture.manager();
+    let first = manager.create("First".to_string(), snapshot()).unwrap();
+    let second = manager.create("Second".to_string(), snapshot()).unwrap();
+    manager.apply(first.id.clone()).unwrap();
+    let writes = fixture.writes();
+    let changed = manager
+        .patchAppearance(
+            snapshot(),
+            BTreeMap::from([("font_scale".to_string(), "1.2".to_string())]),
+            vec![],
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(fixture.writes(), writes + 1);
+    assert_eq!(changed.id, first.id);
+    assert_eq!(changed.snapshot["fontScale"], json!(1.2));
+    fixture
+        .manager()
+        .patchAppearance(
+            snapshot(),
+            BTreeMap::from([("theme_mode".to_string(), "dark".to_string())]),
+            vec![],
+        )
+        .unwrap();
+    let current = fixture.manager().getActive().unwrap().unwrap();
+    assert_eq!(current.snapshot["fontScale"], json!(1.2));
+    assert_eq!(current.snapshot["themeMode"], json!("dark"));
+    assert_eq!(manager.get(second.id.clone()).unwrap(), second);
+    manager.apply(second.id.clone()).unwrap();
+    let restored = manager.apply(first.id.clone()).unwrap();
+    assert_eq!(restored.snapshot, current.snapshot);
+    assertThemePreferenceSnapshot(&fixture.preferences().data().unwrap(), &current.snapshot)
+        .unwrap();
+}
+
+/// Rejects malformed edits before storage writes and retains the original active configuration.
+#[test]
+fn partial_appearance_rejects_invalid_fields_and_values_without_writing() {
+    let fixture = StoreFixture::new();
+    let manager = fixture.manager();
+    let config = manager.create("Strict".to_string(), snapshot()).unwrap();
+    manager.apply(config.id.clone()).unwrap();
+    let before = fixture.bytes();
+    for values in [
+        BTreeMap::from([("theme_configs".to_string(), "[]".to_string())]),
+        BTreeMap::from([("font_scale".to_string(), "broken".to_string())]),
+        BTreeMap::from([("font_scale".to_string(), "9".to_string())]),
+        BTreeMap::from([("theme_mode".to_string(), "unknown".to_string())]),
+    ] {
+        assert!(manager.patchAppearance(snapshot(), values, vec![]).is_err());
+        assert_eq!(fixture.bytes(), before);
+    }
+    assert!(manager
+        .patchAppearance(
+            snapshot(),
+            BTreeMap::from([("font_scale".to_string(), "1.1".to_string())]),
+            vec!["font_scale".to_string()]
+        )
+        .is_err());
+    assert_eq!(manager.getActive().unwrap().unwrap().id, config.id);
+}
+
+/// Resets explicitly requested fields to their declared initial values while retaining other appearance and preference data.
+#[test]
+fn partial_appearance_reset_preserves_unrelated_values_and_renaming_preserves_edits() {
+    let fixture = StoreFixture::new();
+    let manager = fixture.manager();
+    let initial = snapshot();
+    let config = manager
+        .create("Original".to_string(), initial.clone())
+        .unwrap();
+    manager.apply(config.id.clone()).unwrap();
+    manager
+        .patchAppearance(
+            initial.clone(),
+            BTreeMap::from([
+                ("font_scale".to_string(), "1.2".to_string()),
+                (
+                    "custom_user_avatar_uri".to_string(),
+                    "host:///avatars/user.png".to_string(),
+                ),
+            ]),
+            vec![],
+        )
+        .unwrap();
+    let reset = manager
+        .patchAppearance(
+            initial.clone(),
+            BTreeMap::new(),
+            vec!["font_scale".to_string()],
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(reset.snapshot["fontScale"], initial["fontScale"]);
+    assert_eq!(
+        reset.snapshot["customUserAvatarUri"],
+        json!("host:///avatars/user.png")
+    );
+    let renamed = manager
+        .rename(config.id.clone(), "Renamed".to_string())
+        .unwrap();
+    assert_eq!(renamed.snapshot, reset.snapshot);
+    assert_eq!(renamed.name, "Renamed");
+    assert_eq!(manager.getActive().unwrap().unwrap(), renamed);
+}
+
+/// Initializes only explicit custom appearance without manufacturing a saved configuration or active selection.
+#[test]
+fn partial_appearance_without_a_selected_configuration_keeps_an_empty_catalog() {
+    let fixture = StoreFixture::new();
+    let manager = fixture.manager();
+    assert!(manager
+        .patchAppearance(
+            snapshot(),
+            BTreeMap::from([("theme_mode".to_string(), "light".to_string())]),
+            vec![]
+        )
+        .unwrap()
+        .is_none());
+    assert!(manager.list().unwrap().is_empty());
+    assert!(manager.getActive().unwrap().is_none());
+    let preferences = fixture.preferences().data().unwrap();
+    assert_eq!(
+        preferences.get(&stringPreferencesKey("theme_mode")),
+        Some(&"light".to_string())
+    );
+}
+
+/// Executes preference observer callbacks synchronously in this isolated theme-owner test.
+struct ThemeObserverScheduler;
+
+impl operit_host_api::HostRuntimeTaskSchedulerHost for ThemeObserverScheduler {
+    /// Supplies the deterministic observer clock used by this test host.
+    fn monotonicTimeMillis(&self) -> operit_host_api::HostResult<u64> {
+        Ok(0)
+    }
+    /// Publishes one committed preference callback before the writer acknowledges the change.
+    fn scheduleHostRuntimeTask(
+        &self,
+        _: &str,
+        task: operit_host_api::HostRuntimeTask,
+    ) -> operit_host_api::HostResult<()> {
+        task();
+        Ok(())
+    }
+    /// Rejects asynchronous work outside this test's declared observer boundary.
+    fn scheduleHostRuntimeAsyncTask(
+        &self,
+        _: &str,
+        _: operit_host_api::HostRuntimeAsyncTask,
+    ) -> operit_host_api::HostResult<()> {
+        Err(HostError::new(
+            "Theme observer tests do not schedule async work",
+        ))
+    }
+    /// Rejects delayed work outside this test's declared observer boundary.
+    fn scheduleDelayedHostRuntimeTask(
+        &self,
+        _: &str,
+        _: u64,
+        _: operit_host_api::HostRuntimeTask,
+    ) -> operit_host_api::HostResult<()> {
+        Err(HostError::new(
+            "Theme observer tests do not schedule delayed work",
+        ))
+    }
+    /// Rejects delayed futures outside this observer test's synchronous boundary.
+    fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
+        Box::pin(async {
+            Err(HostError::new(
+                "Theme observer tests do not wait for delays",
+            ))
+        })
+    }
+    /// Finishes the explicitly synchronous observer turn.
+    fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+        Box::pin(async { Ok(()) })
+    }
 }

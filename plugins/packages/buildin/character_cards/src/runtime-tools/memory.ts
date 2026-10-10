@@ -1,4 +1,4 @@
-import type { MemoryChanges, MemoryRecord, LinkRecord } from "../api";
+import type { MemoryChanges, MemoryRecord, LinkRecord, MemoryQueryMatch, MemoryQueryResult } from "../api";
 import type { DocumentChunk, MemorySpace } from "../model";
 import { decodeMemoryBackup } from "../backup";
 import { parseMemoryIdentifier } from "../domain";
@@ -7,8 +7,9 @@ import type { CallerContext, DomainCall, MemoryToolName, ToolParameters, MemoryT
 import { formatTime, limit, optionalNumber, optionalText, requiredText, score, timeBoundary } from "./contract";
 
 /** Preserves the original query result fields and lossless plugin relationship identities. */
-export interface MemoryInfo { ownerKey: string; title: string; content: string; source: string; tags: string[]; createdAt: string; chunkInfo: string | null; chunkIndices: number[] | null }
-export interface QueryResult { memories: MemoryInfo[]; snapshotId: string | null; snapshotCreated: boolean; excludedBySnapshotCount: number }
+export type MemoryInfo = MemoryQueryMatch;
+/** Shares the exact query result contract with the public dependency API. */
+export type QueryResult = MemoryQueryResult;
 export interface LinkInfo { linkId: string; sourceTitle: string; targetTitle: string; linkType: string; weight: number; description: string }
 interface Snapshot { seen: Set<string>; access: number }
 /** Owns ephemeral pagination only; all records and mutations remain in the main file repository. */

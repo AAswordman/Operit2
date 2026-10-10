@@ -11,13 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 use operit_link::CoreLinkError;
-use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::ApiKeyInfo::ApiKeyInfo;
 use operit_model::AttachmentInfo::AttachmentInfo;
-use operit_model::CharacterCard::{
-    CharacterCard, CharacterCardChatModelBindingMode, CharacterCardToolAccessConfig,
-};
-use operit_model::CharacterGroupCard::{CharacterGroupCard, GroupMemberConfig};
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
 use operit_model::FunctionType::FunctionType;
@@ -25,7 +20,6 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::ModelConfigData::ApiProviderType;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_model::PromptTag::TagType;
 use operit_model::TtsConfig::{TtsConfig, TtsProviderType};
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
@@ -2040,111 +2034,12 @@ fn print_chat_message(message: &operit_model::ChatMessage::ChatMessage) {
     println!("Content: {}", message.displayText());
 }
 
-/// Prints one prompt tag for a human reader.
-fn print_tag(tag: &operit_model::PromptTag::PromptTag) {
-    println!("Tag {}", tag.id);
-    println!("Name: {}", tag.name);
-    println!("Description: {}", tag.description);
-    println!("Prompt: {}", tag.promptContent);
-    println!("Type: {}", tagTypeName(&tag.tagType));
-    println!("Created: {}", tag.createdAt);
-    println!("Updated: {}", tag.updatedAt);
-}
-
-/// Prints one character card for a human reader.
-fn print_character_card(card: &CharacterCard) {
-    println!("Character {}", card.id);
-    println!("Name: {}", card.name);
-    println!("Description: {}", card.description);
-    println!("Character setting: {}", card.characterSetting);
-    println!("Opening statement: {}", card.openingStatement);
-    println!("Chat content: {}", card.otherContentChat);
-    println!("Voice content: {}", card.otherContentVoice);
-    println!("Tags: {}", card.attachedTagIds.join(","));
-    println!("Advanced prompt: {}", card.advancedCustomPrompt);
-    println!("Marks: {}", card.marks);
-    println!("Chat model binding: {}", card.chatModelBindingMode);
-    println!(
-        "Chat model: {}",
-        card.chatModelId.clone().unwrap_or_default()
-    );
-    println!(
-        "TTS config: {}",
-        card.ttsConfigId.clone().unwrap_or_default()
-    );
-    println!(
-        "Shared memory mounts: {}",
-        serde_json::to_string(&card.sharedMemoryMounts).expect("sharedMemoryMounts must serialize")
-    );
-    println!(
-        "Tool access: {}",
-        serde_json::to_string(&card.toolAccessConfig).expect("toolAccessConfig must serialize")
-    );
-    println!("Default: {}", card.isDefault);
-    println!("Created: {}", card.createdAt);
-    println!("Updated: {}", card.updatedAt);
-}
-
-/// Prints one character group card for a human reader.
-fn print_character_group_card(group: &CharacterGroupCard) {
-    println!("Character group {}", group.id);
-    println!("Name: {}", group.name);
-    println!("Description: {}", group.description);
-    println!(
-        "Members: {}",
-        group
-            .members
-            .iter()
-            .map(|member| format!("{}:{}", member.characterCardId, member.orderIndex))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    println!("Created: {}", group.createdAt);
-    println!("Updated: {}", group.updatedAt);
-}
-
-fn parse_group_members(value: &str) -> Vec<GroupMemberConfig> {
-    let mut result = Vec::new();
-    for (index, item) in value.split(',').enumerate() {
-        let trimmed = item.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        result.push(GroupMemberConfig {
-            characterCardId: trimmed.to_string(),
-            orderIndex: index as i32,
-        });
-    }
-    result
-}
-
-fn parseTagType(value: Option<&str>) -> Result<TagType, String> {
-    match value.unwrap_or("CUSTOM") {
-        "TONE" => Ok(TagType::TONE),
-        "CHARACTER" => Ok(TagType::CHARACTER),
-        "FUNCTION" => Ok(TagType::FUNCTION),
-        "CUSTOM" => Ok(TagType::CUSTOM),
-        other => Err(format!(
-            "invalid tagType: {other}; expected TONE | CHARACTER | FUNCTION | CUSTOM"
-        )),
-    }
-}
-
 fn parse_permission_level_arg(value: Option<&str>) -> Result<AiPermissionMode, String> {
     match value {
         Some("allow") | Some("ALLOW") => Ok(AiPermissionMode::Full),
         Some("ask") | Some("ASK") => Ok(AiPermissionMode::WorkspaceWrite),
         Some("forbid") | Some("FORBID") => Ok(AiPermissionMode::ReadOnly),
         _ => Err("expected allow, ask, or forbid".to_string()),
-    }
-}
-
-fn tagTypeName(tagType: &TagType) -> &'static str {
-    match tagType {
-        TagType::TONE => "TONE",
-        TagType::CHARACTER => "CHARACTER",
-        TagType::FUNCTION => "FUNCTION",
-        TagType::CUSTOM => "CUSTOM",
     }
 }
 
@@ -2248,50 +2143,6 @@ fn parseCsvList(value: &str) -> Vec<String> {
         }
     }
     result
-}
-
-/// Prints one memory in compact human-readable list form.
-fn print_memory_item_line(memory: &operit_model::Memory::Memory) {
-    println!(
-        "{}\t{}\t{}\t{}",
-        memory.id,
-        memory.title,
-        memory.folderPath.clone().unwrap_or_else(String::new),
-        memory
-            .tags
-            .iter()
-            .map(|tag| tag.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-}
-
-/// Prints one memory with labeled fields for a human reader.
-fn print_memory_item(memory: &operit_model::Memory::Memory) {
-    println!("Memory {}", memory.id);
-    println!("UUID: {}", memory.uuid);
-    println!("Title: {}", memory.title);
-    println!("Content: {}", memory.content);
-    println!("Content type: {}", memory.contentType);
-    println!("Source: {}", memory.source);
-    println!("Credibility: {}", memory.credibility);
-    println!("Importance: {}", memory.importance);
-    println!(
-        "Folder: {}",
-        memory.folderPath.clone().unwrap_or_else(String::new)
-    );
-    println!("Created: {}", memory.createdAt);
-    println!("Updated: {}", memory.updatedAt);
-    println!("Last accessed: {}", memory.lastAccessedAt);
-    println!(
-        "Tags: {}",
-        memory
-            .tags
-            .iter()
-            .map(|tag| tag.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
 }
 
 /// Returns a trimmed string only when the value is non-empty.

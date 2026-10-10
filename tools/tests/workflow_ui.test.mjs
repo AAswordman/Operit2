@@ -1,3 +1,4 @@
+import { composeStreamFixture } from './support/compose_stream_fixture.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -52,11 +53,15 @@ function runtime() {
   });
   const load = loader(context);
   load(new URL('main.js', base));
+  for (const file of ['ToolPkgComposeDslCompiler.js', 'ToolPkgComposeDslRetained.js', 'ToolPkgComposeDslReactive.js']) {
+    vm.runInContext(readFileSync(new URL(file, bridgeRoot), 'utf8'), context);
+  }
   vm.runInContext(embedded('ToolPkgComposeDslBridge.rs'), context);
   const wrapper = embedded('ToolPkgComposeDslRuntimeScript.rs')
     .replaceAll('{{', '{').replaceAll('}}', '}').replace('{script}', '');
   vm.runInContext(wrapper, context);
   context.module.exports = load(new URL('ui/screen.js', base));
+  composeStreamFixture(context).adapt();
   return { context, load, channels };
 }
 

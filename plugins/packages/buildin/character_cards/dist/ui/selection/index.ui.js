@@ -68,9 +68,9 @@ function parseChatSelection(selection2) {
 }
 function requireChatSelection(selection2, cards, groups) {
   const parsed = parseChatSelection(selection2);
-  const records = parsed.kind === "card" ? cards : groups;
+  const records2 = parsed.kind === "card" ? cards : groups;
   let matches = 0;
-  for (const record2 of records) if (record2.id === parsed.id) matches += 1;
+  for (const record2 of records2) if (record2.id === parsed.id) matches += 1;
   if (matches !== 1) throw new Error("Chat selection does not identify exactly one stored record: " + selection2);
   if (parsed.kind === "group") {
     for (const group of groups) if (group.id === parsed.id && group.members.length === 0) throw new Error("A bound chat group must have actual participants: " + group.id);
@@ -264,6 +264,7 @@ var id = shape({ id: required(nonblank) });
 var ownerOnly = shape({ ownerKey: required(owner) });
 var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
+var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
 var validators = {
   "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,

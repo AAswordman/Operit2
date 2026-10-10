@@ -329,7 +329,14 @@ struct Operit1CharacterMemoryBinding {
 struct Operit1MemorySpace {
     id: String,
     name: String,
+    #[serde(default = "enabledProfileUpdates")]
+    profileAutoUpdateEnabled: bool,
+    #[serde(default)]
+    profileAutoUpdateLocked: bool,
 }
+
+/// Matches the released memory-space schema's initial profile update setting.
+fn enabledProfileUpdates() -> bool { true }
 
 #[allow(non_snake_case)]
 fn resolveOperit1CharacterMemoryBinding(

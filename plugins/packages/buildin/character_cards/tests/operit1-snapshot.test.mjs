@@ -90,7 +90,8 @@ for (const version of [10, 20, 21]) {
         assert.equal(row.pinned, 1n);
       }
       const target = body.slice(body.indexOf("chats.push(OperitArchivedChat {"));
-      assert.match(target, /pluginExtensions: std::collections::BTreeMap::new\(\)/);
+      assert.match(target, /pluginExtensions: std::collections::BTreeMap::from/);
+      assert.match(target, /LEGACY_BINDING_NAMESPACE/);
       assert.doesNotMatch(target, /\b(?:characterCardName|characterGroupId)\s*:|default_character|activePrompt/);
       assert.equal(db.prepare("PRAGMA user_version").get().user_version, version);
     } finally { db.close(); }
@@ -104,12 +105,12 @@ test("reader contract validation rejects the prior short query and stale locked 
 });
 
 /** Checks the actual restore chain adopts supported domains and never calls dormant legacy conversion or domain managers. */
-test("full importer keeps model speech preferences chat token and resources with explicit legacy non-adoption", () => {
+test("full importer keeps model speech preferences chat token and resources with centralized character adoption", () => {
   const importer = source(backup + "Operit1SnapshotImportManager.rs");
   const restore = rustFunction(importer, "importSnapshotSourceInner");
   let position = restore.indexOf("ParsedOperit1Snapshot::fromSource(source)?");
   assert.ok(position >= 0);
-  for (const method of ["importModelConfigFromParsed", "importSpeechPreferences", "importDataStorePreferences", "importChatDatabase", "importTokenStatistics", "importSnapshotFiles"]) {
+  for (const method of ["importModelConfigFromParsed", "importSpeechPreferences", "importDataStorePreferences", "importSnapshotFiles", "importChatDatabase", "importTokenStatistics"]) {
     const next = restore.indexOf("self." + method + "(");
     assert.ok(next > position, `Restore must preserve the actual ordered call: ${method}`);
     position = next;
@@ -211,17 +212,19 @@ test("Room 10 20 and 21 bridge targets match current SQLite 28 without source-sc
   for (const file of ["Operit1RoomSchemaMigration.rs", "Operit1SnapshotImportManager.rs", "operit1/Operit1ChatMigration.rs"]) assert.doesNotMatch(source(backup + file), /SqliteV27/);
 });
 
-/** Differentiates zero adopted-memory counters and unassociated targets from nonexistent source memories or recovered historical role/TTS state. */
-test("preview reports present legacy domains and restore does not claim legacy memory recovery", () => {
+/** Checks direct plugin adoption and source counters while leaving historical message profiles explicit. */
+test("preview reports source domains and restore adopts character memory through one boundary", () => {
   const importer = source(backup + "Operit1SnapshotImportManager.rs");
   const restore = rustFunction(importer, "importSnapshotSourceInner");
-  assert.match(restore, /importedMemories: 0/);
-  assert.match(restore, /importedMemoryLinks: 0/);
-  assert.match(restore, /"unadopted_legacy_domains"/);
-  assert.doesNotMatch(importer, /快照没有可迁移的记忆库|正在写入角色卡/);
+  assert.doesNotMatch(restore, /importedMemories: 0|importedMemoryLinks: 0|unadopted_legacy_domains/);
+  const chats = rustFunction(importer, "importChatDatabase");
+  assert.match(chats, /self\.importCharactersAndMemory\(parsed, fileImportPlan, &archive\)\?/);
+  assert.match(chats, /resolveOperit1ArchiveBindings/);
+  const adoption = source(backup + "operit1/Operit1CharacterPluginMigration.rs");
+  assert.match(adoption, /CharacterPluginWriter::open/);
+  assert.match(adoption, /buildOperit1PluginMemoryRecords/);
+  assert.match(adoption, /writer\.import\(&source, data\)\?/);
   const preview = rustFunction(source(backup + "operit1/Operit1ModelMigration.rs"), "preview");
-  assert.match(preview, /self\.archive\.datastorePreferences\.keys\(\)/);
-  assert.match(preview, /isOperit1LegacyMemoryEntry\(entry\)/);
   assert.match(preview, /detectedDomains\.push\("memory"\.to_string\(\)\)/);
   const messages = source(backup + "operit1/Operit1ChatMigration.rs");
   for (const name of ["readOperit1RoomV10Messages", "readOperit1RoomV20Messages", "readOperit1RoomV20MessageVariants"]) assert.match(rustFunction(messages, name), /pluginExtensions: std::collections::BTreeMap::new\(\)/);

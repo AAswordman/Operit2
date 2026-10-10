@@ -275,49 +275,39 @@ impl SystemPromptConfig {
             if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
                 String::new()
             } else {
-                format!(
-                    "{}{}",
-                    SystemToolPrompts::generateMemoryToolsPromptEn(&options.tool_visibility),
-                    SystemToolPrompts::generateToolsPromptEnForHost(
-                        options.chat_id.clone(),
-                        options.has_image_recognition,
-                        false,
-                        options.chat_model_has_direct_image,
-                        options.has_audio_recognition,
-                        options.has_video_recognition,
-                        options.chat_model_has_direct_audio,
-                        options.chat_model_has_direct_video,
-                        &options.saf_bookmark_names,
-                        &options.host_environment,
-                        &options.tool_visibility,
-                        options.hook_metadata.clone(),
-                    )
-                    .await?
+                SystemToolPrompts::generateToolsPromptEnForHost(
+                    options.chat_id.clone(),
+                    options.has_image_recognition,
+                    options.chat_model_has_direct_image,
+                    options.has_audio_recognition,
+                    options.has_video_recognition,
+                    options.chat_model_has_direct_audio,
+                    options.chat_model_has_direct_video,
+                    &options.saf_bookmark_names,
+                    &options.host_environment,
+                    &options.tool_visibility,
+                    options.hook_metadata.clone(),
                 )
+                .await?
             };
         let available_tools_cn =
             if options.use_tool_call_api || options.tool_exposure_mode == ToolExposureMode::CLI {
                 String::new()
             } else {
-                format!(
-                    "{}{}",
-                    SystemToolPrompts::generateMemoryToolsPromptCn(&options.tool_visibility),
-                    SystemToolPrompts::generateToolsPromptCnForHost(
-                        options.chat_id.clone(),
-                        options.has_image_recognition,
-                        false,
-                        options.chat_model_has_direct_image,
-                        options.has_audio_recognition,
-                        options.has_video_recognition,
-                        options.chat_model_has_direct_audio,
-                        options.chat_model_has_direct_video,
-                        &options.saf_bookmark_names,
-                        &options.host_environment,
-                        &options.tool_visibility,
-                        options.hook_metadata.clone(),
-                    )
-                    .await?
+                SystemToolPrompts::generateToolsPromptCnForHost(
+                    options.chat_id.clone(),
+                    options.has_image_recognition,
+                    options.chat_model_has_direct_image,
+                    options.has_audio_recognition,
+                    options.has_video_recognition,
+                    options.chat_model_has_direct_audio,
+                    options.chat_model_has_direct_video,
+                    &options.saf_bookmark_names,
+                    &options.host_environment,
+                    &options.tool_visibility,
+                    options.hook_metadata.clone(),
                 )
+                .await?
             };
 
         if options.enable_tools {

@@ -184,6 +184,7 @@ pub struct JsDirectHostBinding {
 /// Contains narrow typed directory and owner-authenticated record methods without AI tool dispatch.
 #[rustfmt::skip]
 pub const JS_DIRECT_HOST_BINDINGS: &[JsDirectHostBinding] = &[
+    JsDirectHostBinding { namespace: "Storage", method: "request" },
     JsDirectHostBinding { namespace: "Chat", method: "sendMessage" },
     JsDirectHostBinding { namespace: "Chat", method: "sendMessageStreaming" },
     JsDirectHostBinding { namespace: "Chat", method: "cancel" },

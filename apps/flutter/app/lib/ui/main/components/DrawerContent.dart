@@ -531,49 +531,49 @@ class _DrawerContentState extends State<DrawerContent> {
     ),
   );
 
+  /// Adds plugin navigation to the native workspace's existing scrolling surface.
   List<Widget> _pluginNavigationSlivers() => <Widget>[
-    if (widget.pluginEntries.isNotEmpty) ...<Widget>[
-      const SliverToBoxAdapter(child: SizedBox(height: 10)),
-      SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsetsDirectional.only(
-            start: 28,
-            end: 12,
-            bottom: 2,
-          ),
-          child: Text(
-            '插件',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: widget.appearance.titleColor.withValues(alpha: 0.82),
-              fontWeight: FontWeight.w600,
-            ),
+    if (widget.pluginEntries.isNotEmpty)
+      SliverToBoxAdapter(child: _pluginNavigationContent()),
+  ];
+
+  /// Sizes plugin navigation to its content for the owning sidebar scroll.
+  Widget _pluginNavigationContent() => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: <Widget>[
+      const SizedBox(height: 10),
+      Padding(
+        padding: const EdgeInsetsDirectional.only(
+          start: 28,
+          end: 12,
+          bottom: 2,
+        ),
+        child: Text(
+          '插件',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: widget.appearance.titleColor.withValues(alpha: 0.82),
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
-      const SliverToBoxAdapter(child: SizedBox(height: 6)),
-      SliverList(
-        delegate: SliverChildBuilderDelegate((context, index) {
-          final entry = widget.pluginEntries[index];
-          return PluginNavigationDrawerItem(
-            entry: entry,
-            selected: widget.selectedRouteId == entry.routeId,
-            appearance: widget.appearance,
-            onClick: () => widget.onNavigationEntrySelected(entry),
-          );
-        }, childCount: widget.pluginEntries.length),
-      ),
-      SliverToBoxAdapter(
-        child: SidebarDockEndDropTarget(
-          controller:
-              MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
-              ? SidebarDockScope.maybeOf(context)
-              : null,
-          location: SidebarDockLocation.primary,
-          height: 18,
+      const SizedBox(height: 6),
+      for (final entry in widget.pluginEntries)
+        PluginNavigationDrawerItem(
+          entry: entry,
+          selected: widget.selectedRouteId == entry.routeId,
+          appearance: widget.appearance,
+          onClick: () => widget.onNavigationEntrySelected(entry),
         ),
+      SidebarDockEndDropTarget(
+        controller:
+            MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+            ? SidebarDockScope.maybeOf(context)
+            : null,
+        location: SidebarDockLocation.primary,
+        height: 18,
       ),
     ],
-  ];
+  );
 
   /// The workspace is always native; resolving membership never replaces its widgets.
   Widget _workspaceHistory(_WorkspaceSection section, bool searching) {
@@ -787,13 +787,7 @@ class _DrawerContentState extends State<DrawerContent> {
                 _workspaceContent(context, tabs: tabs),
             pluginFooter: widget.pluginEntries.isEmpty
                 ? null
-                : ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 160),
-                    child: CustomScrollView(
-                      shrinkWrap: true,
-                      slivers: _pluginNavigationSlivers(),
-                    ),
-                  ),
+                : _pluginNavigationContent(),
             onActivateChat: _activateChat,
           ),
         ),

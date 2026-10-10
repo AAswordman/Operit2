@@ -52,7 +52,7 @@ impl Stream for ComposeDslEventStream {
                 Ok(stream) => stream.collect(collector).await,
                 Err(error) => collector(ToolPkgComposeDslEvent {
                     requestId: String::new(), phase: "sessionError".into(), update: None,
-                    state: None, memo: None, actionResult: None, navigationCommands: Vec::new(), error: Some(error.clone()),
+                    actionResult: None, navigationCommands: Vec::new(), error: Some(error.clone()),
                 }),
             }
         })

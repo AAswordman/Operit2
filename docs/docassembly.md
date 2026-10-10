@@ -1678,7 +1678,6 @@ ToolPkgParser.rs
 ToolPkgLoader.rs
 ToolPkgManager.rs
 ToolPkgMainRegistrationScriptParser.rs
-ToolPkgComposeDslParser.rs
 ToolPkgTemplateModels.rs
 ToolPkgHookModels.rs
 ```

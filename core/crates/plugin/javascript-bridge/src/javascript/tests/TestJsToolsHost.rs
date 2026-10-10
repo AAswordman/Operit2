@@ -164,9 +164,22 @@ pub fn expect_js_output<T>(output: JsExecutionResult<Option<T>>, context: &str) 
         .expect("JavaScript execution should return a value")
 }
 
+/// Rejects structured storage operations outside the fixture's declared capabilities.
+pub fn rejecting_storage_request<T>(_host: &T, _request: operit_plugin_sdk::js_sdk::storage::StorageRequest) -> JsFuture<serde_json::Value> {
+    rejecting_js_future("Storage.request is not part of this test")
+}
+
 #[macro_export]
 macro_rules! impl_rejecting_js_tools_host {
-    ($host:ty) => {
+    ($host:ty) => { $crate::impl_rejecting_js_tools_host!($host, $crate::javascript::TestJsToolsHost::rejecting_storage_request); };
+    ($host:ty, $storage:path) => {
+        impl operit_plugin_sdk::js_sdk::storage::StorageHost for $host {
+            /// Rejects storage operations outside this test host's declared capabilities.
+            fn request(&self, _request: operit_plugin_sdk::js_sdk::storage::StorageRequest) -> operit_plugin_sdk::js_sdk::JsFuture<serde_json::Value> {
+                $storage(self, _request)
+            }
+        }
+
         impl operit_plugin_sdk::js_sdk::edge::EdgeHost for $host {
             fn execute(&self, _nodeId: String, _interfaceInfo: operit_plugin_sdk::js_sdk::edge::EdgeInterfaceInfo, _args: Option<serde_json::Value>) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::EdgePortResultData> {
                 Box::pin(async { Err(operit_plugin_sdk::js_sdk::JsHostError::new("Edge port is unavailable in this test host")) })
@@ -831,6 +844,10 @@ macro_rules! impl_rejecting_js_tools_host {
             /// Rejects title updates in this test host.
             fn updateTitle(&self, _chatId: String, _title: String) -> operit_plugin_sdk::js_sdk::JsFuture<operit_plugin_sdk::js_sdk::results::ChatTitleUpdateResultData> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.updateTitle is not part of this test")
+            }
+            /// Rejects group mutation outside this test host's declared capabilities.
+            fn updateGroup(&self, _chatIds: Vec<String>, _group: operit_plugin_sdk::js_sdk::JsNullable<String>) -> operit_plugin_sdk::js_sdk::JsFuture<String> {
+                $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.updateGroup is not part of this test")
             }
             fn updatePinned(&self, _chatId: String, _pinned: bool) -> operit_plugin_sdk::js_sdk::JsFuture<String> {
                 $crate::javascript::TestJsToolsHost::rejecting_js_future("Chat.updatePinned is not part of this test")

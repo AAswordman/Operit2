@@ -12,7 +12,7 @@ export type ToolParameters = Record<string, unknown>;
 /** Enumerates the exact runtime fields injected by JsToolManager and JsEngine, excluding tool-specific business parameters. */
 export const hostRuntimeParameterNames = [
   "__operit_package_lang", "__operit_package_state", "__operit_package_caller_name",
-  "__operit_package_chat_id", "__operit_package_caller_participant_id", "__operit_package_name",
+  "__operit_package_chat_id", "__operit_package_caller_participant_id", "__operit_package_caller_owner", "__operit_package_name",
   "__operit_toolpkg_runtime_kind", "__operit_toolpkg_api_version", "__operit_execution_context_key",
   "__operit_toolpkg_subpackage_id", "containerPackageName", "toolPkgId", "__operit_ui_package_name",
   "__operit_script_screen",

@@ -23,11 +23,11 @@ use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost
 use operit_js_bridge::javascript::JsExecutionProvider::QuickJsExecutionProvider;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
 use operit_providers::runtime_support::ProviderRuntimeContext;
-use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingStore, BINDING_SYNC_DOMAIN};
 use operit_store::NetworkControlStore::{NetworkControlStore, NETWORK_CONTROL_SYNC_DOMAIN};
-use operit_store::ObjectBoxStore::{applyObjectBoxSyncOperation, OBJECTBOX_SYNC_DOMAIN};
+use operit_store::PluginStorage::{self, PLUGIN_STORAGE_SYNC_DOMAIN};
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::PreferencesDataStore::{PreferencesDataStore, PreferencesSyncedEntry};
 use operit_store::RuntimeFileSyncStore::{
@@ -303,6 +303,9 @@ impl OperitApplication {
         self.initializeJsonSerializer();
         self.initializeAppLanguage();
         self.initAndroidPermissionPreferences();
+        operit_store::db::AppDatabase::AppDatabase::getDatabase(RuntimeStorePaths::default())
+            .map_err(|error| error.to_string())?;
+        crate::data::backup::CharacterPluginMigration::migrateLegacyCharacters(RuntimeStorePaths::default())?;
         self.preloadDatabase();
         AppLogger::i(
             "OperitApplication",
@@ -583,11 +586,6 @@ impl OperitApplication {
         }
     }
 
-    /// Creates a user-markdown repository using this runtime's configured storage host.
-    #[allow(non_snake_case)]
-    pub fn userMarkdownRepository(&self, ownerKey: String) -> UserMarkdownRepository {
-        UserMarkdownRepository::new(ownerKey, defaultRuntimeStorageHost())
-    }
 
     /// Creates an input menu bridge backed by this application's tool package runtime.
     #[allow(non_snake_case)]
@@ -792,6 +790,7 @@ impl OperitApplication {
             &mut clock,
             sqlStore.localClock().map_err(|error| error.to_string())?,
         );
+        mergeSyncClock(&mut clock, PluginStorage::localClock(self.pluginSqliteHost()?).map_err(|e|e.to_string())?);
         serde_json::to_value(clock).map_err(|error| error.to_string())
     }
 
@@ -814,6 +813,8 @@ impl OperitApplication {
                 .operationsSince(&clock, &domains, limit)
                 .map_err(|error| error.to_string())?,
         );
+        operations.extend(PluginStorage::operationsSince(self.pluginSqliteHost()?, &clock, &domains, limit).map_err(|e|e.to_string())?);
+        operations.retain(|operation| !crate::data::backup::CharacterPluginMigration::isRetiredCharacterOperation(operation));
         operations.sort_by(|left, right| {
             left.createdAt
                 .cmp(&right.createdAt)
@@ -845,6 +846,10 @@ impl OperitApplication {
         };
         let mut operations: Vec<SyncOperation> =
             serde_json::from_value(operationsValue).map_err(|error| error.to_string())?;
+        if operations.iter().any(crate::data::backup::CharacterPluginMigration::isRetiredCharacterOperation) {
+            return Err("Synchronization contains retired Core character or memory data; migrate the source node before synchronizing".to_string());
+        }
+
         let synchronizedChatIds = operations
             .iter()
             .filter(|operation| operation.domain == CHAT_SYNC_DOMAIN)
@@ -866,6 +871,7 @@ impl OperitApplication {
         let store = self.runtimeSyncOperationStore()?;
         let sqlStore = SqlChatSyncStore::default().map_err(|error| error.to_string())?;
         if forceApply && operations.is_empty() {
+            PluginStorage::prepareSpaceJoin(self.pluginSqliteHost()?).map_err(|e|e.to_string())?;
             store
                 .markLocalOperationsUnexportable()
                 .map_err(|error| error.to_string())?;
@@ -898,7 +904,7 @@ impl OperitApplication {
         for operation in operations {
             if matches!(
                 operation.domain.as_str(),
-                CHAT_SYNC_DOMAIN | BINDING_SYNC_DOMAIN | NETWORK_CONTROL_SYNC_DOMAIN
+                CHAT_SYNC_DOMAIN | BINDING_SYNC_DOMAIN | NETWORK_CONTROL_SYNC_DOMAIN | PLUGIN_STORAGE_SYNC_DOMAIN
             ) {
                 observedDomainOperations.push(operation);
             } else {
@@ -956,8 +962,14 @@ impl OperitApplication {
         // These domain stores record their own clocks. A newer chat/binding
         // operation must not make an earlier failed preference delta disappear
         // from the next synchronization retry.
+        let mut appliedPluginOperations = Vec::new();
         for operation in observedDomainOperations {
             match (operation.domain.as_str(), forceApply) {
+                (PLUGIN_STORAGE_SYNC_DOMAIN, force) => PluginStorage::applyOperation(
+                    self.pluginSqliteHost()?,
+                    self.hostManager.runtimeStorageHost.clone().ok_or("RuntimeStorageHost is not registered")?,
+                    &operation, force,
+                ).map_err(|e|e.to_string()),
                 (CHAT_SYNC_DOMAIN, true) => sqlStore
                     .applyBootstrapOperation(&operation)
                     .map_err(|error| error.to_string()),
@@ -974,6 +986,7 @@ impl OperitApplication {
                 }
                 _ => unreachable!("observed sync domains are classified before materialization"),
             }?;
+            if operation.domain == PLUGIN_STORAGE_SYNC_DOMAIN { appliedPluginOperations.push(operation); }
         }
         if forceApply {
             store
@@ -989,6 +1002,7 @@ impl OperitApplication {
             .map_err(|error| error.to_string())?;
         if let Some(storage) = self.hostManager.runtimeStorageHost.as_ref() {
             operit_store::SyncAppliedChanges::publish(storage, &appliedPersistentOperations);
+            operit_store::SyncAppliedChanges::publish(storage, &appliedPluginOperations);
         }
         self.refreshSynchronizedChatFlows(&synchronizedChatIds)?;
         AppLogger::trace(
@@ -1188,6 +1202,12 @@ impl OperitApplication {
         ))
     }
 
+    /// Requires the existing runtime SQLite Host for plugin storage synchronization.
+    #[allow(non_snake_case)]
+    fn pluginSqliteHost(&self) -> Result<std::sync::Arc<dyn operit_host_api::RuntimeSqliteHost>,String> {
+        self.hostManager.runtimeSqliteHost.clone().ok_or_else(|| "RuntimeSqliteHost is not registered for plugin storage".to_string())
+    }
+
     /// Applies one non-preferences persistent operation to its owning domain.
     #[allow(non_snake_case)]
     fn applyNonPreferenceSyncOperation(&self, operation: &SyncOperation) -> Result<(), String> {
@@ -1196,9 +1216,6 @@ impl OperitApplication {
             operation.entityType.as_str(),
             operation.operation.as_str(),
         ) {
-            (OBJECTBOX_SYNC_DOMAIN, _, _) => {
-                applyObjectBoxSyncOperation(operation).map_err(|error| error.to_string())
-            }
             (RUNTIME_FILE_SYNC_DOMAIN, "file", "upsert" | "delete") => {
                 let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
                     "RuntimeStorageHost is not registered for persistent sync".to_string()

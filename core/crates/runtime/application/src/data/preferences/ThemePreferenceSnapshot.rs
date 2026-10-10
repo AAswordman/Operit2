@@ -521,6 +521,50 @@ pub fn validateThemePreferenceSnapshot(
     Ok(())
 }
 
+/// Reads ordinary fields using the declared initial values only for unset preference keys.
+pub(crate) fn readThemePreferenceSnapshot(
+    preferences: &Preferences,
+    initialSnapshot: &BTreeMap<String, Value>,
+) -> Result<BTreeMap<String, Value>, PreferencesDataStoreError> {
+    validateThemePreferenceSnapshot(initialSnapshot)?;
+    let mut snapshot = initialSnapshot.clone();
+    for field in SNAPSHOT_FIELDS {
+        if let Some(text) = preferences.get(&stringPreferencesKey(field.preference_key)) {
+            let value = match field.kind {
+                FieldKind::OptionalString | FieldKind::Enum(_) | FieldKind::OptionalEnum(_) => {
+                    Value::String(text.clone())
+                }
+                _ => serde_json::from_str::<Value>(text)?,
+            };
+            validateField(field, &value)?;
+            snapshot.insert(field.json_key.to_string(), value);
+        }
+    }
+    if let Some(text) = preferences.get(&stringPreferencesKey("use_system_theme")) {
+        let enabled = serde_json::from_str::<bool>(text)?;
+        if enabled {
+            snapshot.insert("themeMode".to_string(), Value::String("system".to_string()));
+        }
+    }
+    validateThemePreferenceSnapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+/// Validates exact ordinary appearance keys before staging a partial configuration edit.
+pub(crate) fn validateThemePreferenceKeys<'a>(
+    keys: impl Iterator<Item = &'a str>,
+) -> Result<(), PreferencesDataStoreError> {
+    for key in keys {
+        if !SNAPSHOT_FIELDS
+            .iter()
+            .any(|field| field.preference_key == key)
+        {
+            return Err(invalidSnapshot(key, "unknown appearance preference"));
+        }
+    }
+    Ok(())
+}
+
 /// Applies a validated complete snapshot using the existing ordinary appearance key names.
 pub(crate) fn writeThemePreferenceSnapshot(
     preferences: &mut Preferences,

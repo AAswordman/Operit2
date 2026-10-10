@@ -394,8 +394,6 @@ class UserPreferencesManager {
   static const String CHAT_STYLE_BUBBLE = 'bubble';
   static const String INPUT_STYLE_CLASSIC = 'classic';
   static const String INPUT_STYLE_AGENT = 'agent';
-  static const String CHAT_HISTORY_GROUPING_CHARACTER = 'character';
-  static const String CHAT_HISTORY_GROUPING_WORKSPACE = 'workspace';
   static const String BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE =
       'tiled_nine_slice';
   static const String BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = 'nine_patch';
@@ -425,8 +423,6 @@ class UserPreferencesManager {
   );
 
   static const String _fileName = 'user_preferences.preferences.json';
-  static const String _KEY_CHAT_HISTORY_GROUPING_MODE =
-      'chat_history_grouping_mode';
 
   /// Names the only built-in conversation tab, independent of old grouping values.
   static const String CHAT_SIDEBAR_WORKSPACE_TAB = 'workspace';
@@ -786,22 +782,6 @@ class UserPreferencesManager {
     await _setStrings(<String, String>{_KEY_CHAT_SIDEBAR_TAB: tabId});
   }
 
-  /// Observes the persisted sidebar conversation grouping mode.
-  Stream<String?> chatHistoryGroupingModeFlow() {
-    return preferencesFlow()
-        .map(
-          (values) => switch (values[_KEY_CHAT_HISTORY_GROUPING_MODE]) {
-            null => null,
-            CHAT_HISTORY_GROUPING_CHARACTER => CHAT_HISTORY_GROUPING_CHARACTER,
-            CHAT_HISTORY_GROUPING_WORKSPACE => CHAT_HISTORY_GROUPING_WORKSPACE,
-            final value => throw FormatException(
-              'Unsupported persisted sidebar grouping mode: $value',
-            ),
-          },
-        )
-        .distinct();
-  }
-
   /// Loads the global settings for converting long pasted text to attachments.
   Future<void> loadLongPastedTextInputSettings() async {
     final values = await _getStrings(<String>[
@@ -857,28 +837,6 @@ class UserPreferencesManager {
       _KEY_LONG_PASTED_TEXT_INPUT_THRESHOLD: threshold.toString(),
     });
     longPastedTextInputSettings.value = settings;
-  }
-
-  /// Loads the persisted sidebar conversation grouping mode.
-  Future<String?> loadChatHistoryGroupingMode() async {
-    final values = await _getStrings(<String>[_KEY_CHAT_HISTORY_GROUPING_MODE]);
-    return values[_KEY_CHAT_HISTORY_GROUPING_MODE];
-  }
-
-  /// Persists the sidebar conversation grouping mode.
-  Future<void> saveChatHistoryGroupingMode(String mode) async {
-    switch (mode) {
-      case CHAT_HISTORY_GROUPING_CHARACTER:
-      case CHAT_HISTORY_GROUPING_WORKSPACE:
-        break;
-      default:
-        throw ArgumentError.value(
-          mode,
-          'mode',
-          'is not a supported grouping mode',
-        );
-    }
-    await _setStrings(<String, String>{_KEY_CHAT_HISTORY_GROUPING_MODE: mode});
   }
 
   /// Reads ordinary appearance values without querying plugin-owned references.
@@ -1246,21 +1204,25 @@ class UserPreferencesManager {
     setIfPresent(_BUBBLE_AI_CUSTOM_FONT_PATH, bubbleAiCustomFontPath);
 
     if (values.isNotEmpty) {
-      await _setStrings(values);
+      await _saveAppearanceValues(values);
     }
   }
 
   /// Clears only ordinary message color overrides, preserving other appearance values.
-  Future<void> resetMessageColorSettings() => _removeStrings(<String>[
-    _CURSOR_USER_BUBBLE_COLOR,
-    _BUBBLE_USER_BUBBLE_COLOR,
-    _BUBBLE_AI_BUBBLE_COLOR,
-    _BUBBLE_USER_TEXT_COLOR,
-    _BUBBLE_AI_TEXT_COLOR,
-  ]);
+  Future<void> resetMessageColorSettings() => _saveAppearanceValues(
+    const {},
+    removeKeys: <String>[
+      _CURSOR_USER_BUBBLE_COLOR,
+      _BUBBLE_USER_BUBBLE_COLOR,
+      _BUBBLE_AI_BUBBLE_COLOR,
+      _BUBBLE_USER_TEXT_COLOR,
+      _BUBBLE_AI_TEXT_COLOR,
+    ],
+  );
 
   /// Clears ordinary theme overrides without deleting independent user-avatar settings.
-  Future<void> resetThemeSettings() => _removeStrings(_themeKeys);
+  Future<void> resetThemeSettings() =>
+      _saveAppearanceValues(const {}, removeKeys: _themeKeys);
 
   /// Persists the ordinary user-avatar setting without any role ownership inference.
   /// Writes the independent user avatar without referencing a plugin identity.
@@ -1269,7 +1231,19 @@ class UserPreferencesManager {
   }) async {
     final values = <String, String>{};
     values[_KEY_CUSTOM_USER_AVATAR_URI] = customUserAvatarUri;
-    await _setStrings(values);
+    await _saveAppearanceValues(values);
+  }
+
+  /// Edits appearance through the theme owner so the active named configuration stays synchronized.
+  Future<void> _saveAppearanceValues(
+    Map<String, String> values, {
+    List<String> removeKeys = const [],
+  }) async {
+    await _clients.application.themeConfigManager().patchAppearance(
+      initialSnapshot: defaultThemePreferenceSnapshot.toJson(),
+      values: values,
+      removeKeys: removeKeys,
+    );
   }
 
   Future<Map<String, String>> _getStrings(List<String> keys) {

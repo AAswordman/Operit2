@@ -38,7 +38,7 @@ function independentConfigurations() {
 
 /** Initializes actual plugin files and a complete record whose independent references are explicitly declared. */
 async function environment(t, themeConfigId = "theme-two", ttsConfigId = "tts-two") {
-  const disk = await createDiskHarness(t), owner = await loadModule("src/storage/files.ts", disk.globals).FileCharacterRepository.open();
+  const disk = await createDiskHarness(t), owner = await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
   const card = await owner.run(
     /** Persists a real plugin role record while keeping the product initial active selection unchanged. */
     repository => repository.createCharacter({ ...plain(drafts.createCharacterDraft()), name: "Actual file application role", themeConfigId, ttsConfigId }),
@@ -64,7 +64,7 @@ function commitActive(env, selection = "card:" + env.card.id) {
 }
 
 /** Reads actual published state bytes outside the plugin IO adapter, not a cached or fixture active value. */
-async function state(env) { return JSON.parse((await env.disk.readBytes(env.statePath)).toString("utf8")); }
+async function state(env) { return JSON.parse((await env.disk.stateBytes()).toString("utf8")); }
 
 /** Both independent references must validate before the real selection file is published. */
 test("selection application prevalidates all explicit references before file commit and awaits each exact apply", async t => {
@@ -81,9 +81,9 @@ test("selection application prevalidates all explicit references before file com
 /** Unknown IDs cannot silently become null, use global configs or publish a new selection. */
 test("unknown theme or speech prevalidation has zero selection writes and preserves exact file bytes", async t => {
   for (const [theme, tts, message] of [["deleted-theme", "tts-two", /Unknown independent theme/], ["theme-two", "deleted-tts", /Unknown independent TTS/]]) {
-    const env = await environment(t, theme, tts), before = await env.disk.readBytes(env.statePath);
+    const env = await environment(t, theme, tts), before = await env.disk.stateBytes();
     await assert.rejects(commitActive(env), message);
-    assert.equal(Buffer.compare(await env.disk.readBytes(env.statePath), before), 0);
+    assert.equal(Buffer.compare(await env.disk.stateBytes(), before), 0);
     assert.equal(env.disk.calls.filter(
       /** Counts genuine publication IO rather than merely inspecting a private staged object. */
       call => call.method === "write" || call.method === "move",
@@ -155,7 +155,7 @@ test("group application uses only its own independent theme and never infers fir
 
 /** A selection owner error is propagated unchanged; no independent application is allowed without confirmation. */
 test("failed real selection publication propagates the original IO error and performs zero config apply", async t => {
-  const env = await environment(t), original = new Error("Actual selection file write rejected"); env.disk.failNext("write", original);
+  const env = await environment(t), original = new Error("Actual selection file write rejected"); env.disk.failNext("storage.commit", original);
   await assert.rejects(commitActive(env),
     /** Preserves the genuine file-owner rejection instead of inventing a successful selection receipt. */
     failure => failure === original,

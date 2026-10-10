@@ -15,3 +15,6 @@ pub mod ToolPkgPublicApiUiCatalog;
 
 /// Owns typed Compose DSL sessions over existing automatic stream proxies.
 pub mod ToolPkgComposeDslSession;
+
+/// Shares retained typed records between finite widget and terminal renderers.
+pub mod ToolPkgComposeDslNodeStore;

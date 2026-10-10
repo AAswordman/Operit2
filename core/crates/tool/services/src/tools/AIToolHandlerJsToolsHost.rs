@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use operit_tools::files::PathMapper::PathMapper;
 
 use operit_plugin_sdk::javascript::{JsExecutionHost, JsToolCallRequest, JsToolCallResultData};
 use operit_plugin_sdk::js_sdk::chat::*;
@@ -9,6 +11,7 @@ use operit_plugin_sdk::js_sdk::network::*;
 use operit_plugin_sdk::js_sdk::results::*;
 use operit_plugin_sdk::js_sdk::software_settings::*;
 use operit_plugin_sdk::js_sdk::system::*;
+use operit_plugin_sdk::js_sdk::storage::*;
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::js_sdk::{JsAny, JsAsyncIterable, JsFuture, JsHostError, rejected_js_async_iterable};
 use serde::de::DeserializeOwned;
@@ -306,7 +309,9 @@ fn authenticated_chat_extension_owner(host: &AIToolHandler) -> Result<String, Js
     registry.getToolPkgContainerRuntime(owner).ok_or_else(|| {
         JsHostError::new(format!("Chat extension owner is not registered: {owner}"))
     })?;
-    if !registry.isPackageEnabled(owner) {
+    if !registry.getEnabledToolPkgContainerRuntimes().iter()
+        .any(|runtime| runtime.packageName == owner)
+    {
         return Err(JsHostError::new(format!(
             "Chat extension owner is disabled: {owner}"
         )));
@@ -408,6 +413,41 @@ fn invoke_chat_cancel(host: &AIToolHandler, chatId: String) -> JsFuture<ChatCanc
 
 include!(concat!(env!("OUT_DIR"), "/js_tools_host_impl.rs"));
 
+/// Converts supported public VFS, runtime-relative and Host paths to one canonical runtime storage identity.
+fn resolve_plugin_storage_path(path: &str, roots: &RuntimeStorePaths) -> Result<String, JsHostError> {
+    let normalized = path.replace('\\', "/");
+    if normalized.starts_with("runtime/") {
+        return Ok(normalized);
+    }
+    if normalized == "/app/data" || normalized.starts_with("/app/data/") {
+        let relative = PathMapper::relativePath("/app/data", &normalized)
+            .map_err(JsHostError::new)?
+            .ok_or_else(|| JsHostError::new("Storage VFS path is not inside the runtime root"))?;
+        return Ok(format!("runtime/{relative}"));
+    }
+    let root = roots.runtime_dir().to_string_lossy().replace('\\', "/");
+    let relative = normalized.strip_prefix(&format!("{root}/"))
+        .ok_or_else(|| JsHostError::new("Storage path is not inside the runtime Host root"))?;
+    Ok(format!("runtime/{relative}"))
+}
+
+/// Captures real enabled ownership, normalizes the selected Host path, and uses the engine's own handles.
+fn invoke_storage_request(host: &AIToolHandler, mut request: StorageRequest) -> JsFuture<Value> {
+    let owner = authenticated_chat_extension_owner(host);
+    let context = host.getContext();
+    let session = host.storageSession.clone();
+    Box::pin(async move {
+        owner?;
+        let sqlite = context.runtimeSqliteHost.ok_or_else(|| JsHostError::new("RuntimeSqliteHost is not registered"))?;
+        let storage = context.runtimeStorageHost.ok_or_else(|| JsHostError::new("RuntimeStorageHost is not registered"))?;
+        if let StorageRequest::Open { path, .. } = &mut request {
+            *path = resolve_plugin_storage_path(path, &RuntimeStorePaths::default())?;
+        }
+        let deviceId = operit_store::SyncOperationStore::SyncOperationStore::new(storage.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH).localDeviceId().map_err(|e| JsHostError::new(e.to_string()))?;
+        session.request(sqlite, storage, request, &deviceId).map_err(|e| JsHostError::new(e.to_string()))
+    })
+}
+
 /// Executes a narrow typed configuration-directory read without registering or invoking an AI tool.
 fn invoke_software_settings_directory<TResult>(
     host: &AIToolHandler,
@@ -463,4 +503,25 @@ where
         }.map_err(|error| JsHostError::new(error.to_string()))?;
         serde_json::from_value(value).map_err(|error| JsHostError::new(error.to_string()))
     })
+}
+
+#[cfg(test)]
+mod plugin_storage_paths {
+    use super::*;
+
+    /// Resolves public local and shared directories to the same identity as runtime and Host paths.
+    #[test]
+    fn directory_paths_resolve_to_canonical_owned_storage() {
+        let roots = RuntimeStorePaths::new(std::path::PathBuf::from("storage-root/runtime"), std::path::PathBuf::from("storage-root/workspaces"));
+        for scope_path in ["device/example/cache.sqlite", "space/example/memory.sqlite"] {
+            let relative = format!("plugin_data/{scope_path}");
+            let expected = format!("runtime/{relative}");
+            for path in [format!("/app/data/{relative}"), expected.clone(), format!("storage-root/runtime/{relative}")] {
+                assert_eq!(resolve_plugin_storage_path(&path, &roots).unwrap(), expected);
+            }
+        }
+        for path in ["/app/workspaces/example/cache.sqlite", "/app/data/../../escape.sqlite", "storage-root/other/cache.sqlite", "/app/database/cache.sqlite"] {
+            assert!(resolve_plugin_storage_path(path, &roots).is_err(), "{path}");
+        }
+    }
 }

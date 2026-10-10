@@ -23,6 +23,7 @@ pub mod network;
 pub mod results;
 pub mod runtime_bindings;
 pub mod software_settings;
+pub mod storage;
 pub mod system;
 pub mod tool_types;
 pub mod toolpkg;
@@ -310,6 +311,7 @@ pub trait JsToolsHost:
     + chat::ChatHost
     + edge::EdgeHost
     + edge::IoHost
+    + storage::StorageHost
     + Send
     + Sync
 {
@@ -328,6 +330,7 @@ impl<T> JsToolsHost for T where
         + chat::ChatHost
         + edge::EdgeHost
         + edge::IoHost
+        + storage::StorageHost
         + Send
         + Sync
 {

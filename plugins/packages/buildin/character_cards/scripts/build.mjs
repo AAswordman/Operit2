@@ -47,7 +47,7 @@ export async function buildMainScript() {
 /** Keeps each screen's module identity intact for the path-only native registration bridge. */
 export async function buildUiScreenScripts() {
   const entries = (await sourceFiles("src/ui")).filter(file => file.endsWith(".ui.ts"));
-  if (entries.length !== 6) throw new Error("Character cards must build its six independently registered Compose screens");
+  if (entries.length !== 7) throw new Error("Character cards must build its seven independently registered Compose screens");
   const scripts = {};
   for (const entry of entries) {
     const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, entry)], bundle: true, format: "cjs", platform: "neutral", target: "es2020", supported: { "async-await": false }, write: false });

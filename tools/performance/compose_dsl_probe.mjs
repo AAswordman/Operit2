@@ -1,3 +1,4 @@
+import { composeStreamFixture } from '../tests/support/compose_stream_fixture.mjs';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -64,7 +65,7 @@ function runtime(rowCount, stateBytes, asynchronous) {
   const context = vm.createContext({ module: { exports: {} }, console,
     __operit_call_runtime_ref: {
       /** Measures the actual complete response crossing the intermediate-result boundary. */
-      sendIntermediateResult(value) { capture(value, 'intermediate'); },
+      sendComposeResponse(phase, value) { capture(value, 'intermediate'); },
     },
     /** Times the actual selector view and exposes one explicit synthetic state-edit action. */
     probeScreen(ctx) {
@@ -87,6 +88,7 @@ function runtime(rowCount, stateBytes, asynchronous) {
   vm.runInContext(sdkScript('ToolPkgComposeDslBridge.rs'), context);
   const wrapper = sdkScript('ToolPkgComposeDslRuntimeScript.rs').replaceAll('{{', '{').replaceAll('}}', '}').replace('{script}', 'module.exports.default = probeScreen;');
   vm.runInContext(wrapper, context);
+  composeStreamFixture(context, { inspectStorage: false, onResponse(phase, value) { if (phase === "intermediate") capture(value, phase); } }).adapt();
   let current = context.__operit_render_compose_dsl({});
 
   /** Captures separate inner-string and outer-event serialization costs. */

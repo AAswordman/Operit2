@@ -96,13 +96,8 @@ class ChatUiIdentity {
 @immutable
 class ChatUiContext {
   /// Creates context with explicit absence when no identity or background exists.
-  const ChatUiContext({
-    required this.selectors,
-    required this.identity,
-    required this.backgroundUri,
-  });
+  const ChatUiContext({required this.identity, required this.backgroundUri});
 
-  final List<ChatUiChoice> selectors;
   final ChatUiIdentity? identity;
   final String? backgroundUri;
 }

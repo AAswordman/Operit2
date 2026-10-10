@@ -22,9 +22,9 @@ const SYNC_DOMAINS: [&str; 6] = [
     "preferences",
     "chat",
     "binding",
-    "objectbox",
     "runtime_file",
     "network_control",
+    "plugin_storage",
 ];
 const SPACE_SYNC_PREPARATION_DELAY_MS: u64 = 0;
 const SYNC_BLOB_CHUNK_BYTES: i64 = 64 * 1024;

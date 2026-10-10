@@ -24,14 +24,10 @@ class ToolPkgDesktopWidgetFrame {
           instanceId: instanceId,
           useEnglish: useEnglish,
         );
+    final store = _ComposeDslNodeStore()..apply(snapshot.renderUpdate);
     return ToolPkgDesktopWidgetFrame._(
       snapshot.widget,
-      _ComposeDslRenderResult(
-        tree: _ComposeDslNode.fromSnapshot(snapshot.renderResult.tree),
-        state: snapshot.renderResult.state,
-        memo: snapshot.renderResult.memo,
-        actionResult: null,
-      ),
+      _ComposeDslRenderResult(tree: store.root, actionResult: null),
     );
   }
 

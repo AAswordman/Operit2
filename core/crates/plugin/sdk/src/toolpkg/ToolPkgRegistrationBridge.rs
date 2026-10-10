@@ -76,18 +76,19 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 case 'app_bar':
                 case 'chat_attachments':
                 case 'chat_sidebar_tabs':
+                case 'chat_input_menu':
                     return;
                 default:
                     throw new Error('registerNavigationEntry.surface is unsupported: ' + String(surface));
             }
         }
 
-        /** Requires one already registered package-owned Compose DSL route for an embedded sidebar tab. */
-        function validateSidebarTabRoute(definition) {
+        /** Requires one already registered package-owned Compose DSL route for an embedded surface. */
+        function validateEmbeddedRoute(definition) {
             var owner = resolveCurrentToolPkgTarget();
-            if (!owner) throw new Error('registerNavigationEntry.route owner is unavailable for chat_sidebar_tabs');
+            if (!owner) throw new Error('registerNavigationEntry.route owner is unavailable for ' + definition.surface);
             if (!definition.route.startsWith('toolpkg:' + owner + ':ui:')) {
-                throw new Error('registerNavigationEntry.route must belong to this package for chat_sidebar_tabs: ' + definition.route);
+                throw new Error('registerNavigationEntry.route must belong to this package for ' + definition.surface + ': ' + definition.route);
             }
             var registeredRoutes = capture.uiRoutes.concat(capture.toolboxUiModules);
             var matches = 0;
@@ -99,11 +100,11 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 if (!explicitMatch && !generatedMatch) continue;
                 matches += 1;
                 if (registered.runtime !== undefined && registered.runtime !== 'compose_dsl') {
-                    throw new Error('registerNavigationEntry.route must use compose_dsl for chat_sidebar_tabs: ' + definition.route);
+                    throw new Error('registerNavigationEntry.route must use compose_dsl for ' + definition.surface + ': ' + definition.route);
                 }
             }
-            if (matches === 0) throw new Error('registerNavigationEntry.route is not registered for chat_sidebar_tabs: ' + definition.route);
-            if (matches !== 1) throw new Error('registerNavigationEntry.route is duplicated for chat_sidebar_tabs: ' + definition.route);
+            if (matches === 0) throw new Error('registerNavigationEntry.route is not registered for ' + definition.surface + ': ' + definition.route);
+            if (matches !== 1) throw new Error('registerNavigationEntry.route is duplicated for ' + definition.surface + ': ' + definition.route);
         }
 
         /** Rejects non-JSON route input before serialization can silently drop or replace values. */
@@ -288,6 +289,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return normalized;
         }
 
+        /** Preserves the exact exported entry when a UI route is registered with a function. */
         function normalizeScreenField(definition, label) {
             if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
                 throw new Error(label + ' expects an object');
@@ -295,10 +297,12 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             var normalized = copyObject(definition, 'screen');
             var screen = definition.screen;
             var path = '';
+            var exportName = null;
             if (typeof screen === 'string') {
                 path = screen.trim().replace(/\\/g, '/');
             } else if (typeof screen === 'function' && typeof screen.__operit_toolpkg_module_path === 'string') {
                 path = screen.__operit_toolpkg_module_path.trim().replace(/\\/g, '/');
+                exportName = screen.__operit_toolpkg_export_name;
             } else if (
                 screen &&
                 typeof screen === 'object' &&
@@ -306,10 +310,15 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 typeof screen.default.__operit_toolpkg_module_path === 'string'
             ) {
                 path = screen.default.__operit_toolpkg_module_path.trim().replace(/\\/g, '/');
+                exportName = screen.default.__operit_toolpkg_export_name;
             }
             if (!path) {
                 throw new Error(label + ' requires a serializable screen reference');
             }
+            if (typeof screen !== 'string' && (typeof exportName !== 'string' || !exportName.trim())) {
+                throw new Error(label + ' screen function must have a named module export');
+            }
+            normalized.screenExport = exportName;
             normalized.screen = path;
             return normalized;
         }
@@ -499,6 +508,38 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             throw new Error('Plugin configuration directory must be an absolute VFS path');
         }
 
+        /** Resolves the executing container's stable local data through its Host. */
+        function getToolPkgLocalDataDir() {
+            var owner = resolveCurrentToolPkgTarget();
+            if (!owner) {
+                throw new Error('package/toolpkg runtime target is empty');
+            }
+            if (typeof NativeInterface === 'undefined' || !NativeInterface ||
+                typeof NativeInterface.getPluginLocalDataDir !== 'function') {
+                throw new Error('NativeInterface.getPluginLocalDataDir is unavailable');
+            }
+            var path = NativeInterface.getPluginLocalDataDir(owner);
+            if (typeof path !== 'string' || !path.startsWith('/')) {
+                throw new Error('Plugin local data directory must be an absolute VFS path');
+            }
+            return path;
+        }
+
+        /** Resolves persistent shared data without changing the plugin's installation scope. */
+        function getToolPkgSpaceDataDir() {
+            var owner = resolveCurrentToolPkgTarget();
+            if (!owner) { throw new Error('package/toolpkg runtime target is empty'); }
+            if (typeof NativeInterface === 'undefined' || !NativeInterface ||
+                typeof NativeInterface.getPluginSpaceDataDir !== 'function') {
+                throw new Error('NativeInterface.getPluginSpaceDataDir is unavailable');
+            }
+            var path = NativeInterface.getPluginSpaceDataDir(owner);
+            if (typeof path !== 'string' || !path.startsWith('/')) {
+                throw new Error('Plugin shared data directory must be an absolute VFS path');
+            }
+            return path;
+        }
+
         function normalizeToolPkgWasmValueType(valueType) {
             var normalizedType = String(valueType || '').trim().toLowerCase();
             if (
@@ -610,7 +651,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                     throw new Error('registerNavigationEntry requires an object');
                 }
                 validateNavigationSurface(definition.surface);
-                if (definition.surface === 'chat_attachments' || definition.surface === 'chat_sidebar_tabs') {
+                if (definition.surface === 'chat_attachments' || definition.surface === 'chat_sidebar_tabs' || definition.surface === 'chat_input_menu') {
                     if (definition.action !== undefined && definition.action !== null) {
                         throw new Error('registerNavigationEntry.action is unsupported for ' + definition.surface);
                     }
@@ -618,7 +659,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                         throw new Error('registerNavigationEntry.route is required for ' + definition.surface);
                     }
                 }
-                if (definition.surface === 'chat_sidebar_tabs') validateSidebarTabRoute(definition);
+                if (definition.surface === 'chat_sidebar_tabs' || definition.surface === 'chat_input_menu') validateEmbeddedRoute(definition);
                 if (Object.prototype.hasOwnProperty.call(definition, 'params')) {
                     validateNavigationParams(definition.params, []);
                 }
@@ -687,6 +728,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             readResource: readToolPkgResource,
             readResourceFromPackage: readToolPkgResourceFromPackage,
             getConfigDir: getToolPkgConfigDir,
+            getLocalDataDir: getToolPkgLocalDataDir,
+            getSpaceDataDir: getToolPkgSpaceDataDir,
             wasm: {
                 call: callToolPkgWasm
             },

@@ -8,10 +8,9 @@ import 'package:flutter/material.dart';
 import '../../../../../../../core/application/PluginHotReload.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
-import '../../../../../../common/CharacterAvatar.dart';
 import '../../../../../../common/contributions/ChatUiContributionModels.dart';
 import '../../../../../../common/contributions/ContributionPresentationResult.dart';
-import '../../../../../../common/contributions/ToolPkgChatUiCatalog.dart';
+import '../../../../../../common/contributions/ChatInputMenuHost.dart';
 import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 import '../../../../../packages/screens/ToolPkgUiLauncherScreen.dart';
@@ -520,8 +519,6 @@ class _ChatSessionSummarySectionState
   int _inputTokenCount = 0;
   int _outputTokenCount = 0;
   bool _statsExpanded = false;
-  Future<ChatUiContext>? _contextActionsFuture;
-  StreamSubscription<void>? _contextCatalogSubscription;
   bool _presentingContextAction = false;
 
   /// Loads plugin actions and native statistics for this exact menu context.
@@ -529,11 +526,6 @@ class _ChatSessionSummarySectionState
   void initState() {
     super.initState();
     _maxContextLengthFuture = _loadSummary();
-    _contextActionsFuture = _loadChatUiContext();
-    _contextCatalogSubscription = ToolPkgCatalogChangeBus.listen(
-      _reloadChatUiContext,
-    );
-    PluginHotReload.revision.addListener(_reloadChatUiContext);
     _summaryTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_pollingSummary) return;
       _pollingSummary = true;
@@ -566,19 +558,7 @@ class _ChatSessionSummarySectionState
       _inputTokenCount = 0;
       _outputTokenCount = 0;
       _maxContextLengthFuture = _loadSummary();
-      _contextActionsFuture = _loadChatUiContext();
     }
-  }
-
-  /// Loads presentation actions from the actual enabled public API owners.
-  Future<ChatUiContext> _loadChatUiContext() => ToolPkgChatUiCatalog(
-    clients: widget.viewModel.clients,
-  ).loadContext(chatId: widget.currentChatId);
-
-  /// Refreshes context after a durable plugin action or package catalog change.
-  void _reloadChatUiContext() {
-    if (!mounted) return;
-    setState(() => _contextActionsFuture = _loadChatUiContext());
   }
 
   /// Refreshes the captured runtime descriptor only after its own valid completion.
@@ -682,65 +662,11 @@ class _ChatSessionSummarySectionState
     }
   }
 
-  /// Renders only the display fields and actions supplied by registered owners.
-  Widget _buildContextActions() => FutureBuilder<ChatUiContext>(
-    future: _contextActionsFuture,
-    builder: (context, snapshot) {
-      if (snapshot.connectionState != ConnectionState.done) {
-        return const Padding(
-          padding: EdgeInsets.all(12),
-          child: LinearProgressIndicator(),
-        );
-      }
-      if (snapshot.hasError) {
-        return Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text('会话插件加载失败：${snapshot.error}'),
-        );
-      }
-      final data = snapshot.requireData;
-      final identity = data.identity;
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (identity != null)
-            ListTile(
-              dense: true,
-              leading: SizedBox(
-                width: 32,
-                height: 32,
-                child: ClipOval(
-                  child: CharacterAvatarImage(
-                    avatarUri: identity.avatarUri,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ),
-              title: Text(
-                identity.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              enabled: !_presentingContextAction,
-              onTap: () => _presentChatUiAction(identity.action),
-            ),
-          for (final selector in data.selectors)
-            ListTile(
-              dense: true,
-              leading: selector.icon == null
-                  ? null
-                  : Icon(
-                      MaterialIconNameResolver.resolve(selector.icon!),
-                      size: 20,
-                    ),
-              title: Text(selector.title),
-              trailing: const Icon(Icons.chevron_right, size: 20),
-              enabled: !_presentingContextAction,
-              onTap: () => _presentChatUiAction(selector.action),
-            ),
-        ],
-      );
-    },
+  /// Embeds registered plugin DSL content without interpreting its menu layout.
+  Widget _buildContextActions() => ChatInputMenuHost(
+    clients: widget.viewModel.clients,
+    chatId: widget.currentChatId,
+    onPresent: _presentChatUiAction,
   );
 
   /// Reads native token statistics without consulting any plugin domain records.
@@ -766,8 +692,6 @@ class _ChatSessionSummarySectionState
   @override
   void dispose() {
     _summaryTimer?.cancel();
-    unawaited(_contextCatalogSubscription?.cancel());
-    PluginHotReload.revision.removeListener(_reloadChatUiContext);
     super.dispose();
   }
 

@@ -78,7 +78,13 @@ fn expectedVersion28Rows(
                     }
                     if EXTENSION_TABLES.iter().any(|candidate| table == candidate) {
                         result.columns.push("pluginExtensions".to_string());
-                        result.values.push(SqliteValue::Text("{}".to_string()));
+                        let extensions = if table == "chats" || table == "sync_sql_chat_rows" {
+                            serde_json::json!({"com.operit.character_cards.migration": {
+                                "characterCardName": row.get::<_, Option<String>>("characterCardName").unwrap(),
+                                "characterGroupId": row.get::<_, Option<String>>("characterGroupId").unwrap(),
+                            }}).to_string()
+                        } else { "{}".to_string() };
+                        result.values.push(SqliteValue::Text(extensions));
                     }
                     if table == "sync_sql_operations"
                         && row.get::<_, String>("domain").unwrap() == "chat"
@@ -115,15 +121,13 @@ fn schemaDefinitions(store: &SqliteStore) -> BTreeMap<String, Vec<SqliteRow>> {
             );
         }
     }
-    definitions.insert(
-        "indexes".to_string(),
-        store
-            .queryRows(
-                "SELECT name,tbl_name,sql FROM sqlite_master WHERE type='index' ORDER BY name",
-                Vec::new(),
-            )
-            .unwrap(),
-    );
+    let mut indexes = store.queryRows("SELECT name,tbl_name,sql FROM sqlite_master WHERE type='index' ORDER BY name", Vec::new()).unwrap();
+    for row in &mut indexes {
+        for value in &mut row.values {
+            if let SqliteValue::Text(sql) = value { *sql = sql.replace("\r\n", "\n"); }
+        }
+    }
+    definitions.insert("indexes".to_string(), indexes);
     definitions
 }
 
@@ -204,7 +208,8 @@ fn opening_version27_atomically_upgrades_records_and_reopens_version28() {
     );
     assert_eq!(chat.workspaceId.as_deref(), Some("workspace-kept"));
     assert_eq!(chat.parentChatId.as_deref(), Some("parent-kept"));
-    assert!(chat.locked && chat.pinned && chat.pluginExtensions.is_empty());
+    assert!(chat.locked && chat.pinned);
+    assert_eq!(chat.pluginExtensions["com.operit.character_cards.migration"], serde_json::json!({"characterCardName":"legacy-card","characterGroupId":"legacy-role-group"}));
     let message = database
         .messageDao()
         .getMessageByTimestamp("v27-chat", 42)

@@ -84,6 +84,8 @@ pub const TOOLPKG_NAV_SURFACE_APP_BAR: &str = "app_bar";
 pub const TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS: &str = "chat_attachments";
 /// Names real plugin-owned UI routes embedded as tabs beside the built-in workspace tab.
 pub const TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS: &str = "chat_sidebar_tabs";
+/// Names plugin-owned Compose DSL rows embedded above the native chat input statistics.
+pub const TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU: &str = "chat_input_menu";
 
 /// Requires an exact supported navigation surface without case folding or whitespace repair.
 #[allow(non_snake_case)]
@@ -93,7 +95,8 @@ pub(crate) fn requireToolPkgNavigationSurface(surface: &str) -> Result<(), Strin
         | TOOLPKG_NAV_SURFACE_MAIN_SIDEBAR_PLUGINS
         | TOOLPKG_NAV_SURFACE_APP_BAR
         | TOOLPKG_NAV_SURFACE_CHAT_ATTACHMENTS
-        | TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS => Ok(()),
+        | TOOLPKG_NAV_SURFACE_CHAT_SIDEBAR_TABS
+        | TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU => Ok(()),
         _ => Err(format!("is unsupported: {surface}")),
     }
 }

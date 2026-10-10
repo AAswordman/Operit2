@@ -1,13 +1,14 @@
 import type { CharacterRepository } from "./canonical";
 import type { ActivePrompt, BackupImportResult, Card, ChatBinding, CharacterDirectories, CharacterState, ConversationGroupRecord, Group, Memory, MemoryAutoSaveStatus, MemoryGraph, MemoryImportResult, MemoryLink, MemoryLinkUpdate, MemoryLinkValues, MemoryRebuildProgress, MemorySearchConfig, MemorySearchOptions, MemorySettings, MemorySpace, MemoryValues, ModelSummary, Store, Tag, TagValues, ToolCatalog, TtsConfig, UserDocument, UserDocumentWrite } from "./model";
 import { assertBoolean, assertCard, assertConversationGroups, assertGroup, assertMemory, assertMemorySettings, assertMemoryValues, assertNumber, assertSearchConfig, assertSearchOptions, assertString, assertTag, assertTagValues, normalizeNames, requireDecimal, requireId, requireName } from "./validation";
+import { clone } from "./storage/records";
 import { createDefaultCharacter, createMemorySpace, assertMemorySpace } from "./storage/state";
 import { searchMemorySpace } from "./memory-search";
 import { requireChatSelection } from "./chat-bindings";
 import { deleteChatExtensionBinding, listChatExtensionBindings, readChatExtensionBinding, writeChatExtensionBinding } from "./chat-extensions";
 
-/** Copies JSON domain records so consumers cannot mutate the in-flight snapshot outside this repository. */
-function copy<T>(value: T): T { return JSON.parse(JSON.stringify(value)); }
+/** Copies structured domain records so consumers cannot mutate the in-flight snapshot outside this repository. */
+function copy<T>(value: T): T { return clone(value); }
 /** Requires one exact record and never selects an arbitrary duplicate or manufactures an absent object. */
 function get<T extends { id: string }>(records: T[], id: string, label: string): T {
   requireId(id, label + " id");

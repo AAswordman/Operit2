@@ -13,12 +13,15 @@ RuntimeContext.register({
     loadSettings: shared_1.loadSettings,
     saveSettings: shared_1.saveSettings,
 });
-async function appendExtraInfoWithStatus(processedInput, chatId, activePrompt) {
-    return (0, shared_1.appendExtraInfoToMessage)(processedInput, chatId || undefined, activePrompt);
+/** Passes the prompt execution identity to extra information injection. */
+async function appendExtraInfoWithStatus(processedInput, chatId, executionContext) {
+    return (0, shared_1.appendExtraInfoToMessage)(processedInput, chatId || undefined, executionContext);
 }
-function resolveHookActivePrompt(input) {
-    return input.eventPayload.metadata?.activePrompt;
+/** Reads the exact participant selected by the generic prompt host. */
+function resolveHookExecutionContext(input) {
+    return input.eventPayload.metadata?.executionContext;
 }
+/** Registers the settings screen and prompt injection hooks. */
 function registerToolPkg() {
     ToolPkg.registerToolboxUiModule({
         id: "message_insert_settings",
@@ -44,6 +47,7 @@ function registerToolPkg() {
     });
     return true;
 }
+/** Injects persisted attachments before input processing when enabled. */
 async function onPromptInput(input) {
     const stage = String(input.eventPayload.stage ?? input.eventName ?? "");
     if (stage !== "before_process") {
@@ -58,9 +62,10 @@ async function onPromptInput(input) {
         return null;
     }
     const chatId = String(input.eventPayload.chatId ?? getChatId() ?? "").trim();
-    const activePrompt = resolveHookActivePrompt(input);
-    return appendExtraInfoWithStatus(processedInput, chatId || undefined, activePrompt);
+    const executionContext = resolveHookExecutionContext(input);
+    return appendExtraInfoWithStatus(processedInput, chatId || undefined, executionContext);
 }
+/** Injects transient attachments into the final model request when enabled. */
 async function onPromptFinalize(input) {
     const stage = String(input.eventPayload.stage ?? input.eventName ?? "");
     if (stage !== "before_send_to_model") {
@@ -75,9 +80,10 @@ async function onPromptFinalize(input) {
         return null;
     }
     const chatId = String(input.eventPayload.chatId ?? getChatId() ?? "").trim();
-    const activePrompt = resolveHookActivePrompt(input);
-    return appendExtraInfoWithStatus(processedInput, chatId || undefined, activePrompt);
+    const executionContext = resolveHookExecutionContext(input);
+    return appendExtraInfoWithStatus(processedInput, chatId || undefined, executionContext);
 }
+/** Reads or toggles the extra information injection menu state. */
 async function onInputMenuToggle(input) {
     const action = String(input.eventPayload.action ?? "").toLowerCase();
     if (action === "toggle") {

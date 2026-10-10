@@ -62,8 +62,8 @@ async function extensionHarness(t) {
     /** Removes only the executing-owner namespace and does not delete a host chat or plugin group. */
     async deleteExtension(target) { attempted("deleteExtension", target); const record = targetRecord(target), existed = record.extension !== null; record.extension = null; return existed; },
   });
-  const globals = { ...disk.globals, Tools: strictMethods("Tools", { Files: disk.files, Chat: chat }) };
-  const files = loadModule("src/storage/files.ts", globals), repository = await files.FileCharacterRepository.open();
+  const globals = { ...disk.globals, Tools: strictMethods("Tools", { Files: disk.files, Storage: disk.storage, Chat: chat }) };
+  const files = loadModule("src/storage/database.ts", globals), repository = await files.DatabaseCharacterRepository.open();
   const service = loadModule("src/service.ts", globals).createCharacterCardsService(repository);
   const statePath = path.join(disk.directory, "character-memory", "state.json");
   return { disk, records, calls, missing, repository, service, statePath,
@@ -75,16 +75,16 @@ async function extensionHarness(t) {
 /** Proves management APIs use only real record extensions and never publish a plugin-file binding mirror. */
 test("binding read/write/delete use only owner-isolated generic extensions and preserve other namespace fields", async t => {
   const h = await extensionHarness(t), card = plain(await h.service.dispatchDomain("character.create", { values: { name: "真实角色", characterSetting: "正文" } }));
-  const stateBefore = await readFile(h.statePath), original = plain(h.records.get("chat-a").extension);
+  const stateBefore = await h.disk.stateBytes(), original = plain(h.records.get("chat-a").extension);
   const written = plain(await h.service.dispatchDomain("chat.configuration.binding.write", { chatId: "chat-a", selection: "card:" + card.id }));
   assert.deepEqual(written, { chatId: "chat-a", selection: "card:" + card.id });
   assert.deepEqual(h.records.get("chat-a").extension, { ...original, selection: written.selection });
   assert.deepEqual(plain(await h.service.dispatchDomain("chat.configuration.binding.read", { chatId: "chat-a" })), written);
-  assert.deepEqual(await readFile(h.statePath), stateBefore);
+  assert.deepEqual(await h.disk.stateBytes(), stateBefore);
   const state = JSON.parse(stateBefore); assert.equal(state.version, 3); assert.equal(Object.hasOwn(state, "chatBindings"), false);
   assert.deepEqual(plain(await h.service.dispatchDomain("chat.configuration.binding.delete", { chatId: "chat-a" })), { chatId: "chat-a", deleted: true });
   assert.deepEqual(plain(await h.service.dispatchDomain("chat.configuration.binding.delete", { chatId: "chat-a" })), { chatId: "chat-a", deleted: false });
-  assert.deepEqual(await readFile(h.statePath), stateBefore);
+  assert.deepEqual(await h.disk.stateBytes(), stateBefore);
   await assert.rejects(() => h.service.dispatchDomain("chat.configuration.binding.read", { chatId: "chat-a" }), /no character selection/);
   const writes = h.calls.filter(
     /** Inspects only actual generic extension submissions. */
@@ -95,7 +95,7 @@ test("binding read/write/delete use only owner-isolated generic extensions and p
 
 /** Distinguishes legitimate null namespaces from absent records, corrupt markers and scheduled host failures. */
 test("extension errors and malformed markers propagate without retry or synthesized bindings", async t => {
-  const h = await extensionHarness(t), before = await readFile(h.statePath);
+  const h = await extensionHarness(t), before = await h.disk.stateBytes();
   await assert.rejects(() => h.service.dispatchDomain("chat.configuration.binding.read", { chatId: "not-persisted" }),
     /** Retains the exact host not-found error. */
     error => error === h.missing,
@@ -117,23 +117,23 @@ test("extension errors and malformed markers propagate without retry or synthesi
     /** Counts all attempted writes, including the failed submission. */
     call => call.method === "writeExtension",
   ).length, 1);
-  assert.deepEqual(await readFile(h.statePath), before);
+  assert.deepEqual(await h.disk.stateBytes(), before);
 });
 
 /** Checks referenced-selection deletion against actual extant host records rather than deleted file mirrors. */
 test("selection deletion reads actual host records and blocks referenced roles without inventing deleted-chat cleanup", async t => {
   const h = await extensionHarness(t), card = plain(await h.service.dispatchDomain("character.create", { values: { name: "将删除角色" } }));
   await h.service.dispatchDomain("chat.configuration.binding.write", { chatId: "chat-a", selection: "card:" + card.id });
-  const before = await readFile(h.statePath);
+  const before = await h.disk.stateBytes();
   await assert.rejects(() => h.service.dispatchDomain("character.delete", { id: card.id }), /Rebind or delete the chat extension/);
-  assert.deepEqual(await readFile(h.statePath), before);
+  assert.deepEqual(await h.disk.stateBytes(), before);
   h.records.delete("chat-a");
   assert.deepEqual(plain(await h.service.dispatchDomain("character.delete", { id: card.id })), { id: card.id, deleted: true });
   assert.equal(h.calls.filter(
     /** Confirms both deletion checks enumerated the real generic source. */
     call => call.method === "listAll",
   ).length, 2);
-  assert.equal(Object.hasOwn(JSON.parse(await readFile(h.statePath, "utf8")), "chatBindings"), false);
+  assert.equal(Object.hasOwn(await h.disk.readState(), "chatBindings"), false);
 });
 
 /** Exercises memory-chat ownership and group metadata against the same service after file bindings were removed. */
@@ -144,9 +144,9 @@ test("memory chat lists use real extension owners and namespace deletion does no
     /** Selects exact genuinely bound chat identities, excluding explicit null namespaces. */
     chat => chat.id,
   ), ["chat-a", "chat-b"]);
-  const stateBefore = await readFile(h.statePath);
+  const stateBefore = await h.disk.stateBytes();
   await h.service.dispatchDomain("chat.configuration.binding.delete", { chatId: "chat-a" });
-  assert.deepEqual(await readFile(h.statePath), stateBefore);
+  assert.deepEqual(await h.disk.stateBytes(), stateBefore);
   const remaining = plain(await h.service.dispatchDomain("memory.chat.list", { ownerKey }));
   assert.deepEqual(remaining.map(
     /** Retains only the actual remaining record extension binding. */

@@ -102,6 +102,7 @@ __export(main_exports, {
   memoryListApi: () => memoryListApi,
   memoryMountApi: () => memoryMountApi,
   memoryMoveApi: () => memoryMoveApi,
+  memoryQueryApi: () => memoryQueryApi,
   memoryRebuildCancelApi: () => memoryRebuildCancelApi,
   memoryRebuildProgressApi: () => memoryRebuildProgressApi,
   memoryRebuildStartApi: () => memoryRebuildStartApi,
@@ -155,7 +156,8 @@ var import_index_ui2 = __toESM(require("./ui/main/index.ui.js"));
 var import_index_ui3 = __toESM(require("./ui/memory-attachment/index.ui.js"));
 var import_index_ui4 = __toESM(require("./ui/chat-sidebar/index.ui.js"));
 var import_index_ui5 = __toESM(require("./ui/selection/index.ui.js"));
-var import_index_ui6 = __toESM(require("./ui/group-execution/index.ui.js"));
+var import_index_ui6 = __toESM(require("./ui/chat-input-menu/index.ui.js"));
+var import_index_ui7 = __toESM(require("./ui/group-execution/index.ui.js"));
 
 // src/drafts.ts
 function createCharacterDraft() {
@@ -443,9 +445,9 @@ function parseChatSelection(selection) {
 }
 function requireChatSelection(selection, cards, groups) {
   const parsed = parseChatSelection(selection);
-  const records2 = parsed.kind === "card" ? cards : groups;
+  const records3 = parsed.kind === "card" ? cards : groups;
   let matches = 0;
-  for (const record2 of records2) if (record2.id === parsed.id) matches += 1;
+  for (const record2 of records3) if (record2.id === parsed.id) matches += 1;
   if (matches !== 1) throw new Error("Chat selection does not identify exactly one stored record: " + selection);
   if (parsed.kind === "group") {
     for (const group of groups) if (group.id === parsed.id && group.members.length === 0) throw new Error("A bound chat group must have actual participants: " + group.id);
@@ -775,6 +777,11 @@ var id = shape({ id: required(nonblank) });
 var ownerOnly = shape({ ownerKey: required(owner) });
 var contentOnly = shape({ content: required(text) });
 var format = enumeration("operit", "tavern");
+var memoryQueryRequest = shape({ participantId: required(nonblank), query: required(nonblank), limit: required(nonnegative), snapshotId: required(nullable(nonblank)) });
+function parseMemoryQueryRequest(payload) {
+  memoryQueryRequest(payload, "memory.query");
+  return payload;
+}
 var validators = {
   "memory.searchWithOptions": shape({ ownerKey: required(owner), query: required(text), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
@@ -912,8 +919,8 @@ function parseChatConfigurationRequest(value) {
   }
   return request;
 }
-function chatRecord(records2, id2, kind) {
-  const matches = records2.filter(
+function chatRecord(records3, id2, kind) {
+  const matches = records3.filter(
     /** Matches the supplied identifier without interpreting its spelling. */
     (item) => item.id === id2
   );
@@ -1985,8 +1992,8 @@ var MemoryJobRunner = class {
                   if (list === void 0) grouped.set(candidate.chatId, [candidate]);
                   else list.push(candidate);
                 }
-                for (const records2 of grouped.values()) {
-                  const capped = records2.slice(0, 20);
+                for (const records3 of grouped.values()) {
+                  const capped = records3.slice(0, 20);
                   for (const sourceType of ["selected_user_message", "reply_finalized_auto"]) {
                     const batch = capped.filter(
                       /** Preserves the original selected/automatic source partition. */
@@ -2044,14 +2051,6 @@ var operitDefaultContent = {
 function createDefaultCharacter(now) {
   return { ...createCharacterDraft(), ...operitDefaultContent, id: "default", isDefault: true, createdAt: now, updatedAt: now };
 }
-function upgradeUntouchedDefault(state) {
-  const card = state.cards.find((item) => item.id === "default" && item.isDefault);
-  if (card === void 0 || card.createdAt !== card.updatedAt) return false;
-  const placeholder = { ...createCharacterDraft(), id: "default", name: "\u9ED8\u8BA4\u89D2\u8272", description: "\u901A\u7528\u52A9\u624B", characterSetting: "\u4F60\u662F\u4E00\u4E2A\u4E50\u4E8E\u52A9\u4EBA\u3001\u8BDA\u5B9E\u4E14\u4E25\u8C28\u7684\u52A9\u624B\u3002", isDefault: true, createdAt: card.createdAt, updatedAt: card.updatedAt };
-  for (const key of Object.keys(placeholder)) if (JSON.stringify(card[key]) !== JSON.stringify(placeholder[key])) return false;
-  Object.assign(card, operitDefaultContent);
-  return true;
-}
 function userDocumentPath(ownerKey) {
   return "owners/" + encodeURIComponent(ownerKey) + "/USER.md";
 }
@@ -2076,9 +2075,9 @@ function createInitialState(now) {
 function array2(value, label) {
   if (!Array.isArray(value)) throw new Error(label + " must be an array");
 }
-function identities(records2, label) {
+function identities(records3, label) {
   const ids = /* @__PURE__ */ new Set();
-  for (const record2 of records2) {
+  for (const record2 of records3) {
     assertObject(record2, label);
     const id2 = requireId(record2.id, label + " id");
     if (ids.has(id2)) throw new Error(label + " has duplicate id: " + id2);
@@ -2088,7 +2087,7 @@ function identities(records2, label) {
 }
 function assertCharacterState(value) {
   assertObject(value, "character state");
-  if (value.version !== 3) throw new Error("Unsupported character state file version");
+  if (value.version !== 3) throw new Error("Unsupported character database version");
   const fields4 = /* @__PURE__ */ new Set(["version", "nextId", "cards", "groups", "tags", "stores", "active", "owners", "conversationGroups"]);
   for (const key of Object.keys(value)) if (!fields4.has(key)) throw new Error("Unsupported character state field: " + key);
   const nextId = BigInt(requireDecimal(value.nextId, "nextId", true));
@@ -2269,15 +2268,6 @@ function assertMemorySpace(value) {
     if (embeddingKeys.has(key)) throw new Error("Duplicate stored embedding input");
     embeddingKeys.add(key);
   }
-}
-function decodeCharacterState(content) {
-  assertString(content, "state file content");
-  const value = JSON.parse(content);
-  assertCharacterState(value);
-  return value;
-}
-function copyState(state) {
-  return decodeCharacterState(JSON.stringify(state));
 }
 
 // src/backup.ts
@@ -3239,8 +3229,8 @@ function configurationRecords(values, label) {
 }
 function requireConfiguration(values, id2, label) {
   requireId(id2, label + "\u5F15\u7528 ID");
-  const records2 = configurationRecords(values, label);
-  const matches = records2.filter(
+  const records3 = configurationRecords(values, label);
+  const matches = records3.filter(
     /** Resolves an exact ID, not a role-prefixed target, configured global or inferred participant. */
     (config) => config.id === id2
   );
@@ -3974,6 +3964,61 @@ function dispatchDomain(operation, input, host) {
   return executeDomain(operation, input, host);
 }
 
+// src/storage/records.ts
+var collections = ["cards", "groups", "tags", "stores", "conversationGroups", "owners", "memories", "links", "chunks", "candidates", "embeddings"];
+var ownerCollections = ["memories", "links", "chunks", "candidates", "embeddings"];
+function clone(value) {
+  if (Array.isArray(value)) return value.map(clone);
+  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)]));
+  return value;
+}
+function equal(left, right) {
+  if (left === right) return true;
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
+  const keys = Object.keys(left), other = Object.keys(right);
+  return Array.isArray(left) === Array.isArray(right) && keys.length === other.length && keys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && equal(left[key], right[key]));
+}
+function recordKey(collection, value, index) {
+  const record2 = value;
+  if (collection !== "embeddings") return record2.id;
+  return String(index).padStart(20, "0");
+}
+function records2(state) {
+  const result2 = [];
+  for (const collection of ["cards", "groups", "tags", "stores", "conversationGroups"]) {
+    for (const record2 of state[collection]) result2.push({ collection, key: record2.id, value: record2, version: null });
+  }
+  for (const owner2 of state.owners) {
+    const { memories, links, chunks, candidates, embeddings, ...metadata } = owner2;
+    result2.push({ collection: "owners", key: owner2.ownerKey, value: metadata, version: null });
+    for (const collection of ownerCollections) for (const [index, record2] of owner2[collection].entries()) result2.push({ collection, key: owner2.ownerKey + "/" + recordKey(collection, record2, index), value: { ownerKey: owner2.ownerKey, record: record2 }, version: null });
+  }
+  return result2;
+}
+function stateFromRecords(metadata, rows) {
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) throw new Error("Invalid character database metadata");
+  if (metadata.migrationStatus === "writing") throw new Error("Character migration has not completed");
+  const state = { version: metadata.version, nextId: metadata.nextId, active: metadata.active, cards: [], groups: [], tags: [], stores: [], conversationGroups: [], owners: [] };
+  const owners = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (row.collection === "owners") {
+      const owner2 = { ...row.value, memories: [], links: [], chunks: [], candidates: [], embeddings: [] };
+      if (owner2.ownerKey !== row.key || owners.has(row.key)) throw new Error("Invalid memory owner record: " + row.key);
+      owners.set(row.key, owner2);
+      state.owners.push(owner2);
+    } else if (!ownerCollections.some((collection) => collection === row.collection)) {
+      state[row.collection].push(row.value);
+    }
+  }
+  for (const row of rows) {
+    if (!ownerCollections.some((collection) => collection === row.collection)) continue;
+    const envelope = row.value, owner2 = owners.get(envelope.ownerKey);
+    if (owner2 === void 0 || row.key !== envelope.ownerKey + "/" + recordKey(row.collection, envelope.record, owner2[row.collection].length)) throw new Error("Invalid owner-scoped record: " + row.key);
+    owner2[row.collection].push(envelope.record);
+  }
+  return state;
+}
+
 // src/memory-search.ts
 function tokens(text2) {
   const words = text2.toLocaleLowerCase().match(/[\p{L}\p{N}_]+/gu);
@@ -4115,8 +4160,8 @@ function searchMemorySpace(space, options) {
         if (value === void 0) throw new Error("Semantic search index is inconsistent");
         vector = value;
       }
-      const score2 = (keyword * keywordWeight + tagValue * tagWeight + vector * vectorWeight + edge * edgeWeight) / denominator;
-      if (score2 > 0 && score2 >= options.relevanceThreshold) scores.push({ memory: document.memory, score: score2 });
+      const score3 = (keyword * keywordWeight + tagValue * tagWeight + vector * vectorWeight + edge * edgeWeight) / denominator;
+      if (score3 > 0 && score3 >= options.relevanceThreshold) scores.push({ memory: document.memory, score: score3 });
     }
     scores.sort(
       /** Orders actual ranked hits with a stable lossless identity tie breaker. */
@@ -4131,19 +4176,19 @@ function searchMemorySpace(space, options) {
 
 // src/repository.ts
 function copy(value) {
-  return JSON.parse(JSON.stringify(value));
+  return clone(value);
 }
-function get(records2, id2, label) {
+function get(records3, id2, label) {
   requireId(id2, label + " id");
-  const recordsWithId = records2.filter(
+  const recordsWithId = records3.filter(
     /** Resolves the exact identity rather than guessing names. */
     (record2) => record2.id === id2
   );
   if (recordsWithId.length !== 1) throw new Error(label + " does not identify exactly one record: " + id2);
   return recordsWithId[0];
 }
-function uniqueName(records2, name, id2) {
-  for (const record2 of records2) if (record2.id !== id2 && record2.name === name) throw new Error("Name already exists: " + name);
+function uniqueName(records3, name, id2) {
+  for (const record2 of records3) if (record2.id !== id2 && record2.name === name) throw new Error("Name already exists: " + name);
 }
 function folder(value) {
   if (value === null) return null;
@@ -4580,7 +4625,7 @@ var RepositorySession = class {
       const original = this.space(ownerKey);
       assertMemorySpace(space);
       if (space.ownerKey !== ownerKey || space.userDocumentPath !== original.userDocumentPath) throw new Error("Memory owner identity or USER.md path cannot change");
-      for (const records2 of [space.memories, space.links, space.chunks, space.candidates]) for (const record2 of records2) this.reserve(record2.id);
+      for (const records3 of [space.memories, space.links, space.chunks, space.candidates]) for (const record2 of records3) this.reserve(record2.id);
       if (space.rebuildTask !== null) this.reserve(space.rebuildTask.id);
       Object.assign(original, copy(space));
     });
@@ -4969,75 +5014,81 @@ var RepositorySession = class {
   }
 };
 
-// src/storage/files.ts
+// src/storage/database.ts
 function completed(result2) {
   if (!result2.successful) throw new Error(result2.details);
 }
-function dataDirectory() {
-  const root = ToolPkg.getConfigDir();
-  if (typeof root !== "string" || root.trim() === "") throw new Error("Plugin config directory is unavailable");
-  return root.replace(/\\/g, "/").replace(/\/$/, "") + "/character-memory";
-}
-var FileCharacterRepository = class _FileCharacterRepository {
-  /** Retains only an authoritative successfully opened or published snapshot. */
-  constructor(directory, state, directories) {
+var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
+  /** Retains the host database handle and the explicit external directory readers. */
+  constructor(database, directory, directories) {
+    this.database = database;
     this.directory = directory;
-    this.state = state;
     this.directories = directories;
     this.busy = false;
-    this.waiters = [];
     this.publicationFailure = null;
+    this.waiters = [];
   }
-  /** Initializes a new product installation; existing broken state is never reconstructed. */
+  /** Initializes a new plugin database or opens the records written by the centralized Core migration. */
   static open(directories = null) {
     return __async(this, null, function* () {
-      const directory = dataDirectory(), info = yield Tools.Files.exists(directory);
-      if (info.exists) {
-        if (!info.isDirectory) throw new Error("Plugin data path is not a directory: " + directory);
-        const content = yield Tools.Files.read(directory + "/state.json"), state2 = decodeCharacterState(content.content);
-        const repository2 = new _FileCharacterRepository(directory, state2, directories);
-        const pending = yield Tools.Files.exists(directory + "/state.next.json");
-        if (pending.exists) throw new Error("Unfinished plugin snapshot publication: " + directory + "/state.next.json");
-        yield repository2.verifyDocuments(state2);
-        if (upgradeUntouchedDefault(state2)) yield repository2.publish(state2, [], []);
-        return repository2;
+      const directory = ToolPkg.getSpaceDataDir();
+      if (typeof directory !== "string" || directory.trim() === "") throw new Error("Plugin data directory is unavailable");
+      const database = yield Tools.Storage.objects.open({ path: directory + "/characters.sqlite" });
+      const repository = new _DatabaseCharacterRepository(database, directory, directories);
+      const metadata = yield database.collection("meta").get("state");
+      if (metadata === null) {
+        const rows = yield repository.readRecords();
+        if (rows.length !== 0) throw new Error("Character database has records without metadata");
+        const state = createInitialState(Date.now());
+        assertCharacterState(state);
+        const documents = state.owners.map((owner2) => ({ ownerKey: owner2.ownerKey, path: directory + "/" + owner2.userDocumentPath, content: "", newDocument: true }));
+        yield repository.publish(state, [], documents, [], null, {});
+      } else {
+        assertCharacterState(stateFromRecords(metadata.value, yield repository.readRecords()));
       }
-      completed(yield Tools.Files.mkdir(directory, true));
-      const state = createInitialState(Date.now());
-      assertCharacterState(state);
-      const repository = new _FileCharacterRepository(directory, state, directories);
-      const documents = state.owners.map(
-        /** Initializes each genuine first-install owner document exactly once. */
-        (owner2) => ({ ownerKey: owner2.ownerKey, path: directory + "/" + owner2.userDocumentPath, content: "", newDocument: true })
-      );
-      yield repository.publish(state, documents, []);
       return repository;
     });
   }
-  /** Runs commands, APIs and UI operations in one private snapshot with one publication phase. */
+  /** Loads bounded collection pages through the host without reading a serialized collection file. */
+  readRecords() {
+    return __async(this, null, function* () {
+      const rows = [];
+      for (const collection of collections) {
+        let after = null;
+        for (; ; ) {
+          const page = yield this.database.collection(collection).list(after, 1e3);
+          for (const entry of page) rows.push({ collection, ...entry });
+          if (page.length < 1e3) break;
+          after = page[page.length - 1].key;
+        }
+      }
+      return rows;
+    });
+  }
+  /** Refreshes host records for each operation so remote synchronization and snapshot imports remain visible. */
   run(action) {
     return __async(this, null, function* () {
       yield this.acquire();
       try {
         if (this.publicationFailure !== null) throw this.publicationFailure.error;
-        yield this.verifyDocuments(this.state);
-        const state = copyState(this.state), session = new RepositorySession(state, this.directory, this.directories);
+        const metadata = yield this.database.collection("meta").get("state");
+        if (metadata === null) throw new Error("Character database metadata disappeared");
+        const rows = yield this.readRecords(), checked = yield this.database.collection("meta").get("state");
+        if (checked === null || checked.version !== metadata.version) throw new Error("Character records changed during the read; operation was not started");
+        const before = stateFromRecords(metadata.value, rows);
+        assertCharacterState(before);
+        const state = clone(before), session = new RepositorySession(state, this.directory, this.directories);
         const result2 = yield action(session);
         assertCharacterState(state);
         const documents = session.documentWrites();
-        const deletedDocuments = this.state.owners.filter(
-          /** Identifies removed owners without guessing names or touching other plugin paths. */
-          (owner2) => !state.owners.some(
-            /** Retains exact owner identities that still exist. */
-            (retained2) => retained2.ownerKey === owner2.ownerKey
-          )
-        ).map(
-          /** Selects only this plugin's validated owner USER.md file. */
-          (owner2) => this.directory + "/" + owner2.userDocumentPath
-        );
-        if (JSON.stringify(state) !== JSON.stringify(this.state) || documents.length !== 0) {
-          yield this.publish(state, documents, deletedDocuments);
-          this.state = state;
+        const removed = before.owners.filter((owner2) => !state.owners.some((retained2) => retained2.ownerKey === owner2.ownerKey)).map((owner2) => this.directory + "/" + owner2.userDocumentPath.slice(0, owner2.userDocumentPath.lastIndexOf("/")));
+        if (!equal(before, state) || documents.length !== 0) {
+          try {
+            yield this.publish(state, rows, documents, removed, metadata.version, metadata.value);
+          } catch (error) {
+            this.publicationFailure = { error };
+            throw error;
+          }
         }
         return result2;
       } finally {
@@ -5045,77 +5096,49 @@ var FileCharacterRepository = class _FileCharacterRepository {
       }
     });
   }
-  /** Requires every existing referenced USER.md file and rejects interrupted document publications. */
-  verifyDocuments(state) {
-    return __async(this, null, function* () {
-      for (const owner2 of state.owners) {
-        const path = this.directory + "/" + owner2.userDocumentPath;
-        const document = yield Tools.Files.read(path);
-        assertString(document.content, "USER.md content");
-        const pending = yield Tools.Files.exists(path + ".next");
-        if (pending.exists) throw new Error("Unfinished owner USER.md publication: " + path + ".next");
-      }
-    });
-  }
-  /** Acquires the sole publisher without evaluating queued domain work beforehand. */
+  /** Serializes domain sessions within this execution while exact host versions guard other executions. */
   acquire() {
     if (!this.busy) {
       this.busy = true;
       return Promise.resolve();
     }
-    return new Promise(
-      /** Stores the next exact lock grant. */
-      (resolve) => {
-        this.waiters.push(resolve);
-      }
-    );
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
   }
-  /** Releases the next caller after its predecessor's original success or failure. */
+  /** Grants the next waiting operation after the current session completes. */
   release() {
     const waiter = this.waiters.shift();
     if (waiter === void 0) this.busy = false;
     else waiter();
   }
-  /** Verifies staging bytes before invoking the existing Files move operation. */
-  stage(path, content) {
+  /** Commits only changed domain records and retains the migration provenance in the metadata guard. */
+  publish(state, before, documents, removed, metadataVersion, metadata) {
     return __async(this, null, function* () {
-      completed(yield Tools.Files.write(path, content, false));
-      const result2 = yield Tools.Files.read(path);
-      if (result2.content !== content) throw new Error("Plugin staging verification failed: " + path);
-    });
-  }
-  /** Publishes and verifies one real file without promising unsupported host atomicity. */
-  move(source, target, content) {
-    return __async(this, null, function* () {
-      completed(yield Tools.Files.move(source, target));
-      const result2 = yield Tools.Files.read(target);
-      if (result2.content !== content) throw new Error("Plugin file publication verification failed: " + target);
-    });
-  }
-  /** Stages all domain/document writes before publication and stops permanently on a publication error. */
-  publish(state, documents, deletedDocuments) {
-    return __async(this, null, function* () {
-      const content = JSON.stringify(state, null, 2) + "\n", pending = this.directory + "/state.next.json", target = this.directory + "/state.json";
-      try {
-        yield this.stage(pending, content);
-        for (const document of documents) {
-          if (document.newDocument) {
-            const existing = yield Tools.Files.exists(document.path);
-            if (existing.exists) throw new Error("New owner document path is already occupied: " + document.path);
-            completed(yield Tools.Files.mkdir(document.path.slice(0, document.path.lastIndexOf("/")), true));
-          } else {
-            const existing = yield Tools.Files.read(document.path);
-            assertString(existing.content, "existing USER.md");
-          }
-          yield this.stage(document.path + ".next", document.content);
-        }
-        for (const document of documents) yield this.move(document.path + ".next", document.path, document.content);
-        for (const path of deletedDocuments) completed(yield Tools.Files.deleteFile(path, false));
-        yield this.move(pending, target, content);
-      } catch (error) {
-        this.publicationFailure = { error };
-        throw error;
+      const previous = new Map(before.map((row) => [row.collection + "\0" + row.key, row]));
+      const mutations = [];
+      for (const row of records2(state)) {
+        const key = row.collection + "\0" + row.key, existing = previous.get(key);
+        if (existing === void 0 || !equal(existing.value, row.value)) mutations.push({ op: "put", collection: row.collection, key: row.key, value: row.value, expectedVersion: existing === void 0 ? null : existing.version });
+        previous.delete(key);
       }
+      for (const row of previous.values()) mutations.push({ op: "delete", collection: row.collection, key: row.key, expectedVersion: row.version });
+      mutations.push({ op: "put", collection: "meta", key: "state", value: { ...metadata, version: state.version, nextId: state.nextId, active: state.active }, expectedVersion: metadataVersion });
+      if (mutations.length > 1e3) throw new Error("Character operation exceeds the host transaction limit of 1000 records");
+      const stagedDocuments = [];
+      for (const document of documents) {
+        if (document.newDocument) {
+          const existing = yield Tools.Files.exists(document.path);
+          if (existing.exists) throw new Error("New owner document path is already occupied: " + document.path);
+          completed(yield Tools.Files.mkdir(document.path.slice(0, document.path.lastIndexOf("/")), true));
+        }
+        const stagedPath = document.path + ".pending";
+        completed(yield Tools.Files.write(stagedPath, document.content, false));
+        stagedDocuments.push({ path: document.path, stagedPath });
+      }
+      yield this.database.commit(mutations);
+      for (const document of stagedDocuments) completed(yield Tools.Files.move(document.stagedPath, document.path));
+      for (const path of removed) completed(yield Tools.Files.deleteFile(path, true));
     });
   }
 };
@@ -5138,10 +5161,10 @@ function connectDirectorySources(sources) {
   directorySources = sources;
 }
 var runtime = /* @__PURE__ */ createServiceRuntime(
-  /** Opens only this plugin's real directory on first use, never during registration. */
+  /** Opens only this plugin's record database on first use, never during registration. */
   () => __async(null, null, function* () {
     opening = true;
-    return createCharacterCardsService(yield FileCharacterRepository.open(directorySources));
+    return createCharacterCardsService(yield DatabaseCharacterRepository.open(directorySources));
   })
 );
 function initializeService() {
@@ -5258,14 +5281,7 @@ function encodeSelection(selection) {
 }
 function contextActions(routes, target, directory) {
   const selected = target.selection === null ? null : decodeSelection(target.selection, directory);
-  const routeId = routes.selection;
-  const input = { mode: "select", chatId: target.chatId };
   return {
-    selectors: [
-      { id: "characters", title: "\u5207\u6362\u89D2\u8272\u5361", icon: "Badge", routeId, input: { ...input, kind: "card", selected: selected !== null && selected.entity === "card" ? selected.prompt : null } },
-      { id: "groups", title: "\u5207\u6362\u7FA4\u7EC4", icon: "Groups", routeId, input: { ...input, kind: "group", selected: selected !== null && selected.entity === "group" ? selected.prompt : null } },
-      ...target.chatId !== null && selected !== null && selected.entity === "group" ? [{ id: "group-execution", title: "\u7FA4\u7EC4\u6267\u884C", icon: "Groups", routeId: routes.execution, input: { mode: "group-execution", chatId: target.chatId } }] : []
-    ],
     identity: selected === null ? null : { title: selected.title, avatarUri: selected.avatarUri, action: previewAction(routes.editor, selected.entity, selected.id) },
     backgroundUri: null
   };
@@ -5331,7 +5347,7 @@ function registerUiContributionApis() {
 }
 
 // src/host.ts
-function register(definition2, screen2, attachmentScreen2, sidebarScreen2, selectionScreen2, groupExecutionScreen2, memoryScreen2) {
+function register(definition2, screen2, attachmentScreen2, sidebarScreen2, selectionScreen2, groupExecutionScreen2, memoryScreen2, inputMenuScreen2) {
   const route = `toolpkg:${definition2.id}:ui:main`;
   ToolPkg.registerUiRoute({ id: "main", route, screen: screen2, runtime: "compose_dsl", keepAlive: true, title: { zh: definition2.title, en: "Characters" } });
   const memoryRoute = `toolpkg:${definition2.id}:ui:memory`;
@@ -5339,6 +5355,9 @@ function register(definition2, screen2, attachmentScreen2, sidebarScreen2, selec
   ToolPkg.registerUiRoute({ id: "memory-attachment", route: attachmentRoute, screen: attachmentScreen2, runtime: "compose_dsl", keepAlive: false, title: { zh: "\u8BB0\u5FC6\u9644\u4EF6", en: "Memory attachment" } });
   const sidebarRoute = `toolpkg:${definition2.id}:ui:chat-sidebar`;
   ToolPkg.registerUiRoute({ id: "chat-sidebar", route: sidebarRoute, screen: sidebarScreen2, runtime: "compose_dsl", keepAlive: true, title: { zh: "\u4F1A\u8BDD\u4FA7\u8FB9\u680F", en: "Chat sidebar" } });
+  const inputMenuRoute = `toolpkg:${definition2.id}:ui:chat-input-menu`;
+  ToolPkg.registerUiRoute({ id: "chat-input-menu", route: inputMenuRoute, screen: inputMenuScreen2, runtime: "compose_dsl", keepAlive: false, title: { zh: "\u5F53\u524D\u89D2\u8272\u5361", en: "Current character" } });
+  ToolPkg.registerNavigationEntry({ id: "current-character", route: inputMenuRoute, surface: "chat_input_menu", title: { zh: "\u5F53\u524D\u89D2\u8272\u5361", en: "Current character" }, order: definition2.order, params: {} });
   const selectionRoute = `toolpkg:${definition2.id}:ui:selection`;
   ToolPkg.registerUiRoute({ id: "selection", route: selectionRoute, screen: selectionScreen2, runtime: "compose_dsl", keepAlive: false, title: { zh: "\u5207\u6362\u89D2\u8272\u5361", en: "Switch character" } });
   ToolPkg.registerUiRoute({ id: "group-execution", route: `toolpkg:${definition2.id}:ui:group-execution`, screen: groupExecutionScreen2, runtime: "compose_dsl", keepAlive: false, title: { zh: "\u7FA4\u7EC4\u6267\u884C", en: "Group execution" } });
@@ -6203,6 +6222,527 @@ function registerDomainCommands() {
   ToolPkg.registerCoreCommand({ id: "memory", name: "memory", title: { zh: "\u89D2\u8272\u8BB0\u5FC6", en: "Character memory" }, description: { zh: "\u7BA1\u7406\u89D2\u8272\u548C\u5171\u4EAB\u8BB0\u5FC6\u3001\u6302\u8F7D\u3001USER.md\u3001\u6761\u76EE\u3001\u5173\u7CFB\u3001\u56FE\u8C31\u53CA\u8BBE\u7F6E\u3002", en: "Manage character and shared memory, mounts, USER.md, items, links, graphs, and settings." }, usage: "/memory help", function: onMemoryCommand });
 }
 
+// src/runtime-tools/contract.ts
+function optionalText(input, name) {
+  if (!Object.prototype.hasOwnProperty.call(input, name)) return void 0;
+  const value = input[name];
+  if (typeof value !== "string") throw new Error(name + " must be a string");
+  return value;
+}
+function requiredText(input, name) {
+  const value = optionalText(input, name);
+  if (value === void 0 || value.trim() === "") throw new Error("Missing or empty required parameter: " + name);
+  return value;
+}
+function optionalNumber(input, name) {
+  if (!Object.prototype.hasOwnProperty.call(input, name)) return void 0;
+  const value = input[name];
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(name + " must be a finite number");
+  return value;
+}
+function limit(input, defaultLimit) {
+  const value = optionalNumber(input, "limit");
+  if (value === void 0) return defaultLimit;
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid limit. Expected a nonnegative integer.");
+  return Math.max(1, value);
+}
+function score2(input, name) {
+  const value = optionalNumber(input, name);
+  if (value !== void 0 && (value < 0 || value > 1)) throw new Error(name + " must be between 0 and 1");
+  return value;
+}
+function formatTime(value) {
+  const date = new Date(value);
+  if (!Number.isSafeInteger(value) || Number.isNaN(date.getTime())) throw new Error("Invalid memory timestamp");
+  const pad = (part) => String(part).padStart(2, "0");
+  return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
+}
+function timeBoundary(input, name) {
+  const value = optionalText(input, name);
+  if (value === void 0) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?$/.exec(value.trim());
+  if (match === null) throw new Error("Invalid " + name + ". Expected format YYYY-MM-DD or YYYY-MM-DD HH:mm.");
+  const end = name === "end_time", year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  const hour = match[4] === void 0 ? end ? 23 : 0 : Number(match[4]);
+  const minute = match[5] === void 0 ? end ? 59 : 0 : Number(match[5]);
+  const date = /* @__PURE__ */ new Date(0);
+  date.setFullYear(year, month - 1, day);
+  date.setHours(hour, minute, end ? 59 : 0, end ? 999 : 0);
+  if (month < 1 || month > 12 || date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day || date.getHours() !== hour || date.getMinutes() !== minute) throw new Error("Local time is invalid: " + value);
+  for (const offset of [-120, -90, -60, -30, 30, 60, 90, 120]) {
+    const other = new Date(date.getTime() + offset * 6e4);
+    if (other.getFullYear() === year && other.getMonth() === month - 1 && other.getDate() === day && other.getHours() === hour && other.getMinutes() === minute) throw new Error("Local time is ambiguous: " + value);
+  }
+  return date.getTime();
+}
+
+// src/runtime-tools/memory.ts
+var MemoryTools = class {
+  /** Binds executable tools to the actual typed main-runtime dispatcher. */
+  constructor(domain) {
+    this.domain = domain;
+    this.snapshots = /* @__PURE__ */ new Map();
+    this.nextSnapshot = 0;
+    this.access = 0;
+  }
+  /** Resolves one exact caller identity rather than interpreting an opaque chat context key. */
+  caller(input, context) {
+    const explicit = optionalText(input, "caller_card_id");
+    if (explicit !== void 0) {
+      if (explicit.trim() === "") throw new Error("caller_card_id must not be blank");
+      if (context.participantId !== null && explicit !== context.participantId) throw new Error("caller_card_id does not match the authenticated execution participant");
+      return explicit;
+    }
+    if (context.participantId === null) throw new Error("caller_card_id or target_owner_key parameter is required");
+    return context.participantId;
+  }
+  /** Resolves the actual persisted binding through the same domain service. */
+  boundOwner(participantId) {
+    return __async(this, null, function* () {
+      const owner2 = yield this.domain("memory.resolveOwner", { characterId: participantId });
+      switch (owner2.kind) {
+        case "CHARACTER":
+          return "character:" + owner2.id;
+        case "SHARED":
+          return "shared:" + owner2.id;
+        default:
+          throw new Error("Invalid memory owner kind");
+      }
+    });
+  }
+  /** Validates an explicit owner, and enforces the selected participant's actual mount permissions. */
+  owner(input, context, write) {
+    return __async(this, null, function* () {
+      const explicit = optionalText(input, "target_owner_key");
+      if (explicit !== void 0 && !/^(character|shared):[^:\s]+$/.test(explicit)) throw new Error("Invalid target_owner_key");
+      const selected = explicit === void 0 ? yield this.boundOwner(this.caller(input, context)) : explicit;
+      if (context.participantId !== null) {
+        const primary = yield this.boundOwner(context.participantId);
+        if (selected !== primary) {
+          const card = yield this.domain("character.get", { id: context.participantId });
+          const permitted = card.sharedMemoryMounts.some(
+            /** Tests the real persisted mount key and requested effect. */
+            (mount2) => "shared:" + mount2.sharedMemoryId === selected && (write ? mount2.writable : mount2.readable)
+          );
+          if (!permitted) throw new Error("Memory owner access denied: " + selected);
+        }
+      }
+      return selected;
+    });
+  }
+  /** Reads a validated complete repository export; no private copy of durable data is retained. */
+  space(ownerKey) {
+    return __async(this, null, function* () {
+      const exported = yield this.domain("memory.export", { ownerKey });
+      const space = decodeMemoryBackup(exported.content).space;
+      if (space.ownerKey !== ownerKey) throw new Error("Memory export owner does not match the requested owner");
+      return space;
+    });
+  }
+  /** Projects the historical model-facing result, keeping record identities internal to the plugin. */
+  info(ownerKey, memory) {
+    return { ownerKey, title: memory.title, content: memory.content, source: memory.source, tags: memory.tags.map(
+      /** Retains actual tag names in the historical query projection. */
+      (tag) => tag.name
+    ), createdAt: formatTime(memory.createdAt), chunkInfo: null, chunkIndices: null };
+  }
+  /** Formats the original five-chunk document result with one-based display indices. */
+  formatChunks(title, total, chunks) {
+    return "Document: " + title + "\n" + chunks.slice(0, 5).map(
+      /** Uses real persisted chunk indices instead of reindexing the selected subset. */
+      (chunk) => "Chunk " + (chunk.chunkIndex + 1) + "/" + total + ":\n" + chunk.content
+    ).join("\n---\n");
+  }
+  /** Reads only a committed main-service embedding; tool projections never mutate a detached export cache.
+   * A missing or duplicate entry is a consistency error rather than permission to compute outside the main repository.
+   */
+  committedEmbedding(space, text2) {
+    const endpoint = space.settings.cloudEmbeddingEndpoint.replace(/\/+$/, "");
+    const model = space.settings.cloudEmbeddingModel;
+    if (!space.settings.cloudEmbeddingEnabled) throw new Error("Cloud embedding is disabled");
+    const matches = space.embeddings.filter(
+      /** Selects the exact persisted provider and input provenance. */
+      (item) => item.endpoint === endpoint && item.model === model && item.text === text2
+    );
+    if (matches.length !== 1) throw new Error("Embedding is missing or duplicated in the committed main-service cache: " + text2);
+    assertEmbedding(matches[0]);
+    return matches[0].vector;
+  }
+  /** Combines lexical coverage and genuine committed embedding channels with the original chunk RRF weights. */
+  searchChunks(space, memory, query, count) {
+    return __async(this, null, function* () {
+      const chunks = space.chunks.filter(
+        /** Selects the complete real document by UUID. */
+        (chunk) => chunk.memoryUuid === memory.uuid
+      ).sort(
+        /** Preserves the persisted document order. */
+        (left, right) => left.chunkIndex - right.chunkIndex
+      );
+      if (query.trim() === "*" || query.trim() === "") return chunks.slice(0, count);
+      const keywords = query.split(query.indexOf("|") === -1 ? /\s+/u : /\|/u).map(
+        /** Preserves the explicitly authored semantic channels. */
+        (word) => word.trim()
+      ).filter(
+        /** Rejects empty separators before requesting real embeddings. */
+        (word) => word.length !== 0
+      );
+      const patterns = [...new Set(keywords)].map(
+        /** Implements authored wildcard spelling using escaped literal segments. */
+        (word) => new RegExp(word.split("*").map(
+          /** Escapes one exact authored keyword segment. */
+          (segment) => segment.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&")
+        ).join(".*"), "isu")
+      );
+      let keywordMultiplier, vectorMultiplier;
+      switch (space.searchConfig.scoreMode) {
+        case "BALANCED":
+          keywordMultiplier = 1;
+          vectorMultiplier = 1;
+          break;
+        case "KEYWORD_FIRST":
+          keywordMultiplier = 1.3;
+          vectorMultiplier = 0.8;
+          break;
+        case "SEMANTIC_FIRST":
+          keywordMultiplier = 0.8;
+          vectorMultiplier = 1.3;
+          break;
+        default:
+          throw new Error("Invalid memory scoring mode");
+      }
+      const scores = /* @__PURE__ */ new Map();
+      if (space.searchConfig.keywordWeight > 0) {
+        const lexical = chunks.map(
+          /** Measures exact lexical coverage in each real persisted chunk. */
+          (chunk) => ({ chunk, hits: patterns.filter(
+            /** Matches document content against the declared lexical expression. */
+            (pattern) => pattern.test(chunk.content)
+          ).length })
+        ).filter(
+          /** Includes only genuine lexical matches in the coverage channel. */
+          (item) => item.hits > 0
+        ).sort(
+          /** Orders coverage ties by original document position. */
+          (left, right) => right.hits - left.hits || left.chunk.chunkIndex - right.chunk.chunkIndex
+        );
+        for (let rank = 0; rank < lexical.length; rank += 1) {
+          const item = lexical[rank];
+          scores.set(item.chunk.id, { chunk: item.chunk, score: space.searchConfig.keywordWeight * keywordMultiplier * (1 + 0.6 * item.hits / Math.max(1, patterns.length)) / (61 + rank) });
+        }
+      }
+      if (space.searchConfig.vectorWeight > 0) {
+        const normalization = 1 / Math.sqrt(Math.max(1, keywords.length));
+        for (const keyword of keywords) {
+          yield this.domain("memory.searchWithOptions", { ownerKey: space.ownerKey, query: keyword, folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null });
+          const committed = yield this.space(space.ownerKey), queryVector = this.committedEmbedding(committed, keyword);
+          const semantic = [];
+          for (const chunk of chunks) semantic.push({ chunk, similarity: cosineSimilarity(queryVector, this.committedEmbedding(committed, chunk.content)) });
+          semantic.sort(
+            /** Ranks actual provider similarities with a stable persisted chunk tie breaker. */
+            (left, right) => right.similarity - left.similarity || left.chunk.chunkIndex - right.chunk.chunkIndex
+          );
+          for (let rank = 0; rank < semantic.length; rank += 1) {
+            const item = semantic[rank], contribution = (1 / (61 + rank) + item.similarity * space.searchConfig.vectorWeight * vectorMultiplier) * normalization;
+            const entry = scores.get(item.chunk.id);
+            if (entry === void 0) scores.set(item.chunk.id, { chunk: item.chunk, score: contribution });
+            else entry.score += contribution;
+          }
+        }
+      }
+      return [...scores.values()].sort(
+        /** Preserves original RRF ordering and lossless numeric identity ties. */
+        (left, right) => right.score - left.score || (BigInt(left.chunk.id) < BigInt(right.chunk.id) ? -1 : BigInt(left.chunk.id) > BigInt(right.chunk.id) ? 1 : 0)
+      ).slice(0, count).map(
+        /** Returns complete original chunk records rather than a synthetic projection. */
+        (item) => item.chunk
+      );
+    });
+  }
+  /** Allocates or reuses owner-scoped pagination under the original snapshot contract. */
+  snapshot(ownerKey, requested) {
+    let snapshots = this.snapshots.get(ownerKey);
+    if (snapshots === void 0) {
+      snapshots = /* @__PURE__ */ new Map();
+      this.snapshots.set(ownerKey, snapshots);
+    }
+    const id2 = requested === void 0 ? "memory-query-" + ++this.nextSnapshot : requested;
+    if (id2.trim() === "") throw new Error("snapshot_id must not be blank");
+    let state = snapshots.get(id2);
+    const created = state === void 0;
+    if (state === void 0) {
+      state = { seen: /* @__PURE__ */ new Set(), access: ++this.access };
+      snapshots.set(id2, state);
+    }
+    state.access = ++this.access;
+    while (snapshots.size > 32) {
+      let oldestKey, oldest = Infinity;
+      for (const [key, item] of snapshots) if (key !== id2 && item.access < oldest) {
+        oldest = item.access;
+        oldestKey = key;
+      }
+      if (oldestKey === void 0) throw new Error("Query snapshot index is inconsistent");
+      snapshots.delete(oldestKey);
+    }
+    return { id: id2, state, created };
+  }
+  /** Resolves a relationship by its exact lossless ID or an unambiguous title pair. */
+  link(space, input) {
+    const id2 = optionalText(input, "link_id");
+    let matches;
+    if (id2 !== void 0) matches = space.links.filter(
+      /** Matches the validated string identity without a floating-point conversion. */
+      (link2) => link2.id === parseMemoryIdentifier(id2, "link_id")
+    );
+    else {
+      const source = this.memory(space, requiredText(input, "source_title")), target = this.memory(space, requiredText(input, "target_title"));
+      const type = optionalText(input, "link_type");
+      matches = space.links.filter(
+        /** Uses the exact directed title pair and optional relation type. */
+        (link2) => link2.sourceMemoryId === source.id && link2.targetMemoryId === target.id && (type === void 0 || link2.type_ === type)
+      );
+    }
+    if (matches.length === 0) throw new Error("No matching link found");
+    if (matches.length !== 1) throw new Error("Multiple links matched. Provide link_id or a more specific link_type.");
+    return matches[0];
+  }
+  /** Requires an exact title and rejects ambiguous records instead of choosing one silently. */
+  memory(space, title) {
+    const matches = space.memories.filter(
+      /** Preserves exact title lookup semantics. */
+      (memory) => memory.title === title
+    );
+    if (matches.length === 0) throw new Error("Memory not found with title: " + title);
+    if (matches.length !== 1) throw new Error("Multiple memories matched title: " + title);
+    return matches[0];
+  }
+  /** Resolves complete relationship display fields from the authoritative same-owner records. */
+  linkInfo(space, link2) {
+    const source = space.memories.find(
+      /** Resolves the real source identity. */
+      (memory) => memory.id === link2.sourceMemoryId
+    ), target = space.memories.find(
+      /** Resolves the real target identity. */
+      (memory) => memory.id === link2.targetMemoryId
+    );
+    if (source === void 0 || target === void 0) throw new Error("Memory link refers to a missing record: " + link2.id);
+    return { linkId: link2.id, sourceTitle: source.title, targetTitle: target.title, linkType: link2.type_, weight: link2.weight, description: link2.description };
+  }
+  /** Executes the selected tool using the actual shared memory domain service. */
+  execute(operation, input, context) {
+    return __async(this, null, function* () {
+      if (operation === "get_memory_owner_key") return this.boundOwner(this.caller(input, context));
+      const write = !["query_memory", "get_memory_by_title", "query_memory_links"].some(
+        /** Classifies only the declared read tools. */
+        (name) => name === operation
+      );
+      const ownerKey = yield this.owner(input, context, write);
+      switch (operation) {
+        case "query_memory":
+          return this.query(ownerKey, input);
+        case "get_memory_by_title":
+          return this.byTitle(ownerKey, input);
+        case "create_memory": {
+          const contentType = optionalText(input, "content_type"), source = optionalText(input, "source"), folderPath = optionalText(input, "folder_path"), tags = optionalText(input, "tags");
+          const result2 = yield this.domain("memory.create", { ownerKey, values: { title: requiredText(input, "title"), content: requiredText(input, "content"), contentType: contentType === void 0 ? "text/plain" : contentType, source: source === void 0 ? "ai_created" : source, folderPath: folderPath === void 0 ? null : folderPath, tags: tags === void 0 ? [] : this.tags(tags) } });
+          return "Successfully created memory: '" + result2.item.title + "' (UUID: " + result2.item.uuid + ")";
+        }
+        case "update_memory": {
+          const oldTitle = requiredText(input, "old_title"), current = yield this.domain("memory.get", { ownerKey, title: oldTitle }), changes2 = {};
+          for (const [parameter, field] of [["new_title", "title"], ["content", "content"], ["content_type", "contentType"], ["source", "source"], ["folder_path", "folderPath"]]) {
+            const value = optionalText(input, parameter);
+            if (value !== void 0) changes2[field] = value;
+          }
+          for (const field of ["credibility", "importance"]) {
+            const value = score2(input, field);
+            if (value !== void 0) changes2[field] = value;
+          }
+          const tags = optionalText(input, "tags");
+          if (tags !== void 0) changes2.tags = this.tags(tags);
+          if (Object.keys(changes2).length === 0) throw new Error("At least one memory change must be provided");
+          const updated = yield this.domain("memory.update", { ownerKey, originalTitle: oldTitle, expectedId: current.item.id, changes: changes2 });
+          return "Successfully updated memory from '" + oldTitle + "' to '" + updated.item.title + "'";
+        }
+        case "delete_memory": {
+          const title = requiredText(input, "title"), memory = yield this.domain("memory.get", { ownerKey, title });
+          yield this.domain("memory.delete", { ownerKey, id: memory.item.id });
+          return "Successfully deleted memory: '" + title + "'";
+        }
+        case "move_memory":
+          return this.move(ownerKey, input);
+        case "update_user_preferences":
+          yield this.domain("memory.user.write", { ownerKey, content: requiredText(input, "content") });
+          return "Successfully updated USER.md";
+        case "link_memories": {
+          const sourceTitle = requiredText(input, "source_title"), targetTitle = requiredText(input, "target_title"), linkType = optionalText(input, "link_type"), weight = score2(input, "weight"), description = optionalText(input, "description");
+          const result2 = yield this.domain("memory.link.create", { ownerKey, sourceTitle, targetTitle, linkType: linkType === void 0 ? "related" : linkType, weight: weight === void 0 ? 0.5 : weight, description: description === void 0 ? "" : description });
+          return { sourceTitle, targetTitle, linkType: result2.link.type_, weight: result2.link.weight, description: result2.link.description };
+        }
+        case "query_memory_links":
+          return this.links(ownerKey, input);
+        case "update_memory_link": {
+          const space = yield this.space(ownerKey), link2 = this.link(space, input), changes2 = {};
+          const type = optionalText(input, "new_link_type"), weight = score2(input, "weight"), description = optionalText(input, "description");
+          if (type !== void 0) {
+            if (type.trim() === "") throw new Error("new_link_type must not be blank");
+            changes2.linkType = type;
+          }
+          if (weight !== void 0) changes2.weight = weight;
+          if (description !== void 0) changes2.description = description;
+          if (Object.keys(changes2).length === 0) throw new Error("At least one of new_link_type, weight, description must be provided");
+          const result2 = yield this.domain("memory.link.update", { ownerKey, linkId: link2.id, changes: changes2 });
+          return { totalCount: 1, links: [this.linkInfo(space, result2.link)] };
+        }
+        case "delete_memory_link": {
+          const link2 = this.link(yield this.space(ownerKey), input);
+          yield this.domain("memory.link.delete", { ownerKey, linkId: link2.id });
+          return "Successfully deleted memory link: " + link2.id;
+        }
+        default:
+          throw new Error("Unknown memory tool: " + operation);
+      }
+    });
+  }
+  /** Splits the original comma-delimited tag contract without touching stored tag identities. */
+  tags(value) {
+    return value.split(",").map(
+      /** Normalizes only delimiters and surrounding authored tag whitespace. */
+      (tag) => tag.trim()
+    ).filter(
+      /** Excludes empty tag entries as declared by the tool contract. */
+      (tag) => tag !== ""
+    );
+  }
+  /** Performs filtered full-record search and commits pagination only after every document read succeeds. */
+  query(ownerKey, input) {
+    return __async(this, null, function* () {
+      const query = requiredText(input, "query"), count = limit(input, query.trim() === "*" ? Number.MAX_SAFE_INTEGER : 20), threshold = optionalNumber(input, "threshold"), folder2 = optionalText(input, "folder_path");
+      if (threshold !== void 0 && threshold < 0) throw new Error("Invalid threshold. Expected number >= 0.");
+      const start = timeBoundary(input, "start_time"), end = timeBoundary(input, "end_time");
+      if (start !== null && end !== null && start > end) throw new Error("start_time must not be after end_time");
+      const result2 = yield this.domain("memory.searchWithOptions", { ownerKey, query, folderPath: folder2 === void 0 ? null : folder2, relevanceThreshold: threshold === void 0 ? 0 : threshold, createdAtStartMs: start, createdAtEndMs: end });
+      if (result2.ownerKey !== ownerKey) throw new Error("Memory search owner does not match the requested owner");
+      const found = result2.items, space = yield this.space(ownerKey);
+      const snapshot2 = this.snapshot(ownerKey, optionalText(input, "snapshot_id"));
+      const unseen = found.filter(
+        /** Excludes only records already delivered from this same owner and snapshot. */
+        (memory) => !snapshot2.state.seen.has(ownerKey + ":" + memory.id)
+      ), returned = unseen.slice(0, count);
+      const memories = [];
+      for (const memory of returned) {
+        const info = this.info(ownerKey, memory);
+        if (memory.isDocumentNode) {
+          const total = space.chunks.filter(
+            /** Counts every real chunk belonging to this document. */
+            (chunk) => chunk.memoryUuid === memory.uuid
+          ).length, chunks = yield this.searchChunks(space, memory, query, Math.min(count, 20));
+          info.content = query.trim() === "*" || count > 20 ? "Document: " + memory.title + " (" + total + " chunks)" : this.formatChunks(memory.title, total, chunks);
+          if (chunks.length !== 0) {
+            info.chunkInfo = "Chunks " + chunks.slice(0, 5).map(
+              /** Displays selected indices using the historical one-based spelling. */
+              (chunk) => chunk.chunkIndex + 1
+            ).join(", ") + "/" + total;
+            info.chunkIndices = chunks.map(
+              /** Returns actual zero-based persisted indices for subsequent tool calls. */
+              (chunk) => chunk.chunkIndex
+            );
+          }
+        }
+        memories.push(info);
+      }
+      for (const memory of returned) snapshot2.state.seen.add(ownerKey + ":" + memory.id);
+      return { memories, snapshotId: snapshot2.id, snapshotCreated: snapshot2.created, excludedBySnapshotCount: found.length - unseen.length };
+    });
+  }
+  /** Reads an exact title or validates the original one-based document query/index/range parameters. */
+  byTitle(ownerKey, input) {
+    return __async(this, null, function* () {
+      const title = requiredText(input, "title"), result2 = yield this.domain("memory.get", { ownerKey, title }), memory = result2.item;
+      if (!memory.isDocumentNode) return { memories: [this.info(ownerKey, memory)], snapshotId: null, snapshotCreated: false, excludedBySnapshotCount: 0 };
+      const space = yield this.space(ownerKey), chunks = space.chunks.filter(
+        /** Selects only this exact real document. */
+        (chunk) => chunk.memoryUuid === memory.uuid
+      ).sort(
+        /** Retains stable document order. */
+        (left, right) => left.chunkIndex - right.chunkIndex
+      ), total = chunks.length;
+      const query = optionalText(input, "query"), index = optionalNumber(input, "chunk_index"), range = optionalText(input, "chunk_range");
+      const supplied = [query !== void 0, index !== void 0, range !== void 0].filter(
+        /** Counts explicitly supplied selectors instead of guessing precedence. */
+        (value) => value
+      ).length;
+      if (supplied === 0) return "Document: " + title + " (" + total + " chunks). Specify query, chunk_range (1-based start-end) or chunk_index (1-based).";
+      if (supplied !== 1) throw new Error("Specify exactly one of query, chunk_range or chunk_index");
+      let selected;
+      if (query !== void 0) {
+        if (query.trim() === "") throw new Error("query must not be blank");
+        selected = yield this.searchChunks(space, memory, query, limit(input, 20));
+      } else {
+        let start, end;
+        if (range !== void 0) {
+          const parsed = /^(\d+)-(\d+)$/.exec(range);
+          if (parsed === null) throw new Error("Invalid chunk_range. Expected start-end");
+          start = Number(parsed[1]);
+          end = Number(parsed[2]);
+        } else {
+          if (index === void 0) throw new Error("Document selector is missing");
+          start = index;
+          end = index;
+        }
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end > total || start > end) throw new Error("Chunk range out of bounds. Valid range: 1-" + total);
+        selected = chunks.filter(
+          /** Selects the validated one-based range using persisted zero-based indices. */
+          (chunk) => chunk.chunkIndex >= start - 1 && chunk.chunkIndex <= end - 1
+        );
+      }
+      if (selected.length === 0) throw new Error("No matching chunks found");
+      return this.formatChunks(title, total, selected);
+    });
+  }
+  /** Moves the exact title/folder intersection through a single domain mutation. */
+  move(ownerKey, input) {
+    return __async(this, null, function* () {
+      const target = optionalText(input, "target_folder_path"), source = optionalText(input, "source_folder_path"), titles = optionalText(input, "titles");
+      if (target === void 0) throw new Error("target_folder_path parameter is required");
+      if (source === void 0 && titles === void 0) throw new Error("Provide titles and/or source_folder_path to select memories to move");
+      const names = titles === void 0 ? null : new Set(titles.split(/[,\n|]/).map(
+        /** Retains the original three title delimiters. */
+        (title) => title.trim()
+      ).filter(
+        /** Rejects delimiter-only selection instead of selecting all memories. */
+        (title) => title !== ""
+      ));
+      if (names !== null && names.size === 0) throw new Error("titles must select at least one memory");
+      const records3 = yield this.domain("memory.list", { ownerKey }), selected = records3.items.filter(
+        /** Intersects both explicit selectors without silently changing selection strategy. */
+        (memory) => (names === null || names.has(memory.title)) && (source === void 0 || (memory.folderPath === null ? "" : memory.folderPath) === source)
+      );
+      if (selected.length === 0) throw new Error("No matching memories found to move");
+      const ids = [...new Set(selected.map(
+        /** Keeps each lossless memory identity once. */
+        (memory) => memory.id
+      ))];
+      const result2 = yield this.domain("memory.move", { ownerKey, ids, folderPath: target });
+      return "Successfully moved " + result2.moved + " memories to '" + target + "'";
+    });
+  }
+  /** Queries actual directed relationships with precise filters and the original 200-result cap. */
+  links(ownerKey, input) {
+    return __async(this, null, function* () {
+      const space = yield this.space(ownerKey), id2 = optionalText(input, "link_id"), source = optionalText(input, "source_title"), target = optionalText(input, "target_title"), type = optionalText(input, "link_type");
+      if (id2 !== void 0) parseMemoryIdentifier(id2, "link_id");
+      const sourceId = source === void 0 ? null : this.memory(space, source).id, targetId = target === void 0 ? null : this.memory(space, target).id;
+      const links = space.links.filter(
+        /** Applies every supplied filter to complete canonical relation records. */
+        (link2) => (id2 === void 0 || link2.id === id2) && (sourceId === null || link2.sourceMemoryId === sourceId) && (targetId === null || link2.targetMemoryId === targetId) && (type === void 0 || link2.type_ === type)
+      ).slice(0, Math.min(limit(input, 20), 200)).map(
+        /** Includes real relationship descriptions and unchanged string identities. */
+        (link2) => this.linkInfo(space, link2)
+      );
+      return { totalCount: links.length, links };
+    });
+  }
+};
+
 // src/memory-jobs/hooks.ts
 function onMemoryMessagePersisted(event) {
   return __async(this, null, function* () {
@@ -6229,6 +6769,7 @@ function registerMemoryJobHooks() {
 }
 
 // src/public-api.ts
+var memoryQueries = new MemoryTools(dispatchDomain2);
 function chatConfigurationResolveApi(event) {
   return __async(this, null, function* () {
     if (event.callerPackage !== "host") throw new Error("chat.configuration.resolve requires an authenticated host caller");
@@ -6255,6 +6796,16 @@ function registerChatConfigurationApis() {
   ToolPkg.registerApi({ name: "chat.configuration.binding.read", function: chatConfigurationBindingReadApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.write", function: chatConfigurationBindingWriteApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.delete", function: chatConfigurationBindingDeleteApi });
+}
+function memoryQueryApi(event) {
+  return __async(this, null, function* () {
+    const input = parseMemoryQueryRequest(event.payload);
+    return memoryQueries.execute("query_memory", {
+      query: input.query,
+      limit: input.limit,
+      ...input.snapshotId === null ? {} : { snapshot_id: input.snapshotId }
+    }, { chatId: null, participantId: input.participantId, callerName: event.callerPackage });
+  });
 }
 function memoryChatListApi(event) {
   return __async(this, null, function* () {
@@ -6607,6 +7158,7 @@ function memoryImportApi(event) {
   });
 }
 function registerDomainApis() {
+  ToolPkg.registerApi({ name: "memory.query", function: memoryQueryApi });
   ToolPkg.registerApi({ name: "memory.searchWithOptions", function: memorySearchWithOptionsApi });
   ToolPkg.registerApi({ name: "memory.candidate.enqueue", function: memoryCandidateEnqueueApi });
   ToolPkg.registerApi({ name: "memory.embeddings.rebuild", function: memoryEmbeddingsRebuildApi });
@@ -7727,10 +8279,10 @@ connectDirectorySources({
   /** Reads complete real builtin, package, skill and MCP sources through the generic settings capability. */
   readToolCatalog: () => Tools.SoftwareSettings.readToolSourceCatalog()
 });
+registerSelectionSettingsAccess();
 registerUiRequestChannel();
 registerSidebarChannel();
 function registerToolPkg() {
-  registerSelectionSettingsAccess();
   registerDomainCommands();
   registerDomainApis();
   registerServiceLifecycle();
@@ -7739,5 +8291,5 @@ function registerToolPkg() {
   registerChatInitialization();
   registerGroupExecutionHooks();
   registerUiContributionApis();
-  return register(definition, import_index_ui2.default, import_index_ui3.default, import_index_ui4.default, import_index_ui5.default, import_index_ui6.default, import_index_ui.default);
+  return register(definition, import_index_ui2.default, import_index_ui3.default, import_index_ui4.default, import_index_ui5.default, import_index_ui7.default, import_index_ui.default, import_index_ui6.default);
 }

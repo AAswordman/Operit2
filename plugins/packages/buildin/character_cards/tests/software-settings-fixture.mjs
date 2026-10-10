@@ -28,7 +28,7 @@ export function createSoftwareSettingsFixture(disk, input) {
       return target[property];
     },
   });
-  const tools = new Proxy({ Files: disk.files, SoftwareSettings: settings }, {
+  const tools = new Proxy({ Files: disk.files, Storage: disk.storage, SoftwareSettings: settings }, {
     /** Exposes only real disk IO and the three explicit test directory methods, without touching the IO-only harness. */
     get(target, property) {
       if (!Object.hasOwn(target, property)) throw new Error("Undeclared Tools fixture capability: " + String(property));

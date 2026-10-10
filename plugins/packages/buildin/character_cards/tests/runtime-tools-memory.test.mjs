@@ -20,7 +20,7 @@ async function call(environment, name, input) {
   return environment.tools.execute(name, { target_owner_key: "character:default", ...input }, environment.context);
 }
 /** Reads the authoritative plugin file for independent mutation and identity assertions. */
-async function state(environment) { return JSON.parse(await readFile(path.join(environment.disk.directory, "character-memory", "state.json"), "utf8")); }
+async function state(environment) { return JSON.parse(await environment.disk.stateBytes().toString("utf8")); }
 
 test("twelve memory tools and the plugin character list match exact executable metadata and typed IPC", async () => {
   const source = await readFile(new URL("../src/runtime-tools/tools.ts", import.meta.url), "utf8"), match = /\/\* METADATA\s+([\s\S]+?)\*\//.exec(source);
@@ -84,7 +84,7 @@ test("relationship CRUD preserves string identities, description and unspecified
 
 test("owner permissions and actual filesystem errors propagate without empty data or old tools", async t => {
   const environment = await environmentFor(t), shared = await environment.domain("memory.shared.create", { name: "Shared" });
-  const failure = new Error("original disk read failure"); environment.disk.failNext("read", failure);
+  const failure = new Error("original disk read failure"); environment.disk.failNext("storage.list", failure);
   await assert.rejects(call(environment, "query_memory", { query: "*" }), error => error === failure);
   await assert.rejects(environment.tools.execute("create_memory", { target_owner_key: "shared:" + shared.id, title: "Denied", content: "Denied" }, { chatId: "real-chat", participantId: "default", callerName: null }), /Memory owner access denied/);
   await assert.rejects(call(environment, "create_memory", { title: "No owner", content: "content", target_owner_key: "character:removed" }), /does not identify exactly one record: removed/);
@@ -143,7 +143,7 @@ async function embeddingEnvironment(t) {
   const disk = await createDiskHarness(t), address = server.address();
   assert.notEqual(address, null); assert.equal(typeof address, "object");
   const endpoint = "http://127.0.0.1:" + address.port;
-  const globals = { ...disk.globals, Tools: { Files: disk.files, Net: {
+  const globals = { ...disk.globals, Tools: { Files: disk.files, Storage: disk.storage, Net: {
     /** Adapts only existing HTTP IO; all embedding validation and ranking remain production code. */
     async http(options) {
       const response = await fetch(options.url, { method: options.method, headers: options.headers, body: options.body });
@@ -194,6 +194,6 @@ test("character list is a real plugin tool and propagates the main repository re
   assert.equal(result.totalCount, persisted.cards.length); assert.equal(result.cards[0].id, persisted.cards[0].id);
   assert.equal(result.cards[0].description, persisted.cards[0].description);
   await assert.rejects(tools.list_character_cards({ guessed_source: "old manager" }), /Unknown list_character_cards parameter/);
-  const failure = new Error("actual-list-file-rejection"); environment.disk.failNext("read", failure);
+  const failure = new Error("actual-list-file-rejection"); environment.disk.failNext("storage.list", failure);
   await assert.rejects(tools.list_character_cards({}), error => error === failure);
 });

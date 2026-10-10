@@ -51,6 +51,29 @@ function transport() {
   return { context, calls, pending, retained: () => retained };
 }
 
+/** Keeps local directory lookup independent of shared config and rejects failed or malformed Host results. */
+test('local data directory resolves through the current owner without changing shared config',()=>{
+  const {context}=transport();
+  context.__operitGetCallState=()=>({params:{toolPkgId:'space_plugin',__operit_toolpkg_api_version:'2.0.0'}});
+  const owners=[];
+  context.NativeInterface={
+    /** Returns a registered shared configuration directory. */
+    getScopedPluginConfigDir(owner,target){return `/app/data/extensions/space/plugins/configs/${target}`;},
+    /** Resolves an independent directory from the active owner. */
+    getPluginLocalDataDir(owner){owners.push(owner);return `/app/data/plugin_data/device/${owner}`;},
+    /** Resolves shared data independently of installation scope. */
+    getPluginSpaceDataDir(owner){return `/app/data/plugin_data/space/${owner}`;},
+  };
+  assert.equal(context.ToolPkg.getConfigDir(),'/app/data/extensions/space/plugins/configs/space_plugin');
+  assert.equal(context.ToolPkg.getLocalDataDir(),'/app/data/plugin_data/device/space_plugin');
+  assert.deepEqual(owners,['space_plugin']);
+  assert.equal(context.ToolPkg.getSpaceDataDir(),'/app/data/plugin_data/space/space_plugin');
+  context.NativeInterface.getPluginLocalDataDir=()=>{throw new Error('fixture local directory failure');};
+  assert.throws(()=>context.ToolPkg.getLocalDataDir(),/fixture local directory failure/);
+  context.NativeInterface.getPluginLocalDataDir=()=>'';
+  assert.throws(()=>context.ToolPkg.getLocalDataDir(),/absolute VFS path/);
+});
+
 /** Checks public methods are captured only as durable exported function references. */
 test('registerApi captures public names independently from implementation names', () => {
   const { context } = transport();

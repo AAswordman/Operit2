@@ -56,7 +56,7 @@ test("controlled Chat/AI: registered main lifecycle and message hooks persist ca
   const saved = await readOwner(harness); assert.equal(saved.candidates.length, 0); assert.equal(saved.memories.length, 2); assert.equal(saved.links.length, 1);
   assert.equal(Object.hasOwn(saved, "userMarkdown"), false);
   const document = await restarted.api("memory.user.path", owner);
-  assert.equal(path.resolve(document.path), path.resolve(harness.disk.directory, "character-memory", "owners", encodeURIComponent(CONTROLLED_OWNER), "USER.md"));
+  assert.equal(path.resolve(document.path), path.resolve(harness.disk.directory, "owners", encodeURIComponent(CONTROLLED_OWNER), "USER.md"));
   assert.equal(await readFile(document.path, "utf8"), "# User\nControlled extracted profile\n");
   const exported = JSON.parse((await restarted.api("memory.export", owner)).content);
   assert.equal(exported.userMarkdown, "# User\nControlled extracted profile\n"); assert.deepEqual(exported.space.memories, saved.memories);
@@ -146,17 +146,17 @@ test("controlled Chat/AI: rebuild and candidate execution plus state-publication
       error => error === statusFailure,
     );
     assert.equal(harness.modelCalls.length, calls);
-    const writes = [];
-    for (const call of harness.disk.calls) if (call.method === "write" && path.resolve(call.args[0]) === path.resolve(harness.disk.directory, "character-memory", "state.next.json")) writes.push(call);
-    assert.ok(writes.length > 0, "The failure must occur at a real state staging-write attempt");
-    const unpublished = JSON.parse(writes[writes.length - 1].args[1]), unpublishedOwner = [];
-    for (const space of unpublished.owners) if (space.ownerKey === CONTROLLED_OWNER) unpublishedOwner.push(space);
-    assert.equal(unpublishedOwner.length, 1);
+    const writes = harness.disk.calls.filter(call => call.method === "storage.commit");
+    assert.ok(writes.length > 0, "The failure must occur during an actual storage transaction");
+    const unpublished = writes[writes.length - 1].args[0];
     if (kind === "rebuild") {
-      assert.equal(unpublishedOwner[0].rebuildProgress.status, "failed");
-      assert.equal(unpublishedOwner[0].rebuildProgress.lastError, failure.message);
+      const owner = unpublished.find(row => row.collection === "owners" && row.key === CONTROLLED_OWNER);
+      assert.equal(owner.value.rebuildProgress.status, "failed");
+      assert.equal(owner.value.rebuildProgress.lastError, failure.message);
     } else {
-      for (const candidate of unpublishedOwner[0].candidates) { assert.equal(candidate.status, "failed"); assert.equal(candidate.lastError, failure.message); }
+      for (const row of unpublished.filter(row => row.collection === "candidates")) {
+        assert.equal(row.value.record.status, "failed"); assert.equal(row.value.record.lastError, failure.message);
+      }
     }
   }
 });

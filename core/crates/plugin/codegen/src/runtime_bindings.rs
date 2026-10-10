@@ -32,6 +32,7 @@ const HOST_TRAITS: &[(&str, &str, &str)] = &[
     ("js_sdk/chat.rs", "ChatHost", "Chat"),
     ("js_sdk/edge.rs", "EdgeHost", "Edge"),
     ("js_sdk/edge.rs", "IoHost", "Io"),
+    ("js_sdk/storage.rs", "StorageHost", "Storage"),
 ];
 
 /// Generates concrete active Tools host trait implementations from canonical Rust signatures.
@@ -97,6 +98,7 @@ pub fn generate_js_tools_host_implementation(
                         ("Chat", "readExtension") if arguments == ["target"] => "        invoke_chat_extension_read(self, target)\n".to_string(),
                         ("Chat", "writeExtension") if arguments == ["target", "value"] => "        invoke_chat_extension_write(self, target, value)\n".to_string(),
                         ("Chat", "deleteExtension") if arguments == ["target"] => "        invoke_chat_extension_delete(self, target)\n".to_string(),
+                        ("Storage", "request") if arguments == ["request"] => "        invoke_storage_request(self, request)\n".to_string(),
                         _ => return Err(format!("Unsupported direct typed host signature: {namespace}.{runtime_name}").into()),
                     };
                     output.push_str(&body);
@@ -583,6 +585,7 @@ globalThis.__operitChatExtensionSequence = 0;
     );
     let mut initialized_namespaces = BTreeSet::new();
     output.push_str(&fs::read_to_string(sdk_src.join("chat_runtime.js"))?);
+    output.push_str(&fs::read_to_string(sdk_src.join("js_sdk/storage_runtime.js"))?);
     let mut chat_namespace_open = false;
     for ((namespace, method), overloads) in methods {
         let binding = bindings
@@ -625,7 +628,9 @@ globalThis.__operitChatExtensionSequence = 0;
             .collect::<Vec<_>>()
             .join(", ");
         if binding.tool.is_none() {
-            if namespace == "SoftwareSettings" {
+            if namespace == "Storage" && method == "request" && canonical_signature == "request" {
+                output.push_str(&format!("{expression}[\"request\"] = __operitStorageRequest;\n__operitInstallStorageFacade();\n"));
+            } else if namespace == "SoftwareSettings" {
                 match (method.as_str(), canonical_signature.as_str()) {
                     ("listModelSummaries" | "listTtsConfigs" | "readToolSourceCatalog" | "listThemeConfigs" | "getCurrentTtsConfigId", "") => {
                         output.push_str(&format!("{expression}[\"{method}\"] = function() {{ if (arguments.length !== 0) return Promise.reject(new Error(\"SoftwareSettings.{method} requires exactly 0 arguments\")); return __operitReadSoftwareSettingsDirectory(\"{method}\"); }};\n"));
@@ -750,6 +755,8 @@ globalThis.__operitChatExtensionSequence = 0;
         "compat/v1/files.js",
         "compat/v1/chat.js",
         "compat/v1/workflow.js",
+        "compat/v1/characters.js",
+        "compat/v1/memory.js",
         "compat/v1/install.js",
     ] {
         output.push('\n');

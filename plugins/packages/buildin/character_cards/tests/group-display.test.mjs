@@ -13,7 +13,7 @@ function displayRequest(selection) {
 
 /** Uses actual plugin directory files without connecting execution catalogs or a host chat implementation. */
 async function fileService(t) {
-  const disk = await createDiskHarness(t), repository = await loadModule("src/storage/files.ts", disk.globals).FileCharacterRepository.open();
+  const disk = await createDiskHarness(t), repository = await loadModule("src/storage/database.ts", disk.globals).DatabaseCharacterRepository.open();
   const service = loadModule("src/service.ts", disk.globals).createCharacterCardsService(repository);
   return { disk, service };
 }

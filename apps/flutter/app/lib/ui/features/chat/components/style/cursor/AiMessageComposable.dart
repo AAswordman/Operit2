@@ -5,7 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
-import '../../../../../common/CharacterAvatar.dart';
+import '../../../../../common/ChatAvatarImage.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
@@ -317,7 +317,7 @@ class _MessageAvatar extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: GestureDetector(
           onTap: onTap,
-          child: CharacterAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
+          child: ChatAvatarImage(avatarUri: imagePath, fit: BoxFit.cover),
         ),
       ),
     );

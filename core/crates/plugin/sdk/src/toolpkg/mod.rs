@@ -13,8 +13,6 @@ pub mod ToolPkgComposeDslDebugDumpReceiver;
 #[path = "ToolPkgComposeDslBridge.rs"]
 pub mod ToolPkgComposeDslBridge;
 
-#[path = "ToolPkgComposeDslParser.rs"]
-pub mod ToolPkgComposeDslParser;
 
 #[path = "ToolPkgComposeDslRuntimeScript.rs"]
 pub mod ToolPkgComposeDslRuntimeScript;

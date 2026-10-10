@@ -12,8 +12,11 @@
     "types": []
   },
   "files": [
+    "../../../../../../../plugins/types/toolpkg.d.ts",
     "files.js",
     "chat.js",
-    "workflow.js"
+    "workflow.js",
+    "characters.js",
+    "memory.js"
   ]
 }

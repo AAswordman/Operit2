@@ -49,8 +49,6 @@ implementation. Applications implement the SDK traits and inject their own host 
 - `toolpkg::ToolPkgLoader::ToolPkgLoader`: loads external or embedded `.toolpkg` archives.
 - `toolpkg::ToolPkgRegistrationBridge`: returns the fixed `registerToolPkg` JavaScript API.
 - `toolpkg::ToolPkgParser`: exposes manifest, runtime, hook, and archive models.
-- `toolpkg::ToolPkgComposeDslParser`: parses Compose DSL render trees, state, memo values, and
-  action identifiers.
 - `toolpkg::ToolPkgComposeDslBridge`: returns the fixed JavaScript DSL context installed by engine
   implementations.
 - `toolpkg::ToolPkgComposeDslRuntimeScript`: wraps screen scripts with render, rerender, and action

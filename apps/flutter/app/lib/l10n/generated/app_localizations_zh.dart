@@ -51,9 +51,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get attachmentCamera => '拍照';
 
   @override
-  String get attachmentMemory => '记忆';
-
-  @override
   String get attachmentFile => '文件';
 
   @override
@@ -91,9 +88,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get attachmentCameraUnavailable => '当前 Flutter 端没有相机采集能力';
-
-  @override
-  String get attachmentMemoryUnavailable => '当前 Flutter 端没有记忆文件夹选择器';
 
   @override
   String get clearSearch => '清空搜索';
@@ -920,26 +914,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryLocalModelsDescription => '管理按需安装的本地模型和推理引擎。';
 
   @override
-  String get settingsCategoryCharactersTitle => '角色';
-
-  @override
-  String get settingsCategoryCharactersSubtitle => '角色卡、群组、绑定';
-
-  @override
-  String get settingsCategoryCharactersDescription =>
-      '管理角色卡、群组、当前激活角色和角色级模型/记忆/工具绑定。';
-
-  @override
-  String get settingsCategoryMemoryTitle => '记忆';
-
-  @override
-  String get settingsCategoryMemorySubtitle => '记忆图谱、共享记忆库、用户资料';
-
-  @override
-  String get settingsCategoryMemoryDescription =>
-      '管理角色与共享记忆库、记忆图谱可视化、用户资料与自动更新策略。';
-
-  @override
   String get settingsCategoryToolsTitle => '工具与权限';
 
   @override
@@ -1157,9 +1131,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsTtsCurrentConfigCannotDelete => '当前正在使用的 TTS 配置不能删除';
-
-  @override
-  String get settingsTtsConfigUsedByCharacter => '该 TTS 配置正在被角色卡使用，不能删除';
 
   @override
   String get settingsModelChatAutoGlmWarning =>
@@ -1872,286 +1843,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelTestItemUnknown => '未知项';
 
   @override
-  String get settingsCharactersCreateCard => '新建角色卡';
-
-  @override
-  String get settingsCharactersEditCard => '编辑角色卡';
-
-  @override
-  String get settingsCharactersCardName => '角色名称';
-
-  @override
-  String get settingsCharactersCreateGroup => '新建群组';
-
-  @override
-  String get settingsCharactersEditGroup => '编辑群组';
-
-  @override
-  String get settingsCharactersGroupName => '群组名称';
-
-  @override
-  String get settingsCharactersDescription => '描述';
-
-  @override
-  String get settingsCharactersCharacterSetting => '角色设定';
-
-  @override
-  String get settingsCharactersOpeningStatement => '开场白';
-
-  @override
-  String get settingsCharactersOtherContentChat => '聊天附加内容';
-
-  @override
-  String get settingsCharactersOtherContentVoice => '语音附加内容';
-
-  @override
-  String get settingsCharactersAdvancedPrompt => '高级自定义 Prompt';
-
-  @override
-  String get settingsCharactersMarks => '备注';
-
-  @override
-  String get settingsCharactersTags => '标签';
-
-  @override
-  String get settingsCharactersNoTags => '当前没有可选标签。可在标签管理中创建后绑定到角色卡。';
-
-  @override
-  String get settingsCharactersImport => '导入';
-
-  @override
-  String get settingsCharactersExport => '导出';
-
-  @override
-  String get settingsCharactersImportJson => '导入 JSON';
-
-  @override
-  String get settingsCharactersExportJson => '导出 JSON';
-
-  @override
-  String get settingsCharactersImportTavernJson => '导入 Tavern JSON';
-
-  @override
-  String get settingsCharactersExportTavernJson => '导出 Tavern JSON';
-
-  @override
-  String get settingsCharactersImportCardJson => '导入角色卡 JSON';
-
-  @override
-  String get settingsCharactersImportCardJsonDone => '已导入角色卡。';
-
-  @override
-  String get settingsCharactersImportTavernJsonDone => '已导入 Tavern 角色卡。';
-
-  @override
-  String get settingsCharactersImportGroupJson => '导入群组 JSON';
-
-  @override
-  String get settingsCharactersImportGroupJsonDone => '已导入群组。';
-
-  @override
-  String settingsCharactersImportJsonError(String error) {
-    return '导入 JSON 失败：$error';
-  }
-
-  @override
-  String settingsCharactersImportTavernJsonError(String error) {
-    return '导入 Tavern JSON 失败：$error';
-  }
-
-  @override
-  String settingsCharactersExportJsonError(String error) {
-    return '导出 JSON 失败：$error';
-  }
-
-  @override
-  String settingsCharactersExportTavernJsonError(String error) {
-    return '导出 Tavern JSON 失败：$error';
-  }
-
-  @override
-  String get settingsCharactersTagsSection => '标签';
-
-  @override
-  String get settingsCharactersManageTags => '管理标签';
-
-  @override
-  String get settingsCharactersCreateTag => '新建标签';
-
-  @override
-  String get settingsCharactersEditTag => '编辑标签';
-
-  @override
-  String get settingsCharactersDeleteTag => '删除标签';
-
-  @override
-  String settingsCharactersDeleteTagMessage(String name) {
-    return '确定删除“$name”吗？';
-  }
-
-  @override
-  String get settingsCharactersTagName => '标签名称';
-
-  @override
-  String get settingsCharactersTagDescription => '标签描述';
-
-  @override
-  String get settingsCharactersTagPromptContent => 'Prompt 内容';
-
-  @override
-  String get settingsCharactersChatModelBindingMode => '聊天模型绑定模式';
-
-  @override
-  String get settingsCharactersChatModelConfigId => '聊天模型配置 ID';
-
-  @override
-  String get settingsCharactersChatModelIndex => '聊天模型序号';
-
-  @override
-  String get settingsCharactersToolAccess => '工具权限模式';
-
-  @override
-  String get settingsCharactersChatModelFollowGlobal => '跟随全局模型';
-
-  @override
-  String get settingsCharactersChatModelFixedConfig => '固定模型配置';
-
-  @override
-  String get settingsCharactersChatModelConfig => '模型配置';
-
-  @override
-  String get settingsCharactersToolAccessFollowGlobal => '跟随全局工具权限';
-
-  @override
-  String get settingsCharactersToolAccessCustom => '自定义角色工具权限';
-
-  @override
-  String get settingsCharactersToolAccessEmpty => '已启用，但未选择任何工具';
-
-  @override
-  String settingsCharactersToolAccessSummaryCounts(
-    int builtinCount,
-    int packageCount,
-    int skillCount,
-    int mcpCount,
-  ) {
-    return '内置 $builtinCount · 工具包 $packageCount · 技能 $skillCount · MCP $mcpCount';
-  }
-
-  @override
-  String get settingsCharactersToolAccessConfigure => '配置工具白名单';
-
-  @override
-  String get settingsCharactersToolAccessTitle => '自定义允许使用的工具';
-
-  @override
-  String get settingsCharactersToolAccessTabBuiltin => '内建工具';
-
-  @override
-  String get settingsCharactersToolAccessTabPackage => '包';
-
-  @override
-  String get settingsCharactersToolAccessTabSkill => 'Skill';
-
-  @override
-  String get settingsCharactersToolAccessTabMcp => 'MCP';
-
-  @override
-  String get settingsCharactersToolAccessSearchPlaceholder => '搜索名称、描述或标识';
-
-  @override
-  String get settingsCharactersToolAccessEmptySearch => '未找到匹配的工具';
-
-  @override
-  String get settingsCharactersToolAccessRequiresUsePackage =>
-      '选择工具包、技能或 MCP 时，需要同时允许内置工具 use_package。';
-
-  @override
-  String get settingsCharactersToolAccessEmptyBuiltin => '当前没有可配置的内建工具';
-
-  @override
-  String get settingsCharactersToolAccessEmptyPackages => '当前没有全局可用的包';
-
-  @override
-  String get settingsCharactersToolAccessEmptySkills => '当前没有对 AI 可见的 Skill';
-
-  @override
-  String get settingsCharactersToolAccessEmptyMcp => '当前没有已启用的 MCP 服务器';
-
-  @override
-  String get settingsCharactersBuiltinTools => '允许的内置工具';
-
-  @override
-  String get settingsCharactersAllowedPackages => '允许的工具包';
-
-  @override
-  String get settingsCharactersAllowedSkills => '允许的技能';
-
-  @override
-  String get settingsCharactersAllowedMcpServers => '允许的 MCP 服务';
-
-  @override
-  String get settingsCharactersGroupMembersTitle => '组内角色';
-
-  @override
-  String get settingsCharactersOpenMemoryGraph => '查看记忆图谱';
-
-  @override
-  String settingsCharactersMemoryGraphTitle(String profileName) {
-    return '$profileName 的记忆图谱';
-  }
-
-  @override
-  String get settingsCharactersMemoryGraphEmpty => '当前记忆库还没有节点';
-
-  @override
-  String settingsCharactersMemoryGraphStats(int nodes, int edges) {
-    return '$nodes 个节点 · $edges 条关系';
-  }
-
-  @override
-  String get settingsCharactersMemoryGraphLink => '记忆关系';
-
-  @override
-  String get settingsCharactersEditUserMarkdown => '编辑用户资料';
-
-  @override
-  String settingsCharactersUserMarkdownTitle(String profileName) {
-    return '$profileName 的用户资料';
-  }
-
-  @override
-  String get settingsCharactersUserMarkdownSaved => '用户资料已保存';
-
-  @override
-  String get settingsCharactersUserMarkdownContent => '用户资料内容';
-
-  @override
-  String get settingsCharactersMemoryAutoUpdate => '自动更新记忆库';
-
-  @override
-  String get settingsCharactersMemoryAutoUpdateDescription =>
-      '允许 AI 从对话中整理信息并写入记忆库。';
-
-  @override
-  String get settingsCharactersPreferenceDescription => '向模型提供用户资料';
-
-  @override
-  String get settingsCharactersPreferenceDescriptionSubtitle =>
-      '聊天时把当前用户资料写入提示词。';
-
-  @override
-  String get settingsCharactersCardsSection => '角色卡';
-
-  @override
-  String get settingsCharactersGroupsSection => '群组';
-
-  @override
-  String settingsCharactersGroupMembers(int count) {
-    return '$count 个成员';
-  }
-
-  @override
   String get settingsToolsPermissionMode => 'AI 能力模式';
 
   @override
@@ -2797,11 +2488,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceThemeTargetGlobal => '全局';
 
   @override
-  String settingsAppearanceThemeTargetCharacter(Object name) {
-    return '当前角色：$name';
-  }
-
-  @override
   String settingsAppearanceThemeTargetGroup(Object name) {
     return '当前群组：$name';
   }
@@ -3390,9 +3076,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDataDetailedStatsSourceTitleGeneration => '标题生成';
 
   @override
-  String get settingsDataDetailedStatsSourceMemory => '记忆分析';
-
-  @override
   String get settingsDataDetailedStatsTotalRequests => '总请求数';
 
   @override
@@ -3522,20 +3205,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsDataChatHistoriesBackupDescription =>
       '备份全部聊天和消息；恢复时按聊天 ID 更新或新增。';
-
-  @override
-  String get settingsDataCharacterCardsBackup => '角色卡数据';
-
-  @override
-  String get settingsDataCharacterCardsBackupDescription =>
-      '备份全部角色卡和已引用标签；恢复时按原 ID 更新或新增。';
-
-  @override
-  String get settingsDataCharacterGroupsBackup => '群组数据';
-
-  @override
-  String get settingsDataCharacterGroupsBackupDescription =>
-      '备份全部群组；恢复时保留组内角色引用和顺序。';
 
   @override
   String get settingsDataModelConfigsBackup => '模型配置';
@@ -4268,5 +3937,38 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String workspaceInsertSymbol(String symbol) {
     return '插入 $symbol';
+  }
+
+  @override
+  String get settingsAppearanceThemeConfig => '主题配置';
+
+  @override
+  String get settingsAppearanceThemeConfigCustom => '未绑定的外观';
+
+  @override
+  String get settingsAppearanceThemeConfigCreate => '新建主题配置';
+
+  @override
+  String get settingsAppearanceThemeConfigRename => '重命名主题配置';
+
+  @override
+  String get settingsAppearanceThemeConfigDelete => '删除当前未启用的主题配置';
+
+  @override
+  String get settingsAppearanceThemeConfigName => '主题名称';
+
+  @override
+  String get settingsAppearanceThemeConfigNameRequired => '请输入主题名称';
+
+  @override
+  String get settingsAppearanceThemeConfigCustomHint =>
+      '点击 + 新建主题配置，即可在角色卡或群组中绑定。';
+
+  @override
+  String get settingsAppearanceThemeConfigEditingHint => '修改外观会自动保存到当前主题配置。';
+
+  @override
+  String settingsAppearanceThemeConfigFailed(String detail) {
+    return '主题操作失败：$detail';
   }
 }

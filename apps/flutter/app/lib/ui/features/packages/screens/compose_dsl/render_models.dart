@@ -5,15 +5,17 @@ part of '../ToolPkgUiLauncherScreen.dart';
 /// Exposes the structured action result contract for return-type regression tests.
 @visibleForTesting
 ({Object? actionResult, Object? renderedActionResult, bool hasRenderResult})
-parseComposeDslActionEventForTest(Map<String, Object?> event) {
-  final phase = event['phase'];
-  if (event['result'] is! Map) throw const FormatException('Compose event result must be structured');
-  final response = _stringMap(event['result']);
-  final result = _ComposeDslRenderResult.tryParse(response);
+parseComposeDslActionEventForTest(core_proxy.ToolPkgComposeDslEvent event) {
+  if (event.error != null) throw StateError(event.error!);
+  final update = event.update;
+  if (update != null) {
+    final store = _ComposeDslNodeStore()..apply(update);
+    store.dispose();
+  }
   return (
-    actionResult: response['actionResult'],
-    renderedActionResult: result?.actionResult,
-    hasRenderResult: (phase == 'intermediate' || phase == 'final') && result != null,
+    actionResult: event.actionResult,
+    renderedActionResult: update == null ? null : event.actionResult,
+    hasRenderResult: update != null,
   );
 }
 
@@ -21,36 +23,11 @@ class _ComposeDslRenderResult {
   /// Stores the root handle and the latest structured runtime metadata.
   const _ComposeDslRenderResult({
     required this.tree,
-    required this.state,
-    required this.memo,
     required this.actionResult,
   });
 
   final _ComposeDslNode tree;
-  final Map<String, Object?> state;
-  final Map<String, Object?> memo;
   final Object? actionResult;
-
-  /// Reads an already structured snapshot supplied by CoreLink.
-  static _ComposeDslRenderResult parse(Object? value) {
-    final result = tryParse(value);
-    if (result == null) throw const FormatException('compose_dsl snapshot requires a tree');
-    return result;
-  }
-
-  /// Reads a headless snapshot without accepting or decoding JSON strings.
-  static _ComposeDslRenderResult? tryParse(Object? value) {
-    if (value is! Map) throw const FormatException('compose_dsl result must be structured');
-    if (value['success'] == false) throw StateError(value['message'].toString());
-    final tree = _ComposeDslNode.parse(value['tree']);
-    if (tree == null) return null;
-    return _ComposeDslRenderResult(
-      tree: tree,
-      state: _stringMap(value['state']),
-      memo: _stringMap(value['memo']),
-      actionResult: value['actionResult'],
-    );
-  }
 }
 
 /// Decodes one queued Compose navigation request.
@@ -185,7 +162,10 @@ class _ComposeDslNode extends ChangeNotifier {
     required List<_ComposeDslNode> children,
     required Map<String, List<_ComposeDslNode>> slots,
     this.id,
-  }) : _type = type, _props = props, _children = children, _slots = slots;
+  }) : _type = type,
+       _props = props,
+       _children = children,
+       _slots = slots;
 
   final String? id;
   String _type;
@@ -194,40 +174,49 @@ class _ComposeDslNode extends ChangeNotifier {
   Map<String, List<_ComposeDslNode>> _slots;
 
   /// Records a renderer's dependency before returning this node's type.
-  String get type { _ComposeDslReadScope.read(this); return _type; }
+  String get type {
+    _ComposeDslReadScope.read(this);
+    return _type;
+  }
 
   /// Records a renderer's dependency before returning this node's properties.
-  Map<String, Object?> get props { _ComposeDslReadScope.read(this); return _props; }
+  Map<String, Object?> get props {
+    _ComposeDslReadScope.read(this);
+    return _props;
+  }
 
   /// Returns retained child handles without reconstructing a recursive tree.
-  List<_ComposeDslNode> get children { _ComposeDslReadScope.read(this); return _children; }
+  List<_ComposeDslNode> get children {
+    _ComposeDslReadScope.read(this);
+    return _children;
+  }
 
   /// Returns retained slot handles without reconstructing their descendants.
-  Map<String, List<_ComposeDslNode>> get slots { _ComposeDslReadScope.read(this); return _slots; }
+  Map<String, List<_ComposeDslNode>> get slots {
+    _ComposeDslReadScope.read(this);
+    return _slots;
+  }
 
   /// Atomically replaces one flat node record after all new handles have been allocated.
-  void replace(core_proxy.ToolPkgComposeDslNodeRecord record, _ComposeDslNodeStore store) {
+  void replace(
+    core_proxy.ToolPkgComposeDslNodeRecord record,
+    _ComposeDslNodeStore store,
+  ) {
     final type = _composeNodeTypes[_normalizeToken(record.nodeType)];
-    if (type == null) throw FormatException('Unknown Compose node type: ${record.nodeType}');
+    if (type == null)
+      throw FormatException('Unknown Compose node type: ${record.nodeType}');
     _type = type;
     _props = record.props;
     _children = record.children.map(store.node).toList(growable: false);
-    _slots = record.slots.map((name, ids) => MapEntry(name, ids.map(store.node).toList(growable: false)));
+    _slots = record.slots.map(
+      (name, ids) =>
+          MapEntry(name, ids.map(store.node).toList(growable: false)),
+    );
   }
 
   /// Invalidates only renderers that read this node during their latest build.
-  void publish() { notifyListeners(); }
-
-  /// Converts one typed headless snapshot without parsing a JSON UI tree.
-  static _ComposeDslNode fromSnapshot(core_proxy.ToolPkgComposeDslNode node) {
-    final type = _composeNodeTypes[_normalizeToken(node.type)];
-    if (type == null) throw FormatException('Unknown Compose node type: ${node.type}');
-    return _ComposeDslNode(
-      type: type,
-      props: node.props,
-      children: node.children.map(fromSnapshot).toList(growable: false),
-      slots: node.slots.map((name, children) => MapEntry(name, children.map(fromSnapshot).toList(growable: false))),
-    );
+  void publish() {
+    notifyListeners();
   }
 
   /// Reads structured nodes supplied directly by isolated renderer tests.

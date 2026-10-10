@@ -254,11 +254,10 @@ void main() {
   testWidgets('workspace grouping uses the same independent previews', (
     tester,
   ) async {
-    await _pumpDrawer(
-      tester,
-      _DrawerBridge(groupingMode: 'workspace'),
-      <core.ChatHistoryListItem>[..._histories('A', 6), ..._histories('B', 6)],
-    );
+    await _pumpDrawer(tester, _DrawerBridge(), <core.ChatHistoryListItem>[
+      ..._histories('A', 6),
+      ..._histories('B', 6),
+    ]);
     final button = find.byKey(
       const ValueKey<String>('history-limit:workspace:A'),
     );
@@ -273,30 +272,34 @@ void main() {
     expect(find.text('展开更多 2'), findsNWidgets(2));
   });
 
-  testWidgets('workspace group controls are native and folding performs no backend mutations', (
-    tester,
-  ) async {
-    final bridge = _DrawerBridge();
-    await _pumpDrawer(tester, bridge, _histories('A', 6));
-    expect(find.text('A'), findsOneWidget);
-    expect(find.byTooltip('分组操作'), findsOneWidget);
-    expect(find.text('未分组'), findsOneWidget);
-    expect(find.byKey(const ValueKey('workspace-create-group')), findsOneWidget);
-    await tester.tap(find.text('A'));
-    await _pumpSidebar(tester);
-    expect(find.text('A-0'), findsNothing);
-    expect(
-      bridge.calls.where(
-        (call) =>
-            call.methodName == 'updateChatOrderAndGroup' ||
-            call.methodName == 'deleteChatHistory' ||
-            call.methodName == 'updateChatPinned',
-      ),
-      isEmpty,
-    );
-    await tester.tap(find.text('A'));
-    await _pumpSidebar(tester);
-  });
+  testWidgets(
+    'workspace group controls are native and folding performs no backend mutations',
+    (tester) async {
+      final bridge = _DrawerBridge();
+      await _pumpDrawer(tester, bridge, _histories('A', 6));
+      expect(find.text('A'), findsOneWidget);
+      expect(find.byTooltip('分组操作'), findsOneWidget);
+      expect(find.text('未分组'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('workspace-create-group')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('A'));
+      await _pumpSidebar(tester);
+      expect(find.text('A-0'), findsNothing);
+      expect(
+        bridge.calls.where(
+          (call) =>
+              call.methodName == 'updateChatOrderAndGroup' ||
+              call.methodName == 'deleteChatHistory' ||
+              call.methodName == 'updateChatPinned',
+        ),
+        isEmpty,
+      );
+      await tester.tap(find.text('A'));
+      await _pumpSidebar(tester);
+    },
+  );
 
   testWidgets('renamed workspace metadata keeps preview keyed by identity', (
     tester,
@@ -417,15 +420,11 @@ core.ChatHistoryListItem _history(
 );
 
 class _DrawerBridge extends OperitRuntimeBridge {
-  /// Configures the persisted grouping mode for the sidebar under test.
-  _DrawerBridge({this.groupingMode = 'character'});
-
-  final String groupingMode;
+  /// Creates a workspace sidebar bridge without a selected plugin tab.
+  _DrawerBridge();
 
   /// Exposes the committed preference snapshot used by reads and watches.
-  Map<String, String> get preferences => <String, String>{
-    'chat_history_grouping_mode': groupingMode,
-  };
+  Map<String, String> get preferences => <String, String>{};
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
 
   /// Implements only preference reads and the group mutations exercised here.

@@ -143,9 +143,9 @@ test("embedded JS transport: the character list rejects retired and unknown para
 test("embedded JS plus disk-backed IPC: original memory and list filesystem failures reach terminal errors", async t => {
   const actual = await environment(t), script = toolModuleScript("src/runtime-tools/tools.ts");
   await actual.service.dispatchDomain("character.list", {});
-  actual.disk.failNext("read", new Error("participant-owner-original-file-error"));
+  actual.disk.failNext("storage.list", new Error("participant-owner-original-file-error"));
   await assert.rejects(actual.native.invoke(script, "get_memory_owner_key", nativeToolParameters("default")), /participant-owner-original-file-error/);
-  actual.disk.failNext("read", new Error("participant-list-original-file-error"));
+  actual.disk.failNext("storage.list", new Error("participant-list-original-file-error"));
   await assert.rejects(actual.native.invoke(script, "list_character_cards", nativeToolParameters("default")), /participant-list-original-file-error/);
   assert.deepEqual(actual.native.terminal.map(
     /** Checks neither failure was converted into a successful empty list or absent owner. */

@@ -65,10 +65,10 @@ test("real registration bootstrap accepts attachment entries from two arbitrary 
 test("real navigation registration rejects unsupported case whitespace and unknown surfaces", () => {
   const actual = registry("arbitrary");
   actual.registerRoute("tab");
-  for (const surface of ["toolbox", "main_sidebar_plugins", "app_bar", "chat_attachments", "chat_sidebar_tabs"]) {
+  for (const surface of ["toolbox", "main_sidebar_plugins", "app_bar", "chat_attachments", "chat_sidebar_tabs", "chat_input_menu"]) {
     actual.evaluate(`ToolPkg.registerNavigationEntry({id:${JSON.stringify(surface)},surface:${JSON.stringify(surface)},route:'toolpkg:arbitrary:ui:tab'});`);
   }
-  assert.equal(actual.entries().length, 5);
+  assert.equal(actual.entries().length, 6);
   for (const surface of ["", "TOOLBOX", "CHAT_ATTACHMENTS", "chat_attachments ", " chat_attachments", "attachments", "CHAT_SIDEBAR_TABS", "chat_sidebar_tabs ", " chat_sidebar_tabs", "chat_sidebar_tab"]) {
     assert.throws(
       /** Passes the explicit invalid surface to the existing production validator. */
@@ -77,7 +77,7 @@ test("real navigation registration rejects unsupported case whitespace and unkno
       error => error.message === "registerNavigationEntry.surface is unsupported: " + surface,
     );
   }
-  assert.equal(actual.entries().length, 5);
+  assert.equal(actual.entries().length, 6);
 });
 
 /** Proves capture serializes the original nested input without modifying it or retaining mutable references. */
@@ -173,7 +173,7 @@ test("generated proxy metadata really contains typed navigation params in catalo
   const declarations = source("plugins/types/toolpkg.d.ts");
   const surface = declarations.match(/export type NavigationSurface = ([^;]+);/);
   assert.ok(surface, "The actual generated SDK declaration must expose its navigation surface type");
-  assert.equal(surface[1], '"toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs"',
+  assert.equal(surface[1], '"toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs" | "chat_input_menu"',
     "Generated SDK surface declaration must be regenerated from the finalized Rust source");
   assert.match(declarations, /interface NavigationEntryRegistration\s*\{[\s\S]*?params\?: JsonValue;/);
 });
@@ -304,3 +304,30 @@ test("real sidebar tab registration rejects non JSON params without partially ca
 });
 
 
+
+/** Uses the real registry to validate direct input-menu DSL embedding for unrelated packages. */
+test("real input-menu registration requires an owned Compose route and preserves opaque input", () => {
+  for (const packageName of ["com.example.menu", "org.example.second-menu"]) {
+    const actual = registry(packageName), route = actual.registerRoute("input-menu");
+    actual.evaluate(`ToolPkg.registerNavigationEntry({id:'row',surface:'chat_input_menu',route:${JSON.stringify(route)},params:{opaque:['value',null]},order:12});`);
+    assert.deepEqual(actual.entries(), [{ id: "row", surface: "chat_input_menu", route, params: { opaque: ["value", null] }, order: 12 }]);
+  }
+  const missing = registry("org.example.missing");
+  assert.throws(
+    /** Rejects a route that the declaring package never registered. */
+    () => missing.evaluate("ToolPkg.registerNavigationEntry({id:'row',surface:'chat_input_menu',route:'toolpkg:org.example.missing:ui:menu'});"),
+    /route is not registered for chat_input_menu/,
+  );
+  assert.deepEqual(missing.entries(), []);
+  const invalid = registry("org.example.invalid"); invalid.registerRoute("menu");
+  for (const definition of [
+    "{id:'row',surface:'chat_input_menu'}",
+    "{id:'row',surface:'chat_input_menu',route:'toolpkg:org.foreign:ui:menu'}",
+    "{id:'row',surface:'chat_input_menu',route:'toolpkg:org.example.invalid:ui:menu',action:function(){}}",
+  ]) assert.throws(
+    /** Validates required route ownership and rejects native action callbacks on the embedded surface. */
+    () => invalid.evaluate("ToolPkg.registerNavigationEntry(" + definition + ");"),
+    /registerNavigationEntry/,
+  );
+  assert.deepEqual(invalid.entries(), []);
+});

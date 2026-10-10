@@ -1382,6 +1382,7 @@ class ToolPkgUiModuleRuntime {
     required this.id,
     required this.runtime,
     required this.screen,
+    required this.screenExport,
     required this.title,
     required this.keepAlive,
   });
@@ -1391,6 +1392,7 @@ class ToolPkgUiModuleRuntime {
     id: value['id'] as String,
     runtime: value['runtime'] as String,
     screen: value['screen'] as String,
+    screenExport: value['screenExport'] == null ? null : value['screenExport'] as String,
     title: LocalizedText.fromMessagePackValue(value['title'] as Map<String, Object?>),
     keepAlive: value['keepAlive'] as bool,
   );
@@ -1400,6 +1402,7 @@ class ToolPkgUiModuleRuntime {
     'id': id,
     'runtime': runtime,
     'screen': screen,
+    'screenExport': screenExport == null ? null : screenExport!,
     'title': title.toMessagePackValue(),
     'keepAlive': keepAlive,
   };
@@ -1407,6 +1410,7 @@ class ToolPkgUiModuleRuntime {
   final String id;
   final String runtime;
   final String screen;
+  final String? screenExport;
   final LocalizedText title;
   final bool keepAlive;
 }
@@ -1418,6 +1422,7 @@ class ToolPkgUiRouteRuntime {
     required this.routeId,
     required this.runtime,
     required this.screen,
+    required this.screenExport,
     required this.title,
     required this.keepAlive,
   });
@@ -1428,6 +1433,7 @@ class ToolPkgUiRouteRuntime {
     routeId: value['routeId'] as String,
     runtime: value['runtime'] as String,
     screen: value['screen'] as String,
+    screenExport: value['screenExport'] == null ? null : value['screenExport'] as String,
     title: LocalizedText.fromMessagePackValue(value['title'] as Map<String, Object?>),
     keepAlive: value['keepAlive'] as bool,
   );
@@ -1438,6 +1444,7 @@ class ToolPkgUiRouteRuntime {
     'routeId': routeId,
     'runtime': runtime,
     'screen': screen,
+    'screenExport': screenExport == null ? null : screenExport!,
     'title': title.toMessagePackValue(),
     'keepAlive': keepAlive,
   };
@@ -1446,6 +1453,7 @@ class ToolPkgUiRouteRuntime {
   final String routeId;
   final String runtime;
   final String screen;
+  final String? screenExport;
   final LocalizedText title;
   final bool keepAlive;
 }

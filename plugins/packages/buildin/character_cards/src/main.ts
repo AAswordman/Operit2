@@ -3,6 +3,7 @@ import screen from "./ui/main/index.ui.js";
 import attachmentScreen from "./ui/memory-attachment/index.ui.js";
 import sidebarScreen from "./ui/chat-sidebar/index.ui.js";
 import selectionScreen from "./ui/selection/index.ui.js";
+import inputMenuScreen from "./ui/chat-input-menu/index.ui.js";
 import groupExecutionScreen from "./ui/group-execution/index.ui.js";
 import { registerUiRequestChannel, registerServiceLifecycle, register } from "./host";
 import { registerDomainCommands } from "./commands";
@@ -33,13 +34,14 @@ connectDirectorySources({
   /** Reads complete real builtin, package, skill and MCP sources through the generic settings capability. */
   readToolCatalog: () => Tools.SoftwareSettings.readToolSourceCatalog(),
 });
+/** Connects independent configuration capabilities in every evaluated execution runtime. */
+registerSelectionSettingsAccess();
 /** Declares IPC handlers when the main runtime is evaluated; no business service is opened. */
 registerUiRequestChannel();
 /** Registers the actual embedded-sidebar catalog IPC without reading host metadata or opening the business store. */
 registerSidebarChannel();
 /** Registers plugin-owned domain commands, typed public APIs, and independent character/memory/sidebar surfaces. */
 export function registerToolPkg(): boolean {
-  registerSelectionSettingsAccess();
   registerDomainCommands();
   registerDomainApis();
   registerServiceLifecycle();
@@ -48,5 +50,5 @@ export function registerToolPkg(): boolean {
   registerChatInitialization();
   registerGroupExecutionHooks();
   registerUiContributionApis();
-  return register(definition, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen, memoryScreen);
+  return register(definition, screen, attachmentScreen, sidebarScreen, selectionScreen, groupExecutionScreen, memoryScreen, inputMenuScreen);
 }

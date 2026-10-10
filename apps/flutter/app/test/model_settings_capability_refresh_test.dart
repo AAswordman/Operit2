@@ -375,7 +375,6 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
         result = model.toJson();
       case 'getAllTtsConfigs':
       case 'getAllSttConfigs':
-      case 'getAllCharacterCards':
         result = <Object?>[];
       case 'getCurrentTtsConfigId':
       case 'getSelectedSttConfigId':

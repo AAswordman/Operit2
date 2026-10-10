@@ -90,6 +90,8 @@ var OperitComposeRetained = (function() {
                         if (identities.has(identity)) throw new Error('duplicate compose node key in ' + parent + ':' + slot);
                         identities.add(identity);
                         var id = parent + '/s:' + slot.length + ':' + slot + '/' + identity + '/t:' + child.type;
+                        // Reattachment must reconcile even a previously skipped dirty occurrence.
+                        if (removalRoots.delete(id)) invalidate(id, true);
                         var previous = nodes.get(id);
                         if (!previous || previous.node !== child || dirty.has(id)) visit(child, id, parent);
                         return id;
@@ -179,17 +181,15 @@ var OperitComposeRetained = (function() {
             var nextRoot = 'root/t:' + tree.type;
             if (rootId !== null && rootId !== nextRoot) removalRoots.add(rootId);
             visit(tree, nextRoot, null);
-            removalRoots.forEach(removeBranch);
-            removalRoots.clear();
             // Only explicitly queued occurrences are visited beneath unchanged ancestors.
             while (dirty.size > 0) {
                 var id = dirty.keys().next().value;
                 var entry = nodes.get(id);
                 if (!entry) { dirty.delete(id); continue; }
                 visit(entry.node, id, entry.parent);
-                removalRoots.forEach(removeBranch);
-                removalRoots.clear();
             }
+            // Branch ownership is final only after all dirty parents have reconciled their references.
+            removalRoots.forEach(removeBranch);
             actionDeletes.forEach(
                 /// Deletes newly discarded and detached callbacks, not every registered callback.
                 function(id) { delete runtime.actionStore[id]; }

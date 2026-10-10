@@ -120,6 +120,54 @@ no edits. Explicit stricter bounds remain in effect. Both packages must be enabl
 and validates legacy graph inputs. See `PUBLIC_API.md` for the distributed typed
 client and provider capability limits. No historical database migration is implicit.
 
+### Caller identity after the role-provider migration
+
+API 2.0.0 exposes `getCallerParticipantId()` consistently in the runtime and
+current declarations. Its value belongs to the authenticated configuration
+provider and is not a runtime-wide character-card identity.
+
+For API 1.0.0 and 1.0.1, `getCallerCardId()` projects the execution participant
+only when the authenticated owner is `com.operit.character_cards`. A call without
+an execution participant returns the documented `undefined`; another provider's
+participant is rejected. The legacy getter is absent from the 2.0.0 surface, and
+a retained legacy function still checks the version of the active call.
+Core transports the generic owner identity without exposing the owner's message
+extension or restoring any character-card fields to the core model.
+
+### Chat and memory after the role-provider migration
+
+Every v1 archive now declares the effective character-provider prerequisite
+`com.operit.character_cards >= 0.1.0` alongside its workflow prerequisite.
+Explicit stricter bounds remain in effect; incompatible upper bounds are errors.
+
+- `Chat.listCharacterCards` reads the provider's real role directory, including
+  roles with fixed models or shared memory, without translating settings bindings.
+- Positional `Chat.createNew(group, setAsCurrentChat, characterCardId)` becomes
+  current creation options with the provider's namespaced selection input.
+  The requested role is validated before creation; folder membership uses the
+  existing generic chat folder API.
+- Ordinary `Chat.sendMessage` uses the native send tool, translating the explicit
+  role into `participant_id` and retaining sender and legacy turn controls.
+- `Chat.sendMessageStreaming` converts growing visible-text snapshots into
+  legacy start/chunk callbacks and returns the actual completion receipt.
+  Snapshot rewrites cannot be expressed by the old append-only callback and are
+  explicit errors. Waifu aggregation, custom timeouts, sender overrides and
+  non-default persistence/visibility/warning controls remain outside this stream
+  adapter. Calls without a completion receipt fail.
+- `Memory` methods invoke the provider's actual executable memory tools and
+  decode the package executor's serialized results. Both positional and object
+  overloads preserve explicitly supplied caller scope and option values;
+  `Memory.query` retains its legacy default limit of 20 and structured result.
+- Relationship IDs are canonical decimal strings in the provider, not UUIDs.
+  Positive safe integer IDs round-trip losslessly; IDs outside JavaScript's safe
+  integer range are rejected. Single-link updates use the legacy result envelope.
+- Memory move title arrays must be representable by the executable tool's title
+  delimiters. Non-document `Memory.getByTitle` encodes the validated legacy query
+  projection as JSON text; document reads retain the provider's text result.
+
+Legacy `SoftwareSettings` management is explicitly excluded from this repair.
+Role/model configuration and memory-profile binding adapters are not installed.
+
 ## Scope and outstanding work
 
 This is not a claim that every historical plugin runs unchanged. Copying the

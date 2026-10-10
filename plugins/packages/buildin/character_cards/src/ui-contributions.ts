@@ -14,12 +14,10 @@ export interface ContextSelection { chatId: string | null; selection: string | n
 
 /** Uses the existing owner-qualified route identifier, never a package-specific host entry point. */
 export interface UiAction { routeId: string; input: JsonValue }
-/** Describes generic selector and attachment display fields understood by Flutter. */
-export interface UiChoice extends UiAction { id: string; title: string; icon: string }
 /** Describes the current chat's display identity and its owner-provided preview action. */
 export interface UiIdentity { title: string; avatarUri: string | null; action: UiAction }
 /** Returns only generic chat context presentation fields at the host boundary. */
-export interface ContextActions { selectors: UiChoice[]; identity: UiIdentity | null; backgroundUri: string | null }
+export interface ContextActions { identity: UiIdentity | null; backgroundUri: string | null }
 /** Uses the real generic Flutter chat history summary contract without legacy domain fields. */
 export interface ChatSummary {
   id: string; title: string; updatedAt: string; displayOrder: number;
@@ -140,17 +138,10 @@ export function encodeSelection(selection: ActivePrompt): string {
   return selectionForActive(selection);
 }
 
-/** Builds the menu's owner-defined selectors and identity action from the same stored chat binding. */
+/** Publishes chat identity and background independently of the plugin-rendered input menu. */
 export function contextActions(routes: ChatUiRoutes, target: ContextSelection, directory: Snapshot): ContextActions {
   const selected = target.selection === null ? null : decodeSelection(target.selection, directory);
-  const routeId = routes.selection;
-  const input = { mode: "select", chatId: target.chatId };
   return {
-    selectors: [
-      { id: "characters", title: "切换角色卡", icon: "Badge", routeId, input: { ...input, kind: "card", selected: selected !== null && selected.entity === "card" ? selected.prompt : null } },
-      { id: "groups", title: "切换群组", icon: "Groups", routeId, input: { ...input, kind: "group", selected: selected !== null && selected.entity === "group" ? selected.prompt : null } },
-      ...(target.chatId !== null && selected !== null && selected.entity === "group" ? [{ id: "group-execution", title: "群组执行", icon: "Groups", routeId: routes.execution, input: { mode: "group-execution", chatId: target.chatId } }] : []),
-    ],
     identity: selected === null ? null : { title: selected.title, avatarUri: selected.avatarUri, action: previewAction(routes.editor, selected.entity, selected.id) },
     backgroundUri: null,
   };

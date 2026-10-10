@@ -111,7 +111,6 @@ pub const DATA_MEMORY_SHARED_DIR_PATH: &str = DATA_MEMORY_SHARED_USER_MARKDOWN.p
 pub const RUNTIME_USER_ASSETS: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree("runtime/data/user_assets", RuntimeStorageOwnership::Space);
 pub const RUNTIME_USER_ASSETS_DIR_PATH: &str = RUNTIME_USER_ASSETS.path;
-pub const RUNTIME_CHARACTER_AVATARS_DIR_PATH: &str = "runtime/data/user_assets/character_avatars";
 pub const RUNTIME_THEME_ASSETS_DIR_PATH: &str = "runtime/data/user_assets/theme";
 pub const RUNTIME_SPACE_MEMBERS: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree("runtime/space/members", RuntimeStorageOwnership::Space);
@@ -212,6 +211,17 @@ pub const RUNTIME_SHARE_IMAGE_EXPORTS: RuntimeStoragePathDefinition =
         RuntimeStorageOwnership::Ephemeral,
     );
 pub const RUNTIME_SHARE_IMAGE_EXPORTS_DIR_PATH: &str = RUNTIME_SHARE_IMAGE_EXPORTS.path;
+
+/// Owns persistent shared plugin data independently of extension installation scope.
+pub const PLUGIN_DATA_SPACE: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/plugin_data/space", RuntimeStorageOwnership::Space,
+);
+pub const PLUGIN_DATA_SPACE_DIR_PATH: &str = PLUGIN_DATA_SPACE.path;
+/// Owns persistent device-local plugin data independently of extension installation scope.
+pub const PLUGIN_DATA_DEVICE: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/plugin_data/device", RuntimeStorageOwnership::CoreNode,
+);
+pub const PLUGIN_DATA_DEVICE_DIR_PATH: &str = PLUGIN_DATA_DEVICE.path;
 
 /// Owns portable extension installations and configurations shared with the device space.
 pub const EXTENSIONS_SPACE: RuntimeStoragePathDefinition =
@@ -411,6 +421,8 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RuntimeStoragePathDefinition::tree("runtime/extensions/plugins/data", RuntimeStorageOwnership::Space),
     EXTENSIONS_SPACE,
     EXTENSIONS_DEVICE,
+    PLUGIN_DATA_SPACE,
+    PLUGIN_DATA_DEVICE,
     EXTENSIONS_SKILLS,
     EXTENSIONS_PACKAGES,
     EXTENSIONS_PLUGIN_CONFIGS,

@@ -3,7 +3,7 @@
 /**
  * Contains every concrete payload returned by the built-in tool runtime.
  */
-export type ToolResultData = EdgePortResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
+export type ToolResultData = EdgePortResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData;
 
 /**
  * Captures the UI node and Android surface reached when an automation run finishes.
@@ -581,46 +581,6 @@ export interface DeviceInfoResultData {
 }
 
 /**
- * Describes one stored memory together with ownership, provenance, tags, and chunk metadata.
- */
-export interface MemoryInfo {
-  ownerKey: string;
-  title: string;
-  content: string;
-  source: string;
-  tags: string[];
-  createdAt: string;
-  chunkInfo?: string | null;
-  chunkIndices?: number[] | null;
-}
-
-/**
- * Contains matched memories and snapshot metadata used to suppress previously returned matches.
- */
-export interface MemoryQueryResultData {
-  /**
-   * Queried memories
-   */
-  memories: MemoryInfo[];
-  /**
-   * Snapshot id for de-duplicated follow-up or parallel queries; may be auto-generated or caller-specified
-   */
-  snapshotId?: string | null;
-  /**
-   * Whether this call created a new snapshot, including when a caller-specified id was created on first use
-   */
-  snapshotCreated?: boolean;
-  /**
-   * Number of matched memories excluded because they were already seen in the snapshot
-   */
-  excludedBySnapshotCount?: number;
-  /**
-   * Formats snapshot de-duplication metadata followed by the matched memory records.
-   */
-  toString(): string;
-}
-
-/**
  * Reports whether the chat service connected and when the connection was established.
  */
 export interface ChatServiceStartResultData {
@@ -955,30 +915,6 @@ export interface ChatMessagesResultData {
    * Contains the inclusive last message index for a range query.
    */
   end?: number;
-}
-
-/**
- * Describes a character card, including its default status and lifecycle timestamps.
- */
-export interface CharacterCardInfo {
-  id: string;
-  name: string;
-  description: string;
-  isDefault: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-
-/**
- * Contains the character cards available to the chat service.
- */
-export interface CharacterCardListResultData {
-  totalCount: number;
-  cards: CharacterCardInfo[];
-  /**
-   * Formats character card metadata and marks the default card.
-   */
-  toString(): string;
 }
 
 /**
@@ -1528,67 +1464,6 @@ export interface GrepResultData {
    */
   toString(): string;
 }
-
-/**
- * Describes a newly created weighted relationship between two memories.
- */
-export interface MemoryLinkResultData {
-  /**
-   * The title of the source memory
-   */
-  sourceTitle: string;
-  /**
-   * The title of the target memory
-   */
-  targetTitle: string;
-  /**
-   * The type of link (e.g., "related", "causes", "explains", "part_of")
-   */
-  linkType: string;
-  /**
-   * The strength of the link (0.0-1.0)
-   */
-  weight: number;
-  /**
-   * Optional description of the link
-   */
-  description: string;
-  /**
-   * Formats the source, target, relationship type, and strength of the created memory link.
-   */
-  toString(): string;
-}
-
-/**
- * Describes a weighted relationship between two stored memories.
- */
-export interface LinkInfo {
-  linkId: number;
-  sourceTitle: string;
-  targetTitle: string;
-  linkType: string;
-  weight: number;
-  description: string;
-}
-
-/**
- * Contains the weighted memory relationships returned by a link query.
- */
-export interface MemoryLinkQueryResultData {
-  /**
-   * Number of links returned
-   */
-  totalCount: number;
-  /**
-   * Queried links
-   */
-  links: LinkInfo[];
-  /**
-   * Formats each queried memory link with identifiers, relationship metadata, and description.
-   */
-  toString(): string;
-}
-
 /**
  * Bounded hardware reply. Transport/authentication failures reject the plugin promise.
  */

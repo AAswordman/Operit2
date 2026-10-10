@@ -76,3 +76,31 @@ test("pure picker action awaits its explicit reader and never substitutes a succ
   await loaded.handleAction("select-theme", {}); assert.equal(calls, 2); assert.equal(stack.length, 2); assert.equal(stack[1].type, "theme");
   assert.equal(current.parent.card.themeConfigId, "independent-theme-one");
 });
+
+/** Resolves bound names from the actual directory and keeps missing references visible without rewriting them. */
+test("binding summary shows the configured name, missing-reference error and explicit unbind action", () => {
+  assert.match(view.themeReferenceSection("independent-theme-two", choices), /独立夜间主题/);
+  assert.match(view.themeReferenceSection("independent-theme-two", choices), /data-action="unbind-theme"/);
+  assert.match(view.themeReferenceSection("deleted-theme", choices), /role="alert"[\s\S]*deleted-theme/);
+  assert.doesNotMatch(view.themeReferenceSection(null, choices), /data-action="unbind-theme"/);
+  const current = dialog("character"); current.choices = [];
+  assert.match(view.themeSpec(current).body, /设置 → 外观/);
+});
+
+/** Clears only the owning editor's staged reference; it never changes another group, role or host appearance. */
+test("explicit unbind edits only the current role or group draft", async () => {
+  for (const kind of ["character", "group"]) {
+    const current = dialog(kind, "independent-theme-one"); let renders = 0;
+    const feature = actions.createThemeFeature({
+      /** Returns this exact local owner rather than another selected participant. */
+      topDialog() { return current.parent; },
+      /** Records repainting after the staged reference has changed. */
+      renderDialogs() { renders += 1; },
+    },
+      /** Rejects an unsolicited directory read during an explicit unbind. */
+      async () => { throw new Error("Unbind must not read or apply any configuration"); },
+    );
+    await feature.handleAction("unbind-theme", {});
+    assert.equal(state.themeDraft(current).themeConfigId, null); assert.equal(renders, 1);
+  }
+});
