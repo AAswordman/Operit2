@@ -167,6 +167,10 @@ pub(super) struct OperitTui {
     pub(super) transcript_scroll: u16,
     pub(super) transcript_viewport_height: u16,
     pub(super) transcript_max_scroll: u16,
+    /// Pins the rendered transcript to its newest line. Only explicit user
+    /// intent sets this (sending a turn, switching chats, scrolling back to
+    /// the bottom); growing content and periodic status refreshes never do, so
+    /// a response can stream in while the reader browses history.
     pub(super) follow_transcript: bool,
     pub(super) transcript_render_cache: TranscriptRenderCache,
     pub(super) transcript_area: Rect,
@@ -5172,6 +5176,10 @@ impl OperitTui {
         self.refresh_context_usage_label().await;
         let is_loading = self.raw_current_chat_is_loading();
         let state = self.current_chat_input_processing_state();
+        // Loading transitions only refresh the status line. They must never
+        // re-engage transcript following: this runs every 250ms while a
+        // response streams, and a reader who scrolled into history keeps
+        // their place until they return to the newest line themselves.
         if self.awaiting_runtime_loading && !is_loading {
             match &state {
                 InputProcessingState::Error { message } => {
@@ -5182,7 +5190,6 @@ impl OperitTui {
                 InputProcessingState::Idle | InputProcessingState::Completed => {
                     self.awaiting_runtime_loading = false;
                     self.last_current_chat_loading = false;
-                    self.follow_transcript = true;
                     self.refresh_chats().await;
                     // Model binding now lives in the persistent right footer
                     // segment; reset the left status for command feedback.
@@ -5192,7 +5199,6 @@ impl OperitTui {
                     }
                 }
                 _ => {
-                    self.follow_transcript = true;
                     self.set_runtime_status_message(
                         self.text().connecting_ai_service().to_string(),
                         &state,
@@ -5204,7 +5210,6 @@ impl OperitTui {
         }
         if is_loading {
             self.awaiting_runtime_loading = false;
-            self.follow_transcript = true;
             let status = match &state {
                 InputProcessingState::Idle => match self.current_chat_model_status_label().await {
                     Ok(label) => label,
@@ -5216,7 +5221,6 @@ impl OperitTui {
             self.set_runtime_status_message(status, &state, is_loading);
         } else if self.last_current_chat_loading {
             self.awaiting_runtime_loading = false;
-            self.follow_transcript = true;
             self.refresh_chats().await;
             // Loading just finished; reset the status line for command
             // feedback instead of rewriting the model binding label.

@@ -22,7 +22,8 @@ use super::app::{
 };
 use crate::cli::network_control_ui::{network_device_label_by_id, network_role_summary};
 use super::helpers::{
-    centered_rect, display_width, short_chat_label, transcript_max_scroll, wrap_approx_lines,
+    centered_rect, display_width, resolve_transcript_scroll, short_chat_label,
+    transcript_max_scroll, wrap_approx_lines,
 };
 use super::pending_queue::{
     pending_queue_preview_text, pending_queue_visible_items, pending_queue_visible_range,
@@ -252,12 +253,10 @@ impl OperitTui {
         let max_scroll = transcript_max_scroll(&transcript_lines, area);
         self.transcript_viewport_height = area.height.saturating_sub(2).max(1);
         self.transcript_max_scroll = max_scroll;
-        if self.follow_transcript {
-            self.transcript_scroll = max_scroll;
-        } else if self.transcript_scroll > max_scroll {
-            self.transcript_scroll = max_scroll;
-            self.follow_transcript = true;
-        }
+        let (scroll, follows) =
+            resolve_transcript_scroll(self.follow_transcript, self.transcript_scroll, max_scroll);
+        self.transcript_scroll = scroll;
+        self.follow_transcript = follows;
 
         let block = Block::default()
             .title(self.text().conversation_title())
