@@ -112,7 +112,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
         model: "ESP32-2432S028-SIM".into(),
     };
     let edgeRouter = EdgePeerRouter::new(nodeId.clone());
-    let scenePlugin = Arc::new(operit_node_edge::scene::ScenePlugin::new(320, 240, true));
+    let scenePlugin = Arc::new(operit_edge_scene::ScenePlugin::new(320, 240, 24, true));
     let mut edgeNode = operit_node_edge::EdgeNode::fromHostManager(hostManager.clone())
         .withPlugin(Arc::new(SimulatorStatusPlugin {
             address: configuredAddress.clone(),

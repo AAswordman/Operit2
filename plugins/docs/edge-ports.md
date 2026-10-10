@@ -3,7 +3,7 @@
 插件 JavaScript 仍在 Core 的原 ToolPkg 运行时执行；只有硬件动作在选中的 Edge
 节点执行。公共入口是静态类 `Tools.Edge` 和 `Tools.Io`，不需要也不允许创建实例。
 `tools` 仍是既有 `Tools` 的兼容别名，但新代码统一使用 `Tools`；不存在小写 `edge/io` 类。
-这不是给 ESP32 加另一套 JS 插件运行时。
+边缘节点可以是不同单片机或操作系统，接口不要求 ESP32、屏幕或触摸。
 
 ## 两个入口
 
@@ -82,3 +82,19 @@ Edge → Core 统一使用 `chatEdgeEvent` 和 ToolPkg main 导出 `on_edge_even
 可用于触摸、GPIO、传感器、串口消息等，不在 Core 入口写死屏幕数据结构。
 完整协议、监听示例及固件事件源见 [edge-events.md](edge-events.md)。
 此通用事件能力不代表 `Tools.Io` 已开放串口读写；事件生产动作由固件显式注册。
+
+## 平台边界
+
+Core 只处理节点路由、既有设备空间/Binding、权限、JSON 参数与通用事件分发。
+设备类型不决定 Core 的执行分支；插件通过设备声明的 action 和 `capabilities`
+查询选择呈现方式，不能把示例板子的尺寸或屏幕服务当作所有 Edge 的必备能力。
+ToolPkg 的专属/一般展示分类统一使用 `"edge": {"exclusive": true}` 扩展标记，
+与芯片型号无关；旧 `esp32` 标记需迁移为 `edge`，否则按默认一般分类显示。
+
+`core/crates/node/edge` 提供通用 Edge 节点和事件源，
+`core/crates/node/edge-contract` 提供通用通信约定，均不依赖场景渲染库。
+有屏幕的设备应用可选择依赖 `hosts/common/operit-edge-scene` 并注册
+`display.scene`；无屏幕节点可仅注册传感器、GPIO、串口或其他业务服务。
+共享场景库没有 ESP32 驱动依赖，尺寸、顶部系统保留区和触摸能力由设备应用传入。
+ESP32 的 320×240、24 像素保留区及 C 屏幕适配在 `apps/esp32` 配置，
+其他设备可选择不同配置、另一种渲染实现，或完全不提供显示能力。

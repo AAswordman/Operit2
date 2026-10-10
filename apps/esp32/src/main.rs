@@ -158,7 +158,7 @@ fn runFirmware(
     // optional diagnostic framebuffer so pairing and chat retain heap headroom.
     board.screenMirror().disablePixelMirror();
     let mut ui = Esp32Ui::new(&board)?;
-    let scenePlugin = Arc::new(operit_node_edge::scene::ScenePlugin::new(320, 240, true));
+    let scenePlugin = Arc::new(operit_edge_scene::ScenePlugin::new(320, 240, 24, true));
     ui.attachScene(Arc::clone(&scenePlugin));
     let scheduler =
         Arc::new(operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost::new()?);

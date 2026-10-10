@@ -92,7 +92,7 @@ Core 不把 action 当成函数名动态执行，只调用固定 `on_edge_event`
 `operit_node_edge::events::EdgeEventSource` 提供：
 `set_event_route_provider`、`pending_event_delivery`、`acknowledge_event_delivery`、
 `disable_event_delivery`、`wait_for_event`。共享 worker `startEdgeEvents` 仅依赖该 trait，
-与屏幕及触摸无关。`ScenePlugin` 通过 adapter 使用原场景队列。
+与屏幕及触摸无关。端侧可选库 `operit-edge-scene` 的 `ScenePlugin` 通过 adapter 使用原场景队列；Core 与公共 Edge 节点库不依赖此库。
 
 普通生产者可复用 `EdgeEventQueue`：设置已授权路由 provider，通过认证后的原生订阅
 动作调用 `subscribe(packageName)`，设备发生变化时调用 `publish(action, data)`。

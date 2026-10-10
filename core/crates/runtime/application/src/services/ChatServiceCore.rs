@@ -180,7 +180,7 @@ fn pluginDisplayText(text: &str, bytes: usize) -> String {
     clean[..end].to_string()
 }
 fn pluginExclusive(extensions: &std::collections::BTreeMap<String, serde_json::Value>) -> bool {
-    extensions.get("esp32").and_then(|v| v.get("exclusive")).and_then(|v| v.as_bool()) == Some(true)
+    extensions.get("edge").and_then(|v| v.get("exclusive")).and_then(|v| v.as_bool()) == Some(true)
 }
 
 /// Describes the runtime state of one explicitly routed chat.
@@ -3540,8 +3540,10 @@ mod edge_plugin_metadata_tests {
         let mut extensions = std::collections::BTreeMap::new();
         assert!(!pluginExclusive(&extensions));
         extensions.insert("esp32".into(), serde_json::json!({"exclusive":true}));
+        assert!(!pluginExclusive(&extensions), "Core must not classify by board type");
+        extensions.insert("edge".into(), serde_json::json!({"exclusive":true}));
         assert!(pluginExclusive(&extensions));
-        extensions.insert("esp32".into(), serde_json::json!({"exclusive":"true"}));
+        extensions.insert("edge".into(), serde_json::json!({"exclusive":"true"}));
         assert!(!pluginExclusive(&extensions));
         assert_eq!(pluginDisplayText("中".repeat(100).as_str(), 191).len(), 189);
         assert_eq!(pluginDisplayText("a\u{1e}b\n", 42), "ab");

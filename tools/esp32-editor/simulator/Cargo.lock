@@ -1034,6 +1034,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-edge-scene"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "operit-edge-contract",
+ "operit-link",
+ "operit-node-edge",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "operit-esp32-simulator"
 version = "0.1.0"
 dependencies = [
@@ -1042,6 +1057,7 @@ dependencies = [
  "log",
  "mdns-sd",
  "operit-edge-contract",
+ "operit-edge-scene",
  "operit-host-api",
  "operit-host-native-common",
  "operit-host-native-scheduler",
@@ -1128,12 +1144,10 @@ name = "operit-node-edge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
  "operit-edge-contract",
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
- "ring",
  "serde",
  "serde_json",
  "tokio",

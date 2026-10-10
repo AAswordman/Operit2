@@ -235,10 +235,11 @@ not automatically replayed after reconnect. Results remain volatile.
 
 The shared device/WASM screen lists enabled Core ToolPkg plugins in two columns,
 with **专属 / 一般** tabs. General is selected by default. A ToolPkg manifest may
-opt into the exclusive category with `"esp32": {"exclusive": true}`; without this
+opt into the exclusive category with `"edge": {"exclusive": true}`; without this
 explicit marker it remains general. This is display classification, not a new
 execution runtime, permission grant, or a native ESP32 plugin implementation.
-Device telemetry/debug services are not listed as user plugins.
+The marker applies to all Edge platforms; an old `esp32` marker must be renamed
+to `edge`. Device telemetry/debug services are not listed as user plugins.
 
 Selecting a package reads its ID, localized description (192 UTF-8 bytes maximum),
 and active tools (three names per page, 64 bytes each) through the chat's existing

@@ -1,8 +1,12 @@
 # Edge 原生场景显示插件：`display.scene` v1
 
 面向运行在 **Core 既有 ToolPkg 运行时**的桌宠、仪表盘和专属硬件插件。
-Core 管理养成数据、素材原件和业务逻辑；ESP32 注册原生显示服务，不运行插件 JavaScript。
-固件和模拟器使用同一个 Rust 场景服务、解析器和协议；浏览器只适配模拟器的显示输出。
+Core 管理养成数据、素材原件和业务逻辑；具备显示能力的 Edge 注册原生显示服务，不运行插件 JavaScript。
+场景服务、解析器和显示协议位于端侧可选库 `hosts/common/operit-edge-scene`；
+公共 Core/Edge 节点库不依赖该库，也不要求节点有屏幕。当前 ESP32 固件和模拟器
+显式引用该库；浏览器只适配模拟器的显示输出。设备应用通过
+`ScenePlugin::new(width, height, reserved_top, touch)` 传入显示参数，
+无顶部系统栏可传 `reserved_top=0`。其他设备可复用此库或实现同一服务协议。
 模拟器现有开发者 HTTP 中的 `scene-view` 仅是浏览器显示镜像，可携带有界素材快照，
 不是固件入口或新的插件 API；Core ToolPkg 不依赖该路径，仍只调用 `Tools.Edge.execute`。
 
@@ -32,7 +36,7 @@ const capabilities = await scene(edgeNodeId, 'capabilities');
 
 ## 首版能力和容量
 
-通过 `capabilities` 查询，以下是当前 320×240 ESP32／模拟器 profile：
+插件应通过 `capabilities` 与 `lease.open` 返回的区域适配设备；不能假定所有 Edge 有屏幕或尺寸相同。以下是当前 320×240 ESP32／模拟器 profile：
 
 | 项目 | 上限／约定 |
 | --- | --- |

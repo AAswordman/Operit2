@@ -81,7 +81,7 @@ pub struct Esp32Ui {
 struct UiContext {
     board: *const operit_board_esp32::Esp32Board,
     actions: Mutex<VecDeque<String>>,
-    scene: Option<std::sync::Arc<operit_node_edge::scene::ScenePlugin>>,
+    scene: Option<std::sync::Arc<operit_edge_scene::ScenePlugin>>,
 }
 
 unsafe impl Send for UiContext {}
@@ -137,7 +137,7 @@ impl Esp32Ui {
     }
 
     /// Attaches the bounded native painter to the existing RGB565 strip.
-    pub fn attachScene(&mut self, scene: std::sync::Arc<operit_node_edge::scene::ScenePlugin>) {
+    pub fn attachScene(&mut self, scene: std::sync::Arc<operit_edge_scene::ScenePlugin>) {
         self.context.scene = Some(scene);
         unsafe {
             operit_ui_scene_painter(Some(scenePainter));

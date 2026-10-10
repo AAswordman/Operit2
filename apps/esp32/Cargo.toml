@@ -20,6 +20,7 @@ async-trait = "0.1"
 log = "0.4"
 operit-board-esp32 = { path = "../../hosts/boards/esp32" }
 operit-node-edge = { path = "../../core/crates/node/edge" }
+operit-edge-scene = { path = "../../hosts/common/operit-edge-scene" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
 operit-link = { path = "../../core/crates/foundation/link" }
 operit-util = { path = "../../core/crates/foundation/util" }
@@ -93,4 +94,7 @@ opt-level = "z"
 [profile.release.package.operit-peer-link]
 opt-level = "z"
 [profile.release.package.operit-host-api]
+opt-level = "z"
+
+[profile.release.package.operit-edge-scene]
 opt-level = "z"

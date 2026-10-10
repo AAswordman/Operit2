@@ -2034,14 +2034,12 @@ name = "operit-node-edge"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64",
  "operit-edge-contract",
  "operit-host-api",
  "operit-host-native-common",
  "operit-link",
  "operit-node-runtime",
  "operit-store",
- "ring",
  "serde",
  "serde_json",
  "tokio",

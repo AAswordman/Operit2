@@ -1,10 +1,11 @@
 //! Bounded, device-owned presentation. No scripts, filesystem paths or business state.
-use crate::{EdgePlugin, EdgePluginManifest, EdgeServiceError};
-use base64::{Engine, engine::general_purpose::STANDARD};
-use operit_edge_contract::scene::*;
+use base64::{engine::general_purpose::STANDARD, Engine};
+use operit_node_edge::{EdgePlugin, EdgePluginManifest, EdgeServiceError};
+pub mod protocol;
 use operit_link::CoreValue;
+use protocol::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
@@ -80,8 +81,8 @@ struct Upload {
     data: Vec<u8>,
 }
 /// Captured at lease.open; a reconnect may replace the entry, never the Space/chat.
-pub use crate::events::EdgeEventRoute as SceneEventRoute;
-pub type SceneRouteProvider = crate::events::EdgeEventRouteProvider;
+pub use operit_node_edge::events::EdgeEventRoute as SceneEventRoute;
+pub type SceneRouteProvider = operit_node_edge::events::EdgeEventRouteProvider;
 #[derive(Clone)]
 pub struct SceneDelivery {
     pub route: SceneEventRoute,
@@ -191,11 +192,14 @@ pub struct ScenePlugin {
     clock: Instant,
     width: u16,
     height: u16,
+    reserved_top: u16,
     touch: bool,
 }
 impl ScenePlugin {
-    pub fn new(width: u16, height: u16, touch: bool) -> Self {
-        assert!(width > 0 && height > 24);
+    /// The device application owns its display dimensions and system UI area.
+    /// A device without a top system bar may pass zero for reserved_top.
+    pub fn new(width: u16, height: u16, reserved_top: u16, touch: bool) -> Self {
+        assert!(width > 0 && height > reserved_top);
         let changed = Arc::new(tokio::sync::Notify::new());
         Self {
             changed: changed.clone(),
@@ -215,6 +219,7 @@ impl ScenePlugin {
             clock: Instant::now(),
             width,
             height,
+            reserved_top,
             touch,
         }
     }
@@ -393,7 +398,7 @@ impl ScenePlugin {
             return Ok(
                 json!({"protocol":VERSION,"screen":{"width":self.width,"height":self.height,"format":"RGB565_LE"},
             "events":{"push":self.route_provider.lock().unwrap().is_some(),"method":"chatEdgeEvent","maxBatch":MAX_PUSH_EVENTS,"ack":true},
-            "reserved":{"x":0,"y":0,"w":self.width,"h":24},"touch":self.touch,"animation":{"local":true,"minFrameMs":50,"maxFrameMs":2000,"maxFrames":8},
+            "reserved":{"x":0,"y":0,"w":self.width,"h":self.reserved_top},"touch":self.touch,"animation":{"local":true,"minFrameMs":50,"maxFrameMs":2000,"maxFrames":8},
             "formats":{"pack":"ESP1","asset":"ESI1","alpha":"straight","paletteMax":16,"maxWidth":96,"maxHeight":96},
             "limits":{"requestBytes":MAX_REQUEST,"replyBytes":MAX_REPLY,"packBytes":MAX_PACK,"cacheBytes":MAX_CACHE,"packs":MAX_PACKS,"assetsPerPack":MAX_ASSETS,"layers":MAX_LAYERS,"chunkBytes":MAX_CHUNK,"scaleMax":8,"events":MAX_EVENTS,"pollPage":8,"uploadBytes":MAX_PACK},
             "cache":{"persistent":false,"usedBytes":s.packs.values().map(|p|p.bytes.len()).sum::<usize>(),"packs":s.packs.iter().map(|(id,p)|json!({"id":id,"bytes":p.bytes.len(),"sha256":p.sha,"assets":p.assets.keys().collect::<Vec<_>>()})).collect::<Vec<_>>()}}),
@@ -410,12 +415,12 @@ impl ScenePlugin {
                 Some(r) => serde_json::from_value(r.clone()).map_err(|_| invalid())?,
                 None => Rect {
                     x: 0,
-                    y: 24,
+                    y: self.reserved_top,
                     w: self.width,
-                    h: self.height - 24,
+                    h: self.height - self.reserved_top,
                 },
             };
-            if rect.y < 24
+            if rect.y < self.reserved_top
                 || rect.w == 0
                 || rect.h == 0
                 || rect.x as u32 + rect.w as u32 > self.width as u32
@@ -667,27 +672,44 @@ impl ScenePlugin {
         }
     }
 }
-impl crate::events::EdgeEventSource for ScenePlugin {
-    fn set_event_route_provider(&self, provider: Arc<crate::events::EdgeEventRouteProvider>) {
+impl operit_node_edge::events::EdgeEventSource for ScenePlugin {
+    fn set_event_route_provider(
+        &self,
+        provider: Arc<operit_node_edge::events::EdgeEventRouteProvider>,
+    ) {
         self.set_route_provider(provider);
     }
-    fn pending_event_delivery(&self) -> Option<crate::events::EdgeEventDelivery> {
+    fn pending_event_delivery(&self) -> Option<operit_node_edge::events::EdgeEventDelivery> {
         let delivery = self.pending_delivery()?;
-        Some(crate::events::EdgeEventDelivery {
+        Some(operit_node_edge::events::EdgeEventDelivery {
             route: delivery.route,
             batch: operit_edge_contract::events::EdgeEventBatch {
-                v: VERSION, source: PLUGIN_ID.into(), stream: delivery.batch.lease,
-                next: delivery.batch.next, lost_before: delivery.batch.lost_before,
-                events: delivery.batch.events.into_iter().map(|e| {
-                    let data = if e.r#type == "target.tap" {
-                        json!({"x":e.x,"y":e.y,"target":e.target})
-                    } else { json!({}) };
-                    operit_edge_contract::events::EdgeActionEvent {seq:e.seq, action:e.r#type, data}
-                }).collect(),
+                v: VERSION,
+                source: PLUGIN_ID.into(),
+                stream: delivery.batch.lease,
+                next: delivery.batch.next,
+                lost_before: delivery.batch.lost_before,
+                events: delivery
+                    .batch
+                    .events
+                    .into_iter()
+                    .map(|e| {
+                        let data = if e.r#type == "target.tap" {
+                            json!({"x":e.x,"y":e.y,"target":e.target})
+                        } else {
+                            json!({})
+                        };
+                        operit_edge_contract::events::EdgeActionEvent {
+                            seq: e.seq,
+                            action: e.r#type,
+                            data,
+                        }
+                    })
+                    .collect(),
             },
         })
     }
-    fn disable_event_delivery(&self, delivery: &crate::events::EdgeEventDelivery) {
+    fn disable_event_delivery(&self, delivery: &operit_node_edge::events::EdgeEventDelivery) {
         let mut s = self.state.lock().unwrap();
         if let Some(l) = &mut s.lease {
             if l.handle == delivery.batch.stream && l.route.as_ref() == Some(&delivery.route) {
@@ -695,16 +717,29 @@ impl crate::events::EdgeEventSource for ScenePlugin {
             }
         }
     }
-    fn acknowledge_event_delivery(&self, delivery: &crate::events::EdgeEventDelivery, next: u64) -> bool {
+    fn acknowledge_event_delivery(
+        &self,
+        delivery: &operit_node_edge::events::EdgeEventDelivery,
+        next: u64,
+    ) -> bool {
         let mut s = self.state.lock().unwrap();
-        let Some(l) = s.lease.as_mut() else {return false;};
-        if delivery.batch.source != PLUGIN_ID || l.handle != delivery.batch.stream
-            || l.route.as_ref() != Some(&delivery.route) || next != delivery.batch.next
-            || next < l.acknowledged {return false;}
+        let Some(l) = s.lease.as_mut() else {
+            return false;
+        };
+        if delivery.batch.source != PLUGIN_ID
+            || l.handle != delivery.batch.stream
+            || l.route.as_ref() != Some(&delivery.route)
+            || next != delivery.batch.next
+            || next < l.acknowledged
+        {
+            return false;
+        }
         l.acknowledged = next;
         true
     }
-    fn wait_for_event(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output=()> + Send + '_>> {
+    fn wait_for_event(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(self.wait_event())
     }
 }
@@ -866,7 +901,7 @@ mod tests {
             .collect()
     }
     fn push_plugin() -> ScenePlugin {
-        let p = ScenePlugin::new(320, 240, true);
+        let p = ScenePlugin::new(320, 240, 24, true);
         p.set_route_provider(Arc::new(|package| {
             Some(SceneEventRoute {
                 space_id: "space-a".into(),
@@ -891,16 +926,14 @@ mod tests {
     #[test]
     fn push_idle_is_asleep_and_requires_an_authorized_chat() {
         use std::future::Future;
-        let p = ScenePlugin::new(320, 240, true);
-        assert!(
-            call(
-                &p,
-                "lease.open",
-                json!({"owner":"pet","notify":{"packageName":"com.operit.pet"}}),
-                0
-            )
-            .is_err()
-        );
+        let p = ScenePlugin::new(320, 240, 24, true);
+        assert!(call(
+            &p,
+            "lease.open",
+            json!({"owner":"pet","notify":{"packageName":"com.operit.pet"}}),
+            0
+        )
+        .is_err());
         let p = push_plugin();
         push_open(&p, 0);
         assert!(p.pending_delivery().is_none());
@@ -970,10 +1003,13 @@ mod tests {
     }
     #[test]
     fn scene_adapter_uses_generic_actions_and_rejects_late_stream_acks() {
-        use crate::events::EdgeEventSource;
+        use operit_node_edge::events::EdgeEventSource;
         let p = push_plugin();
         let lease = push_open(&p, 0);
-        p.state.lock().unwrap().event("target.tap", Some(1), Some(2), Some("pet"));
+        p.state
+            .lock()
+            .unwrap()
+            .event("target.tap", Some(1), Some(2), Some("pet"));
         let d = p.pending_event_delivery().unwrap();
         assert!(d.batch.valid());
         assert_eq!(d.batch.source, "display.scene");
@@ -991,7 +1027,7 @@ mod tests {
     }
     #[test]
     fn compatibility_poll_does_not_ack_or_enable_push() {
-        let p = ScenePlugin::new(320, 240, true);
+        let p = ScenePlugin::new(320, 240, 24, true);
         let l = open(&p);
         p.system_exit();
         assert!(p.pending_delivery().is_none());
@@ -1012,6 +1048,54 @@ mod tests {
             .as_str()
             .unwrap()
             .into()
+    }
+    #[test]
+    fn device_owned_geometry_supports_other_screens_and_no_system_bar() {
+        for (width, height, reserved_top, touch) in [
+            (128, 128, 0, false),
+            (480, 272, 16, true),
+            (64, 48, 5, false),
+        ] {
+            let p = ScenePlugin::new(width, height, reserved_top, touch);
+            let capabilities = call(&p, "capabilities", json!({}), 0).unwrap();
+            assert_eq!(capabilities["screen"]["width"], width);
+            assert_eq!(capabilities["screen"]["height"], height);
+            assert_eq!(capabilities["reserved"]["h"], reserved_top);
+            assert_eq!(capabilities["touch"], touch);
+            let region = call(&p, "lease.open", json!({"owner":"test.device"}), 0).unwrap();
+            assert_eq!(
+                region["rect"],
+                json!({"x":0,"y":reserved_top,"w":width,"h":height-reserved_top})
+            );
+            let lease = region["lease"].clone();
+            call(
+                &p,
+                "scene.set",
+                json!({"lease":lease,"background":0xf800,"layers":[]}),
+                0,
+            )
+            .unwrap();
+            let mut row = vec![0x55; width as usize * 2];
+            p.paint_strip(&mut row, reserved_top, 1, 0);
+            assert!(row.chunks_exact(2).all(|pixel| pixel == [0, 248]));
+            if reserved_top > 0 {
+                row.fill(0x55);
+                p.paint_strip(&mut row, 0, 1, 0);
+                assert!(row.iter().all(|byte| *byte == 0x55));
+                call(&p, "lease.close", json!({"lease":lease}), 0).unwrap();
+                assert_eq!(
+                    call(
+                        &p,
+                        "lease.open",
+                        json!({"owner":"test.device", "rect":{"x":0,"y":0,"w":width,"h":height}}),
+                        0
+                    )
+                    .unwrap_err()
+                    .0,
+                    "SCENE_LIMIT"
+                );
+            }
+        }
     }
     fn install(p: &ScenePlugin, l: &str, name: &str, data: &[u8]) {
         let u = call(
@@ -1052,7 +1136,7 @@ mod tests {
     }
     #[test]
     fn leases_protect_system_region_and_expire_without_core() {
-        let p = ScenePlugin::new(320, 240, true);
+        let p = ScenePlugin::new(320, 240, 24, true);
         assert_eq!(
             call(
                 &p,
@@ -1097,7 +1181,7 @@ mod tests {
     }
     #[test]
     fn upload_is_ordered_idempotent_and_atomic() {
-        let p = ScenePlugin::new(320, 240, true);
+        let p = ScenePlugin::new(320, 240, 24, true);
         let l = open(&p);
         let data = bytes();
         let u = call(
@@ -1177,7 +1261,7 @@ mod tests {
     }
     #[test]
     fn scene_updates_are_atomic_and_displayed_assets_cannot_be_replaced() {
-        let p = ScenePlugin::new(320, 240, true);
+        let p = ScenePlugin::new(320, 240, 24, true);
         let l = open(&p);
         let data = bytes();
         install(&p, &l, "demo", &data);
@@ -1207,7 +1291,7 @@ mod tests {
     }
     #[test]
     fn rgb565_animation_alpha_anchors_clipping_and_touch_golden() {
-        let p = ScenePlugin::new(320, 240, true);
+        let p = ScenePlugin::new(320, 240, 24, true);
         let l = open(&p);
         install(&p, &l, "demo", &bytes());
         scene(
@@ -1235,34 +1319,32 @@ mod tests {
         let (_, a) = {
             let s = p.state.lock().unwrap();
             let (pack, a) = s.resource("demo:pet").unwrap();
-            assert!(
-                sample(
-                    pack,
-                    a,
-                    &Layer {
-                        asset: "demo:pet".into(),
-                        x: -1,
-                        y: 0,
-                        scale: 1,
-                        anchor: "tl".into(),
-                        frame: 0,
-                        play: false,
-                        r#loop: true,
-                        target: None
-                    },
-                    0,
-                    0,
-                    0
-                )
-                .is_some()
-            );
+            assert!(sample(
+                pack,
+                a,
+                &Layer {
+                    asset: "demo:pet".into(),
+                    x: -1,
+                    y: 0,
+                    scale: 1,
+                    anchor: "tl".into(),
+                    frame: 0,
+                    play: false,
+                    r#loop: true,
+                    target: None
+                },
+                0,
+                0,
+                0
+            )
+            .is_some());
             ((), a.clone())
         };
         assert_eq!(a.frames, 2);
     }
     #[test]
     fn event_pages_signal_loss_and_system_exit_remains_pollable() {
-        let p = ScenePlugin::new(320, 240, true);
+        let p = ScenePlugin::new(320, 240, 24, true);
         let l = open(&p);
         {
             let mut s = p.state.lock().unwrap();
@@ -1287,7 +1369,7 @@ mod tests {
     }
     #[test]
     fn wire_envelopes_are_bounded_and_strict() {
-        let p = ScenePlugin::new(320, 240, false);
+        let p = ScenePlugin::new(320, 240, 24, false);
         let args = operit_link::toCoreValue(json!({"v":2})).unwrap();
         let reply = p.invoke("capabilities", args).unwrap();
         let reply: Value = operit_link::fromCoreValue(reply).unwrap();
