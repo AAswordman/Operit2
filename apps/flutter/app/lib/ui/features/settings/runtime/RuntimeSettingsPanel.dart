@@ -52,6 +52,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
   bool _connectionFailed = false;
   generated.CoreSpace? _currentDeviceSpace;
   generated.RuntimeDeviceSpaceTopology? _topology;
+  generated.NetworkControlState? _control;
   Map<String, _PairedRemoteProbeState> _pairedRemoteStates =
       <String, _PairedRemoteProbeState>{};
   Map<String, generated.RuntimePairedDevice> _pairedDevices =
@@ -164,10 +165,14 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
       if (!mounted || !isPageActive || generation != _pageGeneration) return;
       final topology = await _clients.server.runtimeRemoteLinkService
           .deviceSpaceTopology();
+      if (!mounted || !isPageActive || generation != _pageGeneration) return;
+      final control = await _clients.server.runtimeRemoteLinkService
+          .deviceSpaceControl();
       if (mounted && isPageActive && generation == _pageGeneration) {
         setState(() {
           _currentDeviceSpace = deviceSpace;
           _topology = topology;
+          _control = control;
         });
       }
     } catch (error) {
@@ -197,6 +202,241 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
       });
     }
     return _clients.server.runtimeRemoteLinkService.deviceSpaceTopology();
+  }
+
+  /// Builds one management row for every Space member without a direct pairing.
+  ///
+  /// Membership and direct pairing are independent axes: a relayed member stays visible
+  /// and manageable here even though this device never paired with it.
+  List<Widget> _unpairedSpaceMemberTiles(AppLocalizations l10n) {
+    final topology = _topology;
+    if (topology == null) {
+      return const <Widget>[];
+    }
+    final members = topology.devices
+        .where(
+          (device) =>
+              device.deviceId != topology.currentDeviceId &&
+              !_pairedDevices.containsKey(device.deviceId),
+        )
+        .toList(growable: false);
+    if (members.isEmpty) {
+      return const <Widget>[];
+    }
+    final names = <String, String>{
+      for (final device in topology.devices) device.deviceId: device.deviceName,
+    };
+    return <Widget>[
+      for (final device in members) ...<Widget>[
+        const SizedBox(height: 10),
+        _DeviceMemberTile(
+          device: device,
+          statusText: _memberStatusText(l10n, device),
+          pathText: _memberPathText(l10n, names, device),
+          actions: _memberManagementMenu(l10n, device),
+        ),
+      ],
+    ];
+  }
+
+  /// Describes how one member is currently reached: directly, through relays, or not at all.
+  String _memberStatusText(
+    AppLocalizations l10n,
+    generated.RuntimeDeviceSpaceDevice device,
+  ) {
+    if (!device.online) {
+      return l10n.settingsRuntimePairedOffline;
+    }
+    final hops = device.relayHops;
+    if (hops == null) {
+      return '${l10n.settingsRuntimePairedOnline} · ${l10n.deviceSpaceDirectLink}';
+    }
+    return '${l10n.settingsRuntimePairedOnline} · ${l10n.deviceSpaceRelayHops(hops)}';
+  }
+
+  /// Renders the planned relay path from this device through every hop to the member.
+  String? _memberPathText(
+    AppLocalizations l10n,
+    Map<String, String> names,
+    generated.RuntimeDeviceSpaceDevice device,
+  ) {
+    final path = device.relayPath ?? const <String>[];
+    if (path.isEmpty) {
+      return null;
+    }
+    return '${l10n.deviceSpaceRelayPath}: ${[
+      l10n.deviceSpaceLocalDevice,
+      for (final hop in path) names[hop] ?? hop,
+    ].join(' → ')}';
+  }
+
+  /// Builds the device-management menu offered by the current identity's capabilities.
+  Widget? _memberManagementMenu(
+    AppLocalizations l10n,
+    generated.RuntimeDeviceSpaceDevice device,
+  ) {
+    final actions = <Widget>[
+      if (_localHasCapability('network.members.join'))
+        MenuItemButton(
+          onPressed: () => _runDeviceCommand(
+            () => _clients.server.runtimeRemoteLinkService
+                .admitDeviceSpaceMember(deviceId: device.deviceId),
+            l10n.settingsRuntimeControlDeviceAdmitted,
+          ),
+          child: Text(l10n.settingsRuntimeControlAdmitDevice),
+        ),
+      if (device.currentIdentity != null &&
+          _localHasCapability('network.identity.manage'))
+        MenuItemButton(
+          onPressed: () => _runDeviceCommand(
+            () => _clients.server.runtimeRemoteLinkService
+                .clearDeviceSpaceIdentity(nodeId: device.deviceId),
+            l10n.settingsRuntimeControlIdentityResetDone,
+          ),
+          child: Text(l10n.settingsRuntimeControlClearIdentity),
+        ),
+      if (_localHasCapability('network.identity.assign') &&
+          _assignableRoles().isNotEmpty)
+        MenuItemButton(
+          onPressed: () => unawaited(_assignMemberIdentity(device, l10n)),
+          child: Text(l10n.settingsRuntimeControlAssignIdentity),
+        ),
+      if (_localHasCapability('network.connections.disconnect'))
+        MenuItemButton(
+          onPressed: () => _runDeviceCommand(
+            () => _clients.server.runtimeRemoteLinkService
+                .disconnectDeviceSpaceNode(deviceId: device.deviceId),
+            l10n.settingsRuntimeControlDisconnected,
+          ),
+          child: Text(l10n.settingsRuntimeControlDisconnectDevice),
+        ),
+      if (_localHasCapability('network.members.remove'))
+        MenuItemButton(
+          onPressed: () => _runDeviceCommand(
+            () => _clients.server.runtimeRemoteLinkService
+                .removeDeviceSpaceMember(deviceId: device.deviceId),
+            l10n.settingsRuntimeControlRemoved,
+          ),
+          child: Text(l10n.settingsRuntimeControlRemoveDevice),
+        ),
+    ];
+    if (actions.isEmpty) {
+      return null;
+    }
+    return MenuAnchor(
+      builder: (context, controller, _) => IconButton(
+        tooltip: l10n.deviceSpaceManageDevice,
+        onPressed: controller.open,
+        icon: const Icon(Icons.more_vert_outlined),
+      ),
+      menuChildren: actions,
+    );
+  }
+
+  /// Reports whether the current device identity holds one capability.
+  bool _localHasCapability(String capability) {
+    final topology = _topology;
+    if (topology == null) {
+      return false;
+    }
+    for (final device in topology.devices) {
+      if (device.deviceId != topology.currentDeviceId) {
+        continue;
+      }
+      final identity = device.currentIdentity;
+      if (identity == null) {
+        return false;
+      }
+      return identity.capabilities.contains('*') ||
+          identity.capabilities.contains(capability);
+    }
+    return false;
+  }
+
+  /// Lists the identities this device may assign: every capability must already be held.
+  List<generated.NetworkControlRole> _assignableRoles() {
+    final control = _control;
+    if (control == null) {
+      return const <generated.NetworkControlRole>[];
+    }
+    return control.roles.values
+        .where(
+          (role) => _capabilityValues(
+            role.capabilities,
+          ).every(_localHasCapability),
+        )
+        .toList(growable: false);
+  }
+
+  /// Executes one device-management command and refreshes the projection.
+  Future<void> _runDeviceCommand(
+    Future<void> Function() command,
+    String feedback,
+  ) async {
+    try {
+      await command();
+      await _refreshCurrentDeviceSpace();
+      if (mounted) {
+        _showDeviceFeedback(feedback);
+      }
+    } catch (error) {
+      if (mounted) {
+        _showDeviceFeedback(error.toString());
+      }
+    }
+  }
+
+  /// Assigns one of the locally assignable identities to a Space member.
+  Future<void> _assignMemberIdentity(
+    generated.RuntimeDeviceSpaceDevice device,
+    AppLocalizations l10n,
+  ) async {
+    final roles = _assignableRoles();
+    if (roles.isEmpty) {
+      return;
+    }
+    final roleId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text(l10n.settingsRuntimeControlAssignIdentity),
+        children: <Widget>[
+          for (final role in roles)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(dialogContext).pop(role.roleId),
+              child: Text(role.displayName),
+            ),
+        ],
+      ),
+    );
+    if (roleId == null || !mounted) {
+      return;
+    }
+    await _runDeviceCommand(
+      () => _clients.server.runtimeRemoteLinkService.setDeviceSpaceIdentity(
+        assignment: generated.NetworkControlIdentityAssignment(
+          nodeId: device.deviceId,
+          roleId: roleId,
+        ),
+      ),
+      l10n.settingsRuntimeControlIdentityAssignment,
+    );
+  }
+
+  /// Surfaces one device-management outcome without leaving the settings page.
+  void _showDeviceFeedback(String message) {
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Normalizes the generated identity capability container into plain strings.
+  List<String> _capabilityValues(Object? capabilities) {
+    if (capabilities is Iterable<Object?>) {
+      return capabilities
+          .map((capability) => capability.toString())
+          .toList(growable: false);
+    }
+    return const <String>[];
   }
 
   /// Applies one paired-device snapshot without network probing.
@@ -503,6 +743,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
             onDelete: _deletePairedDevice,
             onRemovedFromSpace: _handleRemovedFromSpace,
           ),
+          ..._unpairedSpaceMemberTiles(l10n),
         ],
       ),
       _SectionCard(
@@ -1413,6 +1654,91 @@ class _RemoteProbeText extends StatelessWidget {
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
         color: color,
         fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+/// Renders one Space member that has no direct pairing with the current device.
+///
+/// The tile keeps relayed members first-class: it shows how the member is reached and
+/// hosts the same management surface used for paired devices.
+class _DeviceMemberTile extends StatelessWidget {
+  const _DeviceMemberTile({
+    required this.device,
+    required this.statusText,
+    required this.pathText,
+    required this.actions,
+  });
+
+  final generated.RuntimeDeviceSpaceDevice device;
+  final String statusText;
+  final String? pathText;
+  final Widget? actions;
+
+  /// Builds the member row.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(
+              device.online ? Icons.lan_outlined : Icons.link_off_outlined,
+              color: device.online ? colorScheme.primary : colorScheme.error,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  device.deviceName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$statusText · ${l10n.deviceSpaceMemberNotPaired}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                if (pathText != null) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Text(
+                    pathText!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          ?actions,
+        ],
       ),
     );
   }

@@ -7723,6 +7723,42 @@ abstract class AppLocalizations {
   /// **'Devices'**
   String get deviceSpaceDevices;
 
+  /// No description provided for @deviceSpaceMemberNotPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Space member · not paired'**
+  String get deviceSpaceMemberNotPaired;
+
+  /// No description provided for @deviceSpaceDirectLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct'**
+  String get deviceSpaceDirectLink;
+
+  /// No description provided for @deviceSpaceRelayHops.
+  ///
+  /// In en, this message translates to:
+  /// **'Relayed · {hops} hops'**
+  String deviceSpaceRelayHops(int hops);
+
+  /// No description provided for @deviceSpaceRelayPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Path'**
+  String get deviceSpaceRelayPath;
+
+  /// No description provided for @deviceSpaceLocalDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get deviceSpaceLocalDevice;
+
+  /// No description provided for @deviceSpaceManageDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage device'**
+  String get deviceSpaceManageDevice;
+
   /// No description provided for @deviceSpaceMore.
   ///
   /// In en, this message translates to:

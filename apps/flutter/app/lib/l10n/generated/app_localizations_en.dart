@@ -4351,6 +4351,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get deviceSpaceDevices => 'Devices';
 
   @override
+  String get deviceSpaceMemberNotPaired => 'Space member · not paired';
+
+  @override
+  String get deviceSpaceDirectLink => 'Direct';
+
+  @override
+  String deviceSpaceRelayHops(int hops) {
+    return 'Relayed · $hops hops';
+  }
+
+  @override
+  String get deviceSpaceRelayPath => 'Path';
+
+  @override
+  String get deviceSpaceLocalDevice => 'This device';
+
+  @override
+  String get deviceSpaceManageDevice => 'Manage device';
+
+  @override
   String get deviceSpaceMore => 'More device actions';
 
   @override
