@@ -239,12 +239,6 @@ fn render_fold_group(
     output
         .lines
         .push(fold_header_line(expanded, title_line(&title)));
-    if let Some(context) = fold {
-        output.push_hit_range(
-            header_start..output.lines.len(),
-            context.target(stable_key.to_string(), expanded),
-        );
-    }
     if expanded {
         let inner_width = content_width.saturating_sub(2).max(1);
         let mut inner_kind = None;
@@ -261,6 +255,15 @@ fn render_fold_group(
         );
         indent_folded_lines(&mut inner, 2);
         output.extend(inner);
+    }
+    if let Some(context) = fold {
+        // The whole disclosure is one click target: a reader deep inside a long
+        // thinking or tool block collapses it by clicking the body text instead
+        // of scrolling back to the header.
+        output.push_hit_range(
+            header_start..output.lines.len(),
+            context.target(stable_key.to_string(), expanded),
+        );
     }
     output
 }
@@ -380,16 +383,16 @@ fn render_merged_tool_pair(
         pair.1.is_success,
         inner_width,
     ));
+    if expanded {
+        output
+            .lines
+            .extend(render_merged_tool_detail_lines(pair, inner_width));
+    }
     if let Some(context) = fold {
         output.push_hit_range(
             header_start..output.lines.len(),
             context.target(stable_key.clone(), expanded),
         );
-    }
-    if expanded {
-        output
-            .lines
-            .extend(render_merged_tool_detail_lines(pair, inner_width));
     }
     output
 }
@@ -417,12 +420,6 @@ fn render_think_panel(
     let mut output = FoldedLines::default();
     let header_start = output.lines.len();
     output.lines.push(fold_header_line(expanded, title));
-    if let Some(context) = fold {
-        output.push_hit_range(
-            header_start..output.lines.len(),
-            context.target(stable_key, expanded),
-        );
-    }
     if expanded {
         let body = xml_inner_body(&node.content).trim();
         if !body.is_empty() {
@@ -431,6 +428,12 @@ fn render_think_panel(
             indent_lines(&mut inner, 2);
             output.lines.extend(inner);
         }
+    }
+    if let Some(context) = fold {
+        output.push_hit_range(
+            header_start..output.lines.len(),
+            context.target(stable_key, expanded),
+        );
     }
     output
 }
@@ -478,17 +481,17 @@ fn render_details_panel(
     output
         .lines
         .push(fold_header_line(expanded, title_line(&title)));
-    if let Some(context) = fold {
-        output.push_hit_range(
-            header_start..output.lines.len(),
-            context.target(stable_key, expanded),
-        );
-    }
     if expanded && !body.is_empty() {
         let inner_width = content_width.saturating_sub(2).max(1);
         let mut inner = render_markdown_lines(&body, inner_width, text);
         indent_lines(&mut inner, 2);
         output.lines.extend(inner);
+    }
+    if let Some(context) = fold {
+        output.push_hit_range(
+            header_start..output.lines.len(),
+            context.target(stable_key, expanded),
+        );
     }
     output
 }
@@ -511,12 +514,6 @@ fn render_named_fold_panel(
     output
         .lines
         .push(fold_header_line(expanded, title_line(title)));
-    if let Some(context) = fold {
-        output.push_hit_range(
-            header_start..output.lines.len(),
-            context.target(stable_key, expanded),
-        );
-    }
     if expanded {
         let body = xml_inner_body(&node.content).trim();
         if !body.is_empty() {
@@ -525,6 +522,12 @@ fn render_named_fold_panel(
             indent_lines(&mut inner, 2);
             output.lines.extend(inner);
         }
+    }
+    if let Some(context) = fold {
+        output.push_hit_range(
+            header_start..output.lines.len(),
+            context.target(stable_key, expanded),
+        );
     }
     output
 }
@@ -640,14 +643,31 @@ fn indent_folded_lines(block: &mut FoldedLines, indent: usize) {
     indent_lines(&mut block.lines, indent);
 }
 
-/// Prepends a fixed indent to every rendered line.
+/// Prepends the indent of an expanded fold body to every rendered line.
+///
+/// The indent doubles as a muted gutter rule and demotes unstyled prose one
+/// step, so expanded thinking, search, tool, and details content stays
+/// distinguishable from the conversation text around it - including when the
+/// reader has scrolled far enough that the fold header is off screen.
 fn indent_lines(lines: &mut [Line<'static>], indent: usize) {
     if indent == 0 {
         return;
     }
-    let padding = " ".repeat(indent);
+    let gutter = if indent >= 2 {
+        Span::styled(
+            format!("{}│ ", " ".repeat(indent - 2)),
+            Style::default().fg(theme::TEXT_SUBTLE),
+        )
+    } else {
+        Span::raw(" ".repeat(indent))
+    };
     for line in lines {
-        line.spans.insert(0, Span::raw(padding.clone()));
+        line.spans.insert(0, gutter.clone());
+        for span in line.spans.iter_mut().skip(1) {
+            if span.style.fg.is_none() {
+                span.style = span.style.fg(theme::FOLD_BODY_TEXT);
+            }
+        }
     }
 }
 
@@ -1834,6 +1854,9 @@ fn strip_inline_latex_delimiters(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::render_tool_call_part;
+    use super::*;
+    use crate::tui::fold::TranscriptFoldState;
+    use operit_util::streamnative::NativeMarkdownStreamOperators::NativeMarkdownStreamOperators;
 
     /// Verifies that a generated switch_core tool card renders successfully.
     #[test]
@@ -1849,5 +1872,76 @@ mod tests {
         let params = vec![("node_id".to_string(), "core-test".to_string())];
         let lines = render_tool_call_part("\n switch_core \r\n", &params, 80);
         assert_eq!(lines.len(), 1);
+    }
+
+    /// An expanded group is one click target down to its last body line, and a
+    /// nested tool row inside it keeps its own later hit so clicking that row
+    /// toggles the row rather than collapsing the group.
+    #[test]
+    fn expanded_group_body_records_hits_and_nested_rows_win() {
+        let markup = concat!(
+            "<tool name=\"read_file\" call_id=\"a\"><param name=\"path\">a.txt</param></tool>",
+            "<tool_result name=\"read_file\" status=\"success\"><content>ok</content></tool_result>",
+            "<tool name=\"list_files\" call_id=\"b\"><param name=\"path\">.</param></tool>",
+            "<tool_result name=\"list_files\" status=\"success\"><content>ok2</content></tool_result>",
+        );
+        let nodes = markup.nativeMarkdownSplitByBlock();
+        let mut fold_state = TranscriptFoldState::default();
+        fold_state.set_user_expanded(7, "tools-only-0", true);
+        let context = FoldRenderContext {
+            message_timestamp: 7,
+            is_streaming: false,
+            fold_state: &fold_state,
+            thinking_line: None,
+        };
+
+        let rendered = render_fold_group(
+            &nodes,
+            0,
+            nodes.len() - 1,
+            "tools-only-0",
+            60,
+            TuiLanguage::English.text(),
+            Some(&context),
+        );
+
+        let line_text = |line: &Line<'static>| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        };
+        let nested_line = rendered
+            .lines
+            .iter()
+            .position(|line| line_text(line).contains("list_files"))
+            .expect("the second tool row must render inside the expanded group");
+        assert!(
+            rendered.hits.len() > 2,
+            "every line of the expanded group must be clickable, hits={:?}",
+            rendered
+                .hits
+                .iter()
+                .map(|hit| (hit.line_index, hit.target.stable_key.as_str()))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            rendered
+                .hits
+                .iter()
+                .any(|hit| hit.line_index == nested_line && hit.target.stable_key == "tools-only-0"),
+            "the group must cover its body lines"
+        );
+        let innermost = rendered
+            .hits
+            .iter()
+            .rev()
+            .find(|hit| hit.line_index == nested_line)
+            .expect("the nested row must record a hit");
+        assert!(
+            innermost.target.stable_key.starts_with("merged-tool-"),
+            "the innermost hit must be the nested tool row, got {}",
+            innermost.target.stable_key
+        );
     }
 }

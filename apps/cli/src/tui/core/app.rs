@@ -52,6 +52,7 @@ use super::commands::{expand_plugin_command, keyword_options_for, TuiPluginComma
 use super::config;
 use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
+use super::input::InputHistory;
 use super::i18n::{TuiLanguage, TuiText, TuiTextKey};
 use super::link_proxy_rs::{TuiContentStreamEventInfo, TuiCore};
 pub(super) use super::outgoing_joins::space_join_is_active;
@@ -112,6 +113,8 @@ pub(super) struct OperitTui {
     pub(super) focus: FocusArea,
     pub(super) input: String,
     pub(super) input_cursor: usize,
+    /// Submitted inputs recalled with the arrow keys in the input box.
+    pub(super) input_history: InputHistory,
     pub(super) autocomplete_index: usize,
     pub(super) plugin_commands: Vec<TuiPluginCommandSpec>,
     pub(super) queued_attachment_paths: Vec<String>,
@@ -167,6 +170,10 @@ pub(super) struct OperitTui {
     pub(super) transcript_scroll: u16,
     pub(super) transcript_viewport_height: u16,
     pub(super) transcript_max_scroll: u16,
+    /// Pins the rendered transcript to its newest line. Only explicit user
+    /// intent sets this (sending a turn, switching chats, scrolling back to
+    /// the bottom); growing content and periodic status refreshes never do, so
+    /// a response can stream in while the reader browses history.
     pub(super) follow_transcript: bool,
     pub(super) transcript_render_cache: TranscriptRenderCache,
     pub(super) transcript_area: Rect,
@@ -814,6 +821,7 @@ impl OperitTui {
             focus: FocusArea::Input,
             input: String::new(),
             input_cursor: 0,
+            input_history: InputHistory::default(),
             autocomplete_index: 0,
             plugin_commands,
             queued_attachment_paths: Vec::new(),
@@ -1727,11 +1735,11 @@ impl OperitTui {
                 self.scroll_transcript_half_page_down();
                 return Ok(());
             }
-            (KeyCode::Up, KeyModifiers::NONE) if self.should_arrow_scroll_transcript() => {
+            (KeyCode::Up, KeyModifiers::CONTROL) => {
                 self.scroll_transcript_up(self.terminal_wheel_step());
                 return Ok(());
             }
-            (KeyCode::Down, KeyModifiers::NONE) if self.should_arrow_scroll_transcript() => {
+            (KeyCode::Down, KeyModifiers::CONTROL) => {
                 self.scroll_transcript_down(self.terminal_wheel_step());
                 return Ok(());
             }
@@ -1838,10 +1846,6 @@ impl OperitTui {
 
     fn terminal_wheel_step(&self) -> u16 {
         (self.transcript_viewport_height / 6).max(3)
-    }
-
-    fn should_arrow_scroll_transcript(&self) -> bool {
-        self.focus == FocusArea::Input && self.command_suggestions().is_empty()
     }
 
     async fn handle_chat_list_key(&mut self, key: KeyEvent) -> Result<(), String> {
@@ -2184,6 +2188,7 @@ impl OperitTui {
     pub(super) async fn submit_input(&mut self) -> Result<(), String> {
         let input = self.input.trim_end().to_string();
         if input.starts_with('/') {
+            self.input_history.record(&input);
             self.input.clear();
             self.input_cursor = 0;
             // Slash-command failures (bad arguments, rejected core calls) are
@@ -2213,6 +2218,7 @@ impl OperitTui {
         let inline_attachments = std::mem::take(&mut self.queued_inline_attachments);
         let attachment_tokens = std::mem::take(&mut self.queued_attachment_tokens);
         let message = strip_attachment_tokens(input, &attachment_tokens);
+        self.input_history.record(&message);
         self.follow_transcript = true;
         self.status_message = self.text().connecting().to_string();
         self.input.clear();
@@ -5172,6 +5178,10 @@ impl OperitTui {
         self.refresh_context_usage_label().await;
         let is_loading = self.raw_current_chat_is_loading();
         let state = self.current_chat_input_processing_state();
+        // Loading transitions only refresh the status line. They must never
+        // re-engage transcript following: this runs every 250ms while a
+        // response streams, and a reader who scrolled into history keeps
+        // their place until they return to the newest line themselves.
         if self.awaiting_runtime_loading && !is_loading {
             match &state {
                 InputProcessingState::Error { message } => {
@@ -5182,7 +5192,6 @@ impl OperitTui {
                 InputProcessingState::Idle | InputProcessingState::Completed => {
                     self.awaiting_runtime_loading = false;
                     self.last_current_chat_loading = false;
-                    self.follow_transcript = true;
                     self.refresh_chats().await;
                     // Model binding now lives in the persistent right footer
                     // segment; reset the left status for command feedback.
@@ -5192,7 +5201,6 @@ impl OperitTui {
                     }
                 }
                 _ => {
-                    self.follow_transcript = true;
                     self.set_runtime_status_message(
                         self.text().connecting_ai_service().to_string(),
                         &state,
@@ -5204,7 +5212,6 @@ impl OperitTui {
         }
         if is_loading {
             self.awaiting_runtime_loading = false;
-            self.follow_transcript = true;
             let status = match &state {
                 InputProcessingState::Idle => match self.current_chat_model_status_label().await {
                     Ok(label) => label,
@@ -5216,7 +5223,6 @@ impl OperitTui {
             self.set_runtime_status_message(status, &state, is_loading);
         } else if self.last_current_chat_loading {
             self.awaiting_runtime_loading = false;
-            self.follow_transcript = true;
             self.refresh_chats().await;
             // Loading just finished; reset the status line for command
             // feedback instead of rewriting the model binding label.
