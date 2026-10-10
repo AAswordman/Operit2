@@ -11,6 +11,10 @@ use std::collections::{BTreeMap, HashMap};
 #[serde(tag = "__type")]
 pub enum ToolResultData {
     EdgePortResultData(EdgePortResultData),
+    EdgeAudioInputsResultData(EdgeAudioInputsResultData),
+    EdgeAudioStreamResultData(EdgeAudioStreamResultData),
+    EdgeAudioReadResultData(EdgeAudioReadResultData),
+
     BooleanResultData(BooleanResultData),
     StringResultData(StringResultData),
     SleepResultData(SleepResultData),
@@ -83,6 +87,9 @@ impl ToolResultData {
     pub fn toString(&self) -> String {
         match self {
             Self::EdgePortResultData(data) => serde_json::to_string(data).expect("Edge port result serialization failed"),
+            Self::EdgeAudioInputsResultData(data) => serde_json::to_string(data).expect("Audio result serialization failed"),
+            Self::EdgeAudioStreamResultData(data) => serde_json::to_string(data).expect("Audio result serialization failed"),
+            Self::EdgeAudioReadResultData(data) => serde_json::to_string(data).expect("Audio result serialization failed"),
             Self::BooleanResultData(data) => data.value.to_string(),
             Self::StringResultData(data) => data.value.clone(),
             Self::SleepResultData(data) => data.toString(),
@@ -2746,4 +2753,44 @@ pub struct EdgePortResultData {
     pub nodeId: String,
     /// Native Edge action/port result; no JavaScript source or local serial handle.
     pub data: crate::js_sdk::JsAny,
+}
+
+/// PCM negotiated exactly with the Edge capture host.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EdgeAudioFormat {
+    pub encoding: String,
+    pub sampleRateHz: u32,
+    pub channels: u8,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EdgeAudioInputDevice {
+    pub inputId: String,
+    pub name: String,
+    pub formats: Vec<EdgeAudioFormat>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EdgeAudioInputsResultData {
+    pub nodeId: String,
+    pub inputs: Vec<EdgeAudioInputDevice>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EdgeAudioStreamResultData {
+    pub nodeId: String,
+    pub streamId: String,
+    pub format: EdgeAudioFormat,
+    pub maxDurationMs: u32,
+}
+/// One ordered PCM block, an idle poll, or a terminal result. Bytes are Base64
+/// only at the JS boundary; the Link payload is binary. No WAV header is added.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EdgeAudioReadResultData {
+    pub nodeId: String,
+    pub streamId: String,
+    pub sequence: u32,
+    pub sampleOffset: u64,
+    pub dataBase64: String,
+    pub byteLength: u32,
+    pub pending: bool,
+    pub done: bool,
+    pub error: Option<String>,
 }

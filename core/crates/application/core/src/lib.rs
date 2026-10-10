@@ -227,6 +227,7 @@ impl CoreApplication {
 
     /// Stops application-owned global route state.
     pub async fn shutdown(self) {
+        self.localClient.shutdownEdgeAudio();
         let _ = self.accessServices.stopSpaceSync();
         if let Ok(services) = self.nodeServices() {
             let _ = services.peers().stop().await;
@@ -237,6 +238,7 @@ impl CoreApplication {
     /// Stops application-owned global route state from a synchronous host boundary.
     #[allow(non_snake_case)]
     pub fn shutdownNow(self) {
+        self.localClient.shutdownEdgeAudio();
         if let Some(bridge) = &self.pluginSdkIpcBridge {
             let _ = bridge.stop();
         }
@@ -248,6 +250,7 @@ impl CoreApplication {
 impl Drop for CoreApplication {
     /// Releases process-local synchronization ownership when a Core tree is dropped.
     fn drop(&mut self) {
+        self.localClient.shutdownEdgeAudio();
         if let Some(bridge) = &self.pluginSdkIpcBridge {
             let _ = bridge.stop();
         }

@@ -22,3 +22,14 @@ unadapted plugin UI remain on Core and are not transferred as executable code.
 Transport carriers are composition concerns. A future ESP32 Wi-Fi, BLE, or
 serial carrier should feed the node through a transport adapter while keeping
 Link request and event types out of the device app layer.
+
+## Streaming microphone input
+
+An optional `AudioCaptureHost` installed in `HostManager` supplies microphone
+inputs. Core plugins use `Tools.Edge.listAudioInputs`, `openAudioInput`,
+`readAudioInput`, and `closeAudioInput`; Edge uploads bounded binary PCM through
+its existing admitted TCP/serial Link Push connection. Hardware capture drivers
+must report overruns and release recording resources on Drop.
+
+See [the audio contract and plugin adapter](../../../../docs/edge-streaming-audio.md)
+for lifecycle, format and UART bandwidth requirements.

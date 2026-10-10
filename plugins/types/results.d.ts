@@ -3,7 +3,7 @@
 /**
  * Contains every concrete payload returned by the built-in tool runtime.
  */
-export type ToolResultData = EdgePortResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
+export type ToolResultData = EdgePortResultData | EdgeAudioInputsResultData | EdgeAudioStreamResultData | EdgeAudioReadResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | MemoryQueryResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatCallResultData | ChatMessagesResultData | CharacterCardListResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | FindFilesResultData | GrepResultData | MemoryLinkResultData | MemoryLinkQueryResultData;
 
 /**
  * Captures the UI node and Android surface reached when an automation run finishes.
@@ -1570,4 +1570,47 @@ export interface EdgePortResultData {
    * Native Edge action/port result; no JavaScript source or local serial handle.
    */
   data: any;
+}
+
+/**
+ * PCM negotiated exactly with the Edge capture host.
+ */
+export interface EdgeAudioFormat {
+  encoding: string;
+  sampleRateHz: number;
+  channels: number;
+}
+
+export interface EdgeAudioInputDevice {
+  inputId: string;
+  name: string;
+  formats: EdgeAudioFormat[];
+}
+
+export interface EdgeAudioInputsResultData {
+  nodeId: string;
+  inputs: EdgeAudioInputDevice[];
+}
+
+export interface EdgeAudioStreamResultData {
+  nodeId: string;
+  streamId: string;
+  format: EdgeAudioFormat;
+  maxDurationMs: number;
+}
+
+/**
+ * One ordered PCM block, an idle poll, or a terminal result. Bytes are Base64
+ * only at the JS boundary; the Link payload is binary. No WAV header is added.
+ */
+export interface EdgeAudioReadResultData {
+  nodeId: string;
+  streamId: string;
+  sequence: number;
+  sampleOffset: number;
+  dataBase64: string;
+  byteLength: number;
+  pending: boolean;
+  done: boolean;
+  error?: string;
 }

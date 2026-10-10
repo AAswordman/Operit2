@@ -28,6 +28,7 @@ const files = new Map<string, string>([
   ['/device-state.js', 'web/device-state.ts'],
   ['/scene-renderer.js', 'web/scene-renderer.ts'],
   ['/simulator.js', 'web/simulator.ts'],
+  ['/core-access.js', 'web/core-access.ts'],
   ['/src/layout/project-model.mjs', 'src/layout/project-model.mts'],
   ['/src/layout/geometry.mjs', 'src/layout/geometry.mts'],
   ['/src/layout/routes.mjs', 'src/layout/routes.mts'],

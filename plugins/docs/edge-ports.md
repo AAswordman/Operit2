@@ -62,11 +62,48 @@ Core 树注入的节点 Router。`io/read` 声明 READ，`io/write` 声明 WRITE
 
 ## 暂不实现的后续能力
 
-串口 `read/write`、端口枚举、串口会话、波特率设置、二进制分块、订阅输入流、背压、
+通用串口 `read/write`、端口枚举、串口会话、插件配置串口波特率、任意二进制输入流、
 超时／设备应答关联、跨 Core 委托及完整专属硬件插件实例生命周期暂未开放。
 `{port:"serial",operation:"read"}` 当前**明确拒绝**，不返回空数据假装接通。
 后续可保留 `nodeId + interfaceInfo + args` 入口并增补新的、经过板级注册与权限校验的
 端口能力；开发普通插件不需要另学一套远端 JS 插件 API。
+
+## 流式音频输入
+
+音频使用同一静态类的专用方法；不放进 `execute` 的 JSON 参数或 512 字节事件中：
+
+```ts
+const { inputs } = await Tools.Edge.listAudioInputs(edgeNodeId);
+const stream = await Tools.Edge.openAudioInput(edgeNodeId, {
+  inputId: inputs[0].inputId,
+  maxDurationMs: 20000,
+});
+try {
+  while (true) {
+    const block = await Tools.Edge.readAudioInput(stream.streamId);
+    if (block.pending) continue;
+    if (block.done) {
+      if (block.error) throw new Error(block.error);
+      break;
+    }
+    // 原始 PCM 的 Base64，只在 JS 边界转换；此处交给自己的音频/STT 消费者。
+    await consumePcm(block.dataBase64, stream.format);
+  }
+} finally {
+  await Tools.Edge.closeAudioInput(stream.streamId);
+}
+```
+
+控制复用现有 Link Call，音频复用已批准设备空间内的 Link Push，支持原 TCP/串口
+承载。Core 校验上传节点与已登记会话、格式，不开放任意地址或接收 Core 参数。
+没有 STT 模型配置也可采集、传输和读取；Host 未安装麦克风能力时明确报不可用。
+默认格式为 16 kHz、16 位单声道 PCM，每块最大 4096 字节，有界队列支持背压。
+115200 baud 串口无法承载此默认格式；两端 Host 可配置一致的更高波特率。
+
+插件可使用 [JS/TS 流式识别适配示例](../packages/examples/edge_audio_stream/README.md)
+连接自己的本地或远端 STT 会话。该示例约定 `start/write/finish/abort`，不内置识别模型。
+已有接受完整音频的 STT 接口需要格式转换；分段调用完整文件识别不等于模型原生流式识别。
+格式、终态、时限与设备 Host 适配详见 [流式音频文档](../../docs/edge-streaming-audio.md)。
 
 ## 原生场景显示
 
@@ -85,7 +122,7 @@ Edge → Core 统一使用 `chatEdgeEvent` 和 ToolPkg main 导出 `on_edge_even
 
 ## 平台边界
 
-Core 只处理节点路由、既有设备空间/Binding、权限、JSON 参数与通用事件分发。
+Core 处理节点路由、既有设备空间/Binding、权限、JSON 控制参数、通用事件及有界音频接收。
 设备类型不决定 Core 的执行分支；插件通过设备声明的 action 和 `capabilities`
 查询选择呈现方式，不能把示例板子的尺寸或屏幕服务当作所有 Edge 的必备能力。
 ToolPkg 的专属/一般展示分类统一使用 `"edge": {"exclusive": true}` 扩展标记，

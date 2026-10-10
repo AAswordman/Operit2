@@ -14,6 +14,17 @@ pub trait CoreLinkPushSession: Send {
     async fn close(self: Box<Self>) -> Result<(), CoreLinkError>;
 }
 
+/// Opens a Push to a specific member through a captured, admitted Space entry.
+#[async_trait(?Send)]
+pub trait CoreLinkSpacePushClient: Send + Sync {
+    /// Nominal capacity of a known constrained carrier, before framing/ACK overhead.
+    /// Unknown/network capacity is None; callers still handle runtime backpressure.
+    fn nominalBytesPerSecond(&self) -> Option<u32> { None }
+
+    async fn openPushTo(&self, nodeId: &str, request: CorePushRequest)
+        -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError>;
+}
+
 #[async_trait(?Send)]
 pub trait CoreLinkClient {
     /// Executes a one-shot core method call and returns its serialized response.

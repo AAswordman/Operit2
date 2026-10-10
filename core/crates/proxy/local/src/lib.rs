@@ -247,6 +247,18 @@ impl LocalCoreProxy {
             openPush,
             spaceRuntime,
         ).withPeerServices(self.peerServices.clone())
+            .withEdgeAudioIngress({
+                let support = self.toolRuntimeSupport.clone();
+                Arc::new(move |request, origin| {
+                    support.edgeAudioRegistry().map_err(operit_link::CoreLinkError::internal)?
+                        .openIngress(request.args, &origin)
+                })
+            })
+    }
+
+    /// Cancels this Core's audio receivers before closing its peer service.
+    pub fn shutdownEdgeAudio(&self) {
+        if let Ok(registry) = self.toolRuntimeSupport.edgeAudioRegistry() { registry.shutdown(); }
     }
 
     /// Returns the file-system capability owned by this local core.

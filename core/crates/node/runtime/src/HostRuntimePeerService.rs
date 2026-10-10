@@ -543,6 +543,7 @@ fn isLocalAddress(address: std::net::IpAddr) -> bool { match address {
 #[async_trait(?Send)]
 impl RuntimePeerService for HostRuntimePeerService {
     fn spaceClient(&self) -> Option<Arc<dyn CoreLinkSharedClient + Send + Sync>> { duplex::spaceClient(self) }
+    fn spacePushClient(&self) -> Option<Arc<dyn operit_link::CoreLinkSpacePushClient>> { duplex::spacePushClient(self) }
     fn spaceConnection(&self) -> Option<super::NodeServices::SpaceClientConnection> { duplex::spaceConnection(self) }
     /// Returns only unpaired candidates using the current state after discovery completes.
     async fn discoverPeers(&self, timeoutMs: u64) -> Result<Vec<DiscoveredPeer>, CoreLinkError> {

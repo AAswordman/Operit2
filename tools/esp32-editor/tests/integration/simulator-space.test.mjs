@@ -88,7 +88,11 @@ async function files(directory, prefix = '') {
 // This opt-in integration test uses a real independent Core CLI, the editor's
 // real TCP Edge child, and the same C renderer compiled to WASM. No fake approval
 // replies, manually written membership, or developer's real profile are used.
-test('Core and rendered simulator complete pairing, rejoin, cancellation and restart through real UI actions',
+test(process.env.OPERIT_SIM_AUDIO_ONLY === '1'
+  ? 'Core JS consumes streaming audio through rendered simulator consent and admitted TCP'
+  : process.env.OPERIT_SIM_TEST_ACCESS_ONLY === '1'
+  ? 'Simulated microphone initiates TCP pairing and Core consent before streaming PCM'
+  : 'Core and rendered simulator complete pairing, rejoin, cancellation and restart through real UI actions',
   {timeout: 600000}, async t => {
     const temporaryRoot = await realpath(tmpdir());
     const directory = await mkdtemp(path.join(temporaryRoot, 'operit-simulator-space-'));
@@ -102,6 +106,7 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     }));
     process.env.OPERIT_SIM_STATE_DIR = edgeDirectory;
     process.env.OPERIT_SIM_BIND = '127.0.0.1:0';
+    process.env.OPERIT_SIM_DISCOVERY = 'false';
     const {simulatorRoute, stopSimulator} = await import('../../src/api/simulator-api.mts');
     // Only the model provider boundary is deterministic. Pairing, admission,
     // chat creation, sends, persistence, watches and renderer remain real.
@@ -283,6 +288,10 @@ test('Core and rendered simulator complete pairing, rejoin, cancellation and res
     await startCore();
     const first = await startEdge();
     const node = first.device.deviceId;
+    if (process.env.OPERIT_SIM_TEST_ACCESS_ONLY === '1') {
+      await probeMicrophoneAccess();
+      return;
+    }
     const edgePortArgs={node_id:node,interface_info:{pluginId:'device.status',action:'read'},args:{}};
     await assert.rejects(()=>core.command(['core','tool','exec','edge_execute',JSON.stringify(edgePortArgs)]),
       'plugin port API must not pair, route to a guessed address, or grant access to an unadmitted node');
@@ -352,6 +361,86 @@ ${JSON.stringify(fixtureMetadata)}
       await core.command(['core','package','delete','edge_ports_fixture']);
     }
     t.diagnostic('Real Core JS package -> Tools.Edge/Tools.Io -> existing tool runtime -> authenticated Edge action passed');
+
+    // The editor supplies a paced Host microphone. A real Core market-style JS
+    // package consumes every block over admitted TCP, with no configured STT.
+    const ts = (await import('../../node_modules/typescript/lib/typescript.js')).default;
+    const adapterSource = await readFile(new URL('../../../../plugins/packages/examples/edge_audio_stream/src/stream.ts', import.meta.url), 'utf8');
+    const adapterJs = ts.transpileModule(adapterSource, {compilerOptions: {
+      target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS,
+    }}).outputText;
+    const audioFixture = path.join(directory, 'edge_audio_fixture.js');
+    const audioMetadata = {name:'edge_audio_fixture', description:'Isolated streaming audio SDK integration test',
+      enabledByDefault:true, tools:[{name:'capture', description:'Consume streamed PCM via the public SDK',
+        parameters:[{name:'node_id',description:'Admitted Edge',type:'string',required:true},
+          {name:'stop_early',description:'Close after the first block',type:'boolean',required:false}]}]};
+    await writeFile(audioFixture, `/* METADATA
+${JSON.stringify(audioMetadata)}
+*/
+${adapterJs}
+      exports.capture = async function(params) {
+        const devices = await Tools.Edge.listAudioInputs(params.node_id);
+        if (!devices.inputs.some(input => input.inputId === 'sim-pcm')) throw Error('Simulator microphone missing');
+        const started = Date.now(); let blocks=0, byteLength=0, checksum=0, firstMs=0, aborted=false;
+        if (params.stop_early) {
+          const stream = await Tools.Edge.openAudioInput(params.node_id, {inputId:'sim-pcm',maxDurationMs:20000});
+          try {
+            const block = await Tools.Edge.readAudioInput(stream.streamId);
+            if (block.done || block.pending || block.byteLength !== 640) throw Error('Expected a live PCM block');
+            return {early:true, byteLength:block.byteLength};
+          } finally { await Tools.Edge.closeAudioInput(stream.streamId); }
+        }
+        try {
+          return await transcribeEdge(params.node_id, {inputId:'sim-pcm',maxDurationMs:20000}, {
+            start: async format => { if(format.sampleRateHz!==16000 || format.channels!==1) throw Error('Wrong format'); },
+            write: async pcm => {
+              if (!blocks) firstMs=Date.now()-started;
+              blocks++; byteLength+=pcm.length;
+              for(const byte of pcm) checksum=(checksum+byte)>>>0;
+            },
+            finish: async () => ({blocks,byteLength,checksum,firstMs,elapsedMs:Date.now()-started}),
+            abort: async () => { aborted=true; },
+          });
+        } catch(error) { return {error:String(error.message||error),aborted,blocks,byteLength}; }
+      };`);
+    await core.command(['core','package','import',audioFixture]);
+    const capture = async stopEarly => {
+      const reply = await core.command(['core','package','exec','edge_audio_fixture:capture',JSON.stringify({node_id:node,stop_early:stopEarly})]);
+      assert.equal(reply.success,true,JSON.stringify(reply));
+      const value=reply.result?.value ?? reply.result;
+      return typeof value==='string' ? JSON.parse(value) : value;
+    };
+    try {
+      await post('/api/simulator/audio/configure',{durationMs:1000,fail:false});
+      const audio = await capture(false);
+      assert.equal(audio.blocks,50); assert.equal(audio.byteLength,32000);
+      let checksum=0;
+      for(let sample=0;sample<16000;sample++) {
+        const value=Math.trunc(Math.sin(sample*440*Math.PI*2/16000)*8000);
+        checksum+=(value&255)+((value>>8)&255);
+      }
+      assert.equal(audio.checksum,checksum,'Every PCM byte must arrive intact');
+      assert(audio.firstMs<audio.elapsedMs-300,'Consume while the device is still recording');
+      await waitDevice('normal audio releases simulated microphone',device=>!device.audio.active);
+      await post('/api/simulator/audio/configure',{durationMs:100,fail:true});
+      const overrun = await capture(false);
+      assert.match(overrun.error,/overrun/i); assert.equal(overrun.aborted,true);
+      assert.equal(overrun.blocks,5); assert.equal(overrun.byteLength,3200);
+      await waitDevice('overrun releases simulated microphone',device=>!device.audio.active);
+      await post('/api/simulator/audio/configure',{durationMs:10000,fail:false});
+      const early = await capture(true);
+      assert.equal(early.early,true); assert.equal(early.byteLength,640);
+      await waitDevice('early close releases simulated microphone',device=>!device.audio.active);
+      // Recording can be reopened on the same authenticated connection after failure/cancel.
+      await post('/api/simulator/audio/configure',{durationMs:100,fail:false});
+      assert.equal((await capture(false)).byteLength,3200);
+      await post('/api/simulator/audio/configure',{durationMs:1000,fail:false});
+    } finally { await core.command(['core','package','delete','edge_audio_fixture']); }
+    t.diagnostic('Core JS streaming adapter -> admitted TCP PCM: live reads, exact bytes, overrun/abort, early close and reopen passed without STT configuration');
+    // Dedicated audio runs reuse the real consent/JS fixture, with identical cleanup.
+    // The default Space regression continues to include all restart/cancellation cases.
+    if (process.env.OPERIT_SIM_AUDIO_ONLY === '1') return;
+
 
     // The same market-compatible ToolPkg ships as an opt-in "More packages"
     // asset, not an auto-installed built-in or an ESP JavaScript runtime.
@@ -622,4 +711,53 @@ ${JSON.stringify(fixtureMetadata)}
     assert(!edgeFiles.some(file => /(^|\/)(chat|chats|messages|blobs|models)\//.test(file)), 'no business data copied to Edge storage');
     assert.equal(screen().heapBytes, 0); assert(screen().staticBytes < 10 * 1024);
     t.diagnostic('offline cancellation intent survived both restarts; refresh retried it and reapplication completed with pairing intact and no business replica');
+
+    async function probeMicrophoneAccess() {
+    // A simulated microphone may initiate onboarding itself, with the Core as
+    // the reviewer. Reuse TCP pairing and the ordinary Space approval records.
+    if ((await state()).device.paired) {
+      await leave();
+      await core.command(['unpair', node]);
+      await post('/api/simulator/action', {action:'edge_unpair'});
+    }
+    await core.command(['space','leave']);
+    const targetCore = (await core.command(['space','show'])).members.find(id => id !== node);
+    const coreToken = (await core.command(['token','show'])).token;
+    const access = await post('/api/simulator/core-access', {step:'request', nodeId:targetCore,
+      address:coreAddress, token:coreToken});
+    assert.equal(access.pairing.peerNodeId, targetCore);
+    const duplicate = await post('/api/simulator/core-access', {step:'request', nodeId:targetCore});
+    assert.equal(duplicate.pairing.pairingId, access.pairing.pairingId);
+    const prompt = (await core.command(['prompts'])).find(value => value.pairingId === access.pairing.pairingId);
+    assert(prompt, 'Core receives the simulator-initiated pairing request');
+    await assert.rejects(post('/api/simulator/core-access', {step:'confirm',
+      pairingId:access.pairing.pairingId, confirmationCode:'123'}), /六位/);
+    const submission = await post('/api/simulator/core-access', {step:'confirm',
+      pairingId:access.pairing.pairingId, confirmationCode:prompt.confirmationCode});
+    assert.equal(submission.pairing, null);
+    assert.equal(submission.request.status, 'pending');
+    const incoming = (await core.command(['space','requests','incoming']))
+      .find(value => value.requestId === submission.request.requestId);
+    assert(incoming?.canApprove, 'the real Core has a pending approval for the simulator');
+    await assert.rejects(core.command(['core','tool','exec','edge_list_audio_inputs',JSON.stringify({node_id:node})]),
+      'pairing alone must not authorize audio before Core approval');
+    await core.command(['space','approve',incoming.requestId,String(incoming.assignmentVersion)]);
+    const joined = await post('/api/simulator/core-access', {step:'refresh',requestId:incoming.requestId});
+    assert.equal(joined.request.status, 'joined');
+    assert((await core.command(['core','tool','exec','edge_list_audio_inputs',JSON.stringify({node_id:node})]))
+      .result.inputs.some(input => input.inputId === 'sim-pcm'));
+    const stream = await core.command(['core','tool','exec','edge_open_audio_input',JSON.stringify({
+      node_id:node,input_id:'sim-pcm',max_duration_ms:1000})]).then(value => value.result);
+    try {
+      const block = await core.command(['core','tool','exec','edge_read_audio_input',JSON.stringify({stream_id:stream.streamId})]);
+      assert.equal(block.result.byteLength,640, 'source-initiated admission supports actual binary PCM upload');
+    } finally {
+      await core.command(['core','tool','exec','edge_close_audio_input',JSON.stringify({stream_id:stream.streamId})]);
+    }
+    assert.equal((await post('/api/simulator/core-access', {step:'request',nodeId:targetCore})).joined, true);
+    t.diagnostic('simulated microphone initiated TCP pairing and a Core-reviewed permission request; audio remained denied until Core approval');
+    }
+    await probeMicrophoneAccess();
+
+
   });

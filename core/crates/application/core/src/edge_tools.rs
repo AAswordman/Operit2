@@ -21,12 +21,13 @@ impl EdgeToolRuntime for CoreEdgeToolRuntime {
     fn execute(
         &self,
         nodeId: String,
-        request: CoreCallRequest,
+        mut request: CoreCallRequest,
     ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<Result<serde_json::Value, String>>
     {
         let allowed = matches!(
             (request.target.as_str(), request.methodName.as_str()),
             ("edge.plugins", "invoke") | ("edge.deviceIo", "getDigitalOutput" | "setDigitalOutput")
+                | ("edge.audio", "listInputs" | "startInput" | "stopInput")
         );
         if !allowed {
             return Box::pin(async {
@@ -41,6 +42,14 @@ impl EdgeToolRuntime for CoreEdgeToolRuntime {
                 Box::pin(async move {
                     let result = match router.upgrade() {
                         Some(router) if nodeId != router.localNodeId() => {
+                            // Plugins cannot choose an audio receiving Core. Pin it to the
+                            // runtime that owns their preregistered stream and read queue.
+                            if request.target == "edge.audio" && request.methodName == "startInput" {
+                                match &mut request.args {
+                                    operit_link::CoreValue::Map(args) => { args.insert("receiverNodeId".into(), operit_link::CoreValue::String(router.localNodeId().into())); }
+                                    _ => { let _ = send.send(Err("Invalid audio start arguments".into())); return; }
+                                }
+                            }
                             // Target routing retains pairing direction, Space membership and
                             // NetworkControl policy. No direct peer call, forced address, or adapter retry.
                             match router.callNode(nodeId, request).await.result {

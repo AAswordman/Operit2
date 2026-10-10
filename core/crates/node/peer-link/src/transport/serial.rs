@@ -64,13 +64,15 @@ pub(super) async fn connect(
     target: PeerEndpoint,
     maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerConnection>, String> {
+    let baudRate = host.peerSerialBaudRate.unwrap_or(115200);
+    if baudRate == 0 { return Err("Serial baud rate must be positive".into()); }
     let provider = host
         .serialPortHost
         .as_ref()
         .ok_or("Serial Host is not installed")?;
     let lease = portLease(&target.address).lock_owned().await;
     let connection = provider
-        .open(&target.address, 115200)
+        .open(&target.address, baudRate)
         .await
         .map_err(|e| e.to_string())?;
     let peer = FramedPeerConnection::newSerial(
@@ -90,6 +92,7 @@ struct SerialListener {
     provider: Arc<dyn operit_host_api::SerialPort::SerialPortHost>,
     source: PeerEndpoint,
     maxMessageBytes: usize,
+    baudRate: u32,
     first: Mutex<Option<Arc<dyn PeerConnection>>>,
     closed: AtomicBool,
 }
@@ -110,7 +113,7 @@ impl PeerListener for SerialListener {
             if self.closed.load(Ordering::Acquire) {
                 return Ok(None);
             }
-            match self.provider.open(&self.source.address, 115200).await {
+            match self.provider.open(&self.source.address, self.baudRate).await {
                 Ok(connection) => {
                     let target = PeerEndpoint {
                         nodeId: String::new(),
@@ -143,6 +146,8 @@ pub(super) async fn listen(
     source: PeerEndpoint,
     maxMessageBytes: usize,
 ) -> Result<Arc<dyn PeerListener>, String> {
+    let baudRate = host.peerSerialBaudRate.unwrap_or(115200);
+    if baudRate == 0 { return Err("Serial baud rate must be positive".into()); }
     let provider = host
         .serialPortHost
         .as_ref()
@@ -161,7 +166,7 @@ pub(super) async fn listen(
     // Open once during listener creation so invalid ports/configuration fail
     // synchronously instead of leaving a silent background listener.
     let connection = provider
-        .open(&source.address, 115200)
+        .open(&source.address, baudRate)
         .await
         .map_err(|e| e.to_string())?;
     let target = PeerEndpoint {
@@ -172,6 +177,7 @@ pub(super) async fn listen(
         provider,
         source,
         maxMessageBytes,
+        baudRate,
         first: Mutex::new(Some(FramedPeerConnection::newSerial(
             target.clone(),
             target,
@@ -241,4 +247,27 @@ mod tests {
             .unwrap();
         drop(next);
     }
+    struct BaudPort(std::sync::Mutex<Vec<u32>>);
+    #[async_trait]
+    impl operit_host_api::SerialPort::SerialPortHost for BaudPort {
+        async fn open(&self, _: &str, baud: u32) -> operit_host_api::HostResult<Arc<dyn operit_host_api::SerialPort::SerialPortConnection>> {
+            self.0.lock().unwrap().push(baud);
+            Ok(Arc::new(StubPort))
+        }
+    }
+    #[tokio::test]
+    async fn serial_audio_baud_configuration_applies_to_listener_reopen() {
+        let provider = Arc::new(BaudPort(std::sync::Mutex::new(Vec::new())));
+        let host = HostManager { serialPortHost: Some(provider.clone()), ..HostManager::default() }.withPeerSerialBaudRate(921600);
+        let endpoint = PeerEndpoint { nodeId: "audio-baud".into(), address: "audio-uart".into() };
+        let listener = listen(&host, endpoint.clone(), 8192).await.unwrap();
+        assert_eq!(*provider.0.lock().unwrap(), vec![921600]);
+        listener.accept().await.unwrap().unwrap().close().await;
+        listener.accept().await.unwrap().unwrap().close().await;
+        assert_eq!(*provider.0.lock().unwrap(), vec![921600, 921600]);
+        listener.close().await;
+        let invalid = host.withPeerSerialBaudRate(0);
+        assert!(listen(&invalid, endpoint, 8192).await.is_err());
+    }
+
 }

@@ -757,4 +757,62 @@ mod tests {
         peer.send(message).await.unwrap();
         assert_eq!(*io.sent.lock().await, expected);
     }
+    #[tokio::test]
+    async fn binary_audio_push_roundtrips_existing_serial_frames_and_acks() {
+        use operit_link::{CoreLinkPushRequestMessage, CoreLinkPushResponse, CoreLinkRequest,
+            CoreLinkResponse, CorePushItem, CoreValue};
+        let (pc, board) = uartPipes();
+        let sender = serialPeer(pc.clone(), true);
+        let stale = serialPeer(board.clone(), false);
+        let (initialized, boundary) = tokio::join!(sender.initializeSerial(), stale.readFrame());
+        initialized.unwrap();
+        assert!(boundary.unwrap().is_none());
+        let receiver = serialPeer(board, false);
+        for sequence in 0..100 {
+            let pcm: Vec<u8> = (0..1280).map(|i| (i * 13 + sequence as usize) as u8).collect();
+            let message = PeerMessage::Request(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(CorePushItem {
+                pushId: "audio-push".into(), sequence, args: CoreValue::Bytes(pcm.clone()),
+            })));
+            sender.send(message).await.unwrap();
+            match receiver.receive().await.unwrap().unwrap() {
+                PeerMessage::Request(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(item))) => {
+                    assert_eq!(item.sequence, sequence);
+                    assert_eq!(item.args, CoreValue::Bytes(pcm));
+                }
+                _ => panic!("unexpected PCM message"),
+            }
+            receiver.send(PeerMessage::Response(CoreLinkResponse::Push { pushId: "audio-push".into(),
+                result: Ok(CoreLinkPushResponse::ItemAccepted { sequence }) })).await.unwrap();
+            assert!(matches!(sender.receive().await.unwrap(), Some(PeerMessage::Response(CoreLinkResponse::Push { result: Ok(CoreLinkPushResponse::ItemAccepted { sequence: n }), .. })) if n == sequence));
+        }
+        let ((), closed) = tokio::join!(sender.close(), receiver.receive());
+        assert!(closed.unwrap().is_none());
+    }
+    #[tokio::test]
+    async fn binary_audio_push_survives_fragmented_tcp_frames() {
+        use operit_link::{CoreLinkPushRequestMessage, CoreLinkRequest, CorePushItem, CoreValue};
+        let mut wire = Vec::new();
+        let mut expected = Vec::new();
+        for sequence in 0..100 {
+            let bytes: Vec<u8> = (0..640).map(|i| (i + sequence as usize * 7) as u8).collect();
+            let message = PeerMessage::Request(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(CorePushItem {
+                pushId: "audio-tcp".into(), sequence, args: CoreValue::Bytes(bytes.clone()),
+            })));
+            wire.extend(frame(&encodeLink(message).unwrap()));
+            expected.extend(bytes);
+        }
+        let (receiver, _) = connection(wire.chunks(7).map(|chunk| chunk.to_vec()).collect());
+        let mut received = Vec::new();
+        for sequence in 0..100 {
+            match receiver.receive().await.unwrap().unwrap() {
+                PeerMessage::Request(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(item))) => {
+                    assert_eq!(item.sequence, sequence);
+                    match item.args { CoreValue::Bytes(bytes) => received.extend(bytes), _ => panic!("PCM was not binary") }
+                }
+                _ => panic!("unexpected PCM message"),
+            }
+        }
+        assert_eq!(received, expected);
+    }
+
 }

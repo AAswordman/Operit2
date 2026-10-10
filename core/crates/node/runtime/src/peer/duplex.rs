@@ -243,7 +243,16 @@ impl HostRuntimePeerService {
 // client must not silently acquire authority in a different Space on reconnect.
 fn entryIdentity(service: &HostRuntimePeerService, peer: &str) -> Option<crate::NodeServices::SpaceClientIdentity> {
     service.requirePeerConnectionAllowed(peer).ok()?;
-    let (spaceId, generation) = if let Some(channel) = service.cachedSession(peer) {
+    let (spaceId, generation) = if let Ok(record) = service.outbound(peer) {
+        // An Edge may be the TCP/serial initiator. Its own authenticated pairing
+        // is also an entry once both nodes are admitted; a reverse return grant
+        // is only needed by the receiving side, not by this original sender.
+        if !service.activePeerNodeIds().ok()?.contains(peer) { return None; }
+        let scope = service.router().ok()?.spaceChannelScope(peer).ok()??;
+        let connection = service.cachedSession(peer).map(|channel| format!("session:{}", channel.generation))
+            .unwrap_or_else(|| format!("{:?}:{}", record.transport, record.endpoint));
+        (scope, format!("pairing:{}:{}", record.sessionId, connection))
+    } else if let Some(channel) = service.cachedSession(peer) {
         if !service.sessionScopeAllowed(peer, &channel).ok()? { return None; }
         (channel.returnScope.lock().unwrap().clone()?, format!("session:{}", channel.generation))
     } else {
@@ -294,6 +303,37 @@ impl CoreLinkSharedClient for SessionSpaceClient {
         let kind = watchRouteKind(&r, false);
         self.service.watch(&self.identity.peerNodeId, self.route(r, kind)?).await
     }
+}
+#[async_trait(?Send)]
+impl operit_link::CoreLinkSpacePushClient for SessionSpaceClient {
+    fn nominalBytesPerSecond(&self) -> Option<u32> {
+        let transport = self.service.cachedSession(&self.identity.peerNodeId).map(|channel| channel.raw.transport())
+            .or_else(|| self.service.spaceOutbound(&self.identity.peerNodeId).ok().map(|grant| grant.transport))
+            .or_else(|| self.service.outbound(&self.identity.peerNodeId).ok().and_then(|record| parseTransport(&record.transport).ok()))?;
+        if transport == PeerTransport::Serial { Some(self.service.state.host.peerSerialBaudRate.unwrap_or(115200) / 10) }
+        else { None }
+    }
+
+    async fn openPushTo(&self, node: &str, mut request: CorePushRequest) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+        request.requestId = CoreRequestId::new(nextCoreRouteRequestId("edge-push"));
+        let mut route = self.route(request, RoutedCoreRequestKind::SpaceRoute)?;
+        route.targetNodeId = node.into();
+        let session = self.service.openPush(&self.identity.peerNodeId, route).await?;
+        Ok(Box::new(AdmittedPush { client: SessionSpaceClient { service: self.service.clone(), identity: self.identity.clone() }, session }))
+    }
+}
+struct AdmittedPush { client: SessionSpaceClient, session: Box<dyn CoreLinkPushSession> }
+#[async_trait]
+impl CoreLinkPushSession for AdmittedPush {
+    async fn send(&mut self, value: CoreValue) -> Result<(), CoreLinkError> {
+        self.client.route((), RoutedCoreRequestKind::SpaceRoute)?;
+        self.session.send(value).await
+    }
+    async fn close(self: Box<Self>) -> Result<(), CoreLinkError> { self.session.close().await }
+}
+pub(super) fn spacePushClient(service: &HostRuntimePeerService) -> Option<Arc<dyn operit_link::CoreLinkSpacePushClient>> {
+    let identity = spaceConnection(service)?.identity;
+    Some(Arc::new(SessionSpaceClient { service: service.clone(), identity }))
 }
 pub(super) fn spaceConnection(service: &HostRuntimePeerService) -> Option<crate::NodeServices::SpaceClientConnection> {
     let candidates: BTreeSet<String> = service.state.sharedSessions.lock().unwrap().keys().cloned()
@@ -538,6 +578,29 @@ mod tests {
             active:Mutex::default(),changes:broadcast::channel(32).0,availability:Mutex::new(None),lifecycle:AsyncMutex::new(()),mutation:Mutex::new(()),
             connectLocks:Mutex::default(),sharedSessions:Mutex::default(),
         })};(service,router)
+    }
+    #[test]
+    fn outbound_space_entry_requires_admission_and_current_pairing() {
+        let (service, router) = service("edge");
+        let mut record = StoredOutbound {
+            deviceId: "edge".into(), peerNodeId: "core".into(), peerDeviceInfo: service.state.info.clone(),
+            pairingServiceVersion: PAIRING_SERVICE_VERSION, sessionId: "pairing".into(),
+            sessionSecret: BASE64.encode([1; 32]), endpoint: "127.0.0.1:1234".into(), transport: "tcp".into(),
+        };
+        service.state.store.putRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, "pairing", &record).unwrap();
+        assert!(spacePushClient(&service).is_none(), "offline pairing is not an active entry");
+        service.state.active.lock().unwrap().insert("core".into());
+        *router.scope.lock().unwrap() = None;
+        assert!(spacePushClient(&service).is_none(), "pairing alone must not admit a Space Push");
+        *router.scope.lock().unwrap() = Some("space".into());
+        let identity = entryIdentity(&service, "core").unwrap();
+        let client = SessionSpaceClient {service: service.clone(), identity};
+        assert!(client.route((), RoutedCoreRequestKind::SpaceRoute).is_ok());
+        record.sessionId = "replacement".into();
+        service.state.store.putRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, "pairing", &record).unwrap();
+        assert_eq!(client.route((), RoutedCoreRequestKind::SpaceRoute).unwrap_err().code, "SPACE_ENTRY_CHANGED");
+        *router.scope.lock().unwrap() = None;
+        assert!(spacePushClient(&service).is_none());
     }
     #[test]
     fn space_client_uses_network_return_grant_and_rechecks_scope() {

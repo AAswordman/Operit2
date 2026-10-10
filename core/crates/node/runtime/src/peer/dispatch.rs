@@ -126,7 +126,8 @@ pub(super) async fn watch(service: &HostRuntimePeerService, node: &str, request:
     Ok(stream.withOnClose(move || drop(watchLease)))
 }
 struct Push {
-    lease: ChannelLease,
+    lease: Option<ChannelLease>,
+    scheduler: Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>,
     id: String,
     next: u64,
 }
@@ -137,7 +138,7 @@ impl CoreLinkPushSession for Push {
     async fn send(&mut self, args: CoreValue) -> Result<(), CoreLinkError> {
         let sequence = self.next;
         self.next = sequence.checked_add(1).ok_or_else(|| error("Push sequence exhausted"))?;
-        match self.lease.exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(CorePushItem {
+        match self.lease.as_ref().unwrap().exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Item(CorePushItem {
             pushId: self.id.clone(), sequence, args,
         }))).await? {
             CoreLinkResponse::Push { pushId, result: Ok(CoreLinkPushResponse::ItemAccepted { sequence: accepted }) }
@@ -148,8 +149,9 @@ impl CoreLinkPushSession for Push {
     }
 
     /// Closes one logical Push session while retaining the shared channel.
-    async fn close(self: Box<Self>) -> Result<(), CoreLinkError> {
-        let result = self.lease.exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close {
+    async fn close(mut self: Box<Self>) -> Result<(), CoreLinkError> {
+        let lease = self.lease.take().unwrap();
+        let result = lease.exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close {
             pushId: self.id.clone(),
         })).await;
         match result? {
@@ -159,12 +161,24 @@ impl CoreLinkPushSession for Push {
         }
     }
 }
+impl Drop for Push {
+    fn drop(&mut self) {
+        if let Some(lease) = self.lease.take() {
+            let pushId = self.id.clone();
+            let _ = self.scheduler.scheduleHostRuntimeAsyncTask("peer-push-close", Box::new(move || Box::pin(async move {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(10), lease.exchange(
+                    CoreLinkRequest::Push(CoreLinkPushRequestMessage::Close { pushId }))).await;
+            })));
+        }
+    }
+}
 pub(super) async fn openPush(service: &HostRuntimePeerService, node: &str, request: RoutedCoreRequest<CorePushRequest>) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {
+    let scheduler = service.state.host.hostRuntimeTaskSchedulerHost.clone().ok_or_else(|| error("Host scheduler missing"))?;
     let lease = service.acquirePooledChannel(node).await?;
     let id = request.payload.requestId.0.clone();
     match lease.exchange(CoreLinkRequest::Push(CoreLinkPushRequestMessage::Open(routedPush(request)?))).await? {
         CoreLinkResponse::Push { pushId, result: Ok(CoreLinkPushResponse::Opened) } if pushId == id =>
-            Ok(Box::new(Push { lease, id, next: 0 })),
+            Ok(Box::new(Push { lease: Some(lease), scheduler, id, next: 0 })),
         CoreLinkResponse::Push { result: Err(error), .. } => Err(error),
         _ => Err(error("Push open response mismatch")),
     }

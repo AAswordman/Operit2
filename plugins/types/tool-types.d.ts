@@ -1,11 +1,15 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
-import type { AgentStatusResultData, AppListData, AppOperationData, AppUsageTimeResultData, BinaryFileContentData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, CharacterCardListResultData, ChatCallResultData, ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, DeviceInfoResultData, DirectoryListingData, EdgePortResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData, FileApplyResultData, FileContentData, FileExistsData, FileInfoData, FileOperationData, FilePartContentData, FindFilesResultData, GrepResultData, HiddenTerminalCommandResultData, HttpResponseData, LocationData, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData, MessageSendResultData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, ToolResultData, VisitWebResultData } from "./results";
+import type { AgentStatusResultData, AppListData, AppOperationData, AppUsageTimeResultData, BinaryFileContentData, BluetoothBleNotificationData, BluetoothBleServicesData, BluetoothBondedDevicesData, BluetoothReadData, BluetoothScanResultData, BluetoothSessionData, BluetoothStateData, BluetoothTransferData, BooleanResultData, CharacterCardListResultData, ChatCallResultData, ChatCreationResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, DeviceInfoResultData, DirectoryListingData, EdgeAudioInputsResultData, EdgeAudioReadResultData, EdgeAudioStreamResultData, EdgePortResultData, EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData, FileApplyResultData, FileContentData, FileExistsData, FileInfoData, FileOperationData, FilePartContentData, FindFilesResultData, GrepResultData, HiddenTerminalCommandResultData, HttpResponseData, LocationData, MemoryLinkQueryResultData, MemoryLinkResultData, MemoryQueryResultData, MessageSendResultData, MusicPlaybackResultData, NotificationData, SleepResultData, SystemSettingData, TerminalCommandResultData, TerminalInfoResultData, TerminalSessionCloseResultData, TerminalSessionCreationResultData, TerminalSessionScreenResultData, ToolResultData, VisitWebResultData } from "./results";
 
 /**
  * Maps every built-in tool name to its concrete public result type.
  */
 export interface ToolResultMap {
+  edge_list_audio_inputs: EdgeAudioInputsResultData;
+  edge_open_audio_input: EdgeAudioStreamResultData;
+  edge_read_audio_input: EdgeAudioReadResultData;
+  edge_close_audio_input: BooleanResultData;
   edge_execute: EdgePortResultData;
   io_execute: EdgePortResultData;
   list_files: DirectoryListingData;

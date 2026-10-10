@@ -141,6 +141,9 @@ pub struct HostManager {
     pub httpServerHost: Option<Arc<dyn crate::HttpServer::HttpServerHost>>,
     pub tcpHost: Option<Arc<dyn TcpHost>>,
     pub serialPortHost: Option<Arc<dyn SerialPortHost>>,
+    /// Existing PeerLink UART speed. Both endpoints must use the same value.
+    /// None preserves the legacy 115200 baud default.
+    pub peerSerialBaudRate: Option<u32>,
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
     pub browserAutomationHost: Option<Arc<dyn BrowserAutomationHost>>,
@@ -150,6 +153,7 @@ pub struct HostManager {
     pub webSocketHost: Option<Arc<dyn WebSocketHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub toastHost: Option<Arc<dyn ToastHost>>,
+    pub audioCaptureHost: Option<Arc<dyn crate::AudioCaptureHost>>,
     pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     pub bluetoothHost: Option<Arc<dyn BluetoothHost>>,
     pub deviceIoHost: Option<Arc<dyn DeviceIoHost>>,
@@ -174,6 +178,16 @@ pub struct HostManager {
 }
 
 impl HostManager {
+    pub fn withPeerSerialBaudRate(mut self, baudRate: u32) -> Self {
+        self.peerSerialBaudRate = Some(baudRate);
+        self
+    }
+
+    pub fn withAudioCaptureHost(mut self, host: Arc<dyn crate::AudioCaptureHost>) -> Self {
+        self.audioCaptureHost = Some(host);
+        self
+    }
+
     /// Installs the host-owned service discovery capability.
     pub fn withServiceDiscoveryHost(mut self, host: Arc<dyn ServiceDiscoveryHost>) -> Self {
         self.serviceDiscoveryHost = Some(host);
@@ -193,9 +207,11 @@ impl HostManager {
             httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
+            peerSerialBaudRate: None,
             serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
+            audioCaptureHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -235,9 +251,11 @@ impl HostManager {
             httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
+            peerSerialBaudRate: None,
             serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
+            audioCaptureHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -280,9 +298,11 @@ impl HostManager {
             httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
+            peerSerialBaudRate: None,
             serviceDiscoveryHost: None,
             systemOperationHost: None,
             toastHost: None,
+            audioCaptureHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -326,9 +346,11 @@ impl HostManager {
             httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
+            peerSerialBaudRate: None,
             serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
             toastHost: None,
+            audioCaptureHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -376,9 +398,11 @@ impl HostManager {
             httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
+            peerSerialBaudRate: None,
             serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
             toastHost: None,
+            audioCaptureHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,

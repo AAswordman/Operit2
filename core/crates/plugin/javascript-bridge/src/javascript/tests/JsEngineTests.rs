@@ -146,6 +146,16 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         let gatedToolStarted = self.gatedToolStarted.clone();
         let edgePortCalls = self.edgePortCalls.clone();
         Box::pin(async move {
+            if matches!(request.tool_name.as_str(), "edge_list_audio_inputs" | "edge_open_audio_input" | "edge_read_audio_input" | "edge_close_audio_input") {
+                edgePortCalls.lock().unwrap().push(serde_json::json!({"tool":request.tool_name,"params":request.parameters}));
+                let data = match request.tool_name.as_str() {
+                    "edge_list_audio_inputs" => serde_json::json!({"nodeId":"edge-mic","inputs":[{"inputId":"mic0"}]}),
+                    "edge_open_audio_input" => serde_json::json!({"nodeId":"edge-mic","streamId":"test-stream","format":{"encoding":"pcm_s16le","sampleRateHz":16000,"channels":1}}),
+                    "edge_read_audio_input" => serde_json::json!({"streamId":"test-stream","dataBase64":"AID/fw==","byteLength":4,"sequence":0,"sampleOffset":0,"pending":false,"done":false,"error":null}),
+                    _ => serde_json::json!({"value":true}),
+                };
+                return JsToolCallResult { success:true, data:JsToolCallResultData::Value(data), error:None };
+            }
             if matches!(request.tool_name.as_str(),"edge_execute"|"io_execute") {
                 edgePortCalls.lock().unwrap().push(serde_json::json!({"tool":request.tool_name,"params":request.parameters}));
                 let node = request.parameters["node_id"].as_str().unwrap_or("");
@@ -3380,4 +3390,33 @@ async fn bridge_roundtrip_benchmark() {
         );
         engine.destroy();
     }
+}
+
+/// Runs the generated SDK methods through real QuickJS parameter conversion.
+#[tokio::test(flavor = "current_thread")]
+async fn edge_audio_sdk_forwards_options_stream_identity_and_pcm_result() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let output = engine.execute_script_function(r#"
+        exports.audio = async function() {
+            const inputs = await Tools.Edge.listAudioInputs('edge-mic');
+            const stream = await Tools.Edge.openAudioInput('edge-mic', {
+                inputId:inputs.inputs[0].inputId,
+                format:{encoding:'pcm_s16le',sampleRateHz:16000,channels:1}, maxDurationMs:20000
+            });
+            try {
+                const block = await Tools.Edge.readAudioInput(stream.streamId);
+                return {streamId:stream.streamId,pcm:block.dataBase64,bytes:block.byteLength};
+            } finally { await Tools.Edge.closeAudioInput(stream.streamId); }
+        };
+    "#, "audio", &testParams(), &BTreeMap::new(), None, true, 2000, None).await.unwrap().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), serde_json::json!({"streamId":"test-stream","pcm":"AID/fw==","bytes":4}));
+    let calls = host.edgePortCalls.lock().unwrap();
+    assert_eq!(calls.len(), 4);
+    assert_eq!(calls[0],serde_json::json!({"tool":"edge_list_audio_inputs","params":{"node_id":"edge-mic"}}));
+    assert_eq!(calls[1],serde_json::json!({"tool":"edge_open_audio_input","params":{"node_id":"edge-mic","input_id":"mic0","format":{"encoding":"pcm_s16le","sampleRateHz":16000,"channels":1},"max_duration_ms":20000}}));
+    assert_eq!(calls[2],serde_json::json!({"tool":"edge_read_audio_input","params":{"stream_id":"test-stream"}}));
+    assert_eq!(calls[3],serde_json::json!({"tool":"edge_close_audio_input","params":{"stream_id":"test-stream"}}));
+    drop(calls);
+    engine.destroy();
 }

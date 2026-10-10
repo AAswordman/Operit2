@@ -3,6 +3,8 @@
 #[path = "../../../../apps/esp32/src/edge_chat.rs"]
 mod edge_chat;
 mod memory;
+mod audio;
+mod core_access;
 use operit_link::protocol::LinkDeviceInfo;
 use operit_node_edge::PeerRouter::EdgePeerRouter;
 use operit_node_runtime::{
@@ -96,8 +98,13 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
         stateDir.join("runtime"),
         stateDir.join("workspaces"),
     ));
+    let microphone = Arc::new(audio::SimulatorMicrophone::new());
     let hostManager = operit_host_api::HostManager::HostManager::default()
+        .withAudioCaptureHost(microphone.clone())
         .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
+        .withServiceDiscoveryHost(Arc::new(
+            operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default(),
+        ))
         .withRuntimeStorageHost(storage.clone())
         .withHostRuntimeTaskSchedulerHost(scheduler.clone());
     let identityStore = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(
@@ -137,7 +144,8 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                 token: std::env::var("OPERIT_SIM_TOKEN")
                     .unwrap_or_else(|_| "operit-simulator-token".into()),
                 transports: vec![PeerTransport::Tcp],
-                discoveryEnabled: false,
+                discoveryEnabled: std::env::var("OPERIT_SIM_DISCOVERY")
+                    .map_or(true, |value| value != "false" && value != "0"),
                 portMode,
                 updatedAt: operit_host_api::TimeUtils::currentTimeMillis(),
             })?;
@@ -182,6 +190,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
     let mut routePoll = tokio::time::interval(std::time::Duration::from_millis(500));
     routePoll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut chatRoute = edge_chat::SpaceChatRoute::default();
+    let mut coreAccess = core_access::CoreAccess::default();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     loop {
         let line = tokio::select! {
@@ -197,32 +206,34 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
         let request: serde_json::Value = serde_json::from_str(&line)?;
         let id = request["id"].clone();
         let services = edgeNode.nodeServices();
-        let paired = services
-            .as_ref()
-            .ok()
-            .and_then(|s| s.peers().pairedPeers().ok())
-            .is_some_and(|p| !p.is_empty());
-        let chat_state = edge_chat::snapshot();
-        let chat_screen = edge_chat::screenText();
-        let pairing_code = services
-            .as_ref()
-            .ok()
-            .and_then(|s| s.peers().pairingPrompts().ok())
-            .unwrap_or_default()
-            .into_iter()
-            // Match firmware: one digits-only code, never a device-name prefix.
-            .map(|p| p.confirmationCode)
-            .find(|code| code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()))
-            .unwrap_or_default();
         let result = match request["command"].as_str() {
             Some("state") => {
+                let paired = services
+                    .as_ref()
+                    .ok()
+                    .and_then(|s| s.peers().pairedPeers().ok())
+                    .is_some_and(|p| !p.is_empty());
+                let chat_state = edge_chat::snapshot();
+                let chat_screen = edge_chat::screenText();
+                let pairing_code = services
+                    .as_ref()
+                    .ok()
+                    .and_then(|s| s.peers().pairingPrompts().ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    // Match firmware: one digits-only code, never a device-name prefix.
+                    .map(|p| p.confirmationCode)
+                    .find(|code| code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()))
+                    .unwrap_or_default();
                 let space_join = spaceService.incomingDeviceSpaceJoins().await
                     .ok()
                     .and_then(|requests| requests.into_iter().find(|request| request.canApprove));
                 Ok(serde_json::json!({"address": address,
                 "scene": scenePlugin.summary(),
+                "audio": microphone.snapshot(),
+                "coreAccess": coreAccess.snapshot(),
                 "memory": memory::snapshot(),
-                "deviceId": "esp32-edge-simulator", "paired": paired,
+                "deviceId": nodeId, "paired": paired,
                 "peerServiceAvailable": services.is_ok(),
                 "pairingCode": pairing_code,
                 "spaceJoinPrompt": space_join.as_ref().map(|request| format!("申请加入空间\n{}\n{}", request.applicantName.chars().take(32).collect::<String>(), request.spaceName.chars().take(32).collect::<String>())).unwrap_or_default(),
@@ -237,12 +248,27 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                     Err(error) => serde_json::json!({"ok": false, "error": error}),
                 })}))
             }
+            Some("audioConfigure") => microphone.configure(&request),
+            Some("coreAccess") => match services.as_ref() {
+                Ok(services) => coreAccess.handle(&request, services, &spaceService).await,
+                Err(error) => Err(error.message.clone()),
+            },
             Some("sceneView") => Ok(scenePlugin.visual_snapshot()),
             Some("memory") => Ok(memory::snapshot()),
             // Decision/cleanup failures belong to this RPC, not to run(). In
             // particular a stale approval tap after cancellation must not
             // terminate the device or drop its authenticated TCP listener.
             Some("action") => async {
+                let pairing_code = services
+                    .as_ref()
+                    .ok()
+                    .and_then(|s| s.peers().pairingPrompts().ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    // Match firmware: one digits-only code, never a device-name prefix.
+                    .map(|p| p.confirmationCode)
+                    .find(|code| code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()))
+                    .unwrap_or_default();
                 let action = request["action"].as_str().unwrap_or("");
                 *lastAction.lock().unwrap() = action.to_string();
                 if action == "edge_scene_exit" {
@@ -275,6 +301,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                 } else if action.starts_with("edge_plugins_") || action.starts_with("edge_plugin_") {
                     edge_chat::pluginsAction(action)?;
                 } else if action == "edge_pair" || action == "edge_unpair" {
+                    if action == "edge_unpair" { coreAccess = core_access::CoreAccess::default(); }
                     let result = async {
                         if action == "edge_pair" {
                             let services = edgeNode.nodeServices().map_err(|error| error.message)?;
@@ -303,6 +330,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                     result?;
                 } else if action == "edge_space_leave" {
                     spaceService.leaveDeviceSpace()?;
+                    coreAccess = core_access::CoreAccess::default();
                     chatRoute.reset();
                 } else if action == "edge_history_older" || action == "edge_history_newer" {
                     edge_chat::moveHistory(action == "edge_history_older")?;

@@ -31,6 +31,10 @@ pub struct JsToolApiVariant {
 /// Contains every active JavaScript Tools method binding.
 #[rustfmt::skip]
 pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
+    JsToolBinding { namespace: "Edge", method: "listAudioInputs", tool: BuiltinToolName::EdgeListAudioInputs },
+    JsToolBinding { namespace: "Edge", method: "openAudioInput", tool: BuiltinToolName::EdgeOpenAudioInput },
+    JsToolBinding { namespace: "Edge", method: "readAudioInput", tool: BuiltinToolName::EdgeReadAudioInput },
+    JsToolBinding { namespace: "Edge", method: "closeAudioInput", tool: BuiltinToolName::EdgeCloseAudioInput },
     JsToolBinding { namespace: "Edge", method: "execute", tool: BuiltinToolName::EdgeExecute },
     JsToolBinding { namespace: "Io", method: "execute", tool: BuiltinToolName::IoExecute },
     JsToolBinding { namespace: "Chat", method: "agentStatus", tool: BuiltinToolName::AgentStatus },

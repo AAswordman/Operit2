@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+pub mod AudioCapture;
+pub use AudioCapture::{AudioCaptureHost, AudioCaptureSession, AudioInputDevice, AudioInputFormat};
 pub mod AtomicCounter;
 pub mod FileSystemResource;
 pub mod HostManager;

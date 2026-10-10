@@ -2397,6 +2397,7 @@ dependencies = [
 name = "operit-edge-contract"
 version = "0.1.0"
 dependencies = [
+ "operit-host-api",
  "operit-link",
  "serde",
  "serde_json",
@@ -2932,6 +2933,7 @@ dependencies = [
  "image",
  "json5",
  "md-5",
+ "operit-edge-contract",
  "operit-host-api",
  "operit-link",
  "operit-model",
