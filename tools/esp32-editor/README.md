@@ -4,7 +4,7 @@
 
 设备与 Wasm 预览直接编译 `apps/esp32/ui_port/operit_mini_ui.c`；
 Rust 适配器为 `apps/esp32/src/ui.rs`，C ABI 为 `operit_ui_*`。
-已删除 LVGL 依赖、旧页面/软键盘/emoji 实现及后端切换标记，不再提供回退构建。
+系统页面、文字、触摸和状态表情由共享 C 实现；页面修改后重新构建预览与固件。
 
 ```powershell
 # 仓库根目录
@@ -27,11 +27,9 @@ npm start --prefix tools/esp32-editor                # 预览仍在 8766
   驱动、Rust/网络服务或浏览器 framebuffer。debug snapshot 返回实际 `staticBytes`。
 - 中文和数字使用仓库独立的 `ui_port/mini_font.h`，保留 OFL 授权，不需下载或提取第三方 UI 字体。
 - 审批仍调用共享节点服务；busy 禁止重复提交，配对码优先；解除配对需要确认。
-- 固定系统 UI 不提供通用 emoji、机内软键盘、聊天翻页、会话选择和动态布局。
-  聊天图片可由电脑输入区发送 PNG/JPEG 原件至 Core，屏幕显示有界预览；
+- 电脑输入区支持文字与图片；PNG/JPEG 原件发送至 Core，屏幕显示有界预览。
   JS 插件可以通过可选 `display.scene` 服务显示像素素材并播放本地动画。
-  电脑输入仍可发送文字与图片；网页布局编辑开关停用。布局文档仅作为 Editor 草稿保留；旧分区地址保持不变，但固件不再加载或写入布局包。
-- Rust 模拟器 memory 只报告应用注入的资源限制，不再使用退役 UI 的历史堆预算；
+- Rust 模拟器 memory 只报告应用注入的资源限制；
   `simulator_heap_*` 为 0 只表示无 UI 动态分配池，不代表整机剩余堆为 0。
 - 预览构建无需 ESP-IDF 缓存，仅需 Node.js/Emscripten；固件构建另需 Rust/ESP-IDF/espflash。
 
@@ -58,7 +56,7 @@ npm start --prefix tools/esp32-editor                # 预览仍在 8766
 模拟器直接编译固件的 `apps/esp32/src/edge_chat.rs`，复用 `operit-node-runtime`
 的配对、加密会话、PeerLink，以及设备空间审批和 SpaceBinding 路由。
 编辑器到本机进程的 IPC 只承接 UI 和生命周期，不替代节点之间的 Link 协议。
-自绘 UI 画布继续运行共享 C/Wasm，连接指示跟随真实会话。聊天文字、懒加载翻页与触摸由同一份自绘 C UI 执行；电脑键盘/串口草稿用于测试输入，当前无设备软键盘。
+自绘 UI 画布继续运行共享 C/Wasm，连接指示跟随真实会话。聊天文字、懒加载翻页与触摸由同一份自绘 C UI 执行；电脑键盘/串口草稿用于测试输入。
 此环境模拟设备运行能力，不执行 ESP32 指令集，不模拟 Wi-Fi 无线电、SPI 时序或板上 RAM 限制。
 
 验证命令（仓库根目录执行）：
@@ -149,7 +147,7 @@ Invoke-RestMethod http://127.0.0.1:8766/api/simulator/memory
 ```
 
 桌面进程仍由操作系统分配内存，无法用本机 RSS 证明真机不会 OOM。
-整板堆和 NVS 应通过真实设备 `device:health` 获取；历史 UI 内存预算不再限制图片发送。
+整板堆和 NVS 应通过真实设备 `device:health` 获取。
 
 
 普通使用只需 Node.js 22.6+ 和已有的 `generated/ui.mjs`、`ui.wasm`、`manifest.json`：
@@ -167,7 +165,7 @@ npm run build --prefix ./tools/esp32-editor
 
 然后重新打开编辑器。底层 C/Rust 运行时变更则执行 `npm run build:firmware --prefix ./tools/esp32-editor`。
 
-访问 http://127.0.0.1:8766 。当前页面预览固定自绘屏幕；布局 JSON 可作为草稿保存，但不会应用到设备屏幕。固件部署使用构建产物。USB 操作需要电脑已安装 espflash、Python/pyserial；当前固定 UI 不支持 Wi-Fi/USB 布局下发；两个部署入口都会在访问设备或串口前明确拒绝。手机可通过端口转发访问此服务，默认不开放局域网监听。
+访问 http://127.0.0.1:8766 查看自绘屏幕预览。固件部署使用构建产物；USB 操作需要电脑已安装 espflash、Python/pyserial。手机可通过端口转发访问此服务，默认不开放局域网监听。
 
 开发者修改共享 C/Rust 或新增底层能力后，在开发环境执行：
 
@@ -177,9 +175,9 @@ npm run build:firmware --prefix ./tools/esp32-editor
 
 只生成浏览器预览时用 `npm run build --prefix ./tools/esp32-editor`。预览构建需要 Node.js/Emscripten；固件构建还需 Rust/ESP-IDF。通过 `EMSDK` 或 `--emsdk` 指定 Emscripten 安装目录；不在代码中写入机器绝对路径。Windows 上脚本自动把 Cargo target 放在当前工作区所在盘的 `\esp32`，并把 `CARGO_TARGET_DIR` 与 `CARGO_WORKSPACE_DIR` 注入固件构建。预览独立编译仓库自绘 C 源码，不查找第三方 UI 缓存。仅保留当前增量对象与当前产物。
 
-- 保存 JSON / 编辑 C 都不会自动启动编译；调试面板只显示运行时状态。
+- 编辑源码后显式启动编译；调试面板显示运行时状态。
 - 显式构建生成同源 Wasm 与基础固件。构建失败保留旧预览并显示错误。
-- `apps/esp32/dist/operit-esp32.bin` 是程序镜像（0x10000），另含 bootloader（0x1000）和 partition-table（0x8000）。网页默认清理程序分区后烧录这些已有文件，保留 NVS 和布局分区；勾选清空设备时删除全部历史设备数据。
+- `apps/esp32/dist/operit-esp32.bin` 是程序镜像（0x10000），另含 bootloader（0x1000）和 partition-table（0x8000）。网页默认清理程序分区后烧录这些已有文件，保留 NVS；勾选清空设备时删除全部历史设备数据。
 - 合并的 `operit-esp32-4mb-full.bin` 用于初始部署，不应当作日常界面修改方式。
 - 调试面板的临时状态不写设备设置。屏幕设计与绘制请修改共用 C；Rust 继续负责状态/动作。
 
@@ -195,14 +193,12 @@ npm run build:firmware --prefix ./tools/esp32-editor
 - `wasm/bridge.c`：RGB565 帧缓冲、触摸、自绘 UI 内存统计和动作回调。
 - `wasm/esp_timer.h`：浏览器时钟适配。
 - `web/app.ts`：WebAssembly 宿主和调试面板，不包含按钮布局绘制逻辑。
-- `src/server.mts`：本地服务、运行时状态、布局/AI/部署接口。
-- `src/api/`：布局、部署、AI 的 HTTP 路由。
-- `src/layout/`：项目模型、组件目录、路由和设备布局包。
-- `src/source/`：组件源码引用。
-- `tests/`：Node 测试与 C store 夹具。
+- `src/server.mts`：本地服务、静态资源与运行时构建状态。
+- `src/api/`：模拟设备、UI 调试、AI 与固件安装的 HTTP 路由。
+- `tests/`：渲染器、设备协议、模拟器与调试台测试。
 - `generated/`：忽略提交的构建产物和日志。
 
-集成软件本体时可将前端与 `generated/ui.mjs`、`ui.wasm` 放入 WebView；布局与部署由后端管理，基础运行时构建由开发环境完成。
+集成软件本体时可将前端与 `generated/ui.mjs`、`ui.wasm` 放入 WebView；模拟设备与固件安装由后端管理，运行时构建由开发环境完成。
 
 ## 磁盘占用
 
@@ -210,13 +206,10 @@ npm run build:firmware --prefix ./tools/esp32-editor
 临时链接文件与发布暂存文件在构建结束（包括失败）时自动清理；固件日志只保留最新 256 KiB，服务内存中的构建输出限制为 16,000 字符。
 Emscripten 编译工具链单独安装，不属于调试器运行包；运行已构建的预览无需携带工具链。安装下载包及分片无需保留。
 
-## 布局草稿与未来 UI 开发
+## 系统 UI 开发
 
-布局模型、HTTP/MCP 文档接口和布局包导出仍保留，但当前固定渲染器不使用布局文档。
-旧布局编辑器的拖拽/组件主题/软键盘等退役视图不会因保存项目自动恢复；设备侧栏由固定渲染器绘制。
-修改屏幕请编辑 `apps/esp32/ui_port/operit_mini_ui.c`，修改表情矢量请编辑 `face.svg`，然后重新构建。
-服务返回的 `/api/board` capabilities 表明当前不支持布局编辑、图片或软键盘。
-协议和软件工作区嵌入接口见 [AGENT_API.md](AGENT_API.md) 与 [FRONTEND.md](FRONTEND.md)。
+修改屏幕请编辑 `apps/esp32/ui_port/operit_mini_ui.c`；状态与动作修改对应的 Rust 适配；表情矢量修改 `face.svg`，然后重新构建。
+开发与调试接口见 [AGENT_API.md](AGENT_API.md)，前端和软件内嵌约定见 [FRONTEND.md](FRONTEND.md)。
 
 ### 模拟器设备空间端到端回归
 
@@ -250,7 +243,6 @@ ESP32/模拟器显式传入 320×240、24 像素顶部保留区和触摸能力�
 | Core JS/TS 插件业务、存档、action 处理 | 编译 ToolPkg 并在 Core 导入/启用；真实事件联调 | 已安装兼容服务时不需要 |
 | 插件场景素材 | 通过 `Tools.Edge.execute` 分块上传并更新场景 | 格式/容量符合能力时不需要 |
 | ESP32 固定系统页面、屏幕适配、原生能力 | C/Wasm 预览、模拟器测试、固件构建及实机验证 | 需要 |
-| 历史布局 JSON / OUI2 草稿 | 仅校验与导出草稿 | 当前固件不应用草稿 |
 
 “刷新预览页”仅重载网页及 Wasm；“停止/启动模拟设备”控制 Rust 模拟器进程。
 刷新网页会按现有逻辑请求自动启动模拟器，不清除身份、配对或 Core 存档。
