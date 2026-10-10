@@ -7729,6 +7729,18 @@ abstract class AppLocalizations {
   /// **'Space member · not paired'**
   String get deviceSpaceMemberNotPaired;
 
+  /// No description provided for @deviceSpaceMemberPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Space member · paired'**
+  String get deviceSpaceMemberPaired;
+
+  /// No description provided for @deviceSpacePairedOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired'**
+  String get deviceSpacePairedOnly;
+
   /// No description provided for @deviceSpaceDirectLink.
   ///
   /// In en, this message translates to:
@@ -7758,6 +7770,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Manage device'**
   String get deviceSpaceManageDevice;
+
+  /// No description provided for @deviceSpaceUnpair.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpair device'**
+  String get deviceSpaceUnpair;
 
   /// No description provided for @deviceSpaceMore.
   ///

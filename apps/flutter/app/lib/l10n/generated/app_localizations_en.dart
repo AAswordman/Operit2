@@ -4354,6 +4354,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get deviceSpaceMemberNotPaired => 'Space member · not paired';
 
   @override
+  String get deviceSpaceMemberPaired => 'Space member · paired';
+
+  @override
+  String get deviceSpacePairedOnly => 'Paired';
+
+  @override
   String get deviceSpaceDirectLink => 'Direct';
 
   @override
@@ -4369,6 +4375,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceSpaceManageDevice => 'Manage device';
+
+  @override
+  String get deviceSpaceUnpair => 'Unpair device';
 
   @override
   String get deviceSpaceMore => 'More device actions';

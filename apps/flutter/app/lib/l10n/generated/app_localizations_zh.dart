@@ -4179,6 +4179,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceMemberNotPaired => '空间成员 · 未直连';
 
   @override
+  String get deviceSpaceMemberPaired => '空间成员 · 已直连';
+
+  @override
+  String get deviceSpacePairedOnly => '已配对';
+
+  @override
   String get deviceSpaceDirectLink => '直连';
 
   @override
@@ -4194,6 +4200,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get deviceSpaceManageDevice => '管理设备';
+
+  @override
+  String get deviceSpaceUnpair => '解除配对';
 
   @override
   String get deviceSpaceMore => '更多设备操作';
