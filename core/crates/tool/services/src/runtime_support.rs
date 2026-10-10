@@ -205,6 +205,10 @@ pub struct RuntimeCoreNodeStatus {
     pub platform: String,
     pub model: String,
     pub reachable: bool,
+    /// Peer Links one routed request traverses, reported only for multi-hop members.
+    pub relayHops: Option<u32>,
+    /// Hop node ids from the first hop through the member, reported only for multi-hop members.
+    pub relayPath: Option<Vec<String>>,
 }
 
 /// Describes the current device and every member of its device space.

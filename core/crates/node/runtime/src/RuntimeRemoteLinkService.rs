@@ -3,7 +3,7 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::protocol::LinkDeviceInfo;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_TARGET};
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
-use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
+use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceRoutePlan, CoreSpaceStore};
 use operit_store::NetworkControlStore::{
     NetworkControlAuditRecord, NetworkControlIdentityAssignment, NetworkControlRole,
     NetworkControlState, NetworkControlStore,
@@ -57,6 +57,12 @@ pub struct RuntimeDeviceSpaceDevice {
     pub model: String,
     pub coreVersion: Option<String>,
     pub online: bool,
+    /// Peer Links one routed request traverses; reported only for multi-hop members.
+    #[serde(default)]
+    pub relayHops: Option<u32>,
+    /// Hop node ids from the first hop through the member; reported only for multi-hop members.
+    #[serde(default)]
+    pub relayPath: Option<Vec<String>>,
     pub currentIdentity: Option<RuntimeDeviceSpaceIdentity>,
 }
 
@@ -73,6 +79,8 @@ pub enum RuntimeDeviceSpaceConnectionStatus {
     Online,
     Offline,
     VersionMismatch,
+    /// Announced by its owning device; the local device cannot observe the link directly.
+    Announced,
     Unknown,
 }
 
@@ -390,11 +398,16 @@ impl RuntimeRemoteLinkService {
                 let profile = profiles.get(&deviceId).ok_or_else(|| {
                     format!("Device profile is missing in the current device space: {deviceId}")
                 })?;
-                let online =
-                    deviceId == currentDeviceId || self.nodeRouter.nodeIsReachable(&deviceId)?;
+                let routePlan = if deviceId == currentDeviceId {
+                    None
+                } else {
+                    self.nodeRouter.nodeRoutePlan(&deviceId)?
+                };
+                let online = deviceId == currentDeviceId || routePlan.is_some();
                 Ok(runtimeDeviceSpaceDevice(
                     profile,
                     online,
+                    routePlan.as_ref(),
                     runtimeDeviceSpaceIdentity(&controlState, &deviceId),
                 ))
             })
@@ -455,6 +468,7 @@ impl RuntimeRemoteLinkService {
         Ok(runtimeDeviceSpaceDevice(
             &profile,
             true,
+            None,
             runtimeDeviceSpaceIdentity(&controlState, &profile.nodeId),
         ))
     }
@@ -940,8 +954,15 @@ impl RuntimeRemoteLinkService {
 fn runtimeDeviceSpaceDevice(
     profile: &CoreSpaceDeviceProfile,
     online: bool,
+    routePlan: Option<&CoreSpaceRoutePlan>,
     currentIdentity: Option<RuntimeDeviceSpaceIdentity>,
 ) -> RuntimeDeviceSpaceDevice {
+    // Only a plan with more than one hop reports a relay: a single-hop plan is the
+    // direct Peer Link the local device already observes itself.
+    let (relayHops, relayPath) = match routePlan {
+        Some(plan) if plan.hops() > 1 => (Some(plan.hops()), Some(plan.path.clone())),
+        _ => (None, None),
+    };
     RuntimeDeviceSpaceDevice {
         deviceId: profile.nodeId.clone(),
         userName: profile.userName.clone(),
@@ -950,6 +971,8 @@ fn runtimeDeviceSpaceDevice(
         model: profile.model.clone(),
         coreVersion: profile.coreVersion.clone(),
         online,
+        relayHops,
+        relayPath,
         currentIdentity,
     }
 }
@@ -1004,9 +1027,11 @@ fn runtimeDeviceSpaceConnectionState(
         reasons.push("Core version is unavailable".to_string());
         RuntimeDeviceSpaceConnectionStatus::Unknown
     } else if directlyOnline.is_none() {
-        reasons
-            .push("Direct Peer Link status is not observable from the current device".to_string());
-        RuntimeDeviceSpaceConnectionStatus::Unknown
+        reasons.push(
+            "Announced by its owning device; the local device cannot observe this link directly"
+                .to_string(),
+        );
+        RuntimeDeviceSpaceConnectionStatus::Announced
     } else {
         RuntimeDeviceSpaceConnectionStatus::Online
     };

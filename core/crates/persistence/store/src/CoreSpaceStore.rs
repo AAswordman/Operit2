@@ -16,6 +16,8 @@ use crate::RuntimeStorageHost::defaultRuntimeStorageHost;
 
 const CORE_SPACE_RECORD_KEY: &str = "record";
 const UNMEASURED_DIRECT_PEER_COST: u64 = 1_000_000_000;
+/// Identifies adjacency announcements that carry no measured link quality yet.
+const LOCAL_DIRECT_PEER_EPOCH: &str = "direct-adjacency";
 
 /// Describes the converged Space membership visible to one CoreNode.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +81,27 @@ struct CoreSpaceMemberRecord {
     nodeId: String,
     joinedAt: i64,
     updatedAt: i64,
+}
+
+/// Describes one resolved route plan from this CoreNode to a Space member.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreSpaceRoutePlan {
+    /// Hop node ids from the resolved first hop through the target, inclusive.
+    pub path: Vec<String>,
+}
+
+impl CoreSpaceRoutePlan {
+    /// Returns the only hop this device may forward one request to directly.
+    #[allow(non_snake_case)]
+    pub fn firstHop(&self) -> &str {
+        self.path.first().map(|hop| hop.as_str()).unwrap_or_default()
+    }
+
+    /// Returns how many Peer Links one request traverses along this plan.
+    #[allow(non_snake_case)]
+    pub fn hops(&self) -> u32 {
+        u32::try_from(self.path.len()).unwrap_or(u32::MAX)
+    }
 }
 
 /// Stores the directly paired peers announced by one CoreNode.
@@ -767,6 +790,93 @@ impl CoreSpaceStore {
         })
     }
 
+    /// Publishes the local adjacency announcement for one live direct-peer set.
+    ///
+    /// Peers are replaced with the supplied set - the owning device is the only writer of
+    /// its own record - and every peer without a still-fresh advertisement receives one
+    /// carrying no measured quality yet, so route selection stays at hop count. Returns
+    /// whether the local record changed.
+    #[allow(non_snake_case)]
+    pub fn publishLocalAdjacency(
+        &self,
+        directPeerNodeIds: Vec<String>,
+        linkTtlMs: i64,
+        refreshMarginMs: i64,
+    ) -> Result<bool, String> {
+        if linkTtlMs <= 0 || refreshMarginMs < 0 || refreshMarginMs >= linkTtlMs {
+            return Err("Device space adjacency lifetimes are invalid".to_string());
+        }
+        let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
+        let mut peerSet = BTreeSet::new();
+        for peerNodeId in directPeerNodeIds {
+            validateNodeId(&peerNodeId)?;
+            if peerNodeId == identity.nodeId {
+                return Err("A device cannot register itself as a direct peer".to_string());
+            }
+            peerSet.insert(peerNodeId);
+        }
+        let peers = peerSet.into_iter().collect::<Vec<_>>();
+        let now = currentTimeMillis();
+        let current = self.topologyRecords()?.remove(&identity.nodeId);
+        let mut links = current
+            .as_ref()
+            .map(|record| {
+                record
+                    .links
+                    .iter()
+                    .filter(|link| {
+                        peers.contains(&link.targetNodeId)
+                            && link.expiresAt.saturating_sub(now) > refreshMarginMs
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let retainedTargets = links
+            .iter()
+            .map(|link| link.targetNodeId.clone())
+            .collect::<BTreeSet<_>>();
+        let mut additions = 0_usize;
+        for peerNodeId in peers.iter().filter(|peer| !retainedTargets.contains(*peer)) {
+            let sequence = current
+                .as_ref()
+                .and_then(|record| {
+                    record
+                        .links
+                        .iter()
+                        .find(|link| link.targetNodeId == *peerNodeId)
+                })
+                .map(|link| link.sequence.saturating_add(1))
+                .unwrap_or(1);
+            links.push(CoreSpaceLinkAdvertisement {
+                targetNodeId: peerNodeId.clone(),
+                channelEpoch: LOCAL_DIRECT_PEER_EPOCH.to_string(),
+                sequence,
+                measuredAt: now,
+                expiresAt: now.saturating_add(linkTtlMs),
+                smoothedRttMs: 0,
+                lossPermille: 0,
+                congestionPermille: 0,
+            });
+            additions += 1;
+        }
+        let peersUnchanged = current
+            .as_ref()
+            .map(|record| record.peers.as_slice() == peers.as_slice())
+            .unwrap_or(false);
+        if peersUnchanged && additions == 0 {
+            return Ok(false);
+        }
+        links.sort_by(|left, right| left.targetNodeId.cmp(&right.targetNodeId));
+        self.writeTopologyRecord(&CoreSpaceTopologyRecord {
+            nodeId: identity.nodeId,
+            peers,
+            links,
+            updatedAt: now,
+        })?;
+        Ok(true)
+    }
+
     /// Returns every directed direct-device connection inside the current device space.
     #[allow(non_snake_case)]
     pub fn deviceConnections(&self) -> Result<Vec<CoreSpaceDeviceConnection>, String> {
@@ -794,6 +904,21 @@ impl CoreSpaceStore {
         Ok(connections.into_iter().collect())
     }
 
+    /// Resolves a multi-hop route plan using every current member as a potential relay.
+    #[allow(non_snake_case)]
+    pub fn routePlanThroughPeers(
+        &self,
+        targetNodeId: String,
+        directPeerNodeIds: BTreeSet<String>,
+    ) -> Result<Option<CoreSpaceRoutePlan>, String> {
+        let transitNodeIds = self.space()?.members.into_iter().collect();
+        self.routePlanThroughPeersWithTransitNodes(
+            targetNodeId,
+            directPeerNodeIds,
+            transitNodeIds,
+        )
+    }
+
     /// Resolves an active first hop with Dijkstra over non-expired directed link measurements.
     #[allow(non_snake_case)]
     pub fn reachableNextHopThroughPeers(
@@ -809,14 +934,16 @@ impl CoreSpaceStore {
         )
     }
 
-    /// Resolves a weighted first hop while allowing only selected members to forward a later hop.
+    /// Resolves one weighted route plan while allowing only selected members to forward a
+    /// later hop. The plan lists the hops from the resolved first hop through the target;
+    /// only the first hop is one this device may forward a request to directly.
     #[allow(non_snake_case)]
-    pub fn reachableNextHopThroughPeersWithTransitNodes(
+    pub fn routePlanThroughPeersWithTransitNodes(
         &self,
         targetNodeId: String,
         directPeerNodeIds: BTreeSet<String>,
         transitNodeIds: BTreeSet<String>,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<CoreSpaceRoutePlan>, String> {
         validateNodeId(&targetNodeId)?;
         let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
         if identity.nodeId == targetNodeId {
@@ -832,6 +959,9 @@ impl CoreSpaceStore {
         let now = currentTimeMillis();
         let mut distances = BTreeMap::<String, u64>::new();
         let mut firstHops = BTreeMap::<String, String>::new();
+        // Records which hop first expanded a later hop so one plan can be rebuilt from the
+        // search. Direct peers and the local device itself carry no predecessor.
+        let mut predecessor = BTreeMap::<String, String>::new();
         let mut settled = BTreeSet::<String>::new();
         distances.insert(identity.nodeId.clone(), 0);
         let localTopology = topology.get(&identity.nodeId);
@@ -876,7 +1006,12 @@ impl CoreSpaceStore {
                 return Ok(None);
             };
             if nodeId == targetNodeId {
-                return Ok(firstHops.get(&nodeId).cloned());
+                let Some(firstHop) = firstHops.get(&nodeId).cloned() else {
+                    return Ok(None);
+                };
+                return Ok(Some(CoreSpaceRoutePlan {
+                    path: routePlanPath(&firstHop, &nodeId, &predecessor),
+                }));
             }
             settled.insert(nodeId.clone());
             if nodeId != identity.nodeId && !transitNodeIds.contains(&nodeId) {
@@ -913,11 +1048,33 @@ impl CoreSpaceStore {
                     _ => true,
                 };
                 if replace {
+                    if nodeId == identity.nodeId {
+                        predecessor.remove(&link.targetNodeId);
+                    } else {
+                        predecessor.insert(link.targetNodeId.clone(), nodeId.clone());
+                    }
                     distances.insert(link.targetNodeId.clone(), candidateCost);
                     firstHops.insert(link.targetNodeId.clone(), candidateFirstHop);
                 }
             }
         }
+    }
+
+    /// Resolves a weighted first hop while allowing only selected members to forward a later hop.
+    #[allow(non_snake_case)]
+    pub fn reachableNextHopThroughPeersWithTransitNodes(
+        &self,
+        targetNodeId: String,
+        directPeerNodeIds: BTreeSet<String>,
+        transitNodeIds: BTreeSet<String>,
+    ) -> Result<Option<String>, String> {
+        Ok(self
+            .routePlanThroughPeersWithTransitNodes(
+                targetNodeId,
+                directPeerNodeIds,
+                transitNodeIds,
+            )?
+            .map(|plan| plan.firstHop().to_string()))
     }
 
     /// Reads every synchronized member record stored by this CoreNode.
@@ -1366,6 +1523,25 @@ fn linkCost(link: &CoreSpaceLinkAdvertisement) -> u64 {
         .saturating_add(u64::from(link.congestionPermille).saturating_mul(10))
 }
 
+/// Rebuilds the ordered hop list of one resolved plan from the search predecessor chain.
+fn routePlanPath(
+    firstHop: &str,
+    targetNodeId: &str,
+    predecessor: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut path = vec![targetNodeId.to_string()];
+    let mut cursor = targetNodeId.to_string();
+    while cursor != firstHop {
+        let Some(previous) = predecessor.get(&cursor) else {
+            break;
+        };
+        path.push(previous.clone());
+        cursor = previous.clone();
+    }
+    path.reverse();
+    path
+}
+
 /// Validates one CoreNode identifier used by Space membership.
 fn validateNodeId(nodeId: &str) -> Result<(), String> {
     if nodeId.trim().is_empty() {
@@ -1785,6 +1961,129 @@ mod tests {
             .expect("unmeasured graph lookup must succeed");
 
         assert_eq!(route.as_deref(), Some(targetNodeId));
+    }
+
+    /// Verifies adjacency publication is idempotent, refreshes expiring links and prunes peers.
+    #[test]
+    fn adjacency_publication_refreshes_only_what_expired() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        let localSpace = store
+            .initializeNamed("adjacency-space".to_string())
+            .expect("test space must initialize");
+        let localNodeId = CoreNodeIdentityStore::new(host)
+            .initialize()
+            .expect("test node identity must initialize")
+            .nodeId;
+        store
+            .writeSpaceProjection(
+                localSpace.spaceId,
+                localSpace.spaceName,
+                localSpace.spaceRevision,
+                BTreeSet::from([localNodeId.clone(), "node-peer".to_string()]),
+            )
+            .expect("test space projection must include the peer");
+
+        let ttl = 600_000_i64;
+        let margin = 300_000_i64;
+        assert!(store
+            .publishLocalAdjacency(vec!["node-peer".to_string()], ttl, margin)
+            .expect("first adjacency publication must succeed"));
+        let record = store
+            .topologyRecords()
+            .expect("topology must read")
+            .remove(&localNodeId)
+            .expect("local adjacency record must exist");
+        assert_eq!(record.peers, vec!["node-peer".to_string()]);
+        assert_eq!(record.links.len(), 1);
+        assert!(record.links[0].expiresAt > currentTimeMillis());
+
+        // A second publication with a fresh link changes nothing.
+        assert!(!store
+            .publishLocalAdjacency(vec!["node-peer".to_string()], ttl, margin)
+            .expect("idempotent adjacency publication must succeed"));
+
+        // A link nearing its expiry is rewritten with a fresh lifetime and sequence.
+        writeTestTopology(&store, &localNodeId, vec![testLink("node-peer", 0)]);
+        assert!(store
+            .publishLocalAdjacency(vec!["node-peer".to_string()], ttl, margin)
+            .expect("refreshing adjacency publication must succeed"));
+        let refreshed = store
+            .topologyRecords()
+            .expect("topology must read")
+            .remove(&localNodeId)
+            .expect("local adjacency record must exist");
+        assert_eq!(refreshed.links[0].sequence, 2);
+        assert!(refreshed.links[0].expiresAt > currentTimeMillis() + margin);
+
+        // Dropping the peer prunes both the announcement and its link.
+        assert!(store
+            .publishLocalAdjacency(Vec::new(), ttl, margin)
+            .expect("pruning adjacency publication must succeed"));
+        let pruned = store
+            .topologyRecords()
+            .expect("topology must read")
+            .remove(&localNodeId)
+            .expect("local adjacency record must exist");
+        assert!(pruned.peers.is_empty());
+        assert!(pruned.links.is_empty());
+    }
+
+    /// Verifies published adjacency resolves one tree path through the middle device.
+    #[test]
+    fn adjacency_publication_resolves_tree_route_plan() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(host.clone());
+        let localSpace = store
+            .initializeNamed("tree-space".to_string())
+            .expect("test space must initialize");
+        let localNodeId = CoreNodeIdentityStore::new(host)
+            .initialize()
+            .expect("test node identity must initialize")
+            .nodeId;
+        let middleNodeId = "node-middle";
+        let leafNodeId = "node-leaf";
+        store
+            .writeSpaceProjection(
+                localSpace.spaceId,
+                localSpace.spaceName,
+                localSpace.spaceRevision,
+                BTreeSet::from([
+                    localNodeId.clone(),
+                    middleNodeId.to_string(),
+                    leafNodeId.to_string(),
+                ]),
+            )
+            .expect("test space projection must include both devices");
+        store
+            .publishLocalAdjacency(vec![middleNodeId.to_string()], 600_000, 300_000)
+            .expect("local adjacency must publish");
+        // The middle device announces its own leaf link the same way production does.
+        writeTestTopology(&store, middleNodeId, vec![testLink(leafNodeId, 0)]);
+
+        let plan = store
+            .routePlanThroughPeers(
+                leafNodeId.to_string(),
+                BTreeSet::from([middleNodeId.to_string()]),
+            )
+            .expect("tree path must resolve")
+            .expect("leaf must be reachable through the middle device");
+        assert_eq!(
+            plan.path,
+            vec![middleNodeId.to_string(), leafNodeId.to_string()]
+        );
+        assert_eq!(plan.hops(), 2);
+        assert_eq!(plan.firstHop(), middleNodeId);
+
+        let direct = store
+            .routePlanThroughPeers(
+                middleNodeId.to_string(),
+                BTreeSet::from([middleNodeId.to_string()]),
+            )
+            .expect("direct path must resolve")
+            .expect("middle device must stay reachable");
+        assert_eq!(direct.path, vec![middleNodeId.to_string()]);
+        assert_eq!(direct.hops(), 1);
     }
 
     /// Verifies a non-relay device cannot be selected as a multi-hop forwarding node.

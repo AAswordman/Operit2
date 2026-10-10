@@ -885,6 +885,10 @@ class _GraphDeviceDetails extends StatelessWidget {
                         device.online
                             ? l10n.settingsRuntimePairedOnline
                             : l10n.settingsRuntimePairedOffline,
+                        if (!current && device.online)
+                          device.relayHops == null
+                              ? l10n.deviceSpaceDirectLink
+                              : l10n.deviceSpaceRelayHops(device.relayHops!),
                         device.platform,
                         if (device.coreVersion != null) device.coreVersion!,
                       ].join(' · '),
@@ -892,6 +896,17 @@ class _GraphDeviceDetails extends StatelessWidget {
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
+                    if ((device.relayPath ?? const <String>[]).isNotEmpty)
+                      Text(
+                        '${l10n.deviceSpaceRelayPath}: ${[
+                          l10n.deviceSpaceLocalDevice,
+                          for (final hop in device.relayPath!)
+                            peers[hop]?.deviceName ?? hop,
+                        ].join(' → ')}',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -971,8 +986,8 @@ class _GraphCopy {
       ? '悬停或点击查看设备 · 点击中心展开拓扑'
       : 'Hover or select a device · Select the center to explore connections';
   String get topologyHint => zh
-      ? '实线在线 · 虚线未连通 · 点击当前设备返回'
-      : 'Solid: online · Dashed: not connected · Select your device to return';
+      ? '实线直连在线 · 虚线已宣告 · 点击当前设备返回'
+      : 'Solid: direct online · Dashed: announced · Select your device to return';
   String get empty => zh
       ? '空间已就绪，连接另一台设备，让协作从这里开始'
       : 'Your space is ready. Connect another device to get started.';
@@ -981,7 +996,7 @@ class _GraphCopy {
       ? '点击查看设备 · 点击中心展开拓扑'
       : 'Tap a device for details · Tap the center for connections';
   String get compactTopologyHint =>
-      zh ? '实线在线 · 点击当前设备返回' : 'Solid: online · Select your device to return';
+      zh ? '实线直连在线 · 点击当前设备返回' : 'Solid: direct online · Select your device to return';
   String get noConnections => zh ? '尚无连接记录' : 'No recorded connections';
 
   String connectionStatus(
@@ -992,6 +1007,8 @@ class _GraphCopy {
       zh ? '离线' : 'Offline',
     generated.RuntimeDeviceSpaceConnectionStatus.versionMismatch =>
       zh ? 'Core 版本不匹配' : 'Core version mismatch',
+    generated.RuntimeDeviceSpaceConnectionStatus.announced =>
+      zh ? '已宣告' : 'Announced',
     generated.RuntimeDeviceSpaceConnectionStatus.unknown =>
       zh ? '状态未知' : 'Unknown',
   };
@@ -1016,5 +1033,6 @@ Color _connectionColor(
   generated.RuntimeDeviceSpaceConnectionStatus.online => scheme.primary,
   generated.RuntimeDeviceSpaceConnectionStatus.offline => scheme.outline,
   generated.RuntimeDeviceSpaceConnectionStatus.versionMismatch => scheme.error,
+  generated.RuntimeDeviceSpaceConnectionStatus.announced => scheme.secondary,
   generated.RuntimeDeviceSpaceConnectionStatus.unknown => scheme.tertiary,
 };

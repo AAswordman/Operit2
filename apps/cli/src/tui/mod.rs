@@ -26,6 +26,8 @@ mod markdown;
 mod outgoing_joins;
 #[path = "input/pending_queue.rs"]
 mod pending_queue;
+#[path = "core/peer_discovery.rs"]
+mod peer_discovery;
 #[path = "view/render.rs"]
 mod render;
 #[path = "view/scrollbar.rs"]
@@ -45,7 +47,7 @@ use app::{
 };
 use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
-use operit_node_runtime::NodeServices::{PairingPrompt, PeerTransport};
+use operit_node_runtime::NodeServices::{DiscoveredPeer, PairingPrompt, PeerTransport};
 use operit_node_runtime::RuntimeRemoteLinkService::{RuntimeRemoteLinkService, SpaceJoinRequest};
 use operit_node_runtime::RuntimePeerService::RuntimePeerService;
 use operit_core_application::CoreApplication;
@@ -155,6 +157,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         startup_workspace_prompt_path,
         toast_receiver,
         network_event_receiver,
+        network_event_sender.clone(),
     )
     .await?;
     // Runtime peer/proxy futures are not Send. Keep the monitor on the local
@@ -194,6 +197,8 @@ pub(crate) enum NetworkUiEvent {
         prompts: Vec<PairingPrompt>,
         requests: Option<Vec<SpaceJoinRequest>>,
     },
+    /// A background LAN scan finished; the candidate list opens on the loop.
+    DiscoveryFinished(Result<Vec<DiscoveredPeer>, String>),
 }
 
 /// Fetches change-triggered snapshots off the terminal loop. Peer futures are

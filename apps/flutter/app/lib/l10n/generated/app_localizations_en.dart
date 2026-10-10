@@ -3813,6 +3813,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Roles, identities, device authority, and audit';
 
   @override
+  String get settingsRuntimeIdentitiesAndPermissions =>
+      'Identities & permissions';
+
+  @override
   String get settingsRuntimeControlInitialize => 'Initialize control';
 
   @override
@@ -3857,6 +3861,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsRuntimeControlNoAudit => 'No control commands recorded';
+
+  @override
+  String settingsRuntimeControlAuditCount(int count) {
+    return '$count records';
+  }
 
   @override
   String get settingsRuntimeControlNoBindings => 'No device bindings';
@@ -3915,6 +3924,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsRuntimeControlIdentityDefinitions =>
       'Identity definitions';
+
+  @override
+  String settingsRuntimeControlIdentityCount(int count) {
+    return '$count identities';
+  }
 
   @override
   String get settingsRuntimeControlIdentityAssignment => 'Identity assignment';
@@ -4349,6 +4363,47 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceSpaceDevices => 'Devices';
+
+  @override
+  String get deviceSpaceMemberNotPaired => 'Space member · not paired';
+
+  @override
+  String get deviceSpaceMemberPaired => 'Space member · paired';
+
+  @override
+  String get deviceSpacePairedOnly => 'Paired';
+
+  @override
+  String get deviceSpaceDirectLink => 'Direct';
+
+  @override
+  String deviceSpaceRelayHops(int hops) {
+    return 'Relayed · $hops hops';
+  }
+
+  @override
+  String get deviceSpaceRelayPath => 'Path';
+
+  @override
+  String get deviceSpaceLocalDevice => 'This device';
+
+  @override
+  String get deviceSpaceManageDevice => 'Manage device';
+
+  @override
+  String get deviceSpaceConnectDirect => 'Connect directly';
+
+  @override
+  String get deviceSpaceConnectDirectHint =>
+      'This device is already a Space member. Pairing it adds a direct link without joining again; pairing shows a six-digit code on the other device for you to enter.';
+
+  @override
+  String deviceSpaceDirectLinkEstablished(String device) {
+    return 'Direct link established: $device';
+  }
+
+  @override
+  String get deviceSpaceUnpair => 'Unpair device';
 
   @override
   String get deviceSpaceMore => 'More device actions';

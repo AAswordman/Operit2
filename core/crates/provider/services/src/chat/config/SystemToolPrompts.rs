@@ -909,7 +909,7 @@ fn basic_tools_en() -> SystemToolPromptCategory {
             ),
             tool(
                 "switch_core",
-                "Emit a target-device marker for another currently reachable device. This tool does not switch the runtime itself.",
+                "Emit a target-device marker for another currently reachable device. This tool does not switch the runtime itself. Fails when the target is not a reachable device-space member.",
                 vec![param(
                     "node_id",
                     "string",
@@ -949,7 +949,7 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
             ),
             tool(
                 "switch_core",
-                "为当前设备空间内另一台当前可达的设备输出目标标记；此工具本身不会切换运行时。",
+                "为当前设备空间内另一台当前可达的设备输出目标标记；此工具本身不会切换运行时。目标不是可达的空间成员时会返回失败。",
                 vec![param("node_id", "string", "目标设备的精确 ID", true, None)],
             ),
         ],

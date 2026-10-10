@@ -60,6 +60,10 @@ pub struct SpaceJoinRequest {
 pub(crate) mod space_join;
 #[path = "peer/space_reconcile.rs"]
 pub(crate) mod space_reconcile;
+#[path = "peer/space_doctor.rs"]
+pub(crate) mod space_doctor;
+#[path = "peer/space_topology.rs"]
+pub(crate) mod space_topology;
 
 /// Hooks provided by the existing node runtime, not a second wire protocol.
 #[async_trait::async_trait(?Send)]

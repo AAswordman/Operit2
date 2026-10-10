@@ -3661,6 +3661,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeNetworkControlDescription => '角色、身份、设备权限与审计';
 
   @override
+  String get settingsRuntimeIdentitiesAndPermissions => '身份与权限';
+
+  @override
   String get settingsRuntimeControlInitialize => '初始化控制';
 
   @override
@@ -3704,6 +3707,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsRuntimeControlNoAudit => '暂无控制命令记录';
+
+  @override
+  String settingsRuntimeControlAuditCount(int count) {
+    return '共 $count 条记录';
+  }
 
   @override
   String get settingsRuntimeControlNoBindings => '暂无设备绑定';
@@ -3758,6 +3766,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsRuntimeControlIdentityDefinitions => '身份定义';
+
+  @override
+  String settingsRuntimeControlIdentityCount(int count) {
+    return '共 $count 个身份';
+  }
 
   @override
   String get settingsRuntimeControlIdentityAssignment => '身份分配';
@@ -4174,6 +4187,47 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get deviceSpaceDevices => '设备';
+
+  @override
+  String get deviceSpaceMemberNotPaired => '空间成员 · 未直连';
+
+  @override
+  String get deviceSpaceMemberPaired => '空间成员 · 已直连';
+
+  @override
+  String get deviceSpacePairedOnly => '已配对';
+
+  @override
+  String get deviceSpaceDirectLink => '直连';
+
+  @override
+  String deviceSpaceRelayHops(int hops) {
+    return '经中继 $hops 跳';
+  }
+
+  @override
+  String get deviceSpaceRelayPath => '路径';
+
+  @override
+  String get deviceSpaceLocalDevice => '本机';
+
+  @override
+  String get deviceSpaceManageDevice => '管理设备';
+
+  @override
+  String get deviceSpaceConnectDirect => '建立直连';
+
+  @override
+  String get deviceSpaceConnectDirectHint =>
+      '该设备已是本空间成员。与它配对成功即建立直连，无需重新加入空间；配对需要对方显示、由你输入六位确认码。';
+
+  @override
+  String deviceSpaceDirectLinkEstablished(String device) {
+    return '已建立直连：$device';
+  }
+
+  @override
+  String get deviceSpaceUnpair => '解除配对';
 
   @override
   String get deviceSpaceMore => '更多设备操作';

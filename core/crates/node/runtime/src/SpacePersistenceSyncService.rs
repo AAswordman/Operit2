@@ -256,6 +256,32 @@ impl SpacePersistenceSyncService {
         let activePeers = services.peers().activePeerNodeIds().map_err(|error| error.to_string())?;
         let localNodeId = self.state.nodeRouter.localNodeId();
         let control = NetworkControlStore::new(self.state.localRuntime.runtimeStorageHost())?;
+        // Publish this device's live direct-link adjacency before any snapshot exchange so
+        // every member can resolve routes through it. The announcements carry no measured
+        // quality yet, which keeps route selection at hop count.
+        match crate::NodeSpaceService::space_topology::publishLocalTopology(
+            &self.state.spaceStore,
+            &control,
+            &localNodeId,
+            &activePeers,
+        ) {
+            Ok(true) => {
+                operit_util::AppLogger::AppLogger::v_with_level(
+                    "SpacePersistenceSyncService",
+                    &format!("space_topology.published local={localNodeId}"),
+                    operit_util::AppLogger::VERBOSE_LEVEL_1,
+                );
+            }
+            Ok(false) => {}
+            Err(error) => {
+                operit_util::AppLogger::AppLogger::w(
+                    "SpacePersistenceSyncService",
+                    &format!(
+                        "Local Space topology publish failed; multi-hop routing may degrade: {error}"
+                    ),
+                );
+            }
+        }
         let mut errors = Vec::new();
         for peerNodeId in services.peers().outboundPeerNodeIds().map_err(|error| error.to_string())? {
             if !activePeers.contains(&peerNodeId) || control.nodeIsDisconnected(&peerNodeId)? {

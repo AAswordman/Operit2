@@ -32,9 +32,10 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_node_runtime::NodeServices::{
     DiscoveredPeer, PairedPeer, PairingPrompt, PeerTransport, PendingPairing,
 };
+use operit_node_runtime::SpaceDoctor::{diagnose as space_diagnose, SpaceHealthReport};
 use operit_node_runtime::RuntimeRemoteLinkService::{
     RuntimeDeviceSpaceDevice, RuntimeDeviceSpaceTopology, RuntimePairedDevice,
-    RuntimeRemoteLinkService, SpaceJoinRequest, SpaceJoinStatus,
+    RuntimePairedDeviceStatus, RuntimeRemoteLinkService, SpaceJoinRequest, SpaceJoinStatus,
 };
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_runtime::services::ChatServiceCore::ChatState;
@@ -51,9 +52,10 @@ use super::commands::{expand_plugin_command, keyword_options_for, TuiPluginComma
 use super::config;
 use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
-use super::i18n::{TuiLanguage, TuiText};
+use super::i18n::{TuiLanguage, TuiText, TuiTextKey};
 use super::link_proxy_rs::{TuiContentStreamEventInfo, TuiCore};
 pub(super) use super::outgoing_joins::space_join_is_active;
+use super::peer_discovery::spawn_peer_discovery;
 use super::pending_queue::PendingQueueMessage;
 use super::scrollbar::{
     pointer_hits_scrollbar, scroll_position_for_pointer, scrollbar_hit_part, ScrollbarHit,
@@ -76,6 +78,9 @@ use operit_store::NetworkControlStore::{NetworkControlIdentityAssignment, Networ
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const RUNTIME_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+/// Space membership is a local read; a slower cadence than the chat status is
+/// enough to notice a member joining, leaving, or being removed.
+const SPACE_MEMBERSHIP_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const TRANSIENT_STATUS_DURATION: Duration = Duration::from_secs(3);
 const MAX_PENDING_TERMINAL_EVENTS_PER_FRAME: usize = 64;
 
@@ -127,6 +132,8 @@ pub(super) struct OperitTui {
     pub(super) transient_status_message: Option<String>,
     toast_receiver: mpsc::Receiver<String>,
     network_event_receiver: mpsc::Receiver<NetworkUiEvent>,
+    /// Sender for background network results that must not block the loop.
+    network_event_sender: mpsc::Sender<NetworkUiEvent>,
     seen_pairing_prompt_ids: BTreeSet<String>,
     seen_join_request_ids: BTreeSet<String>,
     /// Pairings this session started with `/network pair` and has not yet
@@ -135,6 +142,9 @@ pub(super) struct OperitTui {
     /// The list popup is currently the Y/N confirm for `/network leave`; any
     /// other popup open clears it so a stale confirm cannot fire elsewhere.
     leave_confirm_pending: bool,
+    /// The list popup is currently the Y/N confirm for hub unpair; holds the
+    /// (device id, label) the confirm will act on.
+    unpair_confirm: Option<(String, String)>,
     /// The network hub panel opened by bare `/network`.
     pub(super) network_hub: Option<NetworkHubModal>,
     /// The pairing wizard; opened from the hub, discovery, or `/network pair`.
@@ -143,6 +153,13 @@ pub(super) struct OperitTui {
     /// popup feeds the selected candidate into the pairing wizard.
     pub(super) discovered_peers: Vec<DiscoveredPeer>,
     discover_select_pending: bool,
+    /// A LAN scan is running; the candidate list opens from its result event.
+    discover_in_flight: bool,
+    /// Last observed local Space identity (id, name) and members; drives the
+    /// membership change notice. `None` until the first observation seeds it.
+    space_identity: Option<(String, String)>,
+    space_members: BTreeSet<String>,
+    last_space_membership_check_at: Option<Instant>,
     /// Seeds the seen-id snapshots from the first fetch so a TUI start does
     /// not replay requests that predate the session.
     network_snapshots_seeded: bool,
@@ -334,6 +351,7 @@ impl DeviceManagerRow {
 /// parallel menu entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeviceManagerAction {
+    Pair,
     Admit,
     Disconnect,
     AssignIdentity,
@@ -347,6 +365,7 @@ pub(super) enum DeviceManagerMode {
     Browsing,
     ActionMenu,
     ConfirmRemove,
+    ConfirmUnpair,
     AssignIdentity,
 }
 
@@ -358,6 +377,8 @@ pub(super) enum DeviceManagerMode {
 pub(super) struct DeviceManagerModal {
     pub(super) topology: RuntimeDeviceSpaceTopology,
     pub(super) blocked: BTreeSet<String>,
+    /// Devices this node already holds a pairing (edge) for.
+    pub(super) paired: BTreeSet<String>,
     pub(super) requests: Vec<SpaceJoinRequest>,
     pub(super) roles: BTreeMap<String, NetworkControlRole>,
     pub(super) initialized: bool,
@@ -406,12 +427,19 @@ impl DeviceManagerModal {
     /// identity changes would drop the capabilities the local UI itself
     /// depends on, and leaving or demoting this device is managed from
     /// another administrator device.
+    ///
+    /// Pairing leads the menu because it is the only link-layer action: an
+    /// admitted member without a local pairing can gain a direct edge without
+    /// any Space capability and without joining again.
     pub(super) fn menu_actions(&self, device_id: &str) -> Vec<DeviceManagerAction> {
         let is_self = device_id == self.topology.currentDeviceId;
         if is_self {
             return Vec::new();
         }
         let mut actions = Vec::new();
+        if !self.blocked.contains(device_id) && !self.paired.contains(device_id) {
+            actions.push(DeviceManagerAction::Pair);
+        }
         if self.blocked.contains(device_id) {
             actions.push(DeviceManagerAction::Admit);
         } else {
@@ -475,6 +503,10 @@ pub(super) struct NetworkHubModal {
     pub(super) paired: BTreeMap<String, RuntimePairedDevice>,
     pub(super) prompts: Vec<PairingPrompt>,
     pub(super) outgoingJoins: Vec<SpaceJoinRequest>,
+    /// Devices the Space policy restricts (`disconnectedNodeIds`). The hub must
+    /// show these as restricted instead of merely offline: they will not come
+    /// back on their own, and no other panel exposes the restriction.
+    pub(super) blocked: BTreeSet<String>,
     pub(super) selected: usize,
 }
 
@@ -502,6 +534,11 @@ pub(super) struct PairWizardModal {
     pub(super) address: String,
     pub(super) transportIndex: usize,
     pub(super) token: String,
+    /// Node id the handshake must match, when the wizard targets a known
+    /// device; empty means "accept whatever node answers the address".
+    pub(super) expectedNode: Option<String>,
+    /// Display label of the expected device, shown while dialing.
+    pub(super) expectedLabel: Option<String>,
     pub(super) pairing: Option<PendingPairing>,
     pub(super) code: String,
     /// The peer a finished pairing produced; drives the join offer.
@@ -651,6 +688,7 @@ impl OperitTui {
         startup_workspace_prompt_path: Option<String>,
         toast_receiver: mpsc::Receiver<String>,
         network_event_receiver: mpsc::Receiver<NetworkUiEvent>,
+        network_event_sender: mpsc::Sender<NetworkUiEvent>,
     ) -> Result<Self, String> {
         let chat_histories = core
             .chat_runtime_holder_main()
@@ -796,14 +834,20 @@ impl OperitTui {
             transient_status_message: None,
             toast_receiver,
             network_event_receiver,
+            network_event_sender,
             seen_pairing_prompt_ids: BTreeSet::new(),
             seen_join_request_ids: BTreeSet::new(),
             pending_pairings: Vec::new(),
             leave_confirm_pending: false,
+            unpair_confirm: None,
             network_hub: None,
             pair_wizard: None,
             discovered_peers: Vec::new(),
             discover_select_pending: false,
+            discover_in_flight: false,
+            space_identity: None,
+            space_members: BTreeSet::new(),
+            last_space_membership_check_at: None,
             network_snapshots_seeded: false,
             context_usage_label: String::new(),
             transcript_scroll: 0,
@@ -1005,7 +1049,7 @@ impl OperitTui {
                         }
                         _ => format!(
                             "network join {}: {} ({})",
-                            join_status_label(&updated.status),
+                            join_status_label(self.text(), &updated.status),
                             updated.targetDeviceId,
                             updated.spaceName
                         ),
@@ -1015,6 +1059,28 @@ impl OperitTui {
                 NetworkUiEvent::Snapshot { prompts, requests } => {
                     self.apply_network_snapshots(prompts, requests);
                 }
+                NetworkUiEvent::DiscoveryFinished(result) => {
+                    self.apply_discovery_result(result);
+                }
+            }
+        }
+    }
+
+    /// Applies a finished LAN scan: opens the candidate list, or reports why
+    /// there is none. Runs on the terminal loop, so it only touches state.
+    fn apply_discovery_result(&mut self, result: Result<Vec<DiscoveredPeer>, String>) {
+        self.discover_in_flight = false;
+        match result {
+            Err(error) => self.status_message = status_error_line(&error),
+            Ok(candidates) if candidates.is_empty() => {
+                self.set_transient_status_message(self.text().network_discover_none().to_string());
+            }
+            Ok(candidates) => {
+                let text = self.text();
+                let items = discovery_popup_items(text, &candidates);
+                self.discovered_peers = candidates;
+                self.open_list_popup(text.network_discover_title().to_string(), items);
+                self.discover_select_pending = true;
             }
         }
     }
@@ -1059,6 +1125,10 @@ impl OperitTui {
         if self.network_snapshots_seeded && has_new_requests {
             self.open_join_decision_modal(requests.clone());
         }
+        // Keep an already open queue aligned with this fetch: reassignments
+        // bump the assignment version, and a decision on a cached version
+        // would be rejected forever.
+        self.refresh_join_decision_modal(&requests);
         self.seen_join_request_ids = requests
             .iter()
             .map(|request| request.requestId.clone())
@@ -1117,6 +1187,26 @@ impl OperitTui {
                     selected: 0,
                 });
             }
+        }
+    }
+
+    /// Keeps an open decision queue aligned with the freshest decidable set:
+    /// entries are replaced in place (a reviewer reassignment bumps the
+    /// assignment version) and entries this device no longer reviews are
+    /// dropped, so a retry can never loop against a stale assignment. The
+    /// popup closes when nothing is left to decide.
+    fn refresh_join_decision_modal(&mut self, fresh: &[SpaceJoinRequest]) {
+        let Some(modal) = self.join_decision.as_ref() else {
+            return;
+        };
+        let (requests, selected) = refreshed_decision_queue(&modal.requests, fresh, modal.selected);
+        if requests.is_empty() {
+            self.join_decision = None;
+            return;
+        }
+        if let Some(modal) = self.join_decision.as_mut() {
+            modal.requests = requests;
+            modal.selected = selected;
         }
     }
 
@@ -1562,11 +1652,9 @@ impl OperitTui {
             return Ok(());
         }
 
-        if self.network_hub.is_some() {
-            self.handle_network_hub_key(key).await?;
-            return Ok(());
-        }
-
+        // List popups opened from the hub render above it, so they must also
+        // receive keys first; otherwise a hub key would fire under the popup
+        // (the hub's discover, audit, policy, token and leave shortcuts).
         if self.show_list_popup
             && self.discover_select_pending
             && key.code == KeyCode::Enter
@@ -1580,8 +1668,18 @@ impl OperitTui {
             return Ok(());
         }
 
+        if self.show_list_popup && self.unpair_confirm.is_some() {
+            self.handle_unpair_confirm_key(key).await;
+            return Ok(());
+        }
+
         if self.show_list_popup {
             return self.handle_list_popup_key(key);
+        }
+
+        if self.network_hub.is_some() {
+            self.handle_network_hub_key(key).await?;
+            return Ok(());
         }
 
         if self.show_help {
@@ -2338,7 +2436,7 @@ impl OperitTui {
 
     /// Executes a Space control command through the runtime-owned authorization service.
     async fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
-        const USAGE: &str = "network opens the hub panel; subcommands: <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
+        const USAGE: &str = "network opens the hub panel; subcommands: <show|bootstrap|audit|doctor|devices|identities|identity|admit|remove|disconnect|policy|token|prompts|requests|approve|reject|discover|pair|pair-confirm|pair-cancel|peers|unpair|join|joins|join-cancel|leave>";
         match args.first().map(String::as_str) {
             None if args.is_empty() => {
                 self.open_network_hub().await;
@@ -2369,6 +2467,9 @@ impl OperitTui {
             }
             Some("audit") if args.len() == 1 => {
                 self.network_audit_popup().await?;
+            }
+            Some("doctor") if args.len() == 1 => {
+                self.network_doctor_popup()?;
             }
             Some("devices") if args.len() == 1 => {
                 self.open_device_manager().await;
@@ -2469,8 +2570,8 @@ impl OperitTui {
                     request.status,
                 );
             }
-            Some("discover") if args.is_empty() => {
-                self.open_discover_list().await;
+            Some("discover") if args.len() == 1 => {
+                self.start_peer_discovery();
             }
             Some("pair") if args.len() >= 3 => {
                 self.network_pair(&args[1..]).await?;
@@ -2533,7 +2634,7 @@ impl OperitTui {
         self.networkControl
             .disconnectDeviceSpaceNode(device_id)
             .await?;
-        Ok(format!("network node disconnected: {device_label}"))
+        Ok(self.text().network_devices_disconnected(device_label))
     }
 
     async fn network_assign_identity(
@@ -2584,7 +2685,7 @@ impl OperitTui {
                 peer_transport_label(candidate) == peer_transport_label(&transport)
             })
             .unwrap_or(2);
-        self.open_pair_wizard(address, transport_index, token.unwrap_or_default(), true);
+        self.open_pair_wizard(address, transport_index, token.unwrap_or_default(), true, None);
         self.pair_wizard_start().await;
         Ok(())
     }
@@ -2610,6 +2711,13 @@ impl OperitTui {
             .await?;
         self.pending_pairings
             .retain(|pending| pending.pairingId != pairing_id);
+        // An admitted member needs only the direct link: the join submission
+        // would be rejected as a duplicate membership, so pairing ends here.
+        if self.network_peer_is_member(&peer.nodeId) {
+            return Ok(self
+                .text()
+                .network_direct_link_established(&paired_peer_label(&peer)));
+        }
         // A finished pairing naturally continues into the join offer: the
         // applicant side (this device) is the one holding outbound trust.
         self.pair_wizard = Some(PairWizardModal {
@@ -2618,6 +2726,8 @@ impl OperitTui {
             address: String::new(),
             transportIndex: 2,
             token: String::new(),
+            expectedNode: None,
+            expectedLabel: None,
             pairing: None,
             code: String::new(),
             peer: Some(peer.clone()),
@@ -2657,17 +2767,20 @@ impl OperitTui {
             return Ok(());
         }
         let text = self.text();
-        let items = peers
-            .into_iter()
-            .map(|(device_id, peer)| {
-                format!(
-                    "{} · {} · {}",
-                    paired_device_label(&device_id, &peer),
-                    device_id,
-                    paired_device_direction(peer.inbound, peer.outbound),
-                )
-            })
-            .collect::<Vec<_>>();
+        let mut items = Vec::new();
+        for (device_id, peer) in peers {
+            let status = self
+                .networkControl
+                .pairedDeviceStatus(device_id.clone())
+                .await?;
+            items.push(format!(
+                "{} · {} · {} · {}",
+                paired_device_label(&device_id, &peer),
+                device_id,
+                paired_device_direction(peer.inbound, peer.outbound),
+                paired_status_label(text, &status),
+            ));
+        }
         self.open_list_popup(text.network_peers_title().to_string(), items);
         Ok(())
     }
@@ -2740,7 +2853,7 @@ impl OperitTui {
                     "{} · {} · {} · {}",
                     request.targetDeviceId,
                     request.spaceName,
-                    join_status_label(&request.status),
+                    join_status_label(text, &request.status),
                     request.requestId,
                 )
             })
@@ -2774,7 +2887,7 @@ impl OperitTui {
             .await?;
         Ok(format!(
             "network join request cancelled: {} ({})",
-            join_status_label(&request.status),
+            join_status_label(self.text(), &request.status),
             request_id
         ))
     }
@@ -2959,13 +3072,10 @@ impl OperitTui {
             self.join_decision = None;
             return;
         };
+        let request_id = request.requestId.clone();
         let decision = self
             .networkControl
-            .decideDeviceSpaceJoin(
-                request.requestId.clone(),
-                request.assignmentVersion,
-                approve,
-            )
+            .decideDeviceSpaceJoin(request_id.clone(), request.assignmentVersion, approve)
             .await;
         let modal = self.join_decision.as_mut().expect("join modal checked above");
         match decision {
@@ -2983,7 +3093,23 @@ impl OperitTui {
                 }
             }
             Err(error) => {
-                self.status_message = error;
+                self.status_message = status_error_line(&error);
+                // A rejected decision usually means the assignment moved under
+                // the cached entry; re-pull so the retry targets the current
+                // version instead of failing forever.
+                if let Ok(fresh) = self.networkControl.incomingDeviceSpaceJoins().await {
+                    self.refresh_join_decision_modal(&fresh);
+                    let still_pending = self.join_decision.as_ref().is_some_and(|modal| {
+                        modal
+                            .requests
+                            .iter()
+                            .any(|request| request.requestId == request_id)
+                    });
+                    if !still_pending {
+                        self.status_message =
+                            self.text().network_join_decision_refreshed().to_string();
+                    }
+                }
             }
         }
     }
@@ -3026,6 +3152,18 @@ impl OperitTui {
         Ok(())
     }
 
+    /// Runs the read-only shared-Space doctor and lists its report, including
+    /// the reconciliation counters. Repair stays a CLI action
+    /// (`operit2 cli link doctor --repair`); the TUI only observes health.
+    fn network_doctor_popup(&mut self) -> Result<(), String> {
+        let report = space_diagnose(&self.networkControl, false)
+            .map_err(|error| format!("space diagnosis failed: {error}"))?;
+        let items = space_health_report_lines(self.text(), &report);
+        let title = self.text().network_doctor_title().to_string();
+        self.open_list_popup(title, items);
+        Ok(())
+    }
+
     /// Opens the network hub: the persistent `/network` panel answering
     /// who-this-node-is, what-is-waiting, and what-is-managed in one place.
     async fn open_network_hub(&mut self) {
@@ -3041,6 +3179,7 @@ impl OperitTui {
             paired: BTreeMap::new(),
             prompts: Vec::new(),
             outgoingJoins: Vec::new(),
+            blocked: BTreeSet::new(),
             selected: 0,
         });
         self.refresh_network_hub();
@@ -3093,6 +3232,7 @@ impl OperitTui {
             return;
         };
         hub.initialized = state.initialized;
+        hub.blocked = state.disconnectedNodeIds;
         hub.topology = topology;
         if let Ok(name) = space_name {
             hub.spaceName = name;
@@ -3172,19 +3312,11 @@ impl OperitTui {
             }
             KeyCode::Char('u') | KeyCode::Char('U') => {
                 if let Some(NetworkHubRow::Peer { deviceId, label, .. }) = selected_row {
-                    match self.networkControl.removePairedDevice(deviceId).await {
-                        Ok(()) => {
-                            self.set_transient_status_message(
-                                self.text().network_unpair_done(&label),
-                            );
-                        }
-                        Err(error) => self.status_message = status_error_line(&error),
-                    }
-                    self.refresh_network_hub();
+                    self.network_unpair_confirm(&deviceId, &label);
                 }
             }
             KeyCode::Char('p') | KeyCode::Char('P') if key.modifiers.is_empty() => {
-                self.open_pair_wizard(String::new(), 0, String::new(), false);
+                self.open_pair_wizard(String::new(), 0, String::new(), false, None);
             }
             KeyCode::Char('P') => {
                 if let Err(error) = self.network_policy_popup() {
@@ -3192,7 +3324,7 @@ impl OperitTui {
                 }
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
-                self.open_discover_list().await;
+                self.start_peer_discovery();
             }
             KeyCode::Char('l') | KeyCode::Char('L') => {
                 if let Err(error) = self.network_leave().await {
@@ -3215,6 +3347,11 @@ impl OperitTui {
                     self.status_message = error;
                 }
             }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                if let Err(error) = self.network_doctor_popup() {
+                    self.status_message = error;
+                }
+            }
             KeyCode::Esc => {
                 self.network_hub = None;
             }
@@ -3225,19 +3362,28 @@ impl OperitTui {
 
     /// Opens the pairing wizard. `autostart` immediately dials the address -
     /// the wizard then lands on code entry, which is the only step left.
+    /// `expected` binds the handshake to a known node id and shows it while
+    /// dialing, which is how the device window pairs one specific member.
     fn open_pair_wizard(
         &mut self,
         address: String,
         transport_index: usize,
         token: String,
         autostart: bool,
+        expected: Option<(String, String)>,
     ) {
+        let (expectedNode, expectedLabel) = match expected {
+            Some((node_id, label)) => (Some(node_id), Some(label)),
+            None => (None, None),
+        };
         self.pair_wizard = Some(PairWizardModal {
             stage: if autostart { PairStage::Code } else { PairStage::Address },
             field: PairField::Address,
             address,
             transportIndex: transport_index.min(PAIR_WIZARD_TRANSPORTS.len() - 1),
             token,
+            expectedNode,
+            expectedLabel,
             pairing: None,
             code: String::new(),
             peer: None,
@@ -3266,9 +3412,10 @@ impl OperitTui {
         } else {
             Some(wizard.token.trim().to_string())
         };
+        let expectedNode = wizard.expectedNode.clone().unwrap_or_default();
         match self
             .networkControl
-            .startPairing(String::new(), address, transport, token)
+            .startPairing(expectedNode, address, transport, token)
             .await
         {
             Ok(pending) => {
@@ -3314,6 +3461,16 @@ impl OperitTui {
             Ok(peer) => {
                 self.pending_pairings
                     .retain(|pending| pending.pairingId != pairing_id);
+                // An admitted member needs only the direct link: the join
+                // submission would be rejected as a duplicate membership.
+                if self.network_peer_is_member(&peer.nodeId) {
+                    self.pair_wizard = None;
+                    self.set_transient_status_message(
+                        self.text()
+                            .network_direct_link_established(&paired_peer_label(&peer)),
+                    );
+                    return;
+                }
                 if let Some(wizard) = self.pair_wizard.as_mut() {
                     wizard.stage = PairStage::JoinOffer;
                     wizard.peer = Some(peer);
@@ -3334,11 +3491,7 @@ impl OperitTui {
         let Some(peer) = self.pair_wizard.as_ref().and_then(|wizard| wizard.peer.clone()) else {
             return;
         };
-        let label = if peer.displayName.is_empty() {
-            peer.nodeId.clone()
-        } else {
-            peer.displayName.clone()
-        };
+        let label = paired_peer_label(&peer);
         let result = self.network_join_target(&peer.nodeId, &label).await;
         self.pair_wizard = None;
         match result {
@@ -3444,29 +3597,16 @@ impl OperitTui {
         };
     }
 
-    /// Runs LAN discovery and shows candidates as a selectable list: Enter
-    /// feeds the chosen candidate straight into the pairing wizard.
-    async fn open_discover_list(&mut self) {
-        let candidates = match self.networkControl.discoverPeers(3000).await {
-            Ok(candidates) => candidates,
-            Err(error) => {
-                self.status_message = error;
-                return;
-            }
-        };
-        if candidates.is_empty() {
-            self.set_transient_status_message(self.text().network_discover_none().to_string());
-            return;
+    /// Starts a background LAN scan; the selectable candidate list opens from
+    /// its result event (Enter pairs with the selection). A scan blocks for its
+    /// whole timeout, so it never runs on the terminal loop; pressing `d` again
+    /// while one is in flight only re-states the status.
+    fn start_peer_discovery(&mut self) {
+        if !self.discover_in_flight {
+            self.discover_in_flight = true;
+            spawn_peer_discovery(self.networkControl.clone(), self.network_event_sender.clone());
         }
-        let text = self.text();
-        let mut items = candidates
-            .iter()
-            .map(|peer| format!("{} · {} · {}", peer.displayName, peer.nodeId, peer.address))
-            .collect::<Vec<_>>();
-        items.push(text.network_discover_select_hint().to_string());
-        self.discovered_peers = candidates;
-        self.open_list_popup(text.network_discover_title().to_string(), items);
-        self.discover_select_pending = true;
+        self.set_transient_status_message(self.text().network_discover_running().to_string());
     }
 
     /// Feeds the discovery candidate under the popup cursor into the wizard
@@ -3486,7 +3626,14 @@ impl OperitTui {
             .iter()
             .position(|transport| matches!(transport, PeerTransport::Tcp))
             .unwrap_or(2);
-        self.open_pair_wizard(candidate.address.clone(), transport_index, String::new(), false);
+        // The candidate carries its node id, so the handshake binds to it.
+        self.open_pair_wizard(
+            candidate.address.clone(),
+            transport_index,
+            String::new(),
+            false,
+            Some((candidate.nodeId.clone(), candidate.displayName.clone())),
+        );
         self.pair_wizard_start().await;
     }
 
@@ -3534,6 +3681,7 @@ impl OperitTui {
             initialized: state.initialized,
             topology,
             blocked: state.disconnectedNodeIds,
+            paired: self.paired_device_ids(),
             requests: requests
                 .into_iter()
                 .filter(|request| request.canApprove)
@@ -3544,6 +3692,45 @@ impl OperitTui {
             menu_device_id: None,
             menu_index: 0,
         });
+    }
+
+    /// Node ids this device currently holds a pairing (edge) for.
+    fn paired_device_ids(&self) -> BTreeSet<String> {
+        self.networkControl
+            .pairedDevicesSnapshot()
+            .map(|snapshot| snapshot.into_keys().collect())
+            .unwrap_or_default()
+    }
+
+    /// Reports whether one device is already a member of the local Space.
+    ///
+    /// Membership is the join contract's own criterion: a request from an
+    /// admitted device is rejected as a duplicate, so the pairing flows must
+    /// not offer that join step.
+    fn network_peer_is_member(&self, device_id: &str) -> bool {
+        self.networkControl
+            .deviceSpace()
+            .map(|space| space.members.iter().any(|member| member == device_id))
+            .unwrap_or(false)
+    }
+
+    /// Opens the pairing wizard for one device picked in the device window.
+    ///
+    /// Pairing leads the device menu because it is the only link-layer action:
+    /// the expected node id binds the handshake, and an admitted device needs
+    /// no join afterwards.
+    async fn network_pair_device(&mut self, device: &str) -> Result<String, String> {
+        let topology = self.networkControl.deviceSpaceTopology()?;
+        let device_id = network_device_id(&topology, device)?;
+        let device_label = network_device_label_by_id(&topology, &device_id)?;
+        self.open_pair_wizard(
+            String::new(),
+            0,
+            String::new(),
+            false,
+            Some((device_id, device_label.clone())),
+        );
+        Ok(self.text().network_pair_device_hint(&device_label))
     }
 
     /// Re-pulls the control snapshot into an open device window, keeping
@@ -3571,11 +3758,13 @@ impl OperitTui {
         let Ok(topology) = self.networkControl.deviceSpaceTopology() else {
             return;
         };
+        let paired = self.paired_device_ids();
         let Some(modal) = self.device_manager.as_mut() else {
             return;
         };
         modal.initialized = state.initialized;
         modal.blocked = state.disconnectedNodeIds;
+        modal.paired = paired;
         modal.roles = state.roles;
         modal.topology = topology;
         modal.requests = requests
@@ -3617,6 +3806,9 @@ impl OperitTui {
             DeviceManagerMode::Browsing => self.handle_device_manager_browse_key(key).await,
             DeviceManagerMode::ActionMenu => self.handle_device_manager_menu_key(key).await,
             DeviceManagerMode::ConfirmRemove => self.handle_device_manager_confirm_key(key).await,
+            DeviceManagerMode::ConfirmUnpair => {
+                self.handle_device_manager_confirm_unpair_key(key).await
+            }
             DeviceManagerMode::AssignIdentity => self.handle_device_manager_assign_key(key).await,
         }
     }
@@ -3741,6 +3933,15 @@ impl OperitTui {
                     }
                     return Ok(());
                 }
+                // Unpairing severs the link the same way the hub's `u` does, so
+                // both paths ask for the same explicit Y.
+                if action == DeviceManagerAction::Unpair {
+                    if let Some(modal) = self.device_manager.as_mut() {
+                        modal.mode = DeviceManagerMode::ConfirmUnpair;
+                        modal.menu_index = 0;
+                    }
+                    return Ok(());
+                }
                 self.run_device_manager_action(&device_id, action).await;
             }
             KeyCode::Esc => {
@@ -3769,6 +3970,37 @@ impl OperitTui {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('1') => {
                 self.run_device_manager_action(&device_id, DeviceManagerAction::Remove)
+                    .await;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('2') | KeyCode::Esc => {
+                if let Some(modal) = self.device_manager.as_mut() {
+                    modal.mode = DeviceManagerMode::Browsing;
+                    modal.menu_device_id = None;
+                    modal.menu_index = 0;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Y/N confirm for unpairing from the device window: the same explicit Y
+    /// the hub's `u` shortcut requires, so neither path severs a pairing on a
+    /// stray key.
+    async fn handle_device_manager_confirm_unpair_key(
+        &mut self,
+        key: KeyEvent,
+    ) -> Result<(), String> {
+        let Some(device_id) = self
+            .device_manager
+            .as_ref()
+            .and_then(|modal| modal.menu_device_id.clone())
+        else {
+            return Ok(());
+        };
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('1') => {
+                self.run_device_manager_action(&device_id, DeviceManagerAction::Unpair)
                     .await;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('2') | KeyCode::Esc => {
@@ -3832,6 +4064,7 @@ impl OperitTui {
     /// only lifts the policy restriction, the link returns on its own.
     async fn run_device_manager_action(&mut self, device_id: &str, action: DeviceManagerAction) {
         let result = match action {
+            DeviceManagerAction::Pair => self.network_pair_device(device_id).await,
             DeviceManagerAction::Admit => self.network_admit_device(device_id).await,
             DeviceManagerAction::Disconnect => self.network_disconnect_device(device_id).await,
             DeviceManagerAction::Unpair => self.network_unpair(device_id).await,
@@ -4062,6 +4295,7 @@ impl OperitTui {
         self.update_list_popup_filter();
         self.show_list_popup = true;
         self.leave_confirm_pending = false;
+        self.unpair_confirm = None;
         self.discover_select_pending = false;
         self.focus = FocusArea::Input;
     }
@@ -4073,6 +4307,8 @@ impl OperitTui {
         self.list_popup_search.clear();
         self.list_popup_filtered_indices.clear();
         self.list_popup_selected_index = 0;
+        self.leave_confirm_pending = false;
+        self.unpair_confirm = None;
         self.discover_select_pending = false;
     }
 
@@ -4117,6 +4353,43 @@ impl OperitTui {
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.leave_confirm_pending = false;
+                self.close_list_popup();
+            }
+            _ => {}
+        }
+    }
+
+    /// Opens the Y/N confirm for unpairing a peer from the hub: one stray key
+    /// must never sever a pairing, so removal waits for an explicit Y.
+    fn network_unpair_confirm(&mut self, device_id: &str, label: &str) {
+        let text = self.text();
+        let items = vec![
+            format!("{}: {}", text.network_unpair_device_label(), label),
+            text.network_unpair_warning(label),
+        ];
+        self.open_list_popup(text.network_unpair_title().to_string(), items);
+        self.unpair_confirm = Some((device_id.to_string(), label.to_string()));
+    }
+
+    /// Y/N confirm for the hub's `u`: Y removes the pairing, N/Esc cancels;
+    /// every other key is consumed so it cannot reach the hub underneath.
+    async fn handle_unpair_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let Some((device_id, label)) = self.unpair_confirm.take() else {
+                    return;
+                };
+                self.close_list_popup();
+                match self.networkControl.removePairedDevice(device_id).await {
+                    Ok(()) => self.set_transient_status_message(
+                        self.text().network_unpair_done(&label),
+                    ),
+                    Err(error) => self.status_message = status_error_line(&error),
+                }
+                self.refresh_network_hub();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.unpair_confirm = None;
                 self.close_list_popup();
             }
             _ => {}
@@ -4843,6 +5116,52 @@ impl OperitTui {
             self.last_runtime_status_refresh_at = Some(now);
             self.refresh_runtime_status().await;
         }
+        if self
+            .last_space_membership_check_at
+            .map(|last| now.saturating_duration_since(last) >= SPACE_MEMBERSHIP_REFRESH_INTERVAL)
+            .unwrap_or(true)
+        {
+            self.last_space_membership_check_at = Some(now);
+            self.check_space_membership_changes();
+        }
+    }
+
+    /// Notices local Space membership changes (a device joined, left, or was
+    /// removed) on the status line. A Space identity change re-seeds silently:
+    /// leaving and joining already report themselves, and the member set
+    /// changes wholesale with them.
+    fn check_space_membership_changes(&mut self) {
+        let Ok(space) = self.networkControl.deviceSpace() else {
+            return;
+        };
+        let members = space.members.iter().cloned().collect::<BTreeSet<_>>();
+        let identity_changed = self
+            .space_identity
+            .as_ref()
+            .is_some_and(|(space_id, _)| space_id != &space.spaceId);
+        let previous = std::mem::replace(&mut self.space_members, members.clone());
+        let seeded = self
+            .space_identity
+            .replace((space.spaceId.clone(), space.spaceName.clone()));
+        if seeded.is_none() || identity_changed {
+            return;
+        }
+        let name_for = self
+            .networkControl
+            .deviceSpaceTopology()
+            .map(|topology| {
+                topology
+                    .devices
+                    .into_iter()
+                    .map(|device| (device.deviceId, device.deviceName))
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+        if let Some(message) =
+            space_membership_notice(self.text(), &previous, &members, &name_for)
+        {
+            self.set_transient_status_message(message);
+        }
     }
 
     async fn refresh_runtime_status(&mut self) {
@@ -5345,16 +5664,240 @@ fn resolve_pending_pairing<'a>(
     }
 }
 
-pub(super) fn join_status_label(status: &SpaceJoinStatus) -> &'static str {
+/// Localized label for a join request's lifecycle state; the hub, the joins
+/// list and the decision popup all render the same word for the same state.
+pub(super) fn join_status_label(text: TuiText, status: &SpaceJoinStatus) -> &'static str {
     match status {
-        SpaceJoinStatus::Pending => "pending",
-        SpaceJoinStatus::Approving => "approving",
-        SpaceJoinStatus::Approved => "approved",
-        SpaceJoinStatus::Rejected => "rejected",
-        SpaceJoinStatus::Cancelled => "cancelled",
-        SpaceJoinStatus::Expired => "expired",
-        SpaceJoinStatus::Joined => "joined",
+        SpaceJoinStatus::Pending => text.network_join_status_pending(),
+        SpaceJoinStatus::Approving => text.network_join_status_approving(),
+        SpaceJoinStatus::Approved => text.network_join_status_approved(),
+        SpaceJoinStatus::Rejected => text.network_join_status_rejected(),
+        SpaceJoinStatus::Cancelled => text.network_join_status_cancelled(),
+        SpaceJoinStatus::Expired => text.network_join_status_expired(),
+        SpaceJoinStatus::Joined => text.network_join_status_joined(),
     }
+}
+
+/// Selectable lines for the discovery popup: one entry per candidate plus the
+/// trailing select hint. Pure so the popup content is testable without a scan.
+pub(super) fn discovery_popup_items(text: TuiText, candidates: &[DiscoveredPeer]) -> Vec<String> {
+    let mut items = candidates
+        .iter()
+        .map(|peer| format!("{} · {} · {}", peer.displayName, peer.nodeId, peer.address))
+        .collect::<Vec<_>>();
+    items.push(text.network_discover_select_hint().to_string());
+    items
+}
+
+/// Rebuilds an open join decision queue from the freshest decidable set:
+/// matching requests are replaced in place (a reviewer reassignment bumps the
+/// assignment version), entries the fetch no longer reports are dropped, and
+/// the selected row follows its request id. Without this a retry would keep
+/// presenting a stale version that the runtime rejects forever.
+pub(super) fn refreshed_decision_queue(
+    current: &[SpaceJoinRequest],
+    fresh: &[SpaceJoinRequest],
+    selected: usize,
+) -> (Vec<SpaceJoinRequest>, usize) {
+    let selected_id = current.get(selected).map(|request| request.requestId.clone());
+    let requests = fresh
+        .iter()
+        .filter(|request| request.canApprove)
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected = selected_id
+        .and_then(|id| requests.iter().position(|request| request.requestId == id))
+        .unwrap_or_else(|| selected.min(requests.len().saturating_sub(1)));
+    (requests, selected)
+}
+
+/// Status suffix for one hub member row. A policy restriction outranks
+/// reachability: a restricted device will not come back on its own, so
+/// "offline; waiting for it to come back" would be a lie there.
+pub(super) fn hub_member_status_label(
+    text: TuiText,
+    blocked: bool,
+    online: bool,
+) -> Option<&'static str> {
+    if blocked {
+        Some(text.network_hub_member_restricted())
+    } else if !online {
+        Some(text.network_devices_offline())
+    } else {
+        None
+    }
+}
+
+/// Localized label for one paired device's status as listed by `/network peers`;
+/// `RemovedFromSpace` is the only way a user learns a peer is paired but no
+/// longer shares this Space.
+pub(super) fn paired_status_label(
+    text: TuiText,
+    status: &RuntimePairedDeviceStatus,
+) -> &'static str {
+    match status {
+        RuntimePairedDeviceStatus::Online => text.network_peer_status_online(),
+        RuntimePairedDeviceStatus::Offline => text.network_peer_status_offline(),
+        RuntimePairedDeviceStatus::Invalid => text.network_peer_status_invalid(),
+        RuntimePairedDeviceStatus::RemovedFromSpace => text.network_peer_status_removed(),
+    }
+}
+
+/// One-line notice for a local Space membership change: who left (or was
+/// removed) and who joined. `None` when the member set is unchanged. Device
+/// names fall back to node ids for members the topology no longer lists.
+pub(super) fn space_membership_notice(
+    text: TuiText,
+    previous: &BTreeSet<String>,
+    current: &BTreeSet<String>,
+    name_for: &BTreeMap<String, String>,
+) -> Option<String> {
+    let render = |ids: &[String]| {
+        ids.iter()
+            .map(|id| name_for.get(id).cloned().unwrap_or_else(|| id.clone()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let left = previous.difference(current).cloned().collect::<Vec<_>>();
+    let joined = current.difference(previous).cloned().collect::<Vec<_>>();
+    let mut notices = Vec::new();
+    if !left.is_empty() {
+        notices.push(text.network_space_members_removed(render(&left)));
+    }
+    if !joined.is_empty() {
+        notices.push(text.network_space_members_added(render(&joined)));
+    }
+    if notices.is_empty() {
+        None
+    } else {
+        Some(notices.join(" · "))
+    }
+}
+
+/// Renders the doctor report as popup lines. Multi-placeholder lines go
+/// through named `render` args: the generated per-key methods take their
+/// placeholders in alphabetical order, which must never be confused with
+/// reading order.
+pub(super) fn space_health_report_lines(text: TuiText, report: &SpaceHealthReport) -> Vec<String> {
+    let flag = |value: bool| {
+        if value {
+            text.network_doctor_yes().to_string()
+        } else {
+            text.network_doctor_no().to_string()
+        }
+    };
+    let policy_state = if report.policyReadable {
+        text.network_doctor_policy_readable()
+    } else {
+        text.network_doctor_policy_unreadable()
+    };
+    let mut items = vec![
+        text.render(
+            TuiTextKey::NetworkDoctorSpace,
+            &[
+                ("space_name", report.spaceName.clone()),
+                ("space_id", report.spaceId.clone()),
+                ("revision", report.spaceRevision.to_string()),
+            ],
+        ),
+        text.render(
+            TuiTextKey::NetworkDoctorPolicy,
+            &[
+                ("state", policy_state.to_string()),
+                ("records", report.recordMembers.len().to_string()),
+                ("replay", report.replayMembers.len().to_string()),
+            ],
+        ),
+    ];
+    for journal in &report.journals {
+        items.push(text.render(
+            TuiTextKey::NetworkDoctorJournal,
+            &[
+                ("device", journal.deviceId.clone()),
+                ("lines", journal.totalLines.to_string()),
+                ("decoded", journal.decodedLines.to_string()),
+                ("findings", journal.findings.len().to_string()),
+            ],
+        ));
+    }
+    items.push(text.render(
+        TuiTextKey::NetworkDoctorProjection,
+        &[
+            ("entries", report.projection.projectionEntries.to_string()),
+            (
+                "journal_only",
+                report.projection.journalOnlyOperationIds.len().to_string(),
+            ),
+            (
+                "projection_only",
+                report.projection.projectionOnlyOperationIds.len().to_string(),
+            ),
+        ],
+    ));
+    for pair in &report.pairs {
+        items.push(text.render(
+            TuiTextKey::NetworkDoctorPeer,
+            &[
+                ("device", pair.deviceId.clone()),
+                ("member", flag(pair.member)),
+                ("online", flag(pair.online)),
+                ("inbound", flag(pair.pairedInbound)),
+                ("outbound", flag(pair.pairedOutbound)),
+            ],
+        ));
+    }
+    // D3 join review state: committed/recoverable/reassignable are the
+    // Approving-exit signals, and only recoverable records are not findings.
+    for join in &report.joins {
+        items.push(text.render(
+            TuiTextKey::NetworkDoctorJoin,
+            &[
+                ("request", join.requestId.clone()),
+                (
+                    "status",
+                    join_status_label(text, &join.status).to_string(),
+                ),
+                (
+                    "reviewer",
+                    join.reviewerDeviceId.clone().unwrap_or_else(|| "-".to_string()),
+                ),
+                ("version", join.assignmentVersion.to_string()),
+                ("committed", flag(join.committed)),
+                ("recoverable", flag(join.recoverable)),
+                ("reassignable", flag(join.reassignable)),
+            ],
+        ));
+    }
+    if report.findings.is_empty() {
+        items.push(text.network_doctor_findings_none().to_string());
+    } else {
+        for finding in &report.findings {
+            items.push(text.render(
+                TuiTextKey::NetworkDoctorFinding,
+                &[
+                    ("severity", finding.severity.clone()),
+                    ("check", finding.check.clone()),
+                    ("summary", finding.summary.clone()),
+                ],
+            ));
+        }
+    }
+    let counters = &report.counters;
+    items.push(text.render(
+        TuiTextKey::NetworkDoctorCounters,
+        &[
+            ("divergences", counters.divergencesDetected.to_string()),
+            ("quarantined", counters.linesQuarantined.to_string()),
+            ("repairs", counters.repairsRun.to_string()),
+            ("failed", counters.repairsFailed.to_string()),
+            ("reconciles", counters.reconcileExchanges.to_string()),
+            ("rounds", counters.reconcileRounds.to_string()),
+            ("incomplete", counters.reconcileIncomplete.to_string()),
+            ("oversize", counters.oversizeOffersRefused.to_string()),
+        ],
+    ));
+    items.push(text.network_doctor_repair_hint().to_string());
+    items
 }
 
 /// Display label for a paired device; the projection carries the human name
@@ -5371,6 +5914,15 @@ fn paired_device_label(device_id: &str, peer: &RuntimePairedDevice) -> String {
 /// CoreLinkError text whose extra lines are a location and backtrace dump.
 fn status_error_line(error: &str) -> String {
     error.lines().next().unwrap_or_default().to_string()
+}
+
+/// Display label of a finished pairing, falling back to its node id.
+fn paired_peer_label(peer: &PairedPeer) -> String {
+    if peer.displayName.is_empty() {
+        peer.nodeId.clone()
+    } else {
+        peer.displayName.clone()
+    }
 }
 
 fn paired_device_direction(inbound: bool, outbound: bool) -> &'static str {
@@ -5390,6 +5942,7 @@ mod tests {
     use operit_node_runtime::RuntimeRemoteLinkService::{
         RuntimeDeviceSpaceIdentity, SpaceJoinStatus,
     };
+    use operit_node_runtime::SpaceDoctor::JoinHealth;
     use std::collections::BTreeSet;
 
     /// Builds a device window fixture: self plus two foreign devices, one
@@ -5404,6 +5957,8 @@ mod tests {
                 model: String::new(),
                 coreVersion: None,
                 online,
+                relayHops: None,
+                relayPath: None,
                 currentIdentity: identity.map(|display_name| RuntimeDeviceSpaceIdentity {
                     displayName: display_name.to_string(),
                     capabilities: Vec::new(),
@@ -5421,6 +5976,7 @@ mod tests {
                 connections: Vec::new(),
             },
             blocked: ["tablet".to_string()].into_iter().collect(),
+            paired: BTreeSet::new(),
             requests: vec![SpaceJoinRequest {
                 requestId: "req-1".to_string(),
                 targetDeviceId: "self".to_string(),
@@ -5471,6 +6027,25 @@ mod tests {
         assert!(!actions.contains(&DeviceManagerAction::Admit));
 
         assert!(modal.menu_actions("self").is_empty());
+    }
+
+    /// Direct-link pairing is link-level: it leads the menu for a member
+    /// without a local pairing, and disappears once the edge exists or the
+    /// device is restricted from connections.
+    #[test]
+    fn device_manager_menu_offers_pairing_only_for_unpaired_members() {
+        let modal = device_manager_fixture();
+        let actions = modal.menu_actions("phone");
+        assert_eq!(actions.first(), Some(&DeviceManagerAction::Pair));
+        assert!(!modal
+            .menu_actions("tablet")
+            .contains(&DeviceManagerAction::Pair));
+
+        let mut paired = device_manager_fixture();
+        paired.paired = ["phone".to_string()].into_iter().collect();
+        assert!(!paired
+            .menu_actions("phone")
+            .contains(&DeviceManagerAction::Pair));
     }
 
     /// Identity actions appear only when they can apply, and only for
@@ -5738,6 +6313,8 @@ mod tests {
             model: String::new(),
             coreVersion: None,
             online,
+            relayHops: None,
+            relayPath: None,
             currentIdentity: None,
         };
         RuntimeDeviceSpaceTopology {
@@ -5814,5 +6391,204 @@ mod tests {
         round_trip("serial", PeerTransport::Serial);
         round_trip("bluetooth", PeerTransport::Bluetooth);
         assert_eq!(peer_transport_label(&PeerTransport::Tcp), "tcp");
+    }
+
+    /// Builds one join request fixture for decision-queue refresh tests.
+    fn join_request_fixture(id: &str, version: u64, can_approve: bool) -> SpaceJoinRequest {
+        SpaceJoinRequest {
+            requestId: id.to_string(),
+            targetDeviceId: "self".to_string(),
+            applicantDeviceId: format!("applicant-{id}"),
+            applicantName: format!("name-{id}"),
+            spaceName: "Space".to_string(),
+            status: SpaceJoinStatus::Pending,
+            createdAt: 0,
+            expiresAt: i64::MAX,
+            canApprove: can_approve,
+            reviewerDeviceId: Some("self".to_string()),
+            reviewerName: None,
+            reviewerHops: None,
+            assignmentVersion: version,
+            decisionApprove: None,
+        }
+    }
+
+    /// A reviewer reassignment bumps the assignment version; the refreshed
+    /// queue must present the new version, because the runtime rejects a
+    /// decision on the cached one forever.
+    #[test]
+    fn decision_queue_refresh_replaces_stale_versions() {
+        let current = vec![
+            join_request_fixture("req", 1, true),
+            join_request_fixture("gone", 1, true),
+        ];
+        let fresh = vec![join_request_fixture("req", 2, true)];
+        let (requests, selected) = refreshed_decision_queue(&current, &fresh, 0);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].requestId, "req");
+        assert_eq!(requests[0].assignmentVersion, 2);
+        assert_eq!(selected, 0);
+    }
+
+    /// The selected row follows its request id across the refresh, withdrawn
+    /// or no-longer-decidable requests disappear, and an empty result lets
+    /// the popup close instead of holding a ghost entry.
+    #[test]
+    fn decision_queue_refresh_keeps_selection_and_drops_withdrawn() {
+        let current = vec![
+            join_request_fixture("a", 1, true),
+            join_request_fixture("b", 1, true),
+        ];
+        let fresh = vec![
+            join_request_fixture("b", 3, true),
+            join_request_fixture("c", 1, true),
+            join_request_fixture("not-mine", 1, false),
+        ];
+        let (requests, selected) = refreshed_decision_queue(&current, &fresh, 1);
+        let ids = requests
+            .iter()
+            .map(|request| request.requestId.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["b", "c"]);
+        assert_eq!(selected, 0);
+
+        let (empty, selected) = refreshed_decision_queue(&current, &[], 1);
+        assert!(empty.is_empty());
+        assert_eq!(selected, 0);
+    }
+
+    /// The discovery popup lists every candidate and keeps the select hint
+    /// as the trailing (unselectable by count) line.
+    #[test]
+    fn discovery_items_end_with_the_select_hint() {
+        let text = TuiLanguage::English.text();
+        let candidates = vec![
+            DiscoveredPeer {
+                nodeId: "n1".to_string(),
+                address: "10.0.0.2:8080".to_string(),
+                displayName: "phone".to_string(),
+            },
+            DiscoveredPeer {
+                nodeId: "n2".to_string(),
+                address: "10.0.0.3:8080".to_string(),
+                displayName: "tablet".to_string(),
+            },
+        ];
+        let items = discovery_popup_items(text, &candidates);
+        assert_eq!(items.len(), 3);
+        assert!(items[0].contains("phone") && items[0].contains("n1"));
+        assert!(items[1].contains("tablet") && items[1].contains("n2"));
+        assert_eq!(items[2], text.network_discover_select_hint());
+    }
+
+    /// The health report renders the D3 signals that carry the Approving
+    /// exit - committed/recoverable/reassignable - plus the reconciliation
+    /// counters, so the TUI can observe the new core behavior.
+    #[test]
+    fn doctor_lines_report_join_health_and_counters() {
+        let text = TuiLanguage::English.text();
+        let report = SpaceHealthReport {
+            localNodeId: "self".to_string(),
+            spaceId: "space-1".to_string(),
+            spaceName: "Home".to_string(),
+            spaceRevision: 7,
+            policyReadable: true,
+            policyError: None,
+            recordMembers: vec!["self".to_string()],
+            replayMembers: vec!["self".to_string(), "phone".to_string()],
+            pairs: Vec::new(),
+            joins: vec![JoinHealth {
+                requestId: "req-1".to_string(),
+                applicantDeviceId: "phone".to_string(),
+                status: SpaceJoinStatus::Approving,
+                reviewerDeviceId: Some("tab".to_string()),
+                assignmentVersion: 2,
+                approvedDecision: Some(true),
+                committed: true,
+                recoverable: true,
+                reassignable: false,
+            }],
+            journals: Vec::new(),
+            projection: Default::default(),
+            clockAnomalies: Vec::new(),
+            findings: Vec::new(),
+            counters: Default::default(),
+            repair: None,
+        };
+        let lines = space_health_report_lines(text, &report);
+        let joined = lines.join("\n");
+        assert!(joined.contains("Home"), "space identity must render: {joined}");
+        assert!(joined.contains("readable"), "policy state must render: {joined}");
+        assert!(
+            joined.contains("req-1") && joined.contains("recoverable=yes"),
+            "join health must render: {joined}"
+        );
+        assert!(joined.contains("reconciles=0"), "counters must render: {joined}");
+        assert!(joined.contains("Findings: none"), "findings must render: {joined}");
+        assert!(joined.contains("--repair"), "the CLI repair hint must render: {joined}");
+    }
+
+    /// The hub status tag must call out a policy restriction instead of
+    /// pretending the device is merely offline: it will not return by itself.
+    #[test]
+    fn hub_status_prefers_restricted_over_offline() {
+        let text = TuiLanguage::English.text();
+        assert_eq!(
+            hub_member_status_label(text, true, true),
+            Some(text.network_hub_member_restricted())
+        );
+        assert_eq!(
+            hub_member_status_label(text, false, false),
+            Some(text.network_devices_offline())
+        );
+        assert_eq!(hub_member_status_label(text, false, true), None);
+    }
+
+    /// `/network peers` names every status, including the pairing-only case
+    /// where the peer is no longer in this Space.
+    #[test]
+    fn paired_status_labels_cover_every_state() {
+        let text = TuiLanguage::English.text();
+        assert_eq!(
+            paired_status_label(text, &RuntimePairedDeviceStatus::Online),
+            text.network_peer_status_online()
+        );
+        assert_eq!(
+            paired_status_label(text, &RuntimePairedDeviceStatus::Offline),
+            text.network_peer_status_offline()
+        );
+        assert_eq!(
+            paired_status_label(text, &RuntimePairedDeviceStatus::Invalid),
+            text.network_peer_status_invalid()
+        );
+        assert_eq!(
+            paired_status_label(text, &RuntimePairedDeviceStatus::RemovedFromSpace),
+            text.network_peer_status_removed()
+        );
+    }
+
+    /// A membership change names the devices that left and joined; a departed
+    /// device keeps its node id because the topology no longer lists it.
+    #[test]
+    fn space_membership_notice_names_changed_members() {
+        let text = TuiLanguage::English.text();
+        let previous = BTreeSet::from(["self".to_string(), "old".to_string()]);
+        let current = BTreeSet::from(["self".to_string(), "new".to_string()]);
+        let names = BTreeMap::from([("new".to_string(), "phone".to_string())]);
+        assert_eq!(
+            space_membership_notice(text, &previous, &previous, &names),
+            None
+        );
+        let notice = space_membership_notice(text, &previous, &current, &names)
+            .expect("a changed member set must produce a notice");
+        assert!(notice.contains("old"), "departed id must be named: {notice}");
+        assert!(
+            notice.contains("phone"),
+            "joined device must use its name: {notice}"
+        );
+        assert!(
+            notice.contains(" · "),
+            "both sides must share one notice: {notice}"
+        );
     }
 }
