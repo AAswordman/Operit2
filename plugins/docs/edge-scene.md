@@ -254,5 +254,7 @@ Core 监听入口和传输协议见 [edge-events.md](edge-events.md)，不再限
   持久化互动与游标后返回 `{accepted:true,next:batch.next}`。
 - 只有发生事件才唤醒 worker；没有事件不轮询、不发 RPC。保活与输入完全独立。
 - 旧 Space 的接收方不带入新 Space；旧 stream ACK 不改变新 stream；ACK 丢失只重送事件。
-- 当前 PR 尚未合并的 `chatEdgeSceneEvent` / `on_edge_scene_event` 协议已替换，
+- 早期开发版本的 `chatEdgeSceneEvent` / `on_edge_scene_event` 协议已替换，
   示例、固件与 Core 必须同时更新；没有保留屏幕专用旁路。
+
+插件开发、素材适配、模拟器联调与发布步骤见 [Edge 插件作者指南](edge-plugin-guide.md)。

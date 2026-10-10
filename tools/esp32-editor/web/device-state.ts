@@ -1,4 +1,6 @@
 export interface DeviceState {
+    error?: string;
+    address?: string;
     scene?: {
         active: boolean;
         revision: number;
@@ -66,11 +68,11 @@ export function simulatorViewState(state: {
     ready?: boolean;
     device?: DeviceState | null;
 }): DeviceState {
-    const device = state.device;
+    const device = state.ready === true ? state.device : null;
     return {
         running: state.ready === true, connected: device?.chat?.connected === true, paired: device?.paired === true,
-        pairingCode: device?.pairingCode ?? '', spaceState: device?.chat?.connected ? '已连接 Operit' : '等待连接 Operit',
-        spaceJoinPrompt: device?.spaceJoinPrompt ?? '', spaceJoinBusy: false,
+        pairingCode: device?.pairingCode ?? '', spaceState: simulatorConnectionLabel(device),
+        spaceJoinPrompt: device?.spaceJoinPrompt ?? '', spaceJoinBusy: device?.spaceJoinBusy ?? false,
         spaceJoinRequestId: device?.spaceJoinRequestId,
         spaceJoinAssignmentVersion: device?.spaceJoinAssignmentVersion,
         chatPreview: device?.chatPreview ?? '尚未连接对话',
@@ -78,4 +80,27 @@ export function simulatorViewState(state: {
         plugins: device?.plugins, chat: device?.chat, chatScreen: device?.chatScreen, chatTask: device?.chatTask,
         chatSendResult: device?.chatSendResult,
     };
+}
+
+/** Chat readiness is not evidence of Space membership or data replication. */
+export function simulatorConnectionLabel(device?: DeviceState | null): string {
+    if (device?.pairingCode) return '等待在 Core 输入配对码';
+    if (device?.spaceJoinPrompt) return '等待设备空间审批';
+    if (device?.chat?.connected) return 'Core 对话已就绪';
+    if (device?.paired) return '已配对，等待 Core 对话';
+    return '等待配对';
+}
+
+export interface SimulatorStatus {
+    ready?: boolean;
+    running?: boolean;
+    output?: string;
+    token?: string;
+    device?: DeviceState | null;
+}
+
+export function simulatorStatusLabel(state: SimulatorStatus): string {
+    if (!state.ready) return state.running ? '正在启动模拟设备…' : '模拟设备已停止';
+    const connection = simulatorConnectionLabel(state.device);
+    return state.device?.error ? `${connection} · ${state.device.error}` : connection;
 }

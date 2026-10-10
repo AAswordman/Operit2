@@ -1,9 +1,9 @@
 # Agent UI editing contract
 
-> 当前后端说明（2026-10-06）：UI 已删除，唯一渲染器是
+> 当前能力说明（2026-10-10）：唯一系统 UI 渲染器是
 > `apps/esp32/ui_port/operit_mini_ui.c`，C ABI 为 `operit_ui_*`。
 > 以下布局/组件协议保留为草稿与存储工具；当前固定自绘 UI 不应用布局包，
-> 不提供拖拽控件、旧侧栏、软键盘或图片预览。实现新屏幕需修改自绘 C 源码并重建。
+> 固定 UI 不应用布局草稿，不提供拖拽控件或软键盘。聊天图片预览和插件场景是独立能力；系统页面修改需重建，插件场景使用 Core 上的 Tools.Edge。
 > 历史控件布局能力不能视为当前设备能力；以 `/api/board` capabilities 为准。
 
 
@@ -67,7 +67,7 @@ Windows/macOS/Linux Agents can use HTTP or MCP. Android/iOS/Web/OHOS Agents use 
 
 ## Data and firmware
 
-Version 1 supports the current board's 320×240 layout, up to 24 nodes and a conservative complexity budget of 40. Nested children reference a preceding `panel`; coordinates are relative to their parent. Bounds, unique IDs, supported widget types, actions, and strings are validated before writes. The current embedded font supports ASCII; arbitrary C code and file paths cannot be submitted through layout operations.
+Version 1 supports the current board's 320×240 layout, up to 24 nodes and a conservative complexity budget of 40. Nested children reference a preceding `panel`; coordinates are relative to their parent. Bounds, unique IDs, supported widget types, actions, and strings are validated before writes. The draft validator's text constraints do not describe the fixed UI's built-in Chinese font; arbitrary C code and file paths cannot be submitted through layout operations.
 
 Layouts are independent Editor drafts, not firmware UI descriptors. The fixed renderer does not apply layout documents; layout deployment is rejected before contacting a device. Screen code changes require rebuilding the shared C renderer. Build failures remain visible, and the previous successful preview is retained.
 
@@ -96,17 +96,17 @@ The component attachment now includes `codeReference.location` (path, 1-based st
 
 The user's request is to implement behavior in the project, not merely generate route JSON. Read the referenced files, modify the selected component's binding and implement any needed page/command code and registered routes, then validate and build both targets. The JSON proposal example above is an optional compatibility path for small binding-only edits. New unsaved components have no file line number (`location:null`); their ID, draft pointer and full draft document identify them without inventing a saved position.
 
-## v2 项目与直接部署
+## v2 草稿格式与导出（当前固件不应用）
 
-当前默认项目为 v2：根 nodes/background 是 home，pages 是附加页面（总数最多12），entryPage 是启动页；每页24组件、复杂度40。组件 ID 全项目唯一，parent 同页且指向前面的 panel。节点可设 binding clock/connection/expression，fontSize14/48。路由 `go:页面ID` 无需重新编译；swipeLeft/swipeRight 是目标页面 ID。
+当前默认项目为 v2：根 nodes/background 是 home，pages 是附加页面（总数最多12），entryPage 是启动页；每页24组件、复杂度40。组件 ID 全项目唯一，parent 同页且指向前面的 panel。节点可设 binding clock/connection/expression，fontSize14/48。草稿路由 `go:页面ID` 仅用于草稿描述，不改变当前设备页面；swipeLeft/swipeRight 是目标页面 ID。
 
 补丁新增 `addPage {page}`、`updatePage {id,changes}`、`removePage {id}`；`add` 可带 pageId。删除页面清除所有入向路由，首页/当前启动页不能直接删除。矩阵推荐 panel+独立 child button；不要把用户交互做成不可选中的内部控件。
 
-保存是修改真实 `apps/esp32/ui/layout.json` 源文件，不自动改写 C，也不启动编译。`src/layout/package-layout.mts` 生成设备 OUI2 数据包，普通用户通过网页下发，或 POST `/api/deploy/layout`。只有新硬件能力才修改 C/Rust 并显式构建基础运行时。部署协议详见 FRONTEND.md。共享运行时支持的数据约束不可在网页单独放宽。
+保存只修改 `apps/esp32/ui/layout.json` 草稿，不自动改写 C，不启动编译，也不应用到固定 UI。`package-layout.mts` 仅导出 OUI2 草稿；`/api/deploy/layout` 与 `/api/deploy/usb-layout` 当前在联系设备前拒绝。改变系统页面需修改 C/Rust 并显式构建；插件素材/业务更新则走 Core ToolPkg 和 `Tools.Edge`。详见 FRONTEND.md 与 `plugins/docs/edge-plugin-guide.md`。
 
 AI 开发任务 kind `operit.hardware.task` 带 task/context；context 包含当前完整草稿、页面/组件ID、JSON pointer、实际源码行号与 revision。默认发到软件当前对话；独立API通过 `/api/ai/develop` 返回审阅提案。密钥不得写入项目。
 
-USB 离线部署：在“部署到设备”刷新串口，选择 COM 口，点击“USB 下发布局，无需编译”。后端先读取设备分区表和两个布局槽位，核对地址/尺寸/CRC/版本，只覆盖非当前槽位并递增版本；不改程序分区或 NVS。临时读取文件和布局文件结束后删除。接口为 `POST /api/deploy/usb-layout {port,document}`，状态仍用 `GET /api/deploy/flash`。与 Wi-Fi 热更新不同，USB 使用 ROM 引导器，会重启设备。
+USB 当前仅用于安装已构建固件。历史双槽布局部署不可作为当前设备能力；草稿导出不会改变固件。
 
 
 ## 真机 USB 读屏与点击（与模拟器分开）

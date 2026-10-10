@@ -18,15 +18,15 @@
         <div>
           <h1>Operit <span>Screen Studio</span>
           </h1>
-          <p>设备界面工作区</p>
+          <p>ESP32 固定 UI 与插件场景调试</p>
         </div>
       </div>
       <div class="header-actions">
         <span class="badge">
           <i>
           </i>自绘 UI 同源预览</span>
-        <button id="open-deploy">部署到设备</button>
-        <button id="open-ai">AI 开发</button>
+        <button id="open-deploy" disabled title="当前固定预览未启用部署面板；固件安装使用 npm run flash">固件安装</button>
+        <button id="open-ai" disabled title="当前固定 UI 未启用草稿 AI 编辑">草稿 AI 编辑</button>
         <button id="save-layout" class="primary" disabled>保存项目</button>
       </div>
     </header>
@@ -44,21 +44,21 @@
         <div class="panel-body">
           <label class="search-label">
             <span class="sr-only">搜索组件</span>
-            <input id="component-search" type="search" placeholder="搜索组件名称…">
+            <input id="component-search" type="search" disabled placeholder="搜索组件名称…">
           </label>
-          <p class="note">当前自绘 UI 暂不支持拖拽布局</p>
+          <p class="note">固定 UI 不支持拖拽布局；组件项目仅保留为历史草稿</p>
           <div id="component-list">
           </div>
           <p id="search-empty" hidden>没有找到组件，试试“按钮”或 slider。</p>
         </div>
       </nav>
       <section class="preview" aria-label="画布">
-        <div class="page-toolbar"><label>当前页面<select id="page-picker" aria-label="当前编辑页面"></select></label><button
-            id="manage-pages">页面 / 关系图</button></div>
+        <div class="page-toolbar"><label>草稿页面<select id="page-picker" aria-label="历史草稿页面" disabled></select></label><button
+            id="manage-pages" disabled title="固定 UI 不应用草稿页面">页面 / 关系图</button></div>
         <div class="canvas-toolbar">
           <label class="mode-switch">
-            <input id="edit-mode" type="checkbox">
-            <span>编辑布局</span>
+            <input id="edit-mode" type="checkbox" disabled>
+            <span>布局编辑未启用</span>
           </label>
           <div class="history-actions">
             <button id="undo-layout" title="撤销 Ctrl+Z" aria-label="撤销" disabled>↶</button>
@@ -83,7 +83,7 @@
             <div class="device">
               <div class="screen-wrap">
                 <canvas id="screen" width="320" height="240" tabindex="0" role="application"
-                  aria-label="ESP32 屏幕。编辑模式下拖动组件；运行模式下触摸操作 自绘 UI">
+                  aria-label="ESP32 固定 UI 预览。点击屏幕操作模拟设备；插件场景由 Core 下发">
                 </canvas>
                 <div id="grid">
                 </div>
@@ -96,7 +96,7 @@
           </div>
         </div>
         <div class="selection-toolbar">
-          <span id="selection-name">选择组件开始编辑</span>
+          <span id="selection-name">固定 UI 触摸调试</span>
           <div>
             <button id="inspect-node" class="mobile-only">属性</button>
             <button id="component-logic" disabled>功能 / AI</button>
@@ -104,7 +104,7 @@
             <button id="delete-node" disabled>删除</button>
           </div>
         </div>
-        <p id="editor-status" role="status" aria-live="polite">正在加载布局…</p>
+        <p id="editor-status" role="status" aria-live="polite">正在加载设备 UI 预览…</p>
         <div class="screen-toolbar">
           <div>
             <button id="home">运行首页</button>
@@ -120,7 +120,7 @@
           </span>
           <span id="render-time">—</span>
         </div>
-        <p class="hint">拖动移动 · 右键 / 长按配置功能 · 方向键微调</p>
+        <p class="hint">点击屏幕操作模拟设备；桌宠场景需在 Core 启用插件后下发</p>
       </section>
       <aside class="inspector panel">
         <nav class="inspector-tabs" aria-label="检查面板">
@@ -130,35 +130,34 @@
         </nav>
         <section id="pane-properties" data-pane="properties">
           <div class="section-top">
-            <strong>组件属性</strong>
+            <strong>组件属性（历史草稿）</strong>
             <span class="pill">px</span>
           </div>
           <div class="panel-body">
-            <div id="properties">
-            </div>
-            <p class="note">屏幕文本目前支持英文、数字与符号。</p>
+            <div id="properties">当前固定 UI 未启用组件编辑。</div>
+            <p class="note">固定 UI 使用内置中文与数字字库；图片通过 Core 聊天预览或插件场景呈现。</p>
           </div>
           <div class="section-top">
             <strong>画布设置</strong>
           </div>
           <div class="panel-body">
-            <label class="toggle">启用项目页面<input id="layout-enabled" type="checkbox">
+            <label class="toggle">启用项目页面<input id="layout-enabled" type="checkbox" disabled>
             </label>
-            <label class="color-field">画布背景<input id="layout-bg" type="color">
+            <label class="color-field">画布背景<input id="layout-bg" type="color" disabled>
             </label>
-            <p class="note">首页与其他页面都保存在同一项目中。保存项目后可直接布局部署不支持。</p>
+            <p class="note">历史布局 JSON 不会应用到当前固定 UI；修改系统页面需更新 C 源码并重建。</p>
           </div>
         </section>
         <section id="pane-layers" data-pane="layers" hidden>
           <div class="section-top">
             <strong>图层</strong>
-            <span id="node-count" class="pill">0 / 24</span>
+            <span id="node-count" class="pill">草稿工具未启用</span>
           </div>
           <div class="panel-body">
             <div id="layers">
             </div>
-            <p class="note">选择图层定位组件。父容器可在设计面板中调整。</p>
-            <button id="reload-layout" class="full-width">重新读取布局</button>
+            <p class="note">历史组件图层不用于 Core 插件场景；场景图层由插件通过 Tools.Edge 更新。</p>
+            <button id="reload-layout" class="full-width" disabled>草稿读取未启用</button>
           </div>
         </section>
         <section id="pane-device" data-pane="device" hidden>
@@ -178,13 +177,13 @@
                   <option value="circle">圆形</option>
                 </select>
               </label>
-              <p class="note">主题切换将进入内置页面；草稿配色在设计面板调整。</p>
+              <p class="note">主题和图标切换当前未启用；表情由设备状态驱动。</p>
             </details>
             <details>
-              <summary>设备状态</summary>
-              <label class="toggle">Wi-Fi 连接<input id="wifi" type="checkbox" checked>
+              <summary>状态预览</summary>
+              <label class="toggle">预览联网状态<input id="wifi" type="checkbox" checked>
               </label>
-              <label class="toggle">Edge 已配置<input id="edge" type="checkbox">
+              <label class="toggle">Core 对话已就绪<input id="edge" type="checkbox">
               </label>
               <label>表情<select id="expression">
                   <option>neutral</option>
@@ -199,7 +198,7 @@
               <summary>渲染与导出</summary>
               <label>色彩格式<select id="color">
                   <option value="rgb565">RGB565 · 实体屏</option>
-                  <option value="rgb332">RGB332 · 远程镜像</option>
+                  <option value="rgb332">RGB332 · 浏览器色彩对照</option>
                 </select>
               </label>
               <label>刷新上限<select id="fps">
@@ -210,14 +209,14 @@
               </label>
               <div class="actions">
                 <button id="capture">导出 320 × 240 PNG</button>
-                <button id="reset">重启模拟</button>
+                <button id="reset">刷新预览页</button>
               </div>
             </details>
             <details open>
               <summary>基础运行时</summary>
               <p id="build-status" role="status">检查构建状态…</p>
-              <p class="note">页面和跳转修改无需编译。修改底层 C / Rust 能力时，由开发环境运行
-                <code>npm run build:firmware --prefix tools/esp32-editor</code>，更新基础运行时。</p>
+              <p class="note">修改系统 UI 或固件能力需由开发环境运行
+                <code>npm run build:firmware --prefix tools/esp32-editor</code>，构建后另行烧录。JS 插件逻辑与场景素材可通过现有接口更新，无需重编固件。</p>
             </details>
             <details class="console">
               <summary>事件日志</summary>
@@ -254,7 +253,7 @@
       </div><button id="pages-close" aria-label="关闭页面管理">×</button>
     </div>
     <div class="dialog-body">
-      <p class="note">点击页面节点切换编辑目标。连线来自组件跳转与滑动设置；新增页保存在项目中，按需建立入口。</p>
+      <p class="note">历史页面关系仅描述草稿；当前固定 UI 不应用新增页或草稿跳转。</p>
       <div id="page-graph"></div>
       <div class="page-settings"><label>启动页面<select id="entry-page"></select></label><label>当前页面名称<input id="page-name"
             maxlength="40"></label><label>左滑到<select id="page-swipe-left"></select></label><label>右滑到<select
@@ -274,21 +273,21 @@
       </div><button id="deploy-close" aria-label="关闭部署">×</button>
     </div>
     <div class="dialog-body">
-      <p>日常修改：编辑 → 保存项目 → 下发布局。设备执行同一份布局及按钮跳转，不启动编译器。</p>
+      <p>当前固件不支持布局包部署。系统 UI 修改需重建固件；插件场景通过 Core 的 Tools.Edge 下发。</p>
       <div class="dialog-actions"><button id="export-layout">导出项目 JSON</button><button
-          id="export-package">下载设备布局包</button></div>
+          id="export-package">导出 OUI2 草稿</button></div>
       <label>设备地址<input id="device-address" placeholder="http://192.168.1.50" autocomplete="off"></label>
       <div class="dialog-actions"><button id="connect-device">检查连接</button><button id="deploy-layout"
           class="primary" disabled>布局部署不支持</button></div>
       <p id="deploy-feedback" role="status"></p>
       <details open>
-        <summary>USB 布局部署 / 首次安装</summary>
-        <p>用数据线连接电脑，选择 ESP32 串口。烧录开发者已生成的基础固件，不启动编译。默认清理程序分区，保留 Wi-Fi、配对信息和布局；需要清掉历史设备数据时勾选下方选项。烧录过程中请勿断电。</p>
+        <summary>USB 固件安装</summary>
+        <p>用数据线连接电脑，选择 ESP32 串口。烧录开发者已生成的基础固件，不启动编译。默认清理程序分区，保留 Wi-Fi、配对身份和空间状态；需要清掉历史设备数据时勾选下方选项。烧录过程中请勿断电。</p>
         <div class="dialog-actions"><select id="flash-port" aria-label="ESP32 串口"></select><button
             id="refresh-ports">刷新串口</button></div>
-        <div class="dialog-actions"><button id="usb-layout" class="primary">USB 布局部署不支持</button><button
+        <div class="dialog-actions"><button id="usb-layout" class="primary" disabled>USB 布局部署不支持</button><button
             id="flash-runtime">安装 / 更新基础固件</button></div>
-        <label><input type="checkbox" id="flash-reset-data"> 清空设备后重新安装（删除 Wi-Fi、配对身份、空间状态和布局，需确认）</label>
+        <label><input type="checkbox" id="flash-reset-data"> 清空设备后重新安装（删除 Wi-Fi、配对身份、空间状态和旧布局数据，需确认）</label>
         <pre id="flash-output"></pre>
       </details>
     </div>
@@ -338,7 +337,7 @@
           placeholder="例如：点击打开网络设置页，并实现返回上一页的逻辑" maxlength="2000"></textarea>
         <div class="dialog-actions"><button id="component-send" class="primary">发送组件到对话</button><button
             id="component-copy">复制源码引用</button></div>
-        <p class="note">AI 根据源码引用修改布局、事件绑定和路由实现，布局直接预览和部署；新增底层能力才需开发者构建基础运行时。</p>
+        <p class="note">布局与事件绑定仅保留为草稿；当前固定 UI 不应用草稿。系统页面改动需重建，插件场景由 Core 通过 Tools.Edge 下发。</p>
       </section>
       <details class="route-fields">
         <summary>手动配置现有路由</summary><label>点击执行<select id="component-click-route"></select></label><label>长按执行<select

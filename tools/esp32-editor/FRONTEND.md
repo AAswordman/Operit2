@@ -1,11 +1,12 @@
 # Screen Studio 前端与软件内嵌约定
 
-> 当前后端说明（2026-10-06）：UI 已删除，唯一渲染器是
+> 当前能力说明（2026-10-10）：唯一系统 UI 渲染器为
 > `apps/esp32/ui_port/operit_mini_ui.c`，C ABI 为 `operit_ui_*`。
-> 以下布局/组件协议保留为草稿与存储工具；当前固定自绘 UI 不应用布局包，
-> 不提供拖拽控件、软键盘或图片预览。左侧抽屉、设置、插件占位页和 SVG 表情屏由共用 C 实现；SVG 构建为固定绘制指令。实现新屏幕需修改自绘 C 源码并重建。
-> 历史控件布局能力不能视为当前设备能力；以 `/api/board` capabilities 为准。
-
+> 固定 UI 不应用布局/OUI2 草稿，不提供拖拽控件或软键盘。侧栏、设置、
+> Core 插件列表与详情及状态表情由共享 C 实现。系统页面修改需重建。
+> 聊天图片与插件场景是独立能力：图片原件送至 Core，设备显示有界预览；
+> 可选 `display.scene` 提供像素素材、本地动画与事件。草稿 API 不能代替场景 API。
+> 网页只模拟当前 ESP32 板型；Core 的通用 Edge 路由与事件不依赖板型。
 
 目标是让用户在 Operit 对话中要求 AI 修改硬件界面，并在同一个编辑器里看到结果。
 当前提供独立 Web 编辑器、HTTP/MCP 布局接口、独立模型 API，以及 Flutter 工作区浏览器到当前对话的桥接源码。
@@ -25,15 +26,15 @@
 | 用户硬件界面的持久化设计 | `../../apps/esp32/ui/layout.json` |
 | 控件实际绘制、字体、动作 | `../../apps/esp32/ui_port/operit_mini_ui.c` |
 
-修改网页 CSS 只改变编辑器，不改变设备画面。修改设备布局请通过布局 API 或编辑 JSON；扩展控件行为则修改共用 C 实现。
+修改网页 CSS 只改变编辑器，不改变设备画面。布局 API 或 JSON 修改只保存草稿；修改当前设备系统页面需编辑共用 C 实现并重建。插件场景由 Core JS/TS 通过 `Tools.Edge` 更新。
 不要手改 `generated/` 产物；当前固件不生成或应用布局描述头文件。新增前端模块必须同时注册 `src/server.mts` 的静态路由。
 
-## 对话 → 布局 → 固件
+## 布局草稿工具（当前固件不应用）
 
 1. AI 调用 `GET /api/components` 和 `GET /api/layout`，读取能力、文档与 revision。
 2. AI 使用 `PATCH /api/layout` 提交结构化操作及 revision，后端校验布局、资源预算和版本冲突。
-3. 编辑器每两秒读取最新版本；页面在后台时暂停读取。无草稿时更新画布，有草稿时保留本地内容并提示冲突。
-4. 保存只写 JSON；部署打包为 OUI2 数据，下发设备，不编译。底层 C/Rust 修改才由开发者显式构建运行时。
+3. 这些接口用于草稿存储与校验；当前固定 UI 页面未启用布局编辑器，也不会把 JSON 更新渲染到设备画布。
+4. 保存只写 JSON；OUI2 仅供草稿导出，当前 Wi-Fi/USB 布局部署在联系设备前拒绝。系统 C/Rust 修改由开发者显式构建运行时。
 5. 烧录保持独立操作；构建成功不等于已烧入设备。
 
 现有 Agent/MCP 工具及请求示例见 [AGENT_API.md](AGENT_API.md)。以后软件中的不同模型共用这些工具和校验，不需要各写一套布局解释器。
@@ -106,18 +107,35 @@ window.operitHost.sendToChat = async payload => {
 
 宿主的 `sendToChat(payload)` 应把代码引用显示为对话附件或引用卡片，需求作为用户输入；无需在宿主中解释或执行模型生成的代码。拥有工作区工具的 AI 根据引用阅读/编辑源码，再通过现有编译流程验证。行号可能随着编辑改变，必须用组件 ID 和版本复核。接入 `request` 的宿主也需转发新的 `/api/component-source` 路径。
 
-## 多页面和部署
+## 草稿格式与当前固件安装
 
-`src/layout/project-model.mts` 管理页面、动态路由和矩阵展开；`pages.js` 提供页面关系图；`src/layout/geometry.mts` 提供四角缩放。`ai.js` / `src/api/ai-api.mts` 支持默认软件对话及独立 Chat Completions 接口，可读取固定项目源文件，提出布局操作/精确源码替换，审阅后应用。后端上限、revision 和唯一替换校验防止过期修改。
+`src/layout/project-model.mts` 与 `package-layout.mts` 保留 v2 草稿模型、校验及
+OUI2 导出。`pages.js`、`editor.js` 等模块是历史草稿工具，当前固定 UI 不启用布局编辑。
+导出 JSON/OUI2 不表示已改变设备画面。`POST /api/deploy/layout` 和
+`POST /api/deploy/usb-layout` 当前会拒绝，不存在无需编译的系统页面部署流程。
 
-`src/layout/package-layout.mts` 将 v2 JSON 打包成 OUI2（16字节头：magic/数据长度/CRC32/协议号），不使用编译器。`deploy.js` / `src/api/deploy-api.mts` 提供设备检查、下发、项目/布局包导出和现成固件串口烧录。软件宿主若替换 transport，应代理 `/api/deploy/*` 和 `/api/ai/*`。手机连接电脑可用安全端口转发；默认服务仍只监听127.0.0.1。
+当前相关接口：
 
-- `GET /api/deploy/ports`、`GET /api/deploy/flash` 查询串口/烧录状态。
-- `POST /api/deploy/flash {port}` 使用现有 dist 二进制，不构建，不擦除整个Flash。
-- `GET /api/deploy/device?address=http://...` 检查协议与设备布局版本。
-- `POST /api/deploy/layout {address,token,document}` 直接部署当前草稿，返回 accepted/bytes/previousRevision；前端轮询确认新版本才显示部署完成。
-- `POST /api/deploy/package {document}` 下载 `.oui`。
+- `GET /api/deploy/ports`、`GET /api/deploy/flash` 查询串口与烧录状态。
+- `POST /api/deploy/flash {port}` 安装已构建固件，不启动编译。默认擦除并重写程序分区，保留 NVS。
+- `GET /api/deploy/device?address=http://...` 查询设备能力；`dynamicLayout:false` 表示不能应用布局包。
+- `POST /api/deploy/package {document}` 仅导出历史 `.oui` 草稿。
 
-整个系统不缓存聊天记录/历史布局；撤销20步在内存。设备双槽用于掉电恢复，不是无限历史。
+显式清空设备使用已有 `resetData` / `confirmReset` 流程，删除配对、空间状态和
+历史设备数据，需要重新配置；Core 端存档不会因此被清空。操作细节见 README。
 
-USB 离线部署：在“部署到设备”刷新串口，选择 COM 口，点击“USB 下发布局，无需编译”。后端先读取设备分区表和两个布局槽位，核对地址/尺寸/CRC/版本，只覆盖非当前槽位并递增版本；不改程序分区或 NVS。临时读取文件和布局文件结束后删除。接口为 `POST /api/deploy/usb-layout {port,document}`，状态仍用 `GET /api/deploy/flash`。与 Wi-Fi 热更新不同，USB 使用 ROM 引导器，会重启设备。
+## 模拟器与插件场景
+
+`simulator.js` 自动请求启动本机 Rust 模拟器，提供生命周期、TCP/Token 与开发日志。
+固定 C/Wasm UI 承接触摸并发送现有 action；`device-state.js` 映射真实状态，
+分别显示配对、等待空间审批和 Core 对话就绪，不能把对话连接当成数据同步完成。
+刷新网页不是重启模拟器；停止/启动按钮才控制 Rust 进程。
+
+`scene-renderer.js` 通过开发镜像 `/api/simulator/scene-view` 显示模拟器场景；
+这是网页开发功能，不是市场插件接口。插件仍使用 Core 上的 JS/TS、
+`Tools.Edge.execute` 和 `on_edge_event`，通过现有 Space/Binding 与端侧通信。
+显示协议与渲染位于端侧可选库 `hosts/common/operit-edge-scene`，Core 不依赖该库。
+
+固定 UI 的 C 静态 RAM、动态分配与 Wasm C 栈读数只描述相应渲染器，
+不包含 Rust 网络、场景素材、驱动与整板堆。模拟器资源限制不是实机遥测。
+跨设备插件开发和真实联调见 [Edge 插件作者指南](../../plugins/docs/edge-plugin-guide.md)。

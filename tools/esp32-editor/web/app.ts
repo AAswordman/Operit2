@@ -58,7 +58,7 @@ hostImage.addEventListener('change', async () => {
   const file = hostImage.files?.[0];
   if (!file) return;
   if (file.size === 0 || file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) {
-    hostStatus.textContent = '只支持小于 512 KiB 的 PNG/JPEG 图片'; hostImage.value = ''; return;
+    hostStatus.textContent = '只支持非空、大小不超过 512 KiB 的 PNG/JPEG 图片'; hostImage.value = ''; return;
   }
   hostStatus.textContent = '正在传输图片…'; hostImage.disabled = true;
   try {
@@ -232,7 +232,7 @@ function renderFrame(now: number): void {
     syncTheme();
     pageLabel.textContent = currentRuntime.ccall('operit_ui_current_page', 'string', [], []);
     const kib = (bytes: number): string => (bytes / 1024).toFixed(1);
-    let resources = `自绘静态 RAM ${kib(miniStaticBytes)} KiB · UI 堆 0`;
+    let resources = `C UI 静态 RAM ${kib(miniStaticBytes)} KiB · C UI 动态分配 0`;
     if (currentRuntime._simulator_stack_size && currentRuntime._simulator_stack_free)
       resources += ` · C 栈剩余 ${kib(currentRuntime._simulator_stack_free())} / ${kib(currentRuntime._simulator_stack_size())} KiB`;
     renderTimeLabel.textContent = `${(performance.now() - started).toFixed(1)} ms · ${resources}`;
@@ -333,13 +333,13 @@ async function updateBuildStatus(): Promise<void> {
     const status = await request<BuildStatus>('/api/build');
     const manifest = status.manifest;
     buildStatus.textContent = status.running
-      ? '正在构建 WebAssembly + ESP32…'
+      ? '正在构建，请查看开发者日志…'
       : status.error
         ? '构建失败：' + status.error
         : status.stale
           ? '底层运行时源码已变化，需要开发者构建'
           : manifest?.firmwareBuilt
-            ? `基础运行时 ${manifest.sourceHash?.slice(0, 12) ?? ''}`
+            ? `固件构建完成 ${manifest.sourceHash?.slice(0, 12) ?? ''} · 烧录需另行执行`
             : '预览已构建；固件未验证';
     if (
       sourceHash &&

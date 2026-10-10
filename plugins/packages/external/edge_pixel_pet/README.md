@@ -7,7 +7,7 @@
 ## 单包构建（从仓库根目录）
 
 ```powershell
-python plugins/packages/external/edge_pixel_pet/generate_assets.py
+python -X utf8 plugins/packages/external/edge_pixel_pet/generate_assets.py
 node tools/esp32-editor/node_modules/typescript/bin/tsc -p plugins/packages/external/edge_pixel_pet/tsconfig.json
 python -X utf8 -c "from pathlib import Path; from plugins.tools.sync_plugin_packages import _pack_toolpkg_folder; root=Path.cwd(); _pack_toolpkg_folder(root, root/'plugins/packages/external/edge_pixel_pet', root/'core/crates/runtime/application/assets/plugins/external/edge_pixel_pet.toolpkg')"
 ```
@@ -45,3 +45,16 @@ core plugin enable com.operit.edge_pixel_pet
 工具使用既有同包 `ToolPkg.ipc` 进入 main actor，与事件回调共用一个串行队列和配置缓存。关闭后保留 lease/cursor 去重 tombstone；重发 ACK 不重复计数或写盘。
 
 插件卡片的连通性／工具调用测试复用既有 `test_connection` 和 `test_tool_call` 导出，仅调用原生 capabilities，不申请区域；需要设置 `EDGE_SCENE_NODE_ID`。
+
+## 端侧前提与示例范围
+
+Core SDK 需提供 `Tools.Edge` 与 `on_edge_event`；已配对的目标 Edge 需有现有
+设备空间/Binding 和兼容 `display.scene` 服务。公共 Edge 节点库不内置渲染器，
+端侧应用通过可选 `hosts/common/operit-edge-scene` 注册服务。场景下发和事件使用
+原有设备空间连接，插件不使用编辑器的 HTTP 镜像或另建网络后端。
+
+当前素材和图层坐标针对 ESP32/模拟器的 320×240 配置。其他分辨率应根据能力查询
+与租约返回的 `rect` 调整；无屏幕设备需要另一种呈现/互动适配。示例保存互动次数，
+不包括完整养成、美术自适应或多 Core 冲突解决逻辑。设备重启的 RAM 素材丢失不等于
+Core 存档丢失。市场作者工作流与完整联调步骤见
+[Edge 插件作者指南](../../../docs/edge-plugin-guide.md)。

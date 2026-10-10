@@ -118,5 +118,7 @@ Core 不把 action 当成函数名动态执行，只调用固定 `on_edge_event`
 ## 迁移
 
 统一使用 `Tools.Edge` / `Tools.Io` 静态类；旧小写 `edge/io` 不再生成。
-本 PR 中尚未合并的 `chatEdgeSceneEvent` 和 `on_edge_scene_event` 已替换为
-`chatEdgeEvent` 和 `on_edge_event`；触摸字段归入 action data。Core、示例及固件需匹配更新。
+早期开发版本的 `chatEdgeSceneEvent` 和 `on_edge_scene_event` 已替换为
+`chatEdgeEvent` 和 `on_edge_event`；触摸字段归入 action data。Core、示例及端侧服务需匹配更新，旧入口不保留。
+
+插件开发、素材适配、模拟器联调与发布步骤见 [Edge 插件作者指南](edge-plugin-guide.md)。
