@@ -74,3 +74,39 @@ test('Compose session resolves an acquired engine without executing work under t
   assert.doesNotMatch(open, /execute_compose|dispatch_compose|self\.getToolPkgExecutionEngine/);
   assert.match(open, /Compose execution context has not been acquired or has been released/);
 });
+
+/** Ensures catalog discovery cannot revoke the execution leases held by live Compose sessions. */
+test('package rescans clean only unleased engines and preserve page-owned Compose sessions', () => {
+  const manager = source('core/crates/tool/services/src/tools/packTool/RuntimePackageManager.rs');
+  const start = manager.indexOf('pub fn loadAvailablePackages(');
+  const end = manager.indexOf('pub fn isToolPkgProtectionSecretConfigured(', start);
+  assert.ok(start >= 0 && end > start);
+  const scan = manager.slice(start, end);
+  assert.match(scan, /applyPackageScanSnapshot\(mergedSnapshot\)/);
+  assert.doesNotMatch(scan, /destroy\w*\(|revokeContainerExecutionContexts\(|session\.close\(|composeDslSessions/);
+
+  const sdk = source('core/crates/plugin/sdk/src/toolpkg/ToolPkgManager.rs');
+  const replacementStart = sdk.indexOf('pub fn replaceRuntimeMaps(');
+  const replacementEnd = sdk.indexOf('pub fn getEnabledToolPkgContainerRuntimes(', replacementStart);
+  assert.ok(replacementStart >= 0 && replacementEnd > replacementStart);
+  const replacement = sdk.slice(replacementStart, replacementEnd);
+  assert.match(replacement, /removeExecutionEnginesMatching\(\|entry\| entry\.activeLeases == 0\)/);
+  assert.doesNotMatch(replacement, /activeLeases\s*(?:\+=|-=|=(?!=))|revokeContainerExecutionContexts\(/);
+});
+
+/** Keeps lease release and explicit container revocation distinct without parallel public cleanup APIs. */
+test('ToolPkg lifecycle exposes owner release and explicit revocation, not interchangeable cleanup APIs', () => {
+  const sdk = source('core/crates/plugin/sdk/src/toolpkg/ToolPkgManager.rs');
+  assert.doesNotMatch(sdk, /pub fn (?:destroyUnleasedToolPkgExecutionEngines|destroyToolPkgExecutionEngines|clear|destroy)\(/);
+  assert.match(sdk, /pub fn releaseToolPkgExecutionEngine\(/);
+  assert.match(sdk, /pub fn revokeContainerExecutionContexts\(/);
+  const releaseStart = sdk.indexOf('pub fn releaseToolPkgExecutionEngine(');
+  const releaseEnd = sdk.indexOf('pub fn revokeContainerExecutionContexts(', releaseStart);
+  assert.ok(releaseStart >= 0 && releaseEnd > releaseStart);
+  assert.match(sdk.slice(releaseStart, releaseEnd), /entry\.activeLeases -= 1/);
+  const revokeEnd = sdk.indexOf('fn removeExecutionEnginesMatching(', releaseEnd);
+  assert.ok(revokeEnd > releaseEnd);
+  const revoke = sdk.slice(releaseEnd, revokeEnd);
+  assert.match(revoke, /entry\.containerPackageName == normalizedContainer/);
+  assert.doesNotMatch(revoke, /activeLeases/);
+});

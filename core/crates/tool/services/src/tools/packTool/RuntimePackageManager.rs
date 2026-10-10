@@ -1273,7 +1273,7 @@ impl RuntimePackageManager {
             }
             self.deleteToolPkgCacheDir(&normalizedPackageName);
             self.toolPkgManager()
-                .destroyToolPkgExecutionEngines(&normalizedPackageName);
+                .revokeContainerExecutionContexts(&normalizedPackageName);
             self.notifyToolPkgRuntimeChangeListeners();
             if packageWasRemoved {
                 return format!(
@@ -2330,15 +2330,9 @@ impl RuntimePackageManager {
     }
 
     #[allow(non_snake_case)]
-    /// Scans built-in, bundled external, and external package sources.
+    /// Scans package sources while preserving execution engines leased by active owners.
     pub fn loadAvailablePackages(&mut self) {
         self.packageRegistryReadiness.begin_scan();
-        let previousContainerNames = self
-            .toolPkgManager()
-            .getToolPkgContainerRuntimes()
-            .into_iter()
-            .map(|runtime| runtime.packageName)
-            .collect::<BTreeSet<_>>();
         let assetSnapshot = self.scanBuiltInPackageAssets();
         let syncError = self.syncBundledExternalImportRecords().err();
         let mut mergedSnapshot = self.scanExternalPackages(&assetSnapshot);
@@ -2351,15 +2345,6 @@ impl RuntimePackageManager {
                 format!("Bundled external package sync failed: {error}"),
                 "package_manager",
             ));
-        }
-        let nextContainerNames = mergedSnapshot
-            .toolPkgContainers
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        for packageName in previousContainerNames.union(&nextContainerNames) {
-            self.toolPkgManager()
-                .destroyToolPkgExecutionEngines(packageName);
         }
         self.applyPackageScanSnapshot(mergedSnapshot);
         self.notifyToolPkgRuntimeChangeListeners();

@@ -80,7 +80,7 @@ impl ToolPkgManager {
         &mut self,
         executionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
     ) {
-        self.destroy();
+        self.removeExecutionEnginesMatching(|_| true);
         self.executionEngineFactory = executionEngineFactory;
     }
 
@@ -232,11 +232,11 @@ impl ToolPkgManager {
             subpackages.remove(subpackage.packageName.trim());
         }
         drop(subpackages);
-        self.destroyToolPkgExecutionEngines(&runtime.packageName);
+        self.revokeContainerExecutionContexts(&runtime.packageName);
         Some(runtime)
     }
 
-    /// Replaces all registered container and subpackage runtime maps.
+    /// Replaces catalog metadata and retires unowned caches while preserving active context leases.
     #[allow(non_snake_case)]
     pub fn replaceRuntimeMaps(
         &mut self,
@@ -251,6 +251,7 @@ impl ToolPkgManager {
             .subpackageByPackageName
             .write()
             .expect("toolpkg subpackage runtime lock poisoned") = subpackageByPackageName;
+        self.removeExecutionEnginesMatching(|entry| entry.activeLeases == 0);
     }
 
     /// Returns the ToolPkg containers enabled directly or through a subpackage.
@@ -509,13 +510,22 @@ impl ToolPkgManager {
         }
     }
 
-    /// Destroys every execution engine owned by one ToolPkg container.
+    /// Revokes every context, including leased contexts, when a container is disabled or removed.
     #[allow(non_snake_case)]
-    pub fn destroyToolPkgExecutionEngines(&self, containerPackageName: &str) {
+    pub fn revokeContainerExecutionContexts(&self, containerPackageName: &str) {
         let normalizedContainer = containerPackageName.trim();
         if normalizedContainer.is_empty() {
             return;
         }
+        self.removeExecutionEnginesMatching(|entry| entry.containerPackageName == normalizedContainer);
+    }
+
+    /// Removes selected registry entries under the lock and destroys their workers after unlocking.
+    #[allow(non_snake_case)]
+    fn removeExecutionEnginesMatching(
+        &self,
+        shouldRemove: impl Fn(&ToolPkgExecutionEngineEntry) -> bool,
+    ) {
         let removed = {
             let mut engines = self
                 .toolPkgExecutionEngines
@@ -523,41 +533,14 @@ impl ToolPkgManager {
                 .expect("toolpkg execution engine mutex poisoned");
             let keys = engines
                 .iter()
-                .filter(|(_, entry)| entry.containerPackageName == normalizedContainer)
+                .filter(|(_, entry)| shouldRemove(entry))
                 .map(|(key, _)| key.clone())
                 .collect::<Vec<_>>();
             keys.into_iter()
-                .filter_map(|key| engines.remove(&key))
+                .map(|key| engines.remove(&key).expect("selected engine must remain registered while locked"))
                 .collect::<Vec<_>>()
         };
         for entry in removed {
-            entry.engine.destroy();
-        }
-    }
-
-    /// Removes every registered ToolPkg runtime while preserving listeners.
-    #[allow(non_snake_case)]
-    pub fn clear(&mut self) {
-        self.containers
-            .write()
-            .expect("toolpkg container runtime lock poisoned")
-            .clear();
-        self.subpackageByPackageName
-            .write()
-            .expect("toolpkg subpackage runtime lock poisoned")
-            .clear();
-    }
-
-    /// Destroys all cached ToolPkg JavaScript execution engines.
-    pub fn destroy(&self) {
-        let engines = {
-            let mut stored = self
-                .toolPkgExecutionEngines
-                .lock()
-                .expect("toolpkg execution engine mutex poisoned");
-            std::mem::take(&mut *stored)
-        };
-        for (_, entry) in engines {
             entry.engine.destroy();
         }
     }
@@ -1320,15 +1303,77 @@ mod tests {
         assert_eq!(destroyed(), 2);
     }
 
-    /// Verifies container cleanup covers main, provider, and UI execution contexts.
+    /// Replaces the current catalog through the same entry point used by package scans.
+    fn rescanRuntimeCatalog(manager: &mut ToolPkgManager) {
+        let containers = manager.containers.read().unwrap().clone();
+        let subpackages = manager.subpackageByPackageName.read().unwrap().clone();
+        manager.replaceRuntimeMaps(containers, subpackages);
+    }
+
+    /// Keeps leased sidebar and provider engines while discarding unowned catalog caches.
     #[test]
-    fn destroysEveryContextOwnedByContainer() {
+    fn catalogScanPreservesLeasedContextsAndDiscardsUnleasedEngines() {
+        let (manager, factory) = recordingManager();
+        manager.acquireToolPkgExecutionEngine("package-a-sidebar", "package_a").unwrap();
+        let sidebar = manager.findToolPkgExecutionEngine("package-a-sidebar", "package_a").unwrap();
+        manager.getToolPkgExecutionEngine("package-a-main", "package_a").unwrap();
+        manager.acquireToolPkgExecutionEngine("package-b-provider", "package_b").unwrap();
+        let provider = manager.findToolPkgExecutionEngine("package-b-provider", "package_b").unwrap();
+        manager.getToolPkgExecutionEngine("package-b-main", "package_b").unwrap();
+
+        rescanRuntimeCatalog(&mut manager.clone());
+
+        assert!(Arc::ptr_eq(&sidebar, &manager.findToolPkgExecutionEngine("package-a-sidebar", "package_a").unwrap()));
+        assert!(Arc::ptr_eq(&provider, &manager.findToolPkgExecutionEngine("package-b-provider", "package_b").unwrap()));
+        assert!(manager.findToolPkgExecutionEngine("package-a-main", "package_a").is_none());
+        assert!(manager.findToolPkgExecutionEngine("package-b-main", "package_b").is_none());
+        {
+            let engines = factory.engines.lock().unwrap();
+            assert!(!engines[0].destroyed.load(Ordering::Acquire));
+            assert!(engines[1].destroyed.load(Ordering::Acquire));
+            assert!(!engines[2].destroyed.load(Ordering::Acquire));
+            assert!(engines[3].destroyed.load(Ordering::Acquire));
+        }
+        manager.releaseToolPkgExecutionEngine("package-a-sidebar", "package_a");
+        manager.releaseToolPkgExecutionEngine("package-b-provider", "package_b");
+        assert!(factory.engines.lock().unwrap().iter().all(|engine| engine.destroyed.load(Ordering::Acquire)));
+    }
+
+    /// Preserves engine identity and every counted lease across repeated catalog replacement.
+    #[test]
+    fn catalogReplacementKeepsLeasedContextUntilLastRelease() {
+        let (mut manager, factory) = recordingManager();
+        manager.acquireToolPkgExecutionEngine("shared-sidebar", "package_a").unwrap();
+        manager.acquireToolPkgExecutionEngine("shared-sidebar", "package_a").unwrap();
+        let engine = manager.findToolPkgExecutionEngine("shared-sidebar", "package_a").unwrap();
+        let mut containers = manager.containers.read().unwrap().clone();
+        containers.get_mut("package_a").unwrap().mainEntry = "dist/updated-main.js".into();
+        let subpackages = manager.subpackageByPackageName.read().unwrap().clone();
+
+        manager.replaceRuntimeMaps(containers, subpackages);
+        rescanRuntimeCatalog(&mut manager);
+        assert!(Arc::ptr_eq(&engine, &manager.findToolPkgExecutionEngine("shared-sidebar", "package_a").unwrap()));
+        assert_eq!(factory.engines.lock().unwrap().len(), 1);
+
+        manager.releaseToolPkgExecutionEngine("shared-sidebar", "package_a");
+        rescanRuntimeCatalog(&mut manager);
+        assert!(!factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+        assert!(manager.findToolPkgExecutionEngine("shared-sidebar", "package_a").is_some());
+
+        manager.releaseToolPkgExecutionEngine("shared-sidebar", "package_a");
+        assert!(factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+        assert!(manager.findToolPkgExecutionEngine("shared-sidebar", "package_a").is_none());
+    }
+
+    /// Revokes leased and cached contexts for one container without affecting other owners.
+    #[test]
+    fn containerRevocationIncludesLeasesAndPreservesOtherOwners() {
         let (manager, factory) = recordingManager();
         manager.getToolPkgExecutionEngine("package-a-main", "package_a");
-        manager.getToolPkgExecutionEngine("package-a-xml-node", "package_a");
+        manager.acquireToolPkgExecutionEngine("package-a-xml-node", "package_a").unwrap();
         manager.getToolPkgExecutionEngine("package-b-provider", "package_b");
 
-        manager.destroyToolPkgExecutionEngines("package_a");
+        manager.revokeContainerExecutionContexts("package_a");
 
         let engines = factory
             .engines
