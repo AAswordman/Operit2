@@ -55,3 +55,4 @@ pub mod skill_runtime;
 
 #[path = "EdgePortTool.rs"]
 pub mod EdgePortTool;
+pub mod EdgeAudioTool;

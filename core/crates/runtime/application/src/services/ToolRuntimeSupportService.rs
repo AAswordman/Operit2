@@ -54,6 +54,7 @@ impl ToolRuntimeSupportService {
             runtimeBindings: OnceLock::new(),
             coreNodeToolRuntime: RwLock::new(None),
             edgeToolRuntime: OnceLock::new(),
+            edgeAudioRegistry: Arc::new(operit_tools::runtime_support::edge_audio::EdgeAudioRegistry::new()),
             coreRouteChangeHandler: RwLock::new(None),
         })
     }
@@ -72,6 +73,7 @@ pub struct RuntimeToolSupport {
     runtimeBindings: OnceLock<RuntimeToolBindings>,
     coreNodeToolRuntime: RwLock<Option<Arc<dyn CoreNodeToolRuntime>>>,
     edgeToolRuntime: OnceLock<Arc<dyn EdgeToolRuntime>>,
+    edgeAudioRegistry: Arc<operit_tools::runtime_support::edge_audio::EdgeAudioRegistry>,
     coreRouteChangeHandler: RwLock<Option<CoreRouteChangeHandler>>,
 }
 
@@ -99,6 +101,10 @@ impl RuntimeToolSupport {
 }
 
 impl ToolRuntimeSupport for RuntimeToolSupport {
+    fn edgeAudioRegistry(&self) -> Result<Arc<operit_tools::runtime_support::edge_audio::EdgeAudioRegistry>, String> {
+        Ok(self.edgeAudioRegistry.clone())
+    }
+
     fn bindEdgeToolRuntime(&self, runtime: Arc<dyn EdgeToolRuntime>) -> Result<(), String> {
         self.edgeToolRuntime.set(runtime).map_err(|_| "Edge tool routing is already initialized".into())
     }

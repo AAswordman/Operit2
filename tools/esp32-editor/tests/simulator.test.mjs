@@ -10,6 +10,7 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
   const dir = await mkdtemp(path.join(tmpdir(), 'operit-sim-api-'));
   process.env.OPERIT_SIM_STATE_DIR = dir;
   process.env.OPERIT_SIM_BIND = '127.0.0.1:0';
+  process.env.OPERIT_SIM_DISCOVERY = 'false';
   const {simulatorRoute, stopSimulator} = await import('../src/api/simulator-api.mts');
   const server = http.createServer((req, res) => void simulatorRoute(req, res, new URL(req.url, 'http://localhost')));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

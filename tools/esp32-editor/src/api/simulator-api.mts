@@ -152,11 +152,11 @@ export function stopSimulator(): void {
   processToStop?.kill();
 }
 
-async function rpc(command: string, fields = {}): Promise<unknown> {
+async function rpc(command: string, fields = {}, timeoutMs = 5000): Promise<unknown> {
   if (!child || !ready) throw new Error('请先启动模拟设备并等待编译完成');
   const id = ++sequence;
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('模拟设备响应超时')); }, 5000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error('模拟设备响应超时')); }, timeoutMs);
     pending.set(id, {resolve: value => { clearTimeout(timer); resolve(value); },
       reject: error => { clearTimeout(timer); reject(error); }});
     child!.stdin.write(JSON.stringify({id, command, ...fields}) + '\n');
@@ -186,6 +186,30 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, token: ready ? token : '', device});
+    } else if (url.pathname === '/api/simulator/core-access' && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) {
+        body += String(chunk);
+        if (Buffer.byteLength(body) > 8192) throw new Error('Core 接入请求过长');
+      }
+      const input = JSON.parse(body) as Record<string, unknown>;
+      if (!['request', 'confirm', 'refresh', 'cancel'].includes(String(input.step))) {
+        throw new Error('无效的 Core 接入步骤');
+      }
+      reply(200, await rpc('coreAccess', {step: input.step, nodeId: input.nodeId, address: input.address,
+        token: input.token, pairingId: input.pairingId, confirmationCode: input.confirmationCode, requestId: input.requestId}, 30000));
+    } else if (url.pathname === '/api/simulator/audio/configure' && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) {
+        body += String(chunk);
+        if (Buffer.byteLength(body) > 1024) throw new Error('音频设置请求过长');
+      }
+      const input = JSON.parse(body) as {durationMs?: unknown; fail?: unknown};
+      if (!Number.isSafeInteger(input.durationMs) || typeof input.durationMs !== 'number' ||
+          input.durationMs < 20 || input.durationMs > 10000 || input.durationMs % 20 !== 0 || typeof input.fail !== 'boolean') {
+        throw new Error('音频时长必须为 20..10000 毫秒且为 20 的倍数，并指定故障开关');
+      }
+      reply(200, await rpc('audioConfigure', {durationMs: input.durationMs, fail: input.fail}));
     } else if (url.pathname === '/api/simulator/scene-view' && req.method === 'GET') {
       reply(200, ready ? await rpc('sceneView') : null);
     } else if (url.pathname === '/api/simulator/memory' && req.method === 'GET') {

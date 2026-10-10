@@ -290,6 +290,8 @@ mod core_edge {
     use operit_store::NetworkControlStore::NetworkControlIdentityAssignment;
     use std::time::Duration;
 
+    mod audio_transport_tests { include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/audio_transport_tests.rs")); }
+
     static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     /// Only the application backend is a spy. Pairing, routing, policy, admission,
@@ -382,6 +384,7 @@ mod core_edge {
         service: RuntimeRemoteLinkService,
         sync: SpacePersistenceSyncService,
         application: Arc<ApplicationSpy>,
+        audio: Arc<operit_tools::runtime_support::edge_audio::EdgeAudioRegistry>,
     }
     struct EdgeFixture {
         storage: Arc<Storage>,
@@ -426,6 +429,7 @@ mod core_edge {
         ));
         configure_listener(&storage);
         let application = Arc::new(ApplicationSpy::default());
+        let audio = Arc::new(operit_tools::runtime_support::edge_audio::EdgeAudioRegistry::new());
         let runtime = CoreNodeLocalRuntime::new(
             application.clone(),
             application.clone(),
@@ -443,7 +447,7 @@ mod core_edge {
                 ))
             }),
             application.clone(),
-        );
+        ).withEdgeAudioIngress({ let audio = audio.clone(); Arc::new(move |request, origin| audio.openIngress(request.args, &origin)) });
         let router = Arc::new(CoreNodeRouter::new(runtime.clone()));
         let info = operit_link::protocol::LinkDeviceInfo {
             platform: "windows".into(),
@@ -468,9 +472,11 @@ mod core_edge {
             service,
             sync,
             application,
+            audio,
         }
     }
-    fn edge_node(storage: Arc<Storage>) -> EdgeFixture {
+    fn edge_node(storage: Arc<Storage>) -> EdgeFixture { edge_node_with_audio(storage, None) }
+    fn edge_node_with_audio(storage: Arc<Storage>, audio: Option<Arc<dyn operit_host_api::AudioCaptureHost>>) -> EdgeFixture {
         configure_listener(&storage);
         let id = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage.clone())
             .initialize()
@@ -481,7 +487,9 @@ mod core_edge {
             inner: inner.clone(),
             traffic: Mutex::default(),
         });
-        let host = host(storage.clone());
+        let mut host = (*host(storage.clone())).clone();
+        host.audioCaptureHost = audio;
+        let host = Arc::new(host);
         let peers = HostRuntimePeerService::new(
             host.clone(),
             &router,

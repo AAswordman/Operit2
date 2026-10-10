@@ -98,7 +98,25 @@ impl PeerRouter for EdgePeerRouter {
             }.map_err(CoreLinkError::internal);
             return CoreCallResponse { requestId: id, result };
         }
+        if request.payload.target == "edge.audio" {
+            if let Some(space) = self.space.get() {
+                match space.spaceStore().space() {
+                    Ok(current) if current.spaceId == request.spaceId
+                        && current.members.contains(&previous) && current.members.contains(&request.originNodeId) => {},
+                    _ => return CoreCallResponse::err(id, CoreLinkError::new("AUDIO_ORIGIN_DENIED", "Audio controls require admitted Space members")),
+                }
+            } else {
+                return CoreCallResponse::err(id, CoreLinkError::new("AUDIO_ORIGIN_DENIED", "Audio requires Space admission"));
+            }
+            if request.payload.methodName == "startInput" {
+                let receiver = match &request.payload.args { operit_link::CoreValue::Map(args) => args.get("receiverNodeId"), _ => None };
+                if receiver != Some(&operit_link::CoreValue::String(request.originNodeId.clone())) {
+                    return CoreCallResponse::err(id, CoreLinkError::new("AUDIO_ORIGIN_DENIED", "Audio receiver must be the authenticated requesting Core"));
+                }
+            }
+        }
         match self.node() {
+            Ok(node) if request.payload.target == "edge.audio" => node.dispatchAudioCall(request.payload, &request.originNodeId).await,
             Ok(node) => node.call(request.payload).await,
             Err(e) => CoreCallResponse::err(id, e),
         }

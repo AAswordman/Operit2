@@ -1,3 +1,4 @@
+pub mod edge_audio;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -235,6 +236,11 @@ pub trait EdgeToolRuntime: Send + Sync {
 
 /// Provides runtime-owned services that the tools crate must not own.
 pub trait ToolRuntimeSupport: Send + Sync {
+    /// Registry owned by this Core runtime; no process-global recording state.
+    fn edgeAudioRegistry(&self) -> Result<Arc<edge_audio::EdgeAudioRegistry>, String> {
+        Err("Edge audio receiving is not initialized".into())
+    }
+
     /// Installs the Core-owned Edge port router, never a process-global client.
     fn bindEdgeToolRuntime(&self, _runtime: Arc<dyn EdgeToolRuntime>) -> Result<(), String> {
         Err("Edge tool routing is not supported by this runtime".into())

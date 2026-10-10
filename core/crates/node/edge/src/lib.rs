@@ -22,6 +22,7 @@ use serde::Deserialize;
 pub mod service;
 pub mod plugin;
 pub mod events;
+pub mod audio;
 
 pub use plugin::EdgePlugin;
 pub use operit_edge_contract::{EdgePluginManifest, EdgeScreenSnapshot, EdgeScreenInputRequest, EdgeScreenInputState};
@@ -49,6 +50,7 @@ pub struct EdgeNode {
     screenService: Option<Arc<dyn ScreenService>>,
     plugins: Vec<Arc<dyn EdgePlugin>>,
     nodeServices: Option<NodeServices>,
+    audioService: Option<Arc<audio::EdgeAudioService>>,
 }
 
 impl EdgeNode {
@@ -60,6 +62,7 @@ impl EdgeNode {
             screenService: None,
             plugins: Vec::new(),
             nodeServices: None,
+            audioService: None,
         }
     }
 
@@ -75,7 +78,11 @@ impl EdgeNode {
 
     /// Creates an Edge Node with device services supplied by one Host Manager.
     pub fn fromHostManager(hostManager: HostManager) -> Self {
-        Self::new(createDeviceIoService(hostManager))
+        let audioService = hostManager.audioCaptureHost.clone().zip(hostManager.hostRuntimeTaskSchedulerHost.clone())
+            .map(|(host, scheduler)| Arc::new(audio::EdgeAudioService::new(host, scheduler)));
+        let mut node = Self::new(createDeviceIoService(hostManager));
+        node.audioService = audioService;
+        node
     }
 
     /// Registers a typed robot face service with this Edge Node.
@@ -370,6 +377,20 @@ impl EdgeNode {
             return Err(CoreLinkError::new("EDGE_PLUGIN_ACTION_NOT_FOUND", "Edge plugin action is not declared"));
         }
         plugin.invokeAsync(&request.action, request.args).await.map_err(serviceError)
+    }
+
+    pub(crate) async fn dispatchAudioCall(&self, request: CoreCallRequest, origin: &str) -> CoreCallResponse {
+        let id = request.requestId.clone();
+        let result = async {
+            let audio = self.audioService.as_ref().ok_or_else(|| CoreLinkError::new("AUDIO_UNAVAILABLE", "Audio capture Host is not installed"))?;
+            match request.methodName.as_str() {
+                "listInputs" => audio.listInputs(),
+                "startInput" => audio.start(request.args, origin, self.nodeServices().map_err(serviceError)?).await,
+                "stopInput" => audio.stop(request.args, origin),
+                _ => Err(CoreLinkError::methodNotFound(&request.registryKey())),
+            }
+        }.await;
+        CoreCallResponse { requestId: id, result }
     }
 
     async fn dispatchAsyncCall(&self, request: CoreCallRequest) -> CoreCallResponse {

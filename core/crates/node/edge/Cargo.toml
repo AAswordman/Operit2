@@ -18,6 +18,8 @@ uuid.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
+operit-tools = { path = "../../tool/services", default-features = false }
+base64.workspace = true
 # Exercise the real full Core router against Edge without enlarging firmware dependencies.
 operit-node-runtime = { path = "../runtime", default-features = false, features = ["full"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }

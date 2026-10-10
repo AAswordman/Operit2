@@ -107,6 +107,7 @@ pub struct CoreNodeLocalRuntime {
             + Sync,
     >,
     spaceRuntime: Arc<dyn CoreLinkSharedClient + Send + Sync>,
+    edgeAudioIngress: Option<Arc<dyn Fn(CorePushRequest, String) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> + Send + Sync>>,
 }
 
 impl CoreNodeLocalRuntime {
@@ -135,12 +136,20 @@ impl CoreNodeLocalRuntime {
             bindCoreNodeToolRuntime,
             openPush,
             spaceRuntime,
+            edgeAudioIngress: None,
         }
     }
 
     /// 生成 Proxy 和应用 Router 共享已注入的通信实例；不新建会话仓库。
     pub fn withPeerServices(mut self, services: Arc<std::sync::OnceLock<NodeServices>>) -> Self {
         self.peerServices = services;
+        self
+    }
+
+    /// Attaches this runtime's audio receivers. Only authenticated routed Space
+    /// Push may enter here; ordinary local/Target dispatch cannot bypass origin validation.
+    pub fn withEdgeAudioIngress(mut self, ingress: Arc<dyn Fn(CorePushRequest, String) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> + Send + Sync>) -> Self {
+        self.edgeAudioIngress = Some(ingress);
         self
     }
 
@@ -2351,6 +2360,14 @@ impl CoreNodeRouter {
             }
         }
         if self.validateIncomingRoute(&previousNodeId, &request)? {
+            if request.payload.target == "edge.audio.ingress" {
+                if request.routeKind != RoutedCoreRequestKind::SpaceRoute || request.payload.methodName != "upload" {
+                    return Err(CoreLinkError::new("AUDIO_ORIGIN_DENIED", "Audio ingress requires an authenticated SpaceRoute upload"));
+                }
+                let ingress = self.localCore.edgeAudioIngress.as_ref().ok_or_else(||
+                    CoreLinkError::new("AUDIO_UNAVAILABLE", "Core audio receiving is not installed"))?;
+                return ingress(request.payload, request.originNodeId);
+            }
             if request.routeKind == RoutedCoreRequestKind::SpaceBinding {
                 return self
                     .openSpacePushWithOrigin(request.payload, request.originNodeId)

@@ -42,6 +42,7 @@ npm start --prefix tools/esp32-editor                # 预览仍在 8766
 运行 `npm start --prefix tools/esp32-editor`，打开 http://127.0.0.1:8766，页面会自动启动 ESP32 模拟设备，也可用底部的启动/停止按钮控制生命周期。
 首次启动需要可用的桌面 Rust/Cargo 工具链，工具会编译并启动本机 Rust 模拟器。
 面板展示实际 TCP 地址、Edge Token、连接状态和编译日志；配对码在设备屏幕显示。停止按钮会终止模拟设备，编辑器退出也会回收进程。
+模拟器默认通过共享 Host 的 mDNS 服务广播，Core 可以扫描发现；已经配对的设备从扫描候选中排除，应在已配对设备列表查看。隔离测试可设置 `OPERIT_SIM_DISCOVERY=false` 关闭广播。局域网发现时应监听 `0.0.0.0`，仅绑定 `127.0.0.1` 的节点供本机直连测试使用。
 
 1. 在运行本次 Edge 功能版本的 Core 应用中打开 Space 设备面板，选择 Edge 配对。
 2. 填写模拟器显示的局域网 TCP 地址（默认监听 `0.0.0.0:18765`，面板会显示可连接的局域网 IP）和“复制 Token”得到的令牌。
@@ -252,3 +253,27 @@ ESP32/模拟器显式传入 320×240、24 像素顶部保留区和触摸能力�
 桌宠联调步骤、事件处理及素材边界见
 [插件作者指南](../../plugins/docs/edge-plugin-guide.md)、
 [示例插件](../../plugins/packages/external/edge_pixel_pet/README.md)。
+
+### 模拟麦克风与流式音频
+
+启动调试台后，展开“ESP32 模拟设备”中的“模拟麦克风”。`sim-pcm` 输入按真实时间输出
+16 kHz、16 位单声道、440 Hz PCM 测试音，每 20 毫秒一块（640 字节）。页面可设置
+20..10000 毫秒时长，或注入结束时的采集过载；采集中拒绝修改输入配置。
+
+Core 插件通过 `Tools.Edge.listAudioInputs/openAudioInput/readAudioInput/closeAudioInput`
+控制采集。页面只配置音频源并显示实际采集状态、块数、字节数和错误；需要完成真实配对
+与设备空间批准，无需配置 STT。音频走已建立的 TCP/Link Push，不走网页业务事件。
+
+`npm run test:space --prefix tools/esp32-editor` 还会导入隔离 JS 测试包，引用仓库的
+流式识别适配库，验证边录边读、32000 字节 PCM 一致性、过载/abort、提前关闭与再次采集。
+测试使用流式消费验证器，不把测试音伪装为语音识别成功。浏览器检查可同时使用现有
+`/api/simulator/debug/snapshot`、`/api/simulator/debug/tap` 观察共享 C/Wasm 审批页面。
+
+此输入是模拟设备的 Host 适配，未安装真实 ESP 麦克风驱动，不能据此判断 I2S/ADC
+采集性能。协议、插件示例及硬件边界见 [流式音频接口](../../docs/edge-streaming-audio.md)。
+
+模拟麦克风接入：展开“ESP32 模拟设备”，在“向 Core 申请接入”填写 Core 节点 ID、TCP 监听地址与 Token，点击“发送接入请求”。输入 Core 显示的配对码后，模拟器会主动申请加入 Core 的设备空间；在 Core 上批准，再点击“刷新申请状态”。已有出向配对会直接提交权限申请。随后插件通过 `Tools.Edge` 打开 `sim-pcm`，在原有 TCP 连接上接收 16 kHz 单声道 PCM。这个入口只发起申请，审批沿用节点的现有权限流程。
+
+独立音频回归命令：`npm run test:audio --prefix tools/esp32-editor`。它复用真实 Core、
+C/Wasm 审批及 JS 包的测试夹具，验证上传、逐块消费、过载和关闭后重开；
+完整空间审批/重启回归仍运行 `npm run test:space --prefix tools/esp32-editor`。

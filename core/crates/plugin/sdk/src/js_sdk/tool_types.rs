@@ -4,6 +4,10 @@ use super::results::*;
 
 /// Maps every built-in tool name to its concrete public result type.
 pub struct ToolResultMap {
+    pub edge_list_audio_inputs: EdgeAudioInputsResultData,
+    pub edge_open_audio_input: EdgeAudioStreamResultData,
+    pub edge_read_audio_input: EdgeAudioReadResultData,
+    pub edge_close_audio_input: BooleanResultData,
     pub edge_execute: EdgePortResultData,
     pub io_execute: EdgePortResultData,
     pub list_files: DirectoryListingData,

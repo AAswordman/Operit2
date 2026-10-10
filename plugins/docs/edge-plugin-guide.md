@@ -112,3 +112,19 @@ main 导出 `on_edge_event(event)`，其 `event.eventPayload` 是
 跨 Core 的可用性取决于现有存储与同步范围、包启用状态和 Binding；首版示例是
 单 Core 控制器，未实现分布式养成事务。“到任何设备互动”仍要求目标端侧有兼容能力
 且权威业务状态可通过现有系统访问。
+
+## 音频输入与流式识别
+
+`Tools.Edge.listAudioInputs/openAudioInput/readAudioInput/closeAudioInput` 在 Core 的同一
+ToolPkg 工具运行时调用，经已有设备空间路由控制 Edge，二进制音频沿 Link Push 返回。
+麦克风不要求屏幕、ESP32 或 STT 配置；设备 Host 需安装其平台的 `AudioCaptureHost`。
+
+[流式识别适配示例](../packages/examples/edge_audio_stream/README.md) 可作为插件源码引用，
+接入作者自己的 STT 会话；它逐块等待识别器消费，并在正常 EOF、采集错误或插件失败时释放资源。
+选择短于插件工具执行超时的录音时长，不在六秒的 `on_edge_event` 钩子里等待录音。
+默认 PCM 不是 WAV，不能直接冒充文件格式传给现有完整音频识别服务。
+完整返回值和限制见 [接口文档](edge-ports.md#流式音频输入)。
+
+调试台提供 `sim-pcm` 模拟输入，可设置 20..10000 毫秒的 440 Hz 测试音，以及录音结束时过载。
+页面显示实际采集块数、字节数和错误；Core 插件打开/读取/关闭输入，页面只设置输入源。
+这是模拟采集和真实 TCP 路由测试，实际麦克风及串口吞吐仍需对应硬件验证。

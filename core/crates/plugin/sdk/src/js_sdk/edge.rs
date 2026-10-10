@@ -1,5 +1,5 @@
 //! Explicit-node hardware ports. Plugins execute on Core; hardware actions execute on Edge.
-use super::results::EdgePortResultData;
+use super::results::{EdgePortResultData, EdgeAudioInputsResultData, EdgeAudioStreamResultData, EdgeAudioReadResultData, BooleanResultData, EdgeAudioFormat};
 use super::{JsAny, JsFuture, JsObject};
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +23,41 @@ pub struct IoInterfaceInfo {
     pub operation: String,
 }
 
-/// Calls only firmware-declared native plugin actions on an explicit node.
+/// Selects an explicit microphone, format and bounded recording duration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeAudioInputOptions {
+    pub inputId: String,
+    /// Missing format selects pcm_s16le, 16000 Hz, mono; unsupported formats reject.
+    pub format: Option<EdgeAudioFormat>,
+    /// Default 60000 ms; must be between 1 and 300000 ms.
+    pub maxDurationMs: Option<u32>,
+}
+
+/// Accesses hardware actions and streaming microphone input on an explicit Edge.
 pub trait EdgeHost: Send + Sync {
+    /// Lists input capabilities. Missing microphone Host rejects explicitly.
+    fn listAudioInputs(&self, nodeId: String) -> JsFuture<EdgeAudioInputsResultData> {
+        let _ = nodeId;
+        Box::pin(async { Err(super::JsHostError::new("Audio input is unavailable")) })
+    }
+    /// Reserves a receiver on the calling Core and starts one Edge recording.
+    fn openAudioInput(&self, nodeId: String, options: EdgeAudioInputOptions) -> JsFuture<EdgeAudioStreamResultData> {
+        let _ = (nodeId, options);
+        Box::pin(async { Err(super::JsHostError::new("Audio input is unavailable")) })
+    }
+    /// Waits at most five seconds; pending means continue reading. Terminal errors
+    /// are distinct from clean EOF. Always close the stream in a finally block.
+    fn readAudioInput(&self, streamId: String) -> JsFuture<EdgeAudioReadResultData> {
+        let _ = streamId;
+        Box::pin(async { Err(super::JsHostError::new("Audio input is unavailable")) })
+    }
+    /// Cancels the Core receiver first, then requests Edge stop. Safe to repeat.
+    fn closeAudioInput(&self, streamId: String) -> JsFuture<BooleanResultData> {
+        let _ = streamId;
+        Box::pin(async { Err(super::JsHostError::new("Audio input is unavailable")) })
+    }
+
     /// Executes a declared action through authenticated node routing without adding application-level retries.
     fn execute(
         &self,

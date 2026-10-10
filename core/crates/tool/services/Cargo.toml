@@ -24,6 +24,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 json5.workspace = true
 md-5 = "0.10"
 operit-host-api = { version = "0.1.0", path = "../../foundation/host-api" }
+operit-edge-contract = { path = "../../node/edge-contract" }
 operit-link = { path = "../../foundation/link" }
 operit-model = { version = "2.0.0-preview.14", path = "../../foundation/model" }
 operit-plugin-sdk = { version = "2.0.0-preview.14", path = "../../plugin/sdk" }
@@ -36,7 +37,7 @@ serde_bytes = "0.11"
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
 url = "2"
 uuid.workspace = true
 zip.workspace = true

@@ -1,4 +1,12 @@
+export interface CoreAccessState {
+    pairing?: {pairingId: string; peerNodeId: string} | null;
+    request?: {requestId: string; status: string; spaceName: string; error?: string | null} | null;
+    joined?: boolean;
+    nodeId?: string;
+}
+
 export interface DeviceState {
+    coreAccess?: CoreAccessState;
     error?: string;
     address?: string;
     scene?: {

@@ -17,6 +17,9 @@ pub trait RuntimePeerService: Send + Sync {
     /// Volatile, admitted Space return route; not reverse pairing permission.
     fn spaceClient(&self) -> Option<std::sync::Arc<dyn operit_link::CoreLinkSharedClient + Send + Sync>> { None }
 
+    /// Captures one admitted Space generation for caller-owned binary Push streams.
+    fn spacePushClient(&self) -> Option<std::sync::Arc<dyn operit_link::CoreLinkSpacePushClient>> { None }
+
     /// Selects an admitted entry together with its volatile identity for UI reconnection.
     fn spaceConnection(&self) -> Option<super::NodeServices::SpaceClientConnection> { None }
 

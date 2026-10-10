@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json --noEmit false --outDir build && node --test tests/stream.test.cjs"
+  },
+  "devDependencies": { "typescript": "^5.8.3" }
+}
