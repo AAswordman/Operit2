@@ -91,6 +91,13 @@ jobs:
             Expand-Archive -Path $zip -DestinationPath $dir -Force
             Remove-Item $zip -Force
           }
+          # Mark the artifact as up-to-date so flutter assemble does not try
+          # to re-download these archives with Dart's HttpClient (which fails
+          # on this runner).  The stamp content must equal the fork engine version.
+          $stampDir = Join-Path $sdkRoot "bin\cache"
+          $stampFile = Join-Path $stampDir "windows-sdk.stamp"
+          Set-Content -Path $stampFile -Value "3.41.10-ohos-0.0.2-beta.operit.1" -NoNewline -Encoding ascii
+          Write-Host "Wrote stamp: $stampFile"
 
       - name: Build and package Windows app
         if: inputs.products != 'cli'
