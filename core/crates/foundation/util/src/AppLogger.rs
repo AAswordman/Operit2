@@ -60,6 +60,9 @@ struct LoggerState {
 
 static STATE: OnceLock<Mutex<LoggerState>> = OnceLock::new();
 static HOST_LOG_SINK_INIT: Once = Once::new();
+/// Serializes file writes (rotate + append) so concurrent loggers cannot
+/// interleave "check size → move → truncate-create → append" and drop lines.
+static FILE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 fn state() -> &'static Mutex<LoggerState> {
     install_host_log_sink_once();
@@ -368,29 +371,40 @@ fn write_entry(
         timestamp_ms,
     };
 
-    let (
-        enable_file_logging,
-        enable_console_logging,
-        console_min_level,
-        console_max_verbose_level,
-        file_system_host,
-        log_file,
-        package_log_file,
-    ) = {
+    let line = format_log_line(&entry, tag);
+    let package_line = tag
+        .eq_ignore_ascii_case(TOOLPKG_LOG_TAG)
+        .then(|| format_package_log_line(&entry));
+
+    let (enable_console_logging, console_min_level, console_max_verbose_level) = {
         let mut guard = state().lock().expect("AppLogger mutex poisoned");
         if guard.retain_entries { guard.entries.push(entry.clone()); }
+
+        // File operations run while the state lock is held: the config check,
+        // the rotation check, and the append are one critical section, so a
+        // concurrent reset/reconfigure cannot slip in between them.
+        if guard.enable_file_logging {
+            if let (Some(file_system_host), Some(path)) =
+                (&guard.file_system_host, &guard.log_file)
+            {
+                append_line(file_system_host, path, &line);
+            }
+            if let (Some(file_system_host), Some(path)) =
+                (&guard.file_system_host, &guard.package_log_file)
+            {
+                if let Some(package_line) = &package_line {
+                    append_line(file_system_host, path, package_line);
+                }
+            }
+        }
+
         (
-            guard.enable_file_logging,
             guard.enable_console_logging,
             guard.console_min_level,
             guard.console_max_verbose_level,
-            guard.file_system_host.clone(),
-            guard.log_file.clone(),
-            guard.package_log_file.clone(),
         )
     };
 
-    let line = format_log_line(&entry, tag);
     if enable_console_logging
         && is_console_loggable(
             priority,
@@ -411,24 +425,79 @@ fn write_entry(
             }
         }
     }
-
-    if enable_file_logging {
-        if let Some(file_system_host) = file_system_host {
-            if let Some(path) = log_file {
-                append_line(&file_system_host, &path, &line);
-            }
-            if tag.eq_ignore_ascii_case(TOOLPKG_LOG_TAG) {
-                if let Some(path) = package_log_file {
-                    append_line(&file_system_host, &path, &format_package_log_line(&entry));
-                }
-            }
-        }
-    }
 }
 
 /// Appends one formatted log line through the configured file-system host.
+///
+/// Callers must hold the state lock; inside, rotation and the append also run
+/// while holding [`FILE_WRITE_LOCK`] (lock order: state → file-write, never the
+/// reverse) so concurrent writers cannot interleave the rotate/append sequence
+/// and drop lines.
 fn append_line(file_system_host: &Arc<dyn FileSystemHost>, path: &str, line: &str) {
-    let _ = file_system_host.writeFile(path, line, true);
+    append_line_with_rotation_cap(file_system_host, path, line, LOG_ROTATE_BYTES);
+}
+
+/// [`append_line`] with an explicit rotation cap so tests can rotate cheaply.
+fn append_line_with_rotation_cap(
+    file_system_host: &Arc<dyn FileSystemHost>,
+    path: &str,
+    line: &str,
+    rotate_bytes: i64,
+) {
+    let _guard = FILE_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    rotate_if_oversized(file_system_host, path, rotate_bytes);
+    if let Err(error) = file_system_host.writeFile(path, line, true) {
+        report_log_io_error("append", path, &error.message);
+    }
+}
+
+/// Size cap before a log file rotates (bytes).
+const LOG_ROTATE_BYTES: i64 = 8 * 1024 * 1024;
+
+/// Rotates one log file once it exceeds the size cap, keeping a single `.1` archive.
+fn rotate_if_oversized(file_system_host: &Arc<dyn FileSystemHost>, path: &str, rotate_bytes: i64) {
+    let metadata = match file_system_host.fileInfo(path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            report_log_io_error("stat", path, &error.message);
+            return;
+        }
+    };
+    if metadata.size <= rotate_bytes {
+        return;
+    }
+    let archive = format!("{path}.1");
+    // Only touch a stale archive that actually exists — a missing archive is
+    // the normal first rotation, not a failure worth reporting.
+    match file_system_host.fileExists(&archive) {
+        Ok(existence) if !existence.exists => {}
+        Ok(_) => {
+            if let Err(error) = file_system_host.deleteFile(&archive, false) {
+                // Keep going and let the move below surface any real failure.
+                report_log_io_error("delete-archive", &archive, &error.message);
+            }
+        }
+        Err(error) => {
+            report_log_io_error("inspect-archive", &archive, &error.message);
+        }
+    }
+    if let Err(error) = file_system_host.moveFile(path, &archive) {
+        // Rotation failed: keep appending to the existing file rather than
+        // dropping lines, but make the failure visible.
+        report_log_io_error("rotate-move", path, &error.message);
+        return;
+    }
+    if let Err(error) = file_system_host.writeFile(path, "", false) {
+        report_log_io_error("rotate-recreate", path, &error.message);
+    }
+}
+
+/// Reports a log-file I/O failure without re-entering the logging pipeline,
+/// which would deadlock on the state lock (or on [`FILE_WRITE_LOCK`]).
+fn report_log_io_error(action: &str, path: &str, message: &str) {
+    eprintln!("AppLogger: failed to {action} '{path}': {message}");
 }
 
 /// Creates an empty log file through the host when the path is absent.
