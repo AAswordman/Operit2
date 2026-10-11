@@ -166,16 +166,7 @@ jobs:
         shell: pwsh
         run: python tools/build_scripts/check_build_environment.py --products app --github-runner
 
-      - name: Prepare Python virtualenv
-        shell: pwsh
-        run: |
-           = (Resolve-Path '.').Path
-           = Join-Path  ".venv\Scripts\python.exe"
-          New-Item -ItemType Directory -Force -Path (Split-Path ) | Out-Null
-           = (Get-Command python).Source
-          Copy-Item   -Force
-          &  --version
-          Write-Host "Prepared .venv Python at "
+
       - name: Prepare Python virtualenv
         shell: pwsh
         run: |
@@ -202,4 +193,5 @@ jobs:
           path: tools/release/dist/operit2-app-android-arm64-v8a.apk
           if-no-files-found: error
           retention-days: 14
+
 
