@@ -176,6 +176,16 @@ jobs:
           Copy-Item   -Force
           &  --version
           Write-Host "Prepared .venv Python at "
+      - name: Prepare Python virtualenv
+        shell: pwsh
+        run: |
+          $repoRoot = (Resolve-Path '.').Path
+          $venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+          New-Item -ItemType Directory -Force -Path (Split-Path $venvPython) | Out-Null
+          $python = (Get-Command python).Source
+          Copy-Item $python $venvPython -Force
+          & $venvPython --version
+          Write-Host "Prepared .venv Python at $venvPython"
       - name: Build and package Android app
         shell: pwsh
         run: |
