@@ -182,6 +182,10 @@ jobs:
         run: |
           npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
           if ($LASTEXITCODE -ne 0) { throw "npm install typescript failed" }
+          corepack enable pnpm
+          if ($LASTEXITCODE -ne 0) { throw "corepack enable pnpm failed" }
+          corepack prepare pnpm@10.7.0 --activate
+          if ($LASTEXITCODE -ne 0) { throw "corepack prepare pnpm failed" }
           Push-Location plugins/packages/buildin/workflow
           try {
             corepack pnpm install --frozen-lockfile
