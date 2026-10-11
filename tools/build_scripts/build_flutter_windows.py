@@ -9,7 +9,9 @@ from common import (
     compress_zip,
     flutter_command,
     flutter_pub_get,
+    generate_dart_proxy_artifacts,
     host_arch,
+    require_command,
     run,
 )
 
@@ -21,12 +23,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--build-number")
     parser.add_argument("--archive-path", type=Path)
     parser.add_argument("--enforce-lockfile", action="store_true")
+    parser.add_argument("--skip-proxy-generation", action="store_true")
     return parser.parse_args()
 
 
 # Builds the Windows Flutter app and writes a release archive.
 def main() -> int:
     args = parse_args()
+    require_command("cargo")
+    if not args.skip_proxy_generation:
+        generate_dart_proxy_artifacts()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
     if args.build_name:
