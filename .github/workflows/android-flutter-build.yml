@@ -177,6 +177,19 @@ jobs:
           Copy-Item $python $venvPython -Force
           & $venvPython --version
           Write-Host "Prepared .venv Python at $venvPython"
+      - name: Prepare TypeScript and pnpm dependencies
+        shell: pwsh
+        run: |
+          npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+          if ($LASTEXITCODE -ne 0) { throw "npm install typescript failed" }
+          Push-Location plugins/packages/buildin/workflow
+          try {
+            corepack pnpm install --frozen-lockfile
+            if ($LASTEXITCODE -ne 0) { throw "corepack pnpm install failed" }
+          } finally {
+            Pop-Location
+          }
+          Write-Host "TypeScript and pnpm dependencies prepared"
       - name: Build and package Android app
         shell: pwsh
         run: |
