@@ -74,6 +74,24 @@ jobs:
         shell: pwsh
         run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
+      - name: Pre-cache Windows engine artifacts
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path $env:GITHUB_WORKSPACE "apps\flutter\app\.fvm\flutter_sdk"
+          $cacheRoot = Join-Path $sdkRoot "bin\cache\artifacts\windows-sdk"
+          New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+          $base = "https://github.com/AAswordman/flutter-ohos/releases/download/3.41.10-ohos-0.0.2-beta.operit.1"
+          foreach ($mode in @("debug", "profile", "release")) {
+            $dir = Join-Path $cacheRoot "windows-x64-$mode"
+            if (Test-Path (Join-Path $dir "flutter_windows.dll")) { continue }
+            $zip = Join-Path $cacheRoot "windows-x64-$mode.zip"
+            Write-Host "Downloading windows-x64-$mode.zip ..."
+            Invoke-WebRequest -Uri "$base/windows-x64-$mode.zip" -OutFile $zip -UseBasicParsing
+            Write-Host "Extracting windows-x64-$mode.zip ..."
+            Expand-Archive -Path $zip -DestinationPath $dir -Force
+            Remove-Item $zip -Force
+          }
+
       - name: Build and package Windows app
         if: inputs.products != 'cli'
         shell: pwsh
