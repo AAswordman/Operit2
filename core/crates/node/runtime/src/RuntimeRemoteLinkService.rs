@@ -804,11 +804,60 @@ impl RuntimeRemoteLinkService {
         targetNodeId: String,
         resumeContext: CoreRouteResumeContext,
     ) -> Result<(), String> {
+        self.changeRoute(chatId, targetNodeId, Some(resumeContext), None, false).await
+    }
+
+    /// Applies one user-initiated Binding change from the client UI.
+    ///
+    /// A non-empty target node pins the chat to that device with the requested
+    /// lock flag; an empty target only updates the lock flag while keeping the
+    /// current node. User changes always bypass the lock so the user can unlock
+    /// and re-pin freely.
+    #[allow(non_snake_case)]
+    pub async fn setChatRouteBinding(
+        &self,
+        chatId: String,
+        targetNodeId: String,
+        locked: bool,
+    ) -> Result<(), String> {
+        let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
+        if targetNodeId.trim().is_empty() {
+            // The lock flag is enforced on the node currently executing the
+            // chat, so the updated record is pushed there without waiting for
+            // the next periodic space synchronization round.
+            let commit = bindingStore.setLocked(&chatId, locked)?;
+            self.installRouteBindingOnTarget(&commit.binding.nodeId, commit.operation)
+                .await?;
+            return Ok(());
+        }
+        self.changeRoute(chatId, targetNodeId, None, Some(locked), true).await
+    }
+
+    /// Shared Binding move used by agent-driven and user-initiated route changes.
+    #[allow(non_snake_case)]
+    async fn changeRoute(
+        &self,
+        chatId: String,
+        targetNodeId: String,
+        resumeContext: Option<CoreRouteResumeContext>,
+        locked: Option<bool>,
+        userInitiated: bool,
+    ) -> Result<(), String> {
         if chatId.trim().is_empty() {
             return Err("route change chat id must not be empty".to_string());
         }
         if targetNodeId.trim().is_empty() {
             return Err("route change target node id must not be empty".to_string());
+        }
+        let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
+        if let Ok(currentBinding) = bindingStore.binding(&chatId) {
+            if currentBinding.locked && !userInitiated {
+                return Err(format!(
+                    "CHAT_ROUTE_USER_LOCKED: the user pinned chat {chatId} to device {}; \
+                     ask the user to unlock it before switching routes",
+                    currentBinding.nodeId
+                ));
+            }
         }
         let space = self.spaceStore.initialize()?;
         if !space.members.iter().any(|member| member == &targetNodeId) {
@@ -839,7 +888,6 @@ impl RuntimeRemoteLinkService {
         .await?;
 
         let routeChangeStartedAt = currentTimeMillis();
-        let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
         let currentBinding = bindingStore.binding(&chatId)?;
         operit_util::AppLogger::AppLogger::trace(
             "CoreRouteTrace",
@@ -894,7 +942,12 @@ impl RuntimeRemoteLinkService {
             );
         }
 
-        let commit = bindingStore.compareAndSet(&chatId, &currentBinding.nodeId, &targetNodeId)?;
+        let commit = bindingStore.compareAndSetWithOptions(
+            &chatId,
+            &currentBinding.nodeId,
+            &targetNodeId,
+            locked,
+        )?;
         if commit.binding.nodeId != targetNodeId {
             return Err(format!(
                 "route change committed to an unexpected target: {}",
@@ -926,14 +979,20 @@ impl RuntimeRemoteLinkService {
                 currentTimeMillis() - routeChangeStartedAt
             ),
         );
-        let lifecycleResult = self
-            .callChatCoreLifecycle(
-                &targetNodeId,
-                GeneratedRouteLifecycle::AfterChangeRoute,
-                chatId,
-                Some(resumeContext),
-            )
-            .await;
+        // Only the agent-driven flow resumes generation on the target; the
+        // after-change hook requires a resume context and a user pin has none.
+        let lifecycleResult = match resumeContext {
+            Some(resumeContext) => Some(
+                self.callChatCoreLifecycle(
+                    &targetNodeId,
+                    GeneratedRouteLifecycle::AfterChangeRoute,
+                    chatId,
+                    Some(resumeContext),
+                )
+                .await,
+            ),
+            None => None,
+        };
         operit_util::AppLogger::AppLogger::trace(
             "CoreRouteTrace",
             &format!(
@@ -941,14 +1000,14 @@ impl RuntimeRemoteLinkService {
                 targetNodeId,
                 commit.binding.generation,
                 currentTimeMillis() - routeChangeStartedAt,
-                if lifecycleResult.is_ok() {
-                    "ok"
-                } else {
-                    "error"
+                match &lifecycleResult {
+                    Some(Ok(())) => "ok",
+                    Some(Err(_)) => "error",
+                    None => "skipped-user-pin",
                 }
             ),
         );
-        lifecycleResult
+        lifecycleResult.unwrap_or(Ok(()))
     }
 
     /// Installs one committed Binding operation on the target without advancing sync clocks.

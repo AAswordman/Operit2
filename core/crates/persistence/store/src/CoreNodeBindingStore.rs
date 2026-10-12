@@ -85,6 +85,9 @@ pub struct CoreNodeBindingRecord {
     pub key: String,
     pub nodeId: String,
     pub generation: i64,
+    /// Marks a Binding pinned by the local user; agent-driven route changes must refuse it.
+    #[serde(default)]
+    pub locked: bool,
 }
 
 /// Reports one committed Binding change and the operation that persists it.
@@ -152,6 +155,7 @@ impl CoreNodeBindingStore {
             key: key.to_string(),
             nodeId: nodeId.to_string(),
             generation: 1,
+            locked: false,
         })
     }
 
@@ -181,6 +185,18 @@ impl CoreNodeBindingStore {
         expectedNodeId: &str,
         targetNodeId: &str,
     ) -> Result<CoreNodeBindingCommit, String> {
+        self.compareAndSetWithOptions(key, expectedNodeId, targetNodeId, None)
+    }
+
+    /// Atomically changes one Binding, optionally updating its user-lock flag.
+    #[allow(non_snake_case)]
+    pub fn compareAndSetWithOptions(
+        &self,
+        key: &str,
+        expectedNodeId: &str,
+        targetNodeId: &str,
+        locked: Option<bool>,
+    ) -> Result<CoreNodeBindingCommit, String> {
         let _lock = coreNodeBindingMutationLock()
             .lock()
             .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
@@ -194,7 +210,8 @@ impl CoreNodeBindingStore {
                 current.nodeId
             ));
         }
-        if current.nodeId == targetNodeId {
+        let targetLocked = locked.unwrap_or(current.locked);
+        if current.nodeId == targetNodeId && current.locked == targetLocked {
             return Ok(CoreNodeBindingCommit {
                 binding: current,
                 operation: self.latestBindingOperation(key)?,
@@ -204,6 +221,29 @@ impl CoreNodeBindingStore {
             key: key.to_string(),
             nodeId: targetNodeId.to_string(),
             generation: current.generation + 1,
+            locked: targetLocked,
+        })
+    }
+
+    /// Updates one Binding's user-lock flag without changing its selected node.
+    #[allow(non_snake_case)]
+    pub fn setLocked(&self, key: &str, locked: bool) -> Result<CoreNodeBindingCommit, String> {
+        let _lock = coreNodeBindingMutationLock()
+            .lock()
+            .map_err(|error| format!("Binding mutation lock poisoned: {error}"))?;
+        validateBindingKey(key)?;
+        let current = self.binding(key)?;
+        if current.locked == locked {
+            return Ok(CoreNodeBindingCommit {
+                binding: current,
+                operation: self.latestBindingOperation(key)?,
+            });
+        }
+        self.appendBindingRecord(CoreNodeBindingRecord {
+            key: current.key,
+            nodeId: current.nodeId,
+            generation: current.generation + 1,
+            locked,
         })
     }
 
@@ -475,4 +515,169 @@ fn validateBindingNodeId(nodeId: &str) -> Result<(), String> {
         return Err("Binding CoreNode id must not be empty".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    use operit_host_api::{HostError, RuntimeStorageEntry, RuntimeStorageHost};
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+
+    #[derive(Clone, Default)]
+    struct MemoryStorageHost {
+        files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    }
+
+    impl RuntimeStorageHost for MemoryStorageHost {
+        /// Returns no physical runtime root for the in-memory test host.
+        fn runtimeRootDir(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+
+        /// Returns no physical workspace root for the in-memory test host.
+        fn workspaceRootDir(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+
+        /// Reads one exact virtual file from the in-memory test host.
+        fn readBytes(&self, path: &str) -> operit_host_api::HostResult<Vec<u8>> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .get(path)
+                .cloned()
+                .ok_or_else(|| HostError::new(format!("missing runtime storage file: {path}")))
+        }
+
+        /// Reads one byte range from the in-memory test host.
+        fn readBytesRange(
+            &self,
+            path: &str,
+            offset: u64,
+            length: usize,
+        ) -> operit_host_api::HostResult<Vec<u8>> {
+            let content = self.readBytes(path)?;
+            let start = usize::try_from(offset)
+                .map_err(|_| HostError::new("runtime storage offset does not fit usize"))?;
+            if start >= content.len() {
+                return Ok(Vec::new());
+            }
+            let end = start
+                .checked_add(length)
+                .ok_or_else(|| HostError::new("runtime storage byte range overflows usize"))?
+                .min(content.len());
+            Ok(content[start..end].to_vec())
+        }
+
+        /// Writes one complete virtual file to the in-memory test host.
+        fn writeBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .insert(path.to_string(), content.to_vec());
+            Ok(())
+        }
+
+        /// Appends bytes to one virtual file in the in-memory test host.
+        fn appendBytes(&self, path: &str, content: &[u8]) -> operit_host_api::HostResult<()> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .entry(path.to_string())
+                .or_default()
+                .extend_from_slice(content);
+            Ok(())
+        }
+
+        /// Deletes one virtual file from the in-memory test host.
+        fn delete(&self, path: &str, _recursive: bool) -> operit_host_api::HostResult<()> {
+            self.files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .remove(path);
+            Ok(())
+        }
+
+        /// Reports whether one virtual file exists in the in-memory test host.
+        fn exists(&self, path: &str) -> operit_host_api::HostResult<bool> {
+            Ok(self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .contains_key(path))
+        }
+
+        /// Lists virtual files stored under one prefix in the in-memory test host.
+        fn list(&self, prefix: &str) -> operit_host_api::HostResult<Vec<RuntimeStorageEntry>> {
+            Ok(self
+                .files
+                .lock()
+                .map_err(|error| HostError::new(error.to_string()))?
+                .iter()
+                .filter(|(path, _)| path.starts_with(prefix))
+                .map(|(path, content)| RuntimeStorageEntry {
+                    path: path.clone(),
+                    isDirectory: false,
+                    size: content.len() as i64,
+                })
+                .collect())
+        }
+    }
+
+    /// Opens one Binding store over a fresh in-memory host.
+    fn testStore() -> CoreNodeBindingStore {
+        CoreNodeBindingStore::new(Arc::new(MemoryStorageHost::default()))
+            .expect("test binding store must open")
+    }
+
+    /// Keeps the user lock sticky across ordinary agent CAS moves.
+    #[test]
+    fn compareAndSet_preserves_lock_flag() {
+        let store = testStore();
+        store.create("chat-1", "node-a").expect("create binding");
+        store
+            .compareAndSetWithOptions("chat-1", "node-a", "node-a", Some(true))
+            .expect("lock binding");
+        assert!(store.binding("chat-1").expect("binding").locked);
+
+        let commit = store
+            .compareAndSet("chat-1", "node-a", "node-b")
+            .expect("agent move");
+        assert_eq!(commit.binding.nodeId, "node-b");
+        assert!(commit.binding.locked, "agent CAS must keep the user lock");
+    }
+
+    /// Lets the user unlock without changing the selected node.
+    #[test]
+    fn setLocked_toggles_without_moving_node() {
+        let store = testStore();
+        store.create("chat-1", "node-a").expect("create binding");
+        store.setLocked("chat-1", true).expect("lock binding");
+        let locked = store.binding("chat-1").expect("binding");
+        assert!(locked.locked);
+        assert_eq!(locked.nodeId, "node-a");
+
+        store.setLocked("chat-1", false).expect("unlock binding");
+        let unlocked = store.binding("chat-1").expect("binding");
+        assert!(!unlocked.locked);
+        assert_eq!(unlocked.nodeId, "node-a");
+        assert!(unlocked.generation > locked.generation);
+    }
+
+    /// Keeps legacy payloads without a lock flag deserializable.
+    #[test]
+    fn legacy_payload_defaults_to_unlocked() {
+        let legacy = serde_json::json!({
+            "key": "chat-1",
+            "nodeId": "node-a",
+            "generation": 3,
+        });
+        let binding: CoreNodeBindingRecord =
+            serde_json::from_value(legacy).expect("legacy payload must deserialize");
+        assert!(!binding.locked);
+    }
 }
