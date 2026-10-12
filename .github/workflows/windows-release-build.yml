@@ -74,40 +74,6 @@ jobs:
         shell: pwsh
         run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
-      - name: Pre-cache Windows engine artifacts
-        shell: pwsh
-        run: |
-          $sdkRoot = Join-Path $env:GITHUB_WORKSPACE "apps\flutter\app\.fvm\flutter_sdk"
-          $cacheRoot = Join-Path $sdkRoot "bin\cache\artifacts\windows-sdk"
-          New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
-          $base = "https://github.com/AAswordman/flutter-ohos/releases/download/3.41.10-ohos-0.0.2-beta.operit.1"
-          # The Flutter SDK expects these directories:
-          #   windows-x64            <- from windows-x64-debug.zip
-          #   windows-x64-profile   <- from windows-x64-profile.zip
-          #   windows-x64-release    <- from windows-x64-release.zip
-          $map = @{
-            "windows-x64-debug.zip"    = "windows-x64"
-            "windows-x64-profile.zip" = "windows-x64-profile"
-            "windows-x64-release.zip" = "windows-x64-release"
-          }
-          foreach ($entry in $map.GetEnumerator()) {
-            $dir = Join-Path $cacheRoot $entry.Value
-            if (Test-Path (Join-Path $dir "flutter_windows.dll")) { continue }
-            $zip = Join-Path $cacheRoot $entry.Key
-            Write-Host "Downloading $($entry.Key) ..."
-            Invoke-WebRequest -Uri "$base/$($entry.Key)" -OutFile $zip -UseBasicParsing
-            Write-Host "Extracting $($entry.Key) to $($entry.Value) ..."
-            Expand-Archive -Path $zip -DestinationPath $dir -Force
-            Remove-Item $zip -Force
-          }
-          # Mark the artifact as up-to-date so flutter assemble does not try
-          # to re-download these archives with Dart's HttpClient (which fails
-          # on this runner).  The stamp content must equal the fork engine version.
-          $stampDir = Join-Path $sdkRoot "bin\cache"
-          $stampFile = Join-Path $stampDir "windows-sdk.stamp"
-          Set-Content -Path $stampFile -Value "3.41.10-ohos-0.0.2-beta.operit.1" -NoNewline -Encoding ascii
-          Write-Host "Wrote stamp: $stampFile"
-
       - name: Build and package Windows app
         if: inputs.products != 'cli'
         shell: pwsh
