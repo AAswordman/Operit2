@@ -44,6 +44,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   bool _toolsExpanded = false;
   bool _behaviorExpanded = false;
   bool _pluginsExpanded = false;
+  bool _routeExpanded = false;
 
   /// Starts observers for the current chat menu settings.
   @override
@@ -282,6 +283,17 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                         ),
                       ],
                     ),
+                    if (widget.currentChatId != null)
+                      _ChatRouteNodeSection(
+                        viewModel: widget.viewModel,
+                        chatId: widget.currentChatId!,
+                        expanded: _routeExpanded,
+                        onToggle: () {
+                          setState(() {
+                            _routeExpanded = !_routeExpanded;
+                          });
+                        },
+                      ),
                     _MenuSection(
                       icon: Icons.extension_outlined,
                       title: '插件',
@@ -748,6 +760,200 @@ enum _ToolPermissionMode {
 
   final String label;
   final core_proxy.AiPermissionMode permissionMode;
+}
+
+/// Renders the per-chat execution-node section fed by Core route streams.
+class _ChatRouteNodeSection extends StatefulWidget {
+  const _ChatRouteNodeSection({
+    required this.viewModel,
+    required this.chatId,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final ChatViewModel viewModel;
+  final String chatId;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  /// Creates the state owning the route and device-space subscriptions.
+  @override
+  State<_ChatRouteNodeSection> createState() => _ChatRouteNodeSectionState();
+}
+
+class _ChatRouteNodeSectionState extends State<_ChatRouteNodeSection> {
+  Stream<core_proxy.BindingRouteStatus?>? _status;
+  Stream<core_proxy.RuntimeDeviceSpaceSnapshot>? _devices;
+
+  /// Binds the section streams to the selected chat's Core flows.
+  void _bindStreams() {
+    _status = widget.viewModel.watchRouteStatus(widget.chatId);
+    _devices = widget.viewModel.watchDeviceSpace();
+  }
+
+  /// Subscribes once when the section is created.
+  @override
+  void initState() {
+    super.initState();
+    _bindStreams();
+  }
+
+  /// Rebinds streams when the selected chat or runtime changes.
+  @override
+  void didUpdateWidget(covariant _ChatRouteNodeSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.chatId != widget.chatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _bindStreams();
+    }
+  }
+
+  Future<void> _selectNode(String nodeId, bool locked) async {
+    try {
+      await widget.viewModel.setChatRoute(widget.chatId, nodeId, locked);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('执行节点切换失败：$error')));
+      }
+    }
+  }
+
+  /// Builds the section from the cached route status and device-space streams.
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<core_proxy.BindingRouteStatus?>(
+      stream: _status,
+      builder: (context, statusSnapshot) {
+        final status = statusSnapshot.data;
+        return StreamBuilder<core_proxy.RuntimeDeviceSpaceSnapshot>(
+          stream: _devices,
+          builder: (context, spaceSnapshot) {
+            final devices =
+                spaceSnapshot.data?.topology.devices ??
+                const <core_proxy.RuntimeDeviceSpaceDevice>[];
+            final ownerNodeId = status?.ownerNodeId;
+            final locked = status?.locked ?? false;
+            core_proxy.RuntimeDeviceSpaceDevice? pinnedDevice;
+            for (final device in devices) {
+              if (device.deviceId == ownerNodeId) pinnedDevice = device;
+            }
+            String summary;
+            if (!locked) {
+              summary = '自动（AI 调度）';
+            } else if (pinnedDevice != null) {
+              summary = pinnedDevice.online
+                  ? pinnedDevice.deviceName
+                  : '${pinnedDevice.deviceName}（离线）';
+            } else {
+              final fallback =
+                  status?.ownerIsLocal ?? false
+                  ? '本机'
+                  : status?.ownerPlatform ?? '';
+              summary = status?.ownerReachable ?? false
+                  ? fallback
+                  : '$fallback（离线）';
+            }
+            return _MenuSection(
+              icon: Icons.dns_outlined,
+              title: '执行节点',
+              value: locked ? '$summary 🔒' : summary,
+              expanded: widget.expanded,
+              onTap: widget.onToggle,
+              children: <Widget>[
+                _RouteNodeRow(
+                  icon: Icons.auto_awesome_outlined,
+                  title: '自动（AI 调度）',
+                  subtitle: '由 AI 根据任务需要切换设备',
+                  selected: !locked,
+                  onTap: () => _selectNode('', false),
+                ),
+                for (final device in devices)
+                  _RouteNodeRow(
+                    icon: device.online
+                        ? Icons.devices
+                        : Icons.phonelink_off,
+                    title: device.deviceName,
+                    subtitle: device.online
+                        ? device.platform
+                        : '${device.platform}（离线）',
+                    selected: locked && device.deviceId == ownerNodeId,
+                    onTap: () => _selectNode(device.deviceId, true),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+/// Renders one selectable execution-node option row.
+class _RouteNodeRow extends StatelessWidget {
+  const _RouteNodeRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final iconColor = selected
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant;
+    return InkWell(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 32),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: <Widget>[
+              Icon(icon, size: 16, color: iconColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(
+                    text: title,
+                    style: textTheme.bodySmall!.copyWith(
+                      color: colorScheme.onSurface,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                    children: <InlineSpan>[
+                      TextSpan(
+                        text: '  $subtitle',
+                        style: textTheme.bodySmall!.copyWith(
+                          color: colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.7,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (selected)
+                Icon(Icons.check, size: 16, color: colorScheme.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _MenuSection extends StatelessWidget {

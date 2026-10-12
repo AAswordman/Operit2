@@ -73,6 +73,8 @@ pub struct BindingRouteStatus {
     pub activeNodeId: String,
     pub activeIsLocal: bool,
     pub generation: i64,
+    /// True when the local user pinned this Binding; agent route changes must refuse it.
+    pub locked: bool,
 }
 
 /// Stores one push session whose CoreNode route is fixed when the stream opens.
@@ -462,6 +464,7 @@ impl CoreNodeRouter {
             ownerIsLocal,
             ownerReachable,
             generation: binding.generation,
+            locked: binding.locked,
         })
     }
 
@@ -3144,6 +3147,7 @@ mod tests {
                     key: key.to_string(),
                     nodeId,
                     generation: 1,
+                    locked: false,
                 }),
             }
         }
