@@ -301,6 +301,16 @@ pub trait CoreNodeToolRuntime: Send + Sync {
     fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String>;
 }
 
+/// Reports the persisted route binding of one chat for tool-level prechecks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(non_snake_case)]
+pub struct RuntimeChatBindingStatus {
+    /// Node the chat is currently bound to (persisted owner, not effective route).
+    pub nodeId: String,
+    /// True when the user pinned this chat in the UI; agent switches must refuse it.
+    pub locked: bool,
+}
+
 /// Provides runtime-owned services that the tools crate must not own.
 pub trait ToolRuntimeSupport: Send + Sync {
     fn bindDeviceToolRuntime(&self, _runtime: Arc<dyn crate::tools::DeviceTools::DeviceToolRuntime>) -> Result<(), String> {
@@ -319,6 +329,16 @@ pub trait ToolRuntimeSupport: Send + Sync {
     /// Returns live device reachability for Core routing tools.
     #[allow(non_snake_case)]
     fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String>;
+
+    /// Returns the persisted route binding of one chat, or None when the chat
+    /// has no explicit binding yet.
+    #[allow(non_snake_case)]
+    fn chatBindingStatus(
+        &self,
+        _chatId: &str,
+    ) -> Result<Option<RuntimeChatBindingStatus>, String> {
+        Ok(None)
+    }
 
     /// Installs the runtime-owned route change controller.
     #[allow(non_snake_case)]

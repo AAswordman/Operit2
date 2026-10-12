@@ -188,6 +188,36 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                         Ok(node) => node.nodeId.clone(),
                         Err(error) => return toolErrorResult(tool, error),
                     };
+                    // The Binding move also refuses user-locked chats, but only
+                    // after the turn ends where the model never sees it. Fail
+                    // the tool call here so the agent can tell the user why.
+                    if let Some(chatId) = ToolExecutionManager::currentToolRuntimeContext()
+                        .and_then(|context| context.callerChatId)
+                    {
+                        let bindingStatus = match runtimeSupport.chatBindingStatus(&chatId) {
+                            Ok(status) => status,
+                            Err(error) => return toolErrorResult(tool, error),
+                        };
+                        if let Some(binding) = bindingStatus.filter(|binding| binding.locked) {
+                            let currentLabel = state
+                                .nodes
+                                .iter()
+                                .find(|node| node.nodeId == binding.nodeId)
+                                .map(crate::runtime_support::coreNodeReferenceLabel)
+                                .unwrap_or_else(|| binding.nodeId.clone());
+                            let reason = if binding.nodeId == targetNodeId {
+                                format!(
+                                    "会话已由用户锁定在设备 {currentLabel} 上执行，无需切换。"
+                                )
+                            } else {
+                                format!(
+                                    "用户已将该会话的执行节点锁定为 {currentLabel}，switch_core 无法切换；\
+                                     请告知用户在聊天输入菜单的「执行节点」中解锁后重试，或直接继续当前设备上的任务。"
+                                )
+                            };
+                            return toolErrorResult(tool, reason);
+                        }
+                    }
                     ToolResult {
                         toolName: tool.name.clone(),
                         success: true,

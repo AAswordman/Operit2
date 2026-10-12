@@ -16,10 +16,10 @@ use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
     CachedMcpToolInfo, CoreNodeToolRuntime, CoreRouteChangeHandler, CoreRouteResumeContext,
-    RuntimeBundledExternalSkillAsset, RuntimeChatCallRequest, RuntimeChatSendRequest,
-    RuntimeChatSlot, RuntimeCoreNodeRouteState, RuntimePluginAsset, RuntimeSkillCatalogEntry,
-    RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
-    ToolRuntimeSupportFuture,
+    RuntimeBundledExternalSkillAsset, RuntimeChatBindingStatus, RuntimeChatCallRequest,
+    RuntimeChatSendRequest, RuntimeChatSlot, RuntimeCoreNodeRouteState, RuntimePluginAsset,
+    RuntimeSkillCatalogEntry, RuntimeStructuredEditAction, RuntimeStructuredEditOperation,
+    ToolRuntimeSupport, ToolRuntimeSupportFuture,
 };
 use operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer;
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
@@ -161,6 +161,26 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
             .clone()
             .ok_or_else(|| "CoreNode routing is not initialized".to_string())?;
         runtime.coreNodeRouteState()
+    }
+
+    /// Reads the persisted chat binding from this node's own replica store.
+    #[allow(non_snake_case)]
+    fn chatBindingStatus(
+        &self,
+        chatId: &str,
+    ) -> Result<Option<RuntimeChatBindingStatus>, String> {
+        let storageHost = self
+            .hostManager
+            .runtimeStorageHost
+            .clone()
+            .ok_or_else(|| "Runtime storage host is not initialized".to_string())?;
+        let bindingStore = operit_store::CoreNodeBindingStore::CoreNodeBindingStore::new(storageHost)?;
+        Ok(bindingStore
+            .bindingOptional(chatId)?
+            .map(|binding| RuntimeChatBindingStatus {
+                nodeId: binding.nodeId,
+                locked: binding.locked,
+            }))
     }
 
     /// Installs the route change controller supplied by the owning Core application.
