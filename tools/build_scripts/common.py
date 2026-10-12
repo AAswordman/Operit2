@@ -155,15 +155,17 @@ def _download_windows_engine_artifact(url: str, archive_path: Path) -> None:
 def _precache_windows_engine_artifacts(sdk_root: Path) -> None:
     """Downloads the flutter-ohos native composition Windows engine artifacts.
 
-    The flutter-ohos WindowsEngineArtifacts downloads from this fork's GitHub
-    release (see flutter_cache.dart). GitHub-hosted artifacts can be flaky from
-    CI runners, and the flutter assemble child process triggers a second
-    download. Populating the SDK cache here (after fvm install and precache)
-    avoids both downloads.
+    The flutter-ohos WindowsEngineArtifacts is an EngineCachedArtifact whose
+    location is bin/cache/artifacts/engine (see flutter_cache.dart and
+    cache.dart). It uses the 'windows-sdk' stamp name, and EngineCachedArtifact
+    also compares version against cache.engineRevision (read from
+    bin/cache/engine.stamp). Populating bin/cache/artifacts/engine and writing
+    both stamps here (after fvm install and precache) prevents flutter build
+    from re-downloading the artifacts during the native-assets phase.
     """
     import zipfile
 
-    cache_dir = sdk_root / "bin" / "cache" / "artifacts" / "windows-sdk"
+    cache_dir = sdk_root / "bin" / "cache" / "artifacts" / "engine"
     cache_dir.mkdir(parents=True, exist_ok=True)
     for directory, archive_name in WINDOWS_ENGINE_BINARY_DIRS.items():
         dest = cache_dir / directory
@@ -178,9 +180,15 @@ def _precache_windows_engine_artifacts(sdk_root: Path) -> None:
         with zipfile.ZipFile(archive_path) as zf:
             zf.extractall(dest)
         archive_path.unlink()
-    stamp_file = sdk_root / "bin" / "cache" / "windows-sdk.stamp"
+    cache_root = sdk_root / "bin" / "cache"
+    stamp_file = cache_root / "windows-sdk.stamp"
     stamp_file.write_text(WINDOWS_ENGINE_ARTIFACT_VERSION, encoding="ascii")
-    print(f"Wrote windows-sdk stamp: {WINDOWS_ENGINE_ARTIFACT_VERSION}", flush=True)
+    engine_stamp_file = cache_root / "engine.stamp"
+    engine_stamp_file.write_text(WINDOWS_ENGINE_ARTIFACT_VERSION, encoding="ascii")
+    print(
+        f"Wrote windows-sdk stamp and engine stamp: {WINDOWS_ENGINE_ARTIFACT_VERSION}",
+        flush=True,
+    )
 
 
 def prepare_fvm_flutter_sdk() -> None:
@@ -194,7 +202,7 @@ def prepare_fvm_flutter_sdk() -> None:
     executable = FLUTTER_APP_DIR / ".fvm" / "flutter_sdk" / "bin" / executable_name
     if not executable.is_file():
         raise RuntimeError(f"FVM SDK command not found: {executable}")
-    run([fvm, "flutter", "precache", "--web", "--ohos"], cwd=FLUTTER_APP_DIR)
+    run([fvm, "flutter", "precache", "--web", "--ohos", "--windows"], cwd=FLUTTER_APP_DIR)
     _precache_windows_engine_artifacts(FLUTTER_APP_DIR / ".fvm" / "flutter_sdk")
     _fvm_sdk_prepared = True
 
