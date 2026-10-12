@@ -74,6 +74,14 @@ jobs:
         shell: pwsh
         run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
+      # GitHub Actions runners cannot reliably reach gitee.com (connection
+      # reset), but the OpenHarmony flutter_packages repo is mirrored on
+      # GitHub.  Rewrite the gitee URL so `flutter pub get` can clone it.
+      - name: Rewrite gitee dependency URL to GitHub mirror
+        shell: pwsh
+        run: |
+          git config --global url."https://github.com/xuanxuan123xuan/flutter_packages.git".insteadOf "https://gitee.com/openharmony-sig/flutter_packages.git"
+
       - name: Build and package Windows app
         if: inputs.products != 'cli'
         shell: pwsh
