@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 
@@ -119,6 +120,69 @@ def host_arch() -> str:
     raise RuntimeError(f"Unsupported host architecture: {machine}")
 
 
+WINDOWS_ENGINE_ARTIFACT_VERSION = "3.41.10-ohos-0.0.2-beta.operit.1"
+WINDOWS_ENGINE_ARTIFACT_BASE_URL = (
+    "https://github.com/AAswordman/flutter-ohos/releases/download/"
+    + WINDOWS_ENGINE_ARTIFACT_VERSION
+)
+WINDOWS_ENGINE_BINARY_DIRS = {
+    "windows-x64": "windows-x64-debug.zip",
+    "windows-x64-profile": "windows-x64-profile.zip",
+    "windows-x64-release": "windows-x64-release.zip",
+}
+
+
+def _download_windows_engine_artifact(url: str, archive_path: Path) -> None:
+    """Downloads one engine artifact with backoff retries."""
+    import time
+    import urllib.request
+
+    for attempt in range(1, 5):
+        try:
+            print(f"Downloading {archive_path.name} (attempt {attempt}) ...", flush=True)
+            urllib.request.urlretrieve(url, archive_path)
+            return
+        except Exception as error:  # noqa: BLE001 - network errors are unpredictable
+            if attempt == 4:
+                raise
+            print(
+                f"Download attempt {attempt} failed: {error}. Retrying in 15s...",
+                flush=True,
+            )
+            time.sleep(15)
+
+
+def _precache_windows_engine_artifacts(sdk_root: Path) -> None:
+    """Downloads the flutter-ohos native composition Windows engine artifacts.
+
+    The flutter-ohos WindowsEngineArtifacts downloads from this fork's GitHub
+    release (see flutter_cache.dart). GitHub-hosted artifacts can be flaky from
+    CI runners, and the flutter assemble child process triggers a second
+    download. Populating the SDK cache here (after fvm install and precache)
+    avoids both downloads.
+    """
+    import zipfile
+
+    cache_dir = sdk_root / "bin" / "cache" / "artifacts" / "windows-sdk"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for directory, archive_name in WINDOWS_ENGINE_BINARY_DIRS.items():
+        dest = cache_dir / directory
+        if dest.exists() and any(dest.iterdir()):
+            print(f"Windows engine artifact already cached: {directory}", flush=True)
+            continue
+        url = f"{WINDOWS_ENGINE_ARTIFACT_BASE_URL}/{archive_name}"
+        archive_path = cache_dir / archive_name
+        _download_windows_engine_artifact(url, archive_path)
+        dest.mkdir(parents=True, exist_ok=True)
+        print(f"Extracting {archive_name} to {dest} ...", flush=True)
+        with zipfile.ZipFile(archive_path) as zf:
+            zf.extractall(dest)
+        archive_path.unlink()
+    stamp_file = sdk_root / "bin" / "cache" / "windows-sdk.stamp"
+    stamp_file.write_text(WINDOWS_ENGINE_ARTIFACT_VERSION, encoding="ascii")
+    print(f"Wrote windows-sdk stamp: {WINDOWS_ENGINE_ARTIFACT_VERSION}", flush=True)
+
+
 def prepare_fvm_flutter_sdk() -> None:
     """Installs and selects the Flutter SDK pinned by the app FVM configuration."""
     global _fvm_sdk_prepared
@@ -131,6 +195,7 @@ def prepare_fvm_flutter_sdk() -> None:
     if not executable.is_file():
         raise RuntimeError(f"FVM SDK command not found: {executable}")
     run([fvm, "flutter", "precache", "--web", "--ohos"], cwd=FLUTTER_APP_DIR)
+    _precache_windows_engine_artifacts(FLUTTER_APP_DIR / ".fvm" / "flutter_sdk")
     _fvm_sdk_prepared = True
 
 
@@ -279,7 +344,7 @@ def dart_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = No
     command = [dart_command(), "pub", "get"]
     if enforce_lockfile:
         command.append("--enforce-lockfile")
-    run(command, cwd=FLUTTER_APP_DIR, env=env)
+    run_with_retries(command, cwd=FLUTTER_APP_DIR, env=env)
 
 
 def flutter_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = None) -> None:
@@ -287,7 +352,35 @@ def flutter_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None =
     command = [flutter_command(), "pub", "get"]
     if enforce_lockfile:
         command.append("--enforce-lockfile")
-    run(command, cwd=FLUTTER_APP_DIR, env=env)
+    run_with_retries(command, cwd=FLUTTER_APP_DIR, env=env)
+
+
+def run_with_retries(
+    command: list[str | Path],
+    cwd: Path = REPO_ROOT,
+    env: dict[str, str] | None = None,
+    attempts: int = 4,
+) -> None:
+    """Runs a network-facing command with backoff retries.
+
+    Git-hosted pub dependencies (e.g. gitee mirrors) reset connections from
+    some CI regions; a bare failure wastes a full runner provisioning cycle,
+    so retry locally before surfacing the error.
+    """
+    delay = 15
+    for attempt in range(1, attempts + 1):
+        try:
+            run(command, cwd=cwd, env=env)
+            return
+        except RuntimeError:
+            if attempt == attempts:
+                raise
+            print(
+                f"attempt {attempt}/{attempts} failed, retrying in {delay}s...",
+                flush=True,
+            )
+            time.sleep(delay)
+            delay *= 2
 
 
 def build_env_with_typescript(version: str) -> dict[str, str]:
@@ -295,3 +388,37 @@ def build_env_with_typescript(version: str) -> dict[str, str]:
     typescript_bin = ensure_typescript(version)
     env["PATH"] = f"{typescript_bin}{os.pathsep}{env['PATH']}"
     return env
+
+
+WORKFLOW_PACKAGE_DIR = (
+    REPO_ROOT / "plugins" / "packages" / "buildin" / "workflow"
+)
+
+
+def ensure_workflow_pnpm_deps(env: dict[str, str] | None = None) -> None:
+    """Installs built-in workflow plugin dependencies with Corepack pnpm.
+
+    Plugin sync (tsc + pack:toolpkg) assumes node_modules is present, which
+    is only true after a manual install on dev machines. Fresh CI runners
+    must install first, honoring the pnpm pin in package.json.
+    """
+    if not (WORKFLOW_PACKAGE_DIR / "package.json").is_file():
+        raise RuntimeError(
+            f"Workflow package.json not found: {WORKFLOW_PACKAGE_DIR}"
+        )
+    if not (WORKFLOW_PACKAGE_DIR / "pnpm-lock.yaml").is_file():
+        raise RuntimeError(
+            f"Workflow pnpm lockfile not found: {WORKFLOW_PACKAGE_DIR}"
+        )
+    corepack = shutil.which("corepack")
+    if corepack is None:
+        raise RuntimeError(
+            "Corepack is required to install workflow dependencies "
+            "(run `corepack enable` first)"
+        )
+    run_with_retries(
+        [corepack, "pnpm", "install", "--frozen-lockfile"],
+        cwd=WORKFLOW_PACKAGE_DIR,
+        env=env,
+        attempts=3,
+    )
