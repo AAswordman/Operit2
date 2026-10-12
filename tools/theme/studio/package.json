@@ -1,0 +1,16 @@
+{
+  "name": "operit2-theme-studio-shell",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 7474",
+    "start": "vite --host 127.0.0.1 --port 7474",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

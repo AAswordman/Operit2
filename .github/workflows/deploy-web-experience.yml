@@ -18,11 +18,15 @@ jobs:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
       FVM_VERSION: 4.3.0
-      WASM_BINDGEN_VERSION: 0.2.122
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Install bootstrap Dart
         uses: dart-lang/setup-dart@v1
@@ -63,22 +67,47 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen CLI
-        run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+      - name: Install locked wasm-bindgen CLI
+        run: |
+          WASM_BINDGEN_VERSION="$(python3 -c 'import pathlib, tomllib; lock = tomllib.loads(pathlib.Path("core/Cargo.lock").read_text("utf-8")); print(next(p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"))')"
+          cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
 
       - name: Build Flutter Web experience
         working-directory: apps/flutter/app
         run: fvm flutter build web --release --no-wasm-dry-run --base-href /
 
-      - name: Verify Flutter Web output
+      - name: Build Theme Studio (/studio/)
         run: |
+          RELEASE_ID="ci-${GITHUB_SHA::12}"
+          FLUTTER_SDK_DIR="$(cd apps/flutter/app && fvm flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["flutterRoot"])')"
+          python3 tools/theme/build_preview.py \
+            --renderer-release-id "${RELEASE_ID}" \
+            --flutter-sdk "${FLUTTER_SDK_DIR}" \
+            --wasm-bindgen "$(command -v wasm-bindgen)" \
+            --base-prefix "/studio"
+          cd tools/theme/studio
+          npm ci
+          OPERIT_THEME_RENDERER_RELEASE_ID="${RELEASE_ID}" \
+          OPERIT_STUDIO_BASE_PREFIX="/studio" \
+          npm run build
+          mkdir -p ../../../apps/flutter/app/build/web/studio
+          cp -a dist/. ../../../apps/flutter/app/build/web/studio/
+
+      - name: Verify Flutter Web and Theme Studio output
+        run: |
+          RELEASE_ID="ci-${GITHUB_SHA::12}"
           test -s apps/flutter/app/build/web/index.html
           test -s apps/flutter/app/build/web/main.dart.js
           test -s apps/flutter/app/build/web/assets/assets/model_logos/DEEPSEEK.svg
           test -s apps/flutter/app/build/web/runtime/generated/operit_runtime_worker.js
+          test -s apps/flutter/app/build/web/studio/index.html
+          test -s apps/flutter/app/build/web/studio/theme-studio-config.json
+          test -s "apps/flutter/app/build/web/studio/theme-preview/${RELEASE_ID}/main.dart.js"
 
       - name: Configure Web custom domain
-        run: printf 'web.operit.app\n' > apps/flutter/app/build/web/CNAME
+        run: |
+          printf 'web.operit.app\n' > apps/flutter/app/build/web/CNAME
+          touch apps/flutter/app/build/web/.nojekyll
 
       - name: Publish to gh-pages branch
         run: |

@@ -1,0 +1,122 @@
+name: Deploy Theme Studio
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "core/crates/theme/**"
+      - "apps/flutter/packages/operit_theme/**"
+      - "apps/flutter/theme_preview/**"
+      - "tools/theme/**"
+      - ".github/workflows/deploy-theme-studio.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: -Awarnings
+      RUST_TOOLCHAIN_VERSION: 1.95.0
+      FVM_VERSION: 4.3.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bootstrap Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.11.5
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install FVM
+        run: |
+          dart pub global activate fvm "$FVM_VERSION"
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Install project Flutter SDK
+        working-directory: apps/flutter/app
+        run: fvm install --skip-pub-get
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install locked wasm-bindgen CLI
+        run: |
+          WASM_BINDGEN_VERSION="$(python3 -c 'import pathlib, tomllib; lock = tomllib.loads(pathlib.Path("core/Cargo.lock").read_text("utf-8")); print(next(p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"))')"
+          cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+
+      - name: Build Theme Preview kernel (Flutter Web + Rust WASM) and Theme Studio
+        run: |
+          RELEASE_ID="ci-${GITHUB_SHA::12}"
+          FLUTTER_SDK_DIR="$(cd apps/flutter/app && fvm flutter --version --machine | python3 -c 'import json,sys; print(json.load(sys.stdin)["flutterRoot"])')"
+          python3 tools/theme/build_preview.py \
+            --renderer-release-id "${RELEASE_ID}" \
+            --flutter-sdk "${FLUTTER_SDK_DIR}" \
+            --wasm-bindgen "$(command -v wasm-bindgen)" \
+            --base-prefix "/studio"
+          cd tools/theme/studio
+          npm ci
+          OPERIT_THEME_RENDERER_RELEASE_ID="${RELEASE_ID}" \
+          OPERIT_STUDIO_BASE_PREFIX="/studio" \
+          npm run build
+
+      - name: Verify Theme Studio static bundle
+        run: |
+          RELEASE_ID="ci-${GITHUB_SHA::12}"
+          test -s tools/theme/studio/dist/index.html
+          test -s tools/theme/studio/dist/theme-studio-config.json
+          test -s "tools/theme/studio/dist/theme-preview/${RELEASE_ID}/main.dart.js"
+          test -s "tools/theme/studio/dist/theme-preview/${RELEASE_ID}/contract/operit_theme_contract_bg.wasm"
+
+      - name: Publish Theme Studio to gh-pages branch
+        run: |
+          staging_dir="$RUNNER_TEMP/operit-theme-studio-dist"
+          rm -rf "$staging_dir"
+          mkdir -p "$staging_dir"
+          cp -a tools/theme/studio/dist/. "$staging_dir/"
+          if git fetch origin gh-pages:gh-pages; then
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf .
+          fi
+          rm -rf studio
+          mkdir -p studio
+          cp -a "$staging_dir/." studio/
+          touch .nojekyll
+          if [ ! -f CNAME ]; then
+            printf 'web.operit.app\n' > CNAME
+          fi
+          if [ ! -f index.html ]; then
+            printf '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=./studio/"><title>Operit2 Theme Studio</title></head><body><a href="./studio/">Open Operit2 Theme Studio</a></body></html>\n' > index.html
+          fi
+          git add --all
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "deploy(theme-studio): $GITHUB_SHA"
+            git push origin HEAD:gh-pages --force
+          fi
