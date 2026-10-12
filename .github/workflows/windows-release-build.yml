@@ -81,13 +81,22 @@ jobs:
           $cacheRoot = Join-Path $sdkRoot "bin\cache\artifacts\windows-sdk"
           New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
           $base = "https://github.com/AAswordman/flutter-ohos/releases/download/3.41.10-ohos-0.0.2-beta.operit.1"
-          foreach ($mode in @("debug", "profile", "release")) {
-            $dir = Join-Path $cacheRoot "windows-x64-$mode"
+          # The Flutter SDK expects these directories:
+          #   windows-x64            <- from windows-x64-debug.zip
+          #   windows-x64-profile   <- from windows-x64-profile.zip
+          #   windows-x64-release    <- from windows-x64-release.zip
+          $map = @{
+            "windows-x64-debug.zip"    = "windows-x64"
+            "windows-x64-profile.zip" = "windows-x64-profile"
+            "windows-x64-release.zip" = "windows-x64-release"
+          }
+          foreach ($entry in $map.GetEnumerator()) {
+            $dir = Join-Path $cacheRoot $entry.Value
             if (Test-Path (Join-Path $dir "flutter_windows.dll")) { continue }
-            $zip = Join-Path $cacheRoot "windows-x64-$mode.zip"
-            Write-Host "Downloading windows-x64-$mode.zip ..."
-            Invoke-WebRequest -Uri "$base/windows-x64-$mode.zip" -OutFile $zip -UseBasicParsing
-            Write-Host "Extracting windows-x64-$mode.zip ..."
+            $zip = Join-Path $cacheRoot $entry.Key
+            Write-Host "Downloading $($entry.Key) ..."
+            Invoke-WebRequest -Uri "$base/$($entry.Key)" -OutFile $zip -UseBasicParsing
+            Write-Host "Extracting $($entry.Key) to $($entry.Value) ..."
             Expand-Archive -Path $zip -DestinationPath $dir -Force
             Remove-Item $zip -Force
           }
