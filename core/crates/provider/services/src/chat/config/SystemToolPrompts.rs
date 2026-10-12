@@ -882,7 +882,7 @@ fn basic_tools_en() -> SystemToolPromptCategory {
             ),
             tool(
                 "switch_core",
-                "Emit a target-device marker for another currently reachable device. This tool does not switch the runtime itself. Fails when the target is not a reachable device-space member. Accepts a device name, a user name, a unique ID prefix, or the exact ID from list_core_nodes.",
+                "Emit a target-device marker for another currently reachable device. This tool does not switch the runtime itself. Fails when the target is not a reachable device-space member, or when the user has pinned this chat to a device (CHAT_ROUTE_USER_LOCKED); if the user asks to switch a pinned chat, explain that they must unlock it in the UI first. Accepts a device name, a user name, a unique ID prefix, or the exact ID from list_core_nodes.",
                 vec![param(
                     "node_id",
                     "string",
@@ -922,7 +922,7 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
             ),
             tool(
                 "switch_core",
-                "为当前设备空间内另一台当前可达的设备输出目标标记；此工具本身不会切换运行时。目标不是可达的空间成员时会返回失败。接受设备名、用户名、唯一 ID 前缀或 list_core_nodes 返回的完整 ID。",
+                "为当前设备空间内另一台当前可达的设备输出目标标记；此工具本身不会切换运行时。目标不是可达的空间成员，或用户已将该会话锁定在某个设备上（CHAT_ROUTE_USER_LOCKED）时会返回失败；若用户要求切换已锁定的会话，请告知其需先在界面中解锁。接受设备名、用户名、唯一 ID 前缀或 list_core_nodes 返回的完整 ID。",
                 vec![param("node_id", "string", "目标设备：list_core_nodes 返回的设备名或完整 ID，或唯一 ID 前缀", true, None)],
             ),
         ],

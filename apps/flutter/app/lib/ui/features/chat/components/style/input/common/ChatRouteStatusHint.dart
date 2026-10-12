@@ -69,7 +69,10 @@ class _ChatRouteStatusHintState extends State<ChatRouteStatusHint> {
             : status == null
             ? l10n.chatRouteLoading
             : chatRouteHint(l10n, status);
-        return widget.builder(' ($suffix)');
+        // The lock glyph mirrors the user-pinned Binding flag so manual pins
+        // stay visible even while the input menu popup is closed.
+        final lockMark = (status?.locked ?? false) ? ' 🔒' : '';
+        return widget.builder(' ($suffix$lockMark)');
       },
     );
   }

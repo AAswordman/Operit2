@@ -117,6 +117,24 @@ class ChatViewModel {
     return clients.serverCoreNodeRouter.bindingRouteStatusFlow(key: chatId);
   }
 
+  /// Watches the device-space snapshot feeding the chat route node selector.
+  Stream<core_proxy.RuntimeDeviceSpaceSnapshot> watchDeviceSpace() {
+    return clients.serverRuntimeRemoteLinkService.deviceSpaceSnapshotFlow();
+  }
+
+  /// Pins the chat route to one device, or unlocks it with an empty node id.
+  Future<void> setChatRoute(
+    String chatId,
+    String targetNodeId,
+    bool locked,
+  ) {
+    return clients.serverRuntimeRemoteLinkService.setChatRouteBinding(
+      chatId: chatId,
+      targetNodeId: targetNodeId,
+      locked: locked,
+    );
+  }
+
   /// Watches messages for one explicit main-runtime chat id.
   Stream<List<ChatUiMessage>> watchMessages(String chatId) {
     return _chat.chatMessagesFlow(chatId: chatId);
