@@ -11,6 +11,7 @@ from common import (
     flutter_pub_get,
     generate_dart_proxy_artifacts,
     host_arch,
+    prepare_python_command,
     require_command,
     run,
 )
@@ -31,6 +32,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     require_command("cargo")
+    # The Flutter native-assets hook and the CMake sync_operit_plugins target
+    # both invoke .venv/Scripts/python.exe.  Provision it before the build
+    # so those steps do not fail on CI runners that have no .venv yet.
+    prepare_python_command()
     if not args.skip_proxy_generation:
         generate_dart_proxy_artifacts()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
