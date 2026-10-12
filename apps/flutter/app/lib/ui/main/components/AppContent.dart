@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:operit_theme/operit_theme.dart';
 
 import '../../common/components/RetainedPage.dart';
 import '../MainLayoutController.dart';
@@ -63,9 +64,6 @@ class _AppContentState extends State<AppContent> {
   );
   static const double _phonePageTransitionOffset = 12;
   static const double _tabletPageTransitionOffset = 16;
-  static const double _topBarHeight = 64;
-  static const double _navigationIconStartPadding = 4;
-  static const double _navigationIconSize = 48;
 
   final Map<String, Widget> _screenCache = <String, Widget>{};
   final Map<String, bool> _screenKeepAliveCache = <String, bool>{};
@@ -276,65 +274,38 @@ class _AppContentState extends State<AppContent> {
                     : widget.useTabletLayout && widget.isTabletSidebarExpanded
                     ? Icons.chevron_left
                     : Icons.segment;
-                final navigationIconWidget = Icon(
-                  navigationIcon,
-                  color: appBarContentColor,
-                );
                 final shouldFlipNavigationIcon =
                     !widget.canGoBack &&
                     !(widget.useTabletLayout && widget.isTabletSidebarExpanded);
-                return ColoredBox(
-                  color: contentColor,
-                  child: SizedBox(
-                    height: topPadding + _topBarHeight,
-                    child: Padding(
-                      padding: EdgeInsets.only(top: topPadding),
-                      child: Row(
-                        children: <Widget>[
-                          const SizedBox(width: _navigationIconStartPadding),
-                          SizedBox(
-                            width: _navigationIconSize,
-                            height: _navigationIconSize,
-                            child: IconButton(
-                              onPressed: widget.canGoBack
-                                  ? widget.onGoBack
-                                  : widget.onNavigationButtonPressed,
-                              icon: shouldFlipNavigationIcon
-                                  ? Transform(
-                                      alignment: Alignment.center,
-                                      transform: Matrix4.identity()
-                                        ..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
-                                      child: navigationIconWidget,
-                                    )
-                                  : navigationIconWidget,
-                              tooltip: widget.canGoBack
-                                  ? 'Back'
-                                  : widget.useTabletLayout &&
-                                        widget.isTabletSidebarExpanded
-                                  ? 'Collapse sidebar'
-                                  : 'Navigation',
-                            ),
-                          ),
-                          Expanded(
-                            child:
-                                titleContent?.content(context) ??
-                                TopBarTitleText(
-                                  primaryText: widget.currentRouteTitle,
-                                  contentColor: appBarContentColor,
-                                ),
-                          ),
-                          if (actions != null) ...actions(context),
-                          for (final entry in widget.appBarEntries)
-                            IconButton(
-                              tooltip: entry.title,
-                              onPressed: () =>
-                                  widget.onAppBarEntrySelected(entry),
-                              icon: Icon(entry.icon, color: appBarContentColor),
-                            ),
-                        ],
+                return ThemeTopBarChrome(
+                  title:
+                      titleContent?.content(context) ??
+                      TopBarTitleText(
+                        primaryText: widget.currentRouteTitle,
+                        contentColor: appBarContentColor,
                       ),
-                    ),
-                  ),
+                  navigationIcon: navigationIcon,
+                  navigationTooltip: widget.canGoBack
+                      ? 'Back'
+                      : widget.useTabletLayout && widget.isTabletSidebarExpanded
+                      ? 'Collapse sidebar'
+                      : 'Navigation',
+                  onNavigationPressed: widget.canGoBack
+                      ? widget.onGoBack
+                      : widget.onNavigationButtonPressed,
+                  contentColor: contentColor,
+                  contentForeground: appBarContentColor,
+                  topPadding: topPadding,
+                  flipNavigationIcon: shouldFlipNavigationIcon,
+                  actions: <Widget>[
+                    if (actions != null) ...actions(context),
+                    for (final entry in widget.appBarEntries)
+                      IconButton(
+                        tooltip: entry.title,
+                        onPressed: () => widget.onAppBarEntrySelected(entry),
+                        icon: Icon(entry.icon, color: appBarContentColor),
+                      ),
+                  ],
                 );
               },
             ),

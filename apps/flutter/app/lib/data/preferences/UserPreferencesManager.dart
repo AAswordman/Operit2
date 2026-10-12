@@ -1,371 +1,15 @@
 // ignore_for_file: file_names, constant_identifier_names
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
+import 'package:operit_theme/operit_theme.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 
-class ThemePreferenceSnapshot {
-  /// Creates the complete effective theme state for one UI surface.
-  const ThemePreferenceSnapshot({
-    required this.themeMode,
-    required this.useCustomColors,
-    required this.customPrimaryColor,
-    required this.customSecondaryColor,
-    required this.useBackgroundImage,
-    required this.backgroundImageUri,
-    required this.backgroundMediaType,
-    required this.backgroundImageOpacity,
-    required this.videoBackgroundMuted,
-    required this.videoBackgroundLoop,
-    required this.useBackgroundBlur,
-    required this.backgroundBlurRadius,
-    required this.transparentSurfaceEnabled,
-    required this.chatInputFloating,
-    required this.inputStyle,
-    required this.chatStyle,
-    required this.bubbleShowAvatar,
-    required this.bubbleWideLayoutEnabled,
-    required this.cursorUserBubbleColor,
-    required this.bubbleUserBubbleColor,
-    required this.bubbleAiBubbleColor,
-    required this.bubbleUserTextColor,
-    required this.bubbleAiTextColor,
-    required this.bubbleUserUseImage,
-    required this.bubbleAiUseImage,
-    required this.bubbleUserImageUri,
-    required this.bubbleAiImageUri,
-    required this.bubbleUserImageRenderMode,
-    required this.bubbleAiImageRenderMode,
-    required this.bubbleUserImageCropLeft,
-    required this.bubbleUserImageCropTop,
-    required this.bubbleUserImageCropRight,
-    required this.bubbleUserImageCropBottom,
-    required this.bubbleUserImageRepeatStart,
-    required this.bubbleUserImageRepeatEnd,
-    required this.bubbleUserImageRepeatYStart,
-    required this.bubbleUserImageRepeatYEnd,
-    required this.bubbleUserImageScale,
-    required this.bubbleAiImageCropLeft,
-    required this.bubbleAiImageCropTop,
-    required this.bubbleAiImageCropRight,
-    required this.bubbleAiImageCropBottom,
-    required this.bubbleAiImageRepeatStart,
-    required this.bubbleAiImageRepeatEnd,
-    required this.bubbleAiImageRepeatYStart,
-    required this.bubbleAiImageRepeatYEnd,
-    required this.bubbleAiImageScale,
-    required this.bubbleUserRoundedCornersEnabled,
-    required this.bubbleAiRoundedCornersEnabled,
-    required this.bubbleUserContentPaddingLeft,
-    required this.bubbleUserContentPaddingRight,
-    required this.bubbleAiContentPaddingLeft,
-    required this.bubbleAiContentPaddingRight,
-    required this.customUserAvatarUri,
-    required this.avatarShape,
-    required this.avatarCornerRadius,
-    required this.useCustomFont,
-    required this.fontType,
-    required this.systemFontName,
-    required this.customFontPath,
-    required this.fontScale,
-    required this.bubbleUserUseCustomFont,
-    required this.bubbleUserFontType,
-    required this.bubbleUserSystemFontName,
-    required this.bubbleUserCustomFontPath,
-    required this.bubbleAiUseCustomFont,
-    required this.bubbleAiFontType,
-    required this.bubbleAiSystemFontName,
-    required this.bubbleAiCustomFontPath,
-    required this.showThinkingProcess,
-    required this.showModelProvider,
-    required this.showModelName,
-    required this.showRoleName,
-    required this.showUserName,
-    required this.showMessageTokenStats,
-    required this.showMessageTimingStats,
-    required this.showMessageTimestamp,
-    required this.showInputProcessingStatus,
-  });
-
-  final ThemeMode themeMode;
-  final bool useCustomColors;
-  final int? customPrimaryColor;
-  final int? customSecondaryColor;
-  final bool useBackgroundImage;
-  final String? backgroundImageUri;
-  final String backgroundMediaType;
-  final double backgroundImageOpacity;
-  final bool videoBackgroundMuted;
-  final bool videoBackgroundLoop;
-  final bool useBackgroundBlur;
-  final double backgroundBlurRadius;
-  final bool transparentSurfaceEnabled;
-  final bool chatInputFloating;
-  final String inputStyle;
-  final String chatStyle;
-  final bool bubbleShowAvatar;
-  final bool bubbleWideLayoutEnabled;
-  final int? cursorUserBubbleColor;
-  final int? bubbleUserBubbleColor;
-  final int? bubbleAiBubbleColor;
-  final int? bubbleUserTextColor;
-  final int? bubbleAiTextColor;
-  final bool bubbleUserUseImage;
-  final bool bubbleAiUseImage;
-  final String? bubbleUserImageUri;
-  final String? bubbleAiImageUri;
-  final String bubbleUserImageRenderMode;
-  final String bubbleAiImageRenderMode;
-  final double bubbleUserImageCropLeft;
-  final double bubbleUserImageCropTop;
-  final double bubbleUserImageCropRight;
-  final double bubbleUserImageCropBottom;
-  final double bubbleUserImageRepeatStart;
-  final double bubbleUserImageRepeatEnd;
-  final double bubbleUserImageRepeatYStart;
-  final double bubbleUserImageRepeatYEnd;
-  final double bubbleUserImageScale;
-  final double bubbleAiImageCropLeft;
-  final double bubbleAiImageCropTop;
-  final double bubbleAiImageCropRight;
-  final double bubbleAiImageCropBottom;
-  final double bubbleAiImageRepeatStart;
-  final double bubbleAiImageRepeatEnd;
-  final double bubbleAiImageRepeatYStart;
-  final double bubbleAiImageRepeatYEnd;
-  final double bubbleAiImageScale;
-  final bool bubbleUserRoundedCornersEnabled;
-  final bool bubbleAiRoundedCornersEnabled;
-  final double bubbleUserContentPaddingLeft;
-  final double bubbleUserContentPaddingRight;
-  final double bubbleAiContentPaddingLeft;
-  final double bubbleAiContentPaddingRight;
-  final String? customUserAvatarUri;
-  final String avatarShape;
-  final double avatarCornerRadius;
-  final bool useCustomFont;
-  final String fontType;
-  final String? systemFontName;
-  final String? customFontPath;
-  final double fontScale;
-  final bool bubbleUserUseCustomFont;
-  final String bubbleUserFontType;
-  final String? bubbleUserSystemFontName;
-  final String? bubbleUserCustomFontPath;
-  final bool bubbleAiUseCustomFont;
-  final String bubbleAiFontType;
-  final String? bubbleAiSystemFontName;
-  final String? bubbleAiCustomFontPath;
-  final bool showThinkingProcess;
-  final bool showModelProvider;
-  final bool showModelName;
-  final bool showRoleName;
-  final bool showUserName;
-  final bool showMessageTokenStats;
-  final bool showMessageTimingStats;
-  final bool showMessageTimestamp;
-  final bool showInputProcessingStatus;
-
-  /// Encodes the complete effective theme state for another Flutter engine.
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'themeMode': themeMode.name,
-      'useCustomColors': useCustomColors,
-      'customPrimaryColor': customPrimaryColor,
-      'customSecondaryColor': customSecondaryColor,
-      'useBackgroundImage': useBackgroundImage,
-      'backgroundImageUri': backgroundImageUri,
-      'backgroundMediaType': backgroundMediaType,
-      'backgroundImageOpacity': backgroundImageOpacity,
-      'videoBackgroundMuted': videoBackgroundMuted,
-      'videoBackgroundLoop': videoBackgroundLoop,
-      'useBackgroundBlur': useBackgroundBlur,
-      'backgroundBlurRadius': backgroundBlurRadius,
-      'transparentSurfaceEnabled': transparentSurfaceEnabled,
-      'chatInputFloating': chatInputFloating,
-      'inputStyle': inputStyle,
-      'chatStyle': chatStyle,
-      'bubbleShowAvatar': bubbleShowAvatar,
-      'bubbleWideLayoutEnabled': bubbleWideLayoutEnabled,
-      'cursorUserBubbleColor': cursorUserBubbleColor,
-      'bubbleUserBubbleColor': bubbleUserBubbleColor,
-      'bubbleAiBubbleColor': bubbleAiBubbleColor,
-      'bubbleUserTextColor': bubbleUserTextColor,
-      'bubbleAiTextColor': bubbleAiTextColor,
-      'bubbleUserUseImage': bubbleUserUseImage,
-      'bubbleAiUseImage': bubbleAiUseImage,
-      'bubbleUserImageUri': bubbleUserImageUri,
-      'bubbleAiImageUri': bubbleAiImageUri,
-      'bubbleUserImageRenderMode': bubbleUserImageRenderMode,
-      'bubbleAiImageRenderMode': bubbleAiImageRenderMode,
-      'bubbleUserImageCropLeft': bubbleUserImageCropLeft,
-      'bubbleUserImageCropTop': bubbleUserImageCropTop,
-      'bubbleUserImageCropRight': bubbleUserImageCropRight,
-      'bubbleUserImageCropBottom': bubbleUserImageCropBottom,
-      'bubbleUserImageRepeatStart': bubbleUserImageRepeatStart,
-      'bubbleUserImageRepeatEnd': bubbleUserImageRepeatEnd,
-      'bubbleUserImageRepeatYStart': bubbleUserImageRepeatYStart,
-      'bubbleUserImageRepeatYEnd': bubbleUserImageRepeatYEnd,
-      'bubbleUserImageScale': bubbleUserImageScale,
-      'bubbleAiImageCropLeft': bubbleAiImageCropLeft,
-      'bubbleAiImageCropTop': bubbleAiImageCropTop,
-      'bubbleAiImageCropRight': bubbleAiImageCropRight,
-      'bubbleAiImageCropBottom': bubbleAiImageCropBottom,
-      'bubbleAiImageRepeatStart': bubbleAiImageRepeatStart,
-      'bubbleAiImageRepeatEnd': bubbleAiImageRepeatEnd,
-      'bubbleAiImageRepeatYStart': bubbleAiImageRepeatYStart,
-      'bubbleAiImageRepeatYEnd': bubbleAiImageRepeatYEnd,
-      'bubbleAiImageScale': bubbleAiImageScale,
-      'bubbleUserRoundedCornersEnabled': bubbleUserRoundedCornersEnabled,
-      'bubbleAiRoundedCornersEnabled': bubbleAiRoundedCornersEnabled,
-      'bubbleUserContentPaddingLeft': bubbleUserContentPaddingLeft,
-      'bubbleUserContentPaddingRight': bubbleUserContentPaddingRight,
-      'bubbleAiContentPaddingLeft': bubbleAiContentPaddingLeft,
-      'bubbleAiContentPaddingRight': bubbleAiContentPaddingRight,
-      'customUserAvatarUri': customUserAvatarUri,
-      'avatarShape': avatarShape,
-      'avatarCornerRadius': avatarCornerRadius,
-      'useCustomFont': useCustomFont,
-      'fontType': fontType,
-      'systemFontName': systemFontName,
-      'customFontPath': customFontPath,
-      'fontScale': fontScale,
-      'bubbleUserUseCustomFont': bubbleUserUseCustomFont,
-      'bubbleUserFontType': bubbleUserFontType,
-      'bubbleUserSystemFontName': bubbleUserSystemFontName,
-      'bubbleUserCustomFontPath': bubbleUserCustomFontPath,
-      'bubbleAiUseCustomFont': bubbleAiUseCustomFont,
-      'bubbleAiFontType': bubbleAiFontType,
-      'bubbleAiSystemFontName': bubbleAiSystemFontName,
-      'bubbleAiCustomFontPath': bubbleAiCustomFontPath,
-      'showThinkingProcess': showThinkingProcess,
-      'showModelProvider': showModelProvider,
-      'showModelName': showModelName,
-      'showRoleName': showRoleName,
-      'showUserName': showUserName,
-      'showMessageTokenStats': showMessageTokenStats,
-      'showMessageTimingStats': showMessageTimingStats,
-      'showMessageTimestamp': showMessageTimestamp,
-      'showInputProcessingStatus': showInputProcessingStatus,
-    };
-  }
-
-  /// Decodes a serialized effective theme state from another Flutter engine.
-  factory ThemePreferenceSnapshot.fromJson(Map<String, Object?> json) {
-    /// Converts an optional JSON number into a nullable integer.
-    int? optionalInt(String key) {
-      final value = json[key];
-      return value == null ? null : (value as num).toInt();
-    }
-
-    /// Converts a required JSON number into a double.
-    double requiredDouble(String key) => (json[key] as num).toDouble();
-
-    /// Reads one required string from the serialized snapshot.
-    String requiredString(String key) => json[key] as String;
-
-    /// Reads one optional string from the serialized snapshot.
-    String? optionalString(String key) => json[key] as String?;
-
-    /// Reads one required boolean from the serialized snapshot.
-    bool requiredBool(String key) => json[key] as bool;
-
-    return ThemePreferenceSnapshot(
-      themeMode: ThemeMode.values.byName(requiredString('themeMode')),
-      useCustomColors: requiredBool('useCustomColors'),
-      customPrimaryColor: optionalInt('customPrimaryColor'),
-      customSecondaryColor: optionalInt('customSecondaryColor'),
-      useBackgroundImage: requiredBool('useBackgroundImage'),
-      backgroundImageUri: optionalString('backgroundImageUri'),
-      backgroundMediaType: requiredString('backgroundMediaType'),
-      backgroundImageOpacity: requiredDouble('backgroundImageOpacity'),
-      videoBackgroundMuted: requiredBool('videoBackgroundMuted'),
-      videoBackgroundLoop: requiredBool('videoBackgroundLoop'),
-      useBackgroundBlur: requiredBool('useBackgroundBlur'),
-      backgroundBlurRadius: requiredDouble('backgroundBlurRadius'),
-      transparentSurfaceEnabled: requiredBool('transparentSurfaceEnabled'),
-      chatInputFloating: requiredBool('chatInputFloating'),
-      inputStyle: requiredString('inputStyle'),
-      chatStyle: requiredString('chatStyle'),
-      bubbleShowAvatar: requiredBool('bubbleShowAvatar'),
-      bubbleWideLayoutEnabled: requiredBool('bubbleWideLayoutEnabled'),
-      cursorUserBubbleColor: optionalInt('cursorUserBubbleColor'),
-      bubbleUserBubbleColor: optionalInt('bubbleUserBubbleColor'),
-      bubbleAiBubbleColor: optionalInt('bubbleAiBubbleColor'),
-      bubbleUserTextColor: optionalInt('bubbleUserTextColor'),
-      bubbleAiTextColor: optionalInt('bubbleAiTextColor'),
-      bubbleUserUseImage: requiredBool('bubbleUserUseImage'),
-      bubbleAiUseImage: requiredBool('bubbleAiUseImage'),
-      bubbleUserImageUri: optionalString('bubbleUserImageUri'),
-      bubbleAiImageUri: optionalString('bubbleAiImageUri'),
-      bubbleUserImageRenderMode: requiredString('bubbleUserImageRenderMode'),
-      bubbleAiImageRenderMode: requiredString('bubbleAiImageRenderMode'),
-      bubbleUserImageCropLeft: requiredDouble('bubbleUserImageCropLeft'),
-      bubbleUserImageCropTop: requiredDouble('bubbleUserImageCropTop'),
-      bubbleUserImageCropRight: requiredDouble('bubbleUserImageCropRight'),
-      bubbleUserImageCropBottom: requiredDouble('bubbleUserImageCropBottom'),
-      bubbleUserImageRepeatStart: requiredDouble('bubbleUserImageRepeatStart'),
-      bubbleUserImageRepeatEnd: requiredDouble('bubbleUserImageRepeatEnd'),
-      bubbleUserImageRepeatYStart: requiredDouble(
-        'bubbleUserImageRepeatYStart',
-      ),
-      bubbleUserImageRepeatYEnd: requiredDouble('bubbleUserImageRepeatYEnd'),
-      bubbleUserImageScale: requiredDouble('bubbleUserImageScale'),
-      bubbleAiImageCropLeft: requiredDouble('bubbleAiImageCropLeft'),
-      bubbleAiImageCropTop: requiredDouble('bubbleAiImageCropTop'),
-      bubbleAiImageCropRight: requiredDouble('bubbleAiImageCropRight'),
-      bubbleAiImageCropBottom: requiredDouble('bubbleAiImageCropBottom'),
-      bubbleAiImageRepeatStart: requiredDouble('bubbleAiImageRepeatStart'),
-      bubbleAiImageRepeatEnd: requiredDouble('bubbleAiImageRepeatEnd'),
-      bubbleAiImageRepeatYStart: requiredDouble('bubbleAiImageRepeatYStart'),
-      bubbleAiImageRepeatYEnd: requiredDouble('bubbleAiImageRepeatYEnd'),
-      bubbleAiImageScale: requiredDouble('bubbleAiImageScale'),
-      bubbleUserRoundedCornersEnabled: requiredBool(
-        'bubbleUserRoundedCornersEnabled',
-      ),
-      bubbleAiRoundedCornersEnabled: requiredBool(
-        'bubbleAiRoundedCornersEnabled',
-      ),
-      bubbleUserContentPaddingLeft: requiredDouble(
-        'bubbleUserContentPaddingLeft',
-      ),
-      bubbleUserContentPaddingRight: requiredDouble(
-        'bubbleUserContentPaddingRight',
-      ),
-      bubbleAiContentPaddingLeft: requiredDouble('bubbleAiContentPaddingLeft'),
-      bubbleAiContentPaddingRight: requiredDouble(
-        'bubbleAiContentPaddingRight',
-      ),
-      customUserAvatarUri: optionalString('customUserAvatarUri'),
-      avatarShape: requiredString('avatarShape'),
-      avatarCornerRadius: requiredDouble('avatarCornerRadius'),
-      useCustomFont: requiredBool('useCustomFont'),
-      fontType: requiredString('fontType'),
-      systemFontName: optionalString('systemFontName'),
-      customFontPath: optionalString('customFontPath'),
-      fontScale: requiredDouble('fontScale'),
-      bubbleUserUseCustomFont: requiredBool('bubbleUserUseCustomFont'),
-      bubbleUserFontType: requiredString('bubbleUserFontType'),
-      bubbleUserSystemFontName: optionalString('bubbleUserSystemFontName'),
-      bubbleUserCustomFontPath: optionalString('bubbleUserCustomFontPath'),
-      bubbleAiUseCustomFont: requiredBool('bubbleAiUseCustomFont'),
-      bubbleAiFontType: requiredString('bubbleAiFontType'),
-      bubbleAiSystemFontName: optionalString('bubbleAiSystemFontName'),
-      bubbleAiCustomFontPath: optionalString('bubbleAiCustomFontPath'),
-      showThinkingProcess: requiredBool('showThinkingProcess'),
-      showModelProvider: requiredBool('showModelProvider'),
-      showModelName: requiredBool('showModelName'),
-      showRoleName: requiredBool('showRoleName'),
-      showUserName: requiredBool('showUserName'),
-      showMessageTokenStats: requiredBool('showMessageTokenStats'),
-      showMessageTimingStats: requiredBool('showMessageTimingStats'),
-      showMessageTimestamp: requiredBool('showMessageTimestamp'),
-      showInputProcessingStatus: requiredBool('showInputProcessingStatus'),
-    );
-  }
-}
+export 'package:operit_theme/operit_theme.dart' show ThemePreferenceSnapshot;
 
 class LongPastedTextInputSettings {
   /// Creates the global settings for converting long pasted text to attachments.
@@ -394,6 +38,8 @@ class UserPreferencesManager {
   static const String CHAT_STYLE_BUBBLE = 'bubble';
   static const String INPUT_STYLE_CLASSIC = 'classic';
   static const String INPUT_STYLE_AGENT = 'agent';
+  /// Names the only built-in conversation tab, independent of old grouping values.
+  static const String CHAT_SIDEBAR_WORKSPACE_TAB = 'workspace';
   static const String BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE =
       'tiled_nine_slice';
   static const String BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = 'nine_patch';
@@ -423,309 +69,15 @@ class UserPreferencesManager {
   );
 
   static const String _fileName = 'user_preferences.preferences.json';
-
-  /// Names the only built-in conversation tab, independent of old grouping values.
-  static const String CHAT_SIDEBAR_WORKSPACE_TAB = 'workspace';
   static const String _KEY_CHAT_SIDEBAR_TAB = 'chat_sidebar_tab_v1';
 
   static const ThemePreferenceSnapshot defaultThemePreferenceSnapshot =
-      ThemePreferenceSnapshot(
-        themeMode: ThemeMode.system,
-        useCustomColors: false,
-        customPrimaryColor: null,
-        customSecondaryColor: null,
-        useBackgroundImage: false,
-        backgroundImageUri: null,
-        backgroundMediaType: MEDIA_TYPE_IMAGE,
-        backgroundImageOpacity: 0.3,
-        videoBackgroundMuted: true,
-        videoBackgroundLoop: true,
-        useBackgroundBlur: false,
-        backgroundBlurRadius: 12,
-        transparentSurfaceEnabled: false,
-        chatInputFloating: false,
-        inputStyle: INPUT_STYLE_AGENT,
-        chatStyle: CHAT_STYLE_CURSOR,
-        bubbleShowAvatar: true,
-        bubbleWideLayoutEnabled: false,
-        cursorUserBubbleColor: null,
-        bubbleUserBubbleColor: null,
-        bubbleAiBubbleColor: null,
-        bubbleUserTextColor: null,
-        bubbleAiTextColor: null,
-        bubbleUserUseImage: false,
-        bubbleAiUseImage: false,
-        bubbleUserImageUri: null,
-        bubbleAiImageUri: null,
-        bubbleUserImageRenderMode: BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
-        bubbleAiImageRenderMode: BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
-        bubbleUserImageCropLeft: 0,
-        bubbleUserImageCropTop: 0,
-        bubbleUserImageCropRight: 0,
-        bubbleUserImageCropBottom: 0,
-        bubbleUserImageRepeatStart: 0.35,
-        bubbleUserImageRepeatEnd: 0.65,
-        bubbleUserImageRepeatYStart: 0.35,
-        bubbleUserImageRepeatYEnd: 0.65,
-        bubbleUserImageScale: 1,
-        bubbleAiImageCropLeft: 0,
-        bubbleAiImageCropTop: 0,
-        bubbleAiImageCropRight: 0,
-        bubbleAiImageCropBottom: 0,
-        bubbleAiImageRepeatStart: 0.35,
-        bubbleAiImageRepeatEnd: 0.65,
-        bubbleAiImageRepeatYStart: 0.35,
-        bubbleAiImageRepeatYEnd: 0.65,
-        bubbleAiImageScale: 1,
-        bubbleUserRoundedCornersEnabled: true,
-        bubbleAiRoundedCornersEnabled: true,
-        bubbleUserContentPaddingLeft: 12,
-        bubbleUserContentPaddingRight: 12,
-        bubbleAiContentPaddingLeft: 12,
-        bubbleAiContentPaddingRight: 12,
-        customUserAvatarUri: null,
-        avatarShape: AVATAR_SHAPE_CIRCLE,
-        avatarCornerRadius: 8,
-        useCustomFont: false,
-        fontType: FONT_TYPE_SYSTEM,
-        systemFontName: null,
-        customFontPath: null,
-        fontScale: 1,
-        bubbleUserUseCustomFont: false,
-        bubbleUserFontType: FONT_TYPE_SYSTEM,
-        bubbleUserSystemFontName: SYSTEM_FONT_DEFAULT,
-        bubbleUserCustomFontPath: null,
-        bubbleAiUseCustomFont: false,
-        bubbleAiFontType: FONT_TYPE_SYSTEM,
-        bubbleAiSystemFontName: SYSTEM_FONT_DEFAULT,
-        bubbleAiCustomFontPath: null,
-        showThinkingProcess: true,
-        showModelProvider: false,
-        showModelName: false,
-        showRoleName: true,
-        showUserName: true,
-        showMessageTokenStats: false,
-        showMessageTimingStats: false,
-        showMessageTimestamp: false,
-        showInputProcessingStatus: true,
-      );
+      ThemePreferenceDefaults.snapshot;
 
-  static const String _THEME_MODE = 'theme_mode';
-  static const String _LEGACY_USE_SYSTEM_THEME = 'use_system_theme';
-  static const String _CUSTOM_PRIMARY_COLOR = 'custom_primary_color';
-  static const String _CUSTOM_SECONDARY_COLOR = 'custom_secondary_color';
-  static const String _USE_CUSTOM_COLORS = 'use_custom_colors';
-  static const String _USE_BACKGROUND_IMAGE = 'use_background_image';
-  static const String _BACKGROUND_IMAGE_URI = 'background_image_uri';
-  static const String _BACKGROUND_IMAGE_OPACITY = 'background_image_opacity';
-  static const String _BACKGROUND_MEDIA_TYPE = 'background_media_type';
-  static const String _VIDEO_BACKGROUND_MUTED = 'video_background_muted';
-  static const String _VIDEO_BACKGROUND_LOOP = 'video_background_loop';
-  static const String _TRANSPARENT_SURFACE_ENABLED =
-      'transparent_surface_enabled';
-  static const String _CHAT_INPUT_FLOATING = 'chat_input_floating';
-  static const String _INPUT_STYLE = 'input_style';
-  static const String _USE_BACKGROUND_BLUR = 'use_background_blur';
-  static const String _BACKGROUND_BLUR_RADIUS = 'background_blur_radius';
-  static const String _USE_CUSTOM_FONT = 'use_custom_font';
-  static const String _FONT_TYPE = 'font_type';
-  static const String _SYSTEM_FONT_NAME = 'system_font_name';
-  static const String _CUSTOM_FONT_PATH = 'custom_font_path';
-  static const String _FONT_SCALE = 'font_scale';
-  static const String _CHAT_STYLE = 'chat_style';
-  static const String _BUBBLE_SHOW_AVATAR = 'bubble_show_avatar';
-  static const String _BUBBLE_WIDE_LAYOUT_ENABLED =
-      'bubble_wide_layout_enabled';
-  static const String _CURSOR_USER_BUBBLE_COLOR = 'cursor_user_bubble_color';
-  static const String _BUBBLE_USER_BUBBLE_COLOR = 'bubble_user_bubble_color';
-  static const String _BUBBLE_AI_BUBBLE_COLOR = 'bubble_ai_bubble_color';
-  static const String _BUBBLE_USER_TEXT_COLOR = 'bubble_user_text_color';
-  static const String _BUBBLE_AI_TEXT_COLOR = 'bubble_ai_text_color';
-  static const String _BUBBLE_USER_USE_CUSTOM_FONT =
-      'bubble_user_use_custom_font';
-  static const String _BUBBLE_USER_FONT_TYPE = 'bubble_user_font_type';
-  static const String _BUBBLE_USER_SYSTEM_FONT_NAME =
-      'bubble_user_system_font_name';
-  static const String _BUBBLE_USER_CUSTOM_FONT_PATH =
-      'bubble_user_custom_font_path';
-  static const String _BUBBLE_AI_USE_CUSTOM_FONT = 'bubble_ai_use_custom_font';
-  static const String _BUBBLE_AI_FONT_TYPE = 'bubble_ai_font_type';
-  static const String _BUBBLE_AI_SYSTEM_FONT_NAME =
-      'bubble_ai_system_font_name';
-  static const String _BUBBLE_AI_CUSTOM_FONT_PATH =
-      'bubble_ai_custom_font_path';
-  static const String _BUBBLE_USER_USE_IMAGE = 'bubble_user_use_image';
-  static const String _BUBBLE_AI_USE_IMAGE = 'bubble_ai_use_image';
-  static const String _BUBBLE_USER_IMAGE_URI = 'bubble_user_image_uri';
-  static const String _BUBBLE_AI_IMAGE_URI = 'bubble_ai_image_uri';
-  static const String _BUBBLE_USER_IMAGE_CROP_LEFT =
-      'bubble_user_image_crop_left';
-  static const String _BUBBLE_USER_IMAGE_CROP_TOP =
-      'bubble_user_image_crop_top';
-  static const String _BUBBLE_USER_IMAGE_CROP_RIGHT =
-      'bubble_user_image_crop_right';
-  static const String _BUBBLE_USER_IMAGE_CROP_BOTTOM =
-      'bubble_user_image_crop_bottom';
-  static const String _BUBBLE_USER_IMAGE_REPEAT_START =
-      'bubble_user_image_repeat_start';
-  static const String _BUBBLE_USER_IMAGE_REPEAT_END =
-      'bubble_user_image_repeat_end';
-  static const String _BUBBLE_USER_IMAGE_REPEAT_Y_START =
-      'bubble_user_image_repeat_y_start';
-  static const String _BUBBLE_USER_IMAGE_REPEAT_Y_END =
-      'bubble_user_image_repeat_y_end';
-  static const String _BUBBLE_USER_IMAGE_SCALE = 'bubble_user_image_scale';
-  static const String _BUBBLE_AI_IMAGE_CROP_LEFT = 'bubble_ai_image_crop_left';
-  static const String _BUBBLE_AI_IMAGE_CROP_TOP = 'bubble_ai_image_crop_top';
-  static const String _BUBBLE_AI_IMAGE_CROP_RIGHT =
-      'bubble_ai_image_crop_right';
-  static const String _BUBBLE_AI_IMAGE_CROP_BOTTOM =
-      'bubble_ai_image_crop_bottom';
-  static const String _BUBBLE_AI_IMAGE_REPEAT_START =
-      'bubble_ai_image_repeat_start';
-  static const String _BUBBLE_AI_IMAGE_REPEAT_END =
-      'bubble_ai_image_repeat_end';
-  static const String _BUBBLE_AI_IMAGE_REPEAT_Y_START =
-      'bubble_ai_image_repeat_y_start';
-  static const String _BUBBLE_AI_IMAGE_REPEAT_Y_END =
-      'bubble_ai_image_repeat_y_end';
-  static const String _BUBBLE_AI_IMAGE_SCALE = 'bubble_ai_image_scale';
-  static const String _BUBBLE_USER_IMAGE_RENDER_MODE =
-      'bubble_user_image_render_mode';
-  static const String _BUBBLE_AI_IMAGE_RENDER_MODE =
-      'bubble_ai_image_render_mode';
-  static const String _BUBBLE_USER_ROUNDED_CORNERS_ENABLED =
-      'bubble_rounded_corners_enabled';
-  static const String _BUBBLE_AI_ROUNDED_CORNERS_ENABLED =
-      'bubble_ai_rounded_corners_enabled';
-  static const String _BUBBLE_USER_CONTENT_PADDING_LEFT =
-      'bubble_content_padding_left';
-  static const String _BUBBLE_USER_CONTENT_PADDING_RIGHT =
-      'bubble_content_padding_right';
-  static const String _BUBBLE_AI_CONTENT_PADDING_LEFT =
-      'bubble_ai_content_padding_left';
-  static const String _BUBBLE_AI_CONTENT_PADDING_RIGHT =
-      'bubble_ai_content_padding_right';
-  static const String _KEY_SHOW_THINKING_PROCESS = 'show_thinking_process';
-  static const String _KEY_SHOW_MODEL_PROVIDER = 'show_model_provider';
-  static const String _KEY_SHOW_MODEL_NAME = 'show_model_name';
-  static const String _KEY_SHOW_ROLE_NAME = 'show_role_name';
-  static const String _KEY_SHOW_USER_NAME = 'show_user_name';
-  static const String _KEY_SHOW_MESSAGE_TOKEN_STATS =
-      'show_message_token_stats';
-  static const String _KEY_SHOW_MESSAGE_TIMING_STATS =
-      'show_message_timing_stats';
-  static const String _KEY_SHOW_MESSAGE_TIMESTAMP = 'show_message_timestamp';
-  static const String _KEY_CUSTOM_USER_AVATAR_URI = 'custom_user_avatar_uri';
-  static const String _KEY_AVATAR_SHAPE = 'avatar_shape';
-  static const String _KEY_AVATAR_CORNER_RADIUS = 'avatar_corner_radius';
-  static const String _KEY_SHOW_INPUT_PROCESSING_STATUS =
-      'show_input_processing_status';
   static const String _KEY_LONG_PASTED_TEXT_INPUT_ENABLED =
       'long_pasted_text_input_enabled';
   static const String _KEY_LONG_PASTED_TEXT_INPUT_THRESHOLD =
       'long_pasted_text_input_threshold';
-
-  static const List<String> _stringThemeKeys = <String>[
-    _THEME_MODE,
-    _BACKGROUND_IMAGE_URI,
-    _BACKGROUND_MEDIA_TYPE,
-    _INPUT_STYLE,
-    _CHAT_STYLE,
-    _KEY_AVATAR_SHAPE,
-    _FONT_TYPE,
-    _SYSTEM_FONT_NAME,
-    _CUSTOM_FONT_PATH,
-    _BUBBLE_USER_FONT_TYPE,
-    _BUBBLE_USER_SYSTEM_FONT_NAME,
-    _BUBBLE_USER_CUSTOM_FONT_PATH,
-    _BUBBLE_AI_FONT_TYPE,
-    _BUBBLE_AI_SYSTEM_FONT_NAME,
-    _BUBBLE_AI_CUSTOM_FONT_PATH,
-    _BUBBLE_USER_IMAGE_URI,
-    _BUBBLE_AI_IMAGE_URI,
-    _BUBBLE_USER_IMAGE_RENDER_MODE,
-    _BUBBLE_AI_IMAGE_RENDER_MODE,
-  ];
-
-  static const List<String> _booleanThemeKeys = <String>[
-    _USE_CUSTOM_COLORS,
-    _USE_BACKGROUND_IMAGE,
-    _VIDEO_BACKGROUND_MUTED,
-    _VIDEO_BACKGROUND_LOOP,
-    _TRANSPARENT_SURFACE_ENABLED,
-    _CHAT_INPUT_FLOATING,
-    _USE_BACKGROUND_BLUR,
-    _BUBBLE_SHOW_AVATAR,
-    _BUBBLE_WIDE_LAYOUT_ENABLED,
-    _BUBBLE_USER_USE_IMAGE,
-    _BUBBLE_AI_USE_IMAGE,
-    _BUBBLE_USER_ROUNDED_CORNERS_ENABLED,
-    _BUBBLE_AI_ROUNDED_CORNERS_ENABLED,
-    _KEY_SHOW_THINKING_PROCESS,
-    _KEY_SHOW_INPUT_PROCESSING_STATUS,
-    _USE_CUSTOM_FONT,
-    _BUBBLE_USER_USE_CUSTOM_FONT,
-    _BUBBLE_AI_USE_CUSTOM_FONT,
-    _KEY_SHOW_MODEL_PROVIDER,
-    _KEY_SHOW_MODEL_NAME,
-    _KEY_SHOW_ROLE_NAME,
-    _KEY_SHOW_USER_NAME,
-    _KEY_SHOW_MESSAGE_TOKEN_STATS,
-    _KEY_SHOW_MESSAGE_TIMING_STATS,
-    _KEY_SHOW_MESSAGE_TIMESTAMP,
-  ];
-
-  static const List<String> _intThemeKeys = <String>[
-    _CUSTOM_PRIMARY_COLOR,
-    _CUSTOM_SECONDARY_COLOR,
-    _CURSOR_USER_BUBBLE_COLOR,
-    _BUBBLE_USER_BUBBLE_COLOR,
-    _BUBBLE_AI_BUBBLE_COLOR,
-    _BUBBLE_USER_TEXT_COLOR,
-    _BUBBLE_AI_TEXT_COLOR,
-  ];
-
-  static const List<String> _floatThemeKeys = <String>[
-    _BACKGROUND_IMAGE_OPACITY,
-    _BACKGROUND_BLUR_RADIUS,
-    _KEY_AVATAR_CORNER_RADIUS,
-    _FONT_SCALE,
-    _BUBBLE_USER_IMAGE_CROP_LEFT,
-    _BUBBLE_USER_IMAGE_CROP_TOP,
-    _BUBBLE_USER_IMAGE_CROP_RIGHT,
-    _BUBBLE_USER_IMAGE_CROP_BOTTOM,
-    _BUBBLE_USER_IMAGE_REPEAT_START,
-    _BUBBLE_USER_IMAGE_REPEAT_END,
-    _BUBBLE_USER_IMAGE_REPEAT_Y_START,
-    _BUBBLE_USER_IMAGE_REPEAT_Y_END,
-    _BUBBLE_USER_IMAGE_SCALE,
-    _BUBBLE_AI_IMAGE_CROP_LEFT,
-    _BUBBLE_AI_IMAGE_CROP_TOP,
-    _BUBBLE_AI_IMAGE_CROP_RIGHT,
-    _BUBBLE_AI_IMAGE_CROP_BOTTOM,
-    _BUBBLE_AI_IMAGE_REPEAT_START,
-    _BUBBLE_AI_IMAGE_REPEAT_END,
-    _BUBBLE_AI_IMAGE_REPEAT_Y_START,
-    _BUBBLE_AI_IMAGE_REPEAT_Y_END,
-    _BUBBLE_AI_IMAGE_SCALE,
-    _BUBBLE_USER_CONTENT_PADDING_LEFT,
-    _BUBBLE_USER_CONTENT_PADDING_RIGHT,
-    _BUBBLE_AI_CONTENT_PADDING_LEFT,
-    _BUBBLE_AI_CONTENT_PADDING_RIGHT,
-  ];
-
-  static const List<String> _themeKeys = <String>[
-    ..._stringThemeKeys,
-    ..._booleanThemeKeys,
-    ..._intThemeKeys,
-    ..._floatThemeKeys,
-  ];
-
-  static const List<String> _appearanceKeys = <String>[
-    ..._themeKeys,
-    _KEY_CUSTOM_USER_AVATAR_URI,
-  ];
 
   /// Observes committed user preferences, including changes synchronized from peers.
   Stream<Map<String, String>> preferencesFlow() {
@@ -839,188 +191,21 @@ class UserPreferencesManager {
     longPastedTextInputSettings.value = settings;
   }
 
-  /// Reads ordinary appearance values without querying plugin-owned references.
+  /// Reads only this CoreNode's global personal appearance. No role keys or migration.
   Future<ThemePreferenceSnapshot> resolveThemePreferenceSnapshot() async {
-    final keys = [..._appearanceKeys, _LEGACY_USE_SYSTEM_THEME];
-    final preferences = await _getStrings(keys);
+    final state = await _clients.application.nodeThemeState();
+    final source = state.privateAppearanceJson;
+    if (source == null) throw StateError('Node appearance has not been initialized');
+    return ThemePreferenceSnapshot.fromJson(jsonDecode(source) as Map<String, dynamic>);
+  }
 
-    /// Reads an ordinary key using its declared initial value when unset.
-    String? stringValue(String key, {String? defaultValue}) {
-      return preferences[key] ?? defaultValue;
-    }
-
-    /// Decodes an ordinary boolean and rejects malformed stored values.
-    bool booleanValue(String key, bool defaultValue) {
-      final value = stringValue(key);
-      return value == null ? defaultValue : _decodeBool(value);
-    }
-
-    /// Decodes an optional ordinary integer without altering malformed data.
-    int? intValue(String key) {
-      final value = stringValue(key);
-      return value == null ? null : int.parse(value);
-    }
-
-    /// Decodes an ordinary number using only its declared unset-key value.
-    double doubleValue(String key, double defaultValue) {
-      final value = stringValue(key);
-      return value == null ? defaultValue : double.parse(value);
-    }
-
-    final storedThemeMode = _decodeThemeMode(
-      stringValue(_THEME_MODE) ?? ThemeMode.system.name,
-    );
-    const legacyUseSystemThemeKey = _LEGACY_USE_SYSTEM_THEME;
-    final legacyUseSystemTheme = preferences[legacyUseSystemThemeKey];
-    final themeMode = legacyUseSystemTheme == null
-        ? storedThemeMode
-        : _decodeBool(legacyUseSystemTheme)
-        ? ThemeMode.system
-        : storedThemeMode;
-    if (legacyUseSystemTheme != null) {
-      await _setStrings(<String, String>{_THEME_MODE: themeMode.name});
-      await _removeStrings(<String>[legacyUseSystemThemeKey]);
-    }
-
-    return ThemePreferenceSnapshot(
-      themeMode: themeMode,
-      useCustomColors: booleanValue(_USE_CUSTOM_COLORS, false),
-      customPrimaryColor: intValue(_CUSTOM_PRIMARY_COLOR),
-      customSecondaryColor: intValue(_CUSTOM_SECONDARY_COLOR),
-      useBackgroundImage: booleanValue(_USE_BACKGROUND_IMAGE, false),
-      backgroundImageUri: stringValue(_BACKGROUND_IMAGE_URI),
-      backgroundMediaType:
-          stringValue(_BACKGROUND_MEDIA_TYPE) ?? MEDIA_TYPE_IMAGE,
-      backgroundImageOpacity: doubleValue(_BACKGROUND_IMAGE_OPACITY, 0.3),
-      videoBackgroundMuted: booleanValue(_VIDEO_BACKGROUND_MUTED, true),
-      videoBackgroundLoop: booleanValue(_VIDEO_BACKGROUND_LOOP, true),
-      useBackgroundBlur: booleanValue(_USE_BACKGROUND_BLUR, false),
-      backgroundBlurRadius: doubleValue(_BACKGROUND_BLUR_RADIUS, 12),
-      transparentSurfaceEnabled: booleanValue(
-        _TRANSPARENT_SURFACE_ENABLED,
-        false,
-      ),
-      chatInputFloating: booleanValue(_CHAT_INPUT_FLOATING, false),
-      inputStyle: stringValue(_INPUT_STYLE) ?? INPUT_STYLE_AGENT,
-      chatStyle: stringValue(_CHAT_STYLE) ?? CHAT_STYLE_CURSOR,
-      bubbleShowAvatar: booleanValue(_BUBBLE_SHOW_AVATAR, true),
-      bubbleWideLayoutEnabled: booleanValue(_BUBBLE_WIDE_LAYOUT_ENABLED, false),
-      cursorUserBubbleColor: intValue(_CURSOR_USER_BUBBLE_COLOR),
-      bubbleUserBubbleColor: intValue(_BUBBLE_USER_BUBBLE_COLOR),
-      bubbleAiBubbleColor: intValue(_BUBBLE_AI_BUBBLE_COLOR),
-      bubbleUserTextColor: intValue(_BUBBLE_USER_TEXT_COLOR),
-      bubbleAiTextColor: intValue(_BUBBLE_AI_TEXT_COLOR),
-      bubbleUserUseImage: booleanValue(_BUBBLE_USER_USE_IMAGE, false),
-      bubbleAiUseImage: booleanValue(_BUBBLE_AI_USE_IMAGE, false),
-      bubbleUserImageUri: stringValue(_BUBBLE_USER_IMAGE_URI),
-      bubbleAiImageUri: stringValue(_BUBBLE_AI_IMAGE_URI),
-      bubbleUserImageRenderMode:
-          stringValue(_BUBBLE_USER_IMAGE_RENDER_MODE) ??
-          BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
-      bubbleAiImageRenderMode:
-          stringValue(_BUBBLE_AI_IMAGE_RENDER_MODE) ??
-          BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE,
-      bubbleUserImageCropLeft: doubleValue(_BUBBLE_USER_IMAGE_CROP_LEFT, 0),
-      bubbleUserImageCropTop: doubleValue(_BUBBLE_USER_IMAGE_CROP_TOP, 0),
-      bubbleUserImageCropRight: doubleValue(_BUBBLE_USER_IMAGE_CROP_RIGHT, 0),
-      bubbleUserImageCropBottom: doubleValue(_BUBBLE_USER_IMAGE_CROP_BOTTOM, 0),
-      bubbleUserImageRepeatStart: doubleValue(
-        _BUBBLE_USER_IMAGE_REPEAT_START,
-        0.35,
-      ),
-      bubbleUserImageRepeatEnd: doubleValue(
-        _BUBBLE_USER_IMAGE_REPEAT_END,
-        0.65,
-      ),
-      bubbleUserImageRepeatYStart: doubleValue(
-        _BUBBLE_USER_IMAGE_REPEAT_Y_START,
-        0.35,
-      ),
-      bubbleUserImageRepeatYEnd: doubleValue(
-        _BUBBLE_USER_IMAGE_REPEAT_Y_END,
-        0.65,
-      ),
-      bubbleUserImageScale: doubleValue(_BUBBLE_USER_IMAGE_SCALE, 1),
-      bubbleAiImageCropLeft: doubleValue(_BUBBLE_AI_IMAGE_CROP_LEFT, 0),
-      bubbleAiImageCropTop: doubleValue(_BUBBLE_AI_IMAGE_CROP_TOP, 0),
-      bubbleAiImageCropRight: doubleValue(_BUBBLE_AI_IMAGE_CROP_RIGHT, 0),
-      bubbleAiImageCropBottom: doubleValue(_BUBBLE_AI_IMAGE_CROP_BOTTOM, 0),
-      bubbleAiImageRepeatStart: doubleValue(
-        _BUBBLE_AI_IMAGE_REPEAT_START,
-        0.35,
-      ),
-      bubbleAiImageRepeatEnd: doubleValue(_BUBBLE_AI_IMAGE_REPEAT_END, 0.65),
-      bubbleAiImageRepeatYStart: doubleValue(
-        _BUBBLE_AI_IMAGE_REPEAT_Y_START,
-        0.35,
-      ),
-      bubbleAiImageRepeatYEnd: doubleValue(_BUBBLE_AI_IMAGE_REPEAT_Y_END, 0.65),
-      bubbleAiImageScale: doubleValue(_BUBBLE_AI_IMAGE_SCALE, 1),
-      bubbleUserRoundedCornersEnabled: booleanValue(
-        _BUBBLE_USER_ROUNDED_CORNERS_ENABLED,
-        true,
-      ),
-      bubbleAiRoundedCornersEnabled: booleanValue(
-        _BUBBLE_AI_ROUNDED_CORNERS_ENABLED,
-        true,
-      ),
-      bubbleUserContentPaddingLeft: doubleValue(
-        _BUBBLE_USER_CONTENT_PADDING_LEFT,
-        12,
-      ),
-      bubbleUserContentPaddingRight: doubleValue(
-        _BUBBLE_USER_CONTENT_PADDING_RIGHT,
-        12,
-      ),
-      bubbleAiContentPaddingLeft: doubleValue(
-        _BUBBLE_AI_CONTENT_PADDING_LEFT,
-        12,
-      ),
-      bubbleAiContentPaddingRight: doubleValue(
-        _BUBBLE_AI_CONTENT_PADDING_RIGHT,
-        12,
-      ),
-      customUserAvatarUri: preferences[_KEY_CUSTOM_USER_AVATAR_URI],
-      avatarShape: stringValue(_KEY_AVATAR_SHAPE) ?? AVATAR_SHAPE_CIRCLE,
-      avatarCornerRadius: doubleValue(_KEY_AVATAR_CORNER_RADIUS, 8),
-      useCustomFont: booleanValue(_USE_CUSTOM_FONT, false),
-      fontType: stringValue(_FONT_TYPE) ?? FONT_TYPE_SYSTEM,
-      systemFontName: stringValue(_SYSTEM_FONT_NAME),
-      customFontPath: stringValue(_CUSTOM_FONT_PATH),
-      fontScale: doubleValue(_FONT_SCALE, 1.0),
-      bubbleUserUseCustomFont: booleanValue(
-        _BUBBLE_USER_USE_CUSTOM_FONT,
-        false,
-      ),
-      bubbleUserFontType:
-          stringValue(_BUBBLE_USER_FONT_TYPE) ?? FONT_TYPE_SYSTEM,
-      bubbleUserSystemFontName:
-          stringValue(_BUBBLE_USER_SYSTEM_FONT_NAME) ?? SYSTEM_FONT_DEFAULT,
-      bubbleUserCustomFontPath: stringValue(_BUBBLE_USER_CUSTOM_FONT_PATH),
-      bubbleAiUseCustomFont: booleanValue(_BUBBLE_AI_USE_CUSTOM_FONT, false),
-      bubbleAiFontType: stringValue(_BUBBLE_AI_FONT_TYPE) ?? FONT_TYPE_SYSTEM,
-      bubbleAiSystemFontName:
-          stringValue(_BUBBLE_AI_SYSTEM_FONT_NAME) ?? SYSTEM_FONT_DEFAULT,
-      bubbleAiCustomFontPath: stringValue(_BUBBLE_AI_CUSTOM_FONT_PATH),
-      showThinkingProcess: booleanValue(_KEY_SHOW_THINKING_PROCESS, true),
-      showModelProvider: booleanValue(_KEY_SHOW_MODEL_PROVIDER, false),
-      showModelName: booleanValue(_KEY_SHOW_MODEL_NAME, false),
-      showRoleName: booleanValue(_KEY_SHOW_ROLE_NAME, true),
-      showUserName: booleanValue(_KEY_SHOW_USER_NAME, true),
-      showMessageTokenStats: booleanValue(_KEY_SHOW_MESSAGE_TOKEN_STATS, false),
-      showMessageTimingStats: booleanValue(
-        _KEY_SHOW_MESSAGE_TIMING_STATS,
-        false,
-      ),
-      showMessageTimestamp: booleanValue(_KEY_SHOW_MESSAGE_TIMESTAMP, false),
-      showInputProcessingStatus: booleanValue(
-        _KEY_SHOW_INPUT_PROCESSING_STATUS,
-        true,
-      ),
+  Future<void> saveNodeThemeSettings(Map<String, Object?> updates) async {
+    await _clients.application.updateNodeThemeAppearance(
+      updates: updates.map((key, value) => MapEntry(key, jsonEncode(value))),
     );
   }
 
-  /// Persists supplied ordinary appearance fields without changing plugin bindings.
+  /// Atomically edits global node settings or the editable personal appearance.
   Future<void> saveThemeSettings({
     ThemeMode? themeMode,
     bool? useCustomColors,
@@ -1100,151 +285,90 @@ class UserPreferencesManager {
     String? bubbleAiSystemFontName,
     String? bubbleAiCustomFontPath,
   }) async {
-    final values = <String, String>{};
-
-    /// Encodes explicitly supplied fields for the ordinary preference transaction.
-    void setIfPresent(String key, Object? value) {
-      if (value == null) {
-        return;
-      }
-      values[key] = value.toString();
-    }
-
-    setIfPresent(_THEME_MODE, themeMode?.name);
-    setIfPresent(_CUSTOM_PRIMARY_COLOR, customPrimaryColor);
-    setIfPresent(_CUSTOM_SECONDARY_COLOR, customSecondaryColor);
-    setIfPresent(_USE_CUSTOM_COLORS, useCustomColors);
-    setIfPresent(_USE_BACKGROUND_IMAGE, useBackgroundImage);
-    setIfPresent(_BACKGROUND_IMAGE_URI, backgroundImageUri);
-    setIfPresent(_BACKGROUND_IMAGE_OPACITY, backgroundImageOpacity);
-    setIfPresent(_BACKGROUND_MEDIA_TYPE, backgroundMediaType);
-    setIfPresent(_VIDEO_BACKGROUND_MUTED, videoBackgroundMuted);
-    setIfPresent(_VIDEO_BACKGROUND_LOOP, videoBackgroundLoop);
-    setIfPresent(_USE_BACKGROUND_BLUR, useBackgroundBlur);
-    setIfPresent(_BACKGROUND_BLUR_RADIUS, backgroundBlurRadius);
-    setIfPresent(_TRANSPARENT_SURFACE_ENABLED, transparentSurfaceEnabled);
-    setIfPresent(_CHAT_INPUT_FLOATING, chatInputFloating);
-    setIfPresent(_INPUT_STYLE, inputStyle);
-    setIfPresent(_CHAT_STYLE, chatStyle);
-    setIfPresent(_BUBBLE_SHOW_AVATAR, bubbleShowAvatar);
-    setIfPresent(_BUBBLE_WIDE_LAYOUT_ENABLED, bubbleWideLayoutEnabled);
-    setIfPresent(_CURSOR_USER_BUBBLE_COLOR, cursorUserBubbleColor);
-    setIfPresent(_BUBBLE_USER_BUBBLE_COLOR, bubbleUserBubbleColor);
-    setIfPresent(_BUBBLE_AI_BUBBLE_COLOR, bubbleAiBubbleColor);
-    setIfPresent(_BUBBLE_USER_TEXT_COLOR, bubbleUserTextColor);
-    setIfPresent(_BUBBLE_AI_TEXT_COLOR, bubbleAiTextColor);
-    setIfPresent(_BUBBLE_USER_USE_IMAGE, bubbleUserUseImage);
-    setIfPresent(_BUBBLE_AI_USE_IMAGE, bubbleAiUseImage);
-    setIfPresent(_BUBBLE_USER_IMAGE_URI, bubbleUserImageUri);
-    setIfPresent(_BUBBLE_AI_IMAGE_URI, bubbleAiImageUri);
-    setIfPresent(_BUBBLE_USER_IMAGE_RENDER_MODE, bubbleUserImageRenderMode);
-    setIfPresent(_BUBBLE_AI_IMAGE_RENDER_MODE, bubbleAiImageRenderMode);
-    setIfPresent(_BUBBLE_USER_IMAGE_CROP_LEFT, bubbleUserImageCropLeft);
-    setIfPresent(_BUBBLE_USER_IMAGE_CROP_TOP, bubbleUserImageCropTop);
-    setIfPresent(_BUBBLE_USER_IMAGE_CROP_RIGHT, bubbleUserImageCropRight);
-    setIfPresent(_BUBBLE_USER_IMAGE_CROP_BOTTOM, bubbleUserImageCropBottom);
-    setIfPresent(_BUBBLE_USER_IMAGE_REPEAT_START, bubbleUserImageRepeatStart);
-    setIfPresent(_BUBBLE_USER_IMAGE_REPEAT_END, bubbleUserImageRepeatEnd);
-    setIfPresent(
-      _BUBBLE_USER_IMAGE_REPEAT_Y_START,
-      bubbleUserImageRepeatYStart,
-    );
-    setIfPresent(_BUBBLE_USER_IMAGE_REPEAT_Y_END, bubbleUserImageRepeatYEnd);
-    setIfPresent(_BUBBLE_USER_IMAGE_SCALE, bubbleUserImageScale);
-    setIfPresent(_BUBBLE_AI_IMAGE_CROP_LEFT, bubbleAiImageCropLeft);
-    setIfPresent(_BUBBLE_AI_IMAGE_CROP_TOP, bubbleAiImageCropTop);
-    setIfPresent(_BUBBLE_AI_IMAGE_CROP_RIGHT, bubbleAiImageCropRight);
-    setIfPresent(_BUBBLE_AI_IMAGE_CROP_BOTTOM, bubbleAiImageCropBottom);
-    setIfPresent(_BUBBLE_AI_IMAGE_REPEAT_START, bubbleAiImageRepeatStart);
-    setIfPresent(_BUBBLE_AI_IMAGE_REPEAT_END, bubbleAiImageRepeatEnd);
-    setIfPresent(_BUBBLE_AI_IMAGE_REPEAT_Y_START, bubbleAiImageRepeatYStart);
-    setIfPresent(_BUBBLE_AI_IMAGE_REPEAT_Y_END, bubbleAiImageRepeatYEnd);
-    setIfPresent(_BUBBLE_AI_IMAGE_SCALE, bubbleAiImageScale);
-    setIfPresent(
-      _BUBBLE_USER_ROUNDED_CORNERS_ENABLED,
-      bubbleUserRoundedCornersEnabled,
-    );
-    setIfPresent(
-      _BUBBLE_AI_ROUNDED_CORNERS_ENABLED,
-      bubbleAiRoundedCornersEnabled,
-    );
-    setIfPresent(
-      _BUBBLE_USER_CONTENT_PADDING_LEFT,
-      bubbleUserContentPaddingLeft,
-    );
-    setIfPresent(
-      _BUBBLE_USER_CONTENT_PADDING_RIGHT,
-      bubbleUserContentPaddingRight,
-    );
-    setIfPresent(_BUBBLE_AI_CONTENT_PADDING_LEFT, bubbleAiContentPaddingLeft);
-    setIfPresent(_BUBBLE_AI_CONTENT_PADDING_RIGHT, bubbleAiContentPaddingRight);
-    setIfPresent(_KEY_SHOW_THINKING_PROCESS, showThinkingProcess);
-    setIfPresent(_KEY_SHOW_MODEL_PROVIDER, showModelProvider);
-    setIfPresent(_KEY_SHOW_MODEL_NAME, showModelName);
-    setIfPresent(_KEY_SHOW_ROLE_NAME, showRoleName);
-    setIfPresent(_KEY_SHOW_USER_NAME, showUserName);
-    setIfPresent(_KEY_SHOW_MESSAGE_TOKEN_STATS, showMessageTokenStats);
-    setIfPresent(_KEY_SHOW_MESSAGE_TIMING_STATS, showMessageTimingStats);
-    setIfPresent(_KEY_SHOW_MESSAGE_TIMESTAMP, showMessageTimestamp);
-    setIfPresent(_KEY_AVATAR_SHAPE, avatarShape);
-    setIfPresent(_KEY_AVATAR_CORNER_RADIUS, avatarCornerRadius);
-    setIfPresent(_KEY_SHOW_INPUT_PROCESSING_STATUS, showInputProcessingStatus);
-    setIfPresent(_USE_CUSTOM_FONT, useCustomFont);
-    setIfPresent(_FONT_TYPE, fontType);
-    setIfPresent(_SYSTEM_FONT_NAME, systemFontName);
-    setIfPresent(_CUSTOM_FONT_PATH, customFontPath);
-    setIfPresent(_FONT_SCALE, fontScale);
-    setIfPresent(_BUBBLE_USER_USE_CUSTOM_FONT, bubbleUserUseCustomFont);
-    setIfPresent(_BUBBLE_USER_FONT_TYPE, bubbleUserFontType);
-    setIfPresent(_BUBBLE_USER_SYSTEM_FONT_NAME, bubbleUserSystemFontName);
-    setIfPresent(_BUBBLE_USER_CUSTOM_FONT_PATH, bubbleUserCustomFontPath);
-    setIfPresent(_BUBBLE_AI_USE_CUSTOM_FONT, bubbleAiUseCustomFont);
-    setIfPresent(_BUBBLE_AI_FONT_TYPE, bubbleAiFontType);
-    setIfPresent(_BUBBLE_AI_SYSTEM_FONT_NAME, bubbleAiSystemFontName);
-    setIfPresent(_BUBBLE_AI_CUSTOM_FONT_PATH, bubbleAiCustomFontPath);
-
-    if (values.isNotEmpty) {
-      await _saveAppearanceValues(values);
-    }
+    await saveNodeThemeSettings(<String, Object?>{
+      if (themeMode != null) 'themeMode': themeMode!.name,
+      if (useCustomColors != null) 'useCustomColors': useCustomColors,
+      if (customPrimaryColor != null) 'customPrimaryColor': customPrimaryColor,
+      if (customSecondaryColor != null) 'customSecondaryColor': customSecondaryColor,
+      if (useBackgroundImage != null) 'useBackgroundImage': useBackgroundImage,
+      if (backgroundImageUri != null) 'backgroundImageUri': backgroundImageUri,
+      if (backgroundImageOpacity != null) 'backgroundImageOpacity': backgroundImageOpacity,
+      if (backgroundMediaType != null) 'backgroundMediaType': backgroundMediaType,
+      if (videoBackgroundMuted != null) 'videoBackgroundMuted': videoBackgroundMuted,
+      if (videoBackgroundLoop != null) 'videoBackgroundLoop': videoBackgroundLoop,
+      if (useBackgroundBlur != null) 'useBackgroundBlur': useBackgroundBlur,
+      if (backgroundBlurRadius != null) 'backgroundBlurRadius': backgroundBlurRadius,
+      if (transparentSurfaceEnabled != null) 'transparentSurfaceEnabled': transparentSurfaceEnabled,
+      if (chatInputFloating != null) 'chatInputFloating': chatInputFloating,
+      if (inputStyle != null) 'inputStyle': inputStyle,
+      if (chatStyle != null) 'chatStyle': chatStyle,
+      if (bubbleShowAvatar != null) 'bubbleShowAvatar': bubbleShowAvatar,
+      if (bubbleWideLayoutEnabled != null) 'bubbleWideLayoutEnabled': bubbleWideLayoutEnabled,
+      if (cursorUserBubbleColor != null) 'cursorUserBubbleColor': cursorUserBubbleColor,
+      if (bubbleUserBubbleColor != null) 'bubbleUserBubbleColor': bubbleUserBubbleColor,
+      if (bubbleAiBubbleColor != null) 'bubbleAiBubbleColor': bubbleAiBubbleColor,
+      if (bubbleUserTextColor != null) 'bubbleUserTextColor': bubbleUserTextColor,
+      if (bubbleAiTextColor != null) 'bubbleAiTextColor': bubbleAiTextColor,
+      if (bubbleUserUseImage != null) 'bubbleUserUseImage': bubbleUserUseImage,
+      if (bubbleAiUseImage != null) 'bubbleAiUseImage': bubbleAiUseImage,
+      if (bubbleUserImageUri != null) 'bubbleUserImageUri': bubbleUserImageUri,
+      if (bubbleAiImageUri != null) 'bubbleAiImageUri': bubbleAiImageUri,
+      if (bubbleUserImageRenderMode != null) 'bubbleUserImageRenderMode': bubbleUserImageRenderMode,
+      if (bubbleAiImageRenderMode != null) 'bubbleAiImageRenderMode': bubbleAiImageRenderMode,
+      if (bubbleUserImageCropLeft != null) 'bubbleUserImageCropLeft': bubbleUserImageCropLeft,
+      if (bubbleUserImageCropTop != null) 'bubbleUserImageCropTop': bubbleUserImageCropTop,
+      if (bubbleUserImageCropRight != null) 'bubbleUserImageCropRight': bubbleUserImageCropRight,
+      if (bubbleUserImageCropBottom != null) 'bubbleUserImageCropBottom': bubbleUserImageCropBottom,
+      if (bubbleUserImageRepeatStart != null) 'bubbleUserImageRepeatStart': bubbleUserImageRepeatStart,
+      if (bubbleUserImageRepeatEnd != null) 'bubbleUserImageRepeatEnd': bubbleUserImageRepeatEnd,
+      if (bubbleUserImageRepeatYStart != null) 'bubbleUserImageRepeatYStart': bubbleUserImageRepeatYStart,
+      if (bubbleUserImageRepeatYEnd != null) 'bubbleUserImageRepeatYEnd': bubbleUserImageRepeatYEnd,
+      if (bubbleUserImageScale != null) 'bubbleUserImageScale': bubbleUserImageScale,
+      if (bubbleAiImageCropLeft != null) 'bubbleAiImageCropLeft': bubbleAiImageCropLeft,
+      if (bubbleAiImageCropTop != null) 'bubbleAiImageCropTop': bubbleAiImageCropTop,
+      if (bubbleAiImageCropRight != null) 'bubbleAiImageCropRight': bubbleAiImageCropRight,
+      if (bubbleAiImageCropBottom != null) 'bubbleAiImageCropBottom': bubbleAiImageCropBottom,
+      if (bubbleAiImageRepeatStart != null) 'bubbleAiImageRepeatStart': bubbleAiImageRepeatStart,
+      if (bubbleAiImageRepeatEnd != null) 'bubbleAiImageRepeatEnd': bubbleAiImageRepeatEnd,
+      if (bubbleAiImageRepeatYStart != null) 'bubbleAiImageRepeatYStart': bubbleAiImageRepeatYStart,
+      if (bubbleAiImageRepeatYEnd != null) 'bubbleAiImageRepeatYEnd': bubbleAiImageRepeatYEnd,
+      if (bubbleAiImageScale != null) 'bubbleAiImageScale': bubbleAiImageScale,
+      if (bubbleUserRoundedCornersEnabled != null) 'bubbleUserRoundedCornersEnabled': bubbleUserRoundedCornersEnabled,
+      if (bubbleAiRoundedCornersEnabled != null) 'bubbleAiRoundedCornersEnabled': bubbleAiRoundedCornersEnabled,
+      if (bubbleUserContentPaddingLeft != null) 'bubbleUserContentPaddingLeft': bubbleUserContentPaddingLeft,
+      if (bubbleUserContentPaddingRight != null) 'bubbleUserContentPaddingRight': bubbleUserContentPaddingRight,
+      if (bubbleAiContentPaddingLeft != null) 'bubbleAiContentPaddingLeft': bubbleAiContentPaddingLeft,
+      if (bubbleAiContentPaddingRight != null) 'bubbleAiContentPaddingRight': bubbleAiContentPaddingRight,
+      if (showThinkingProcess != null) 'showThinkingProcess': showThinkingProcess,
+      if (showModelProvider != null) 'showModelProvider': showModelProvider,
+      if (showModelName != null) 'showModelName': showModelName,
+      if (showRoleName != null) 'showRoleName': showRoleName,
+      if (showUserName != null) 'showUserName': showUserName,
+      if (showMessageTokenStats != null) 'showMessageTokenStats': showMessageTokenStats,
+      if (showMessageTimingStats != null) 'showMessageTimingStats': showMessageTimingStats,
+      if (showMessageTimestamp != null) 'showMessageTimestamp': showMessageTimestamp,
+      if (avatarShape != null) 'avatarShape': avatarShape,
+      if (avatarCornerRadius != null) 'avatarCornerRadius': avatarCornerRadius,
+      if (showInputProcessingStatus != null) 'showInputProcessingStatus': showInputProcessingStatus,
+      if (useCustomFont != null) 'useCustomFont': useCustomFont,
+      if (fontType != null) 'fontType': fontType,
+      if (systemFontName != null) 'systemFontName': systemFontName,
+      if (customFontPath != null) 'customFontPath': customFontPath,
+      if (fontScale != null) 'fontScale': fontScale,
+      if (bubbleUserUseCustomFont != null) 'bubbleUserUseCustomFont': bubbleUserUseCustomFont,
+      if (bubbleUserFontType != null) 'bubbleUserFontType': bubbleUserFontType,
+      if (bubbleUserSystemFontName != null) 'bubbleUserSystemFontName': bubbleUserSystemFontName,
+      if (bubbleUserCustomFontPath != null) 'bubbleUserCustomFontPath': bubbleUserCustomFontPath,
+      if (bubbleAiUseCustomFont != null) 'bubbleAiUseCustomFont': bubbleAiUseCustomFont,
+      if (bubbleAiFontType != null) 'bubbleAiFontType': bubbleAiFontType,
+      if (bubbleAiSystemFontName != null) 'bubbleAiSystemFontName': bubbleAiSystemFontName,
+      if (bubbleAiCustomFontPath != null) 'bubbleAiCustomFontPath': bubbleAiCustomFontPath,
+    });
   }
 
-  /// Clears only ordinary message color overrides, preserving other appearance values.
-  Future<void> resetMessageColorSettings() => _saveAppearanceValues(
-    const {},
-    removeKeys: <String>[
-      _CURSOR_USER_BUBBLE_COLOR,
-      _BUBBLE_USER_BUBBLE_COLOR,
-      _BUBBLE_AI_BUBBLE_COLOR,
-      _BUBBLE_USER_TEXT_COLOR,
-      _BUBBLE_AI_TEXT_COLOR,
-    ],
-  );
-
-  /// Clears ordinary theme overrides without deleting independent user-avatar settings.
-  Future<void> resetThemeSettings() =>
-      _saveAppearanceValues(const {}, removeKeys: _themeKeys);
-
-  /// Persists the ordinary user-avatar setting without any role ownership inference.
-  /// Writes the independent user avatar without referencing a plugin identity.
   Future<void> saveGlobalUserAvatarSettings({
     required String customUserAvatarUri,
-  }) async {
-    final values = <String, String>{};
-    values[_KEY_CUSTOM_USER_AVATAR_URI] = customUserAvatarUri;
-    await _saveAppearanceValues(values);
-  }
-
-  /// Edits appearance through the theme owner so the active named configuration stays synchronized.
-  Future<void> _saveAppearanceValues(
-    Map<String, String> values, {
-    List<String> removeKeys = const [],
-  }) async {
-    await _clients.application.themeConfigManager().patchAppearance(
-      initialSnapshot: defaultThemePreferenceSnapshot.toJson(),
-      values: values,
-      removeKeys: removeKeys,
-    );
-  }
+  }) => saveNodeThemeSettings(<String, Object?>{'customUserAvatarUri': customUserAvatarUri});
 
   Future<Map<String, String>> _getStrings(List<String> keys) {
     return _clients.preferencesPreferenceStorageManager.getPreferences(
@@ -1260,12 +384,6 @@ class UserPreferencesManager {
     );
   }
 
-  Future<void> _removeStrings(List<String> keys) {
-    return _clients.preferencesPreferenceStorageManager.removePreferences(
-      fileName: _fileName,
-      keys: keys,
-    );
-  }
 }
 
 /// Decodes one strict boolean preference value.
@@ -1274,15 +392,5 @@ bool _decodeBool(String value) {
     'true' => true,
     'false' => false,
     _ => throw FormatException('invalid boolean preference: $value'),
-  };
-}
-
-/// Decodes one persisted Flutter theme mode name.
-ThemeMode _decodeThemeMode(String value) {
-  return switch (value) {
-    'system' => ThemeMode.system,
-    'light' => ThemeMode.light,
-    'dark' => ThemeMode.dark,
-    _ => throw FormatException('invalid theme mode preference: $value'),
   };
 }

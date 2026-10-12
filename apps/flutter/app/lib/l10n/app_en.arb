@@ -1279,6 +1279,10 @@
       }
     }
   },
+  "settingsAppearanceThemeLibraryTab": "Theme library",
+  "settingsAppearancePersonalThemeSummary": "Global theme · Personal appearance on this node",
+  "settingsAppearancePackageThemeSummary": "Global theme · Theme package · Visual settings are read-only",
+  "settingsAppearancePackageVisualsReadOnly": "A theme package's colors, background, bubbles, fonts and input style are read-only. Explicitly select personal appearance in the theme library before editing.",
   "settingsAppearanceThemeSection": "Theme",
   "settingsAppearanceThemeMode": "Current mode",
   "settingsAppearanceThemeTarget": "Theme save target",

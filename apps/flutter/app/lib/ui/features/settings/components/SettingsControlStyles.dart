@@ -577,6 +577,7 @@ class SettingsSegmentedSelector<T> extends StatelessWidget {
       style: SegmentedButton.styleFrom(
         visualDensity: VisualDensity.compact,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
         selectedBackgroundColor: isDark
             ? colorScheme.primary.withValues(alpha: 0.22)
             : colorScheme.primaryContainer.withValues(alpha: 0.70),

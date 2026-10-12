@@ -4670,6 +4670,30 @@ abstract class AppLocalizations {
   /// **'Failed to turn off access: {error}'**
   String settingsWebAccessStopFailed(String error);
 
+  /// No description provided for @settingsAppearanceThemeLibraryTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme library'**
+  String get settingsAppearanceThemeLibraryTab;
+
+  /// No description provided for @settingsAppearancePersonalThemeSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Global theme · Personal appearance on this node'**
+  String get settingsAppearancePersonalThemeSummary;
+
+  /// No description provided for @settingsAppearancePackageThemeSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Global theme · Theme package · Visual settings are read-only'**
+  String get settingsAppearancePackageThemeSummary;
+
+  /// No description provided for @settingsAppearancePackageVisualsReadOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'A theme package\'s colors, background, bubbles, fonts and input style are read-only. Explicitly select personal appearance in the theme library before editing.'**
+  String get settingsAppearancePackageVisualsReadOnly;
+
   /// No description provided for @settingsAppearanceThemeSection.
   ///
   /// In en, this message translates to:

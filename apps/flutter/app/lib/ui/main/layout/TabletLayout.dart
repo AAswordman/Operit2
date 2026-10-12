@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:operit_theme/operit_theme.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -12,7 +13,6 @@ import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
-import '../../theme/OperitGlassSurface.dart';
 
 class TabletLayout extends StatefulWidget {
   const TabletLayout({
@@ -124,17 +124,9 @@ class _TabletLayoutState extends State<TabletLayout> {
           curve: Curves.fastOutSlowIn,
           width: targetSidebarWidth,
           height: double.infinity,
-          child: OperitGlassSurface(
+          child: ThemeDesktopSidebarSurface(
             color: appearance.containerColor,
-            layer: OperitGlassSurfaceLayer.panel,
-            transparentAlpha: 0.035,
-            borderRadius: BorderRadius.zero,
-            shadows: <BoxShadow>[
-              BoxShadow(
-                blurRadius: 4,
-                color: Colors.black.withValues(alpha: 0.12),
-              ),
-            ],
+            transparentSurface: appearance.transparentSurfaceEnabled,
             child: AnimatedSwitcher(
               duration: _sidebarContentFadeDuration,
               child: _isSidebarContentExpanded

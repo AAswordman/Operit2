@@ -126,7 +126,11 @@ class SelectedFileInput {
   }
 
   /// Snapshot selection shares the same bounded input owner, but requires a known size.
-  static Future<SelectedFileInput?> pickSnapshot() async {
+  static Future<SelectedFileInput?> pickSnapshot({
+    List<XTypeGroup> acceptedTypeGroups = const [
+      XTypeGroup(label: 'Operit snapshot', extensions: ['opsnapshot', 'zip']),
+    ],
+  }) async {
     if (!kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.android ||
             defaultTargetPlatform == TargetPlatform.iOS)) {
@@ -157,9 +161,7 @@ class SelectedFileInput {
       );
     }
     final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(label: 'Operit snapshot', extensions: ['opsnapshot', 'zip']),
-      ],
+      acceptedTypeGroups: acceptedTypeGroups,
     );
     return file == null ? null : fromXFile(file);
   }

@@ -1272,6 +1272,10 @@
       }
     }
   },
+  "settingsAppearanceThemeLibraryTab": "主题库",
+  "settingsAppearancePersonalThemeSummary": "全局主题 · 本节点个人外观",
+  "settingsAppearancePackageThemeSummary": "全局主题 · 主题包 · 视觉设置只读",
+  "settingsAppearancePackageVisualsReadOnly": "主题包的配色、背景、气泡、字体与输入样式为只读。请在主题库显式选择个人外观后编辑。",
   "settingsAppearanceThemeSection": "主题",
   "settingsAppearanceThemeMode": "当前模式",
   "settingsAppearanceThemeTarget": "主题保存目标",

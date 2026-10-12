@@ -2588,6 +2588,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get settingsAppearanceThemeLibraryTab => 'Theme library';
+
+  @override
+  String get settingsAppearancePersonalThemeSummary =>
+      'Global theme · Personal appearance on this node';
+
+  @override
+  String get settingsAppearancePackageThemeSummary =>
+      'Global theme · Theme package · Visual settings are read-only';
+
+  @override
+  String get settingsAppearancePackageVisualsReadOnly =>
+      'A theme package\'s colors, background, bubbles, fonts and input style are read-only. Explicitly select personal appearance in the theme library before editing.';
+
+  @override
   String get settingsAppearanceThemeSection => 'Theme';
 
   @override

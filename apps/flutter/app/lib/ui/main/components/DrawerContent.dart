@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:operit_theme/operit_theme.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -1033,43 +1034,11 @@ class _BottomThemeToggleButton extends StatelessWidget {
   final VoidCallback onToggle;
 
   @override
-  Widget build(BuildContext context) {
-    final shape = BorderRadius.circular(8);
-    return Tooltip(
-      message: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
-      child: SizedBox(
-        width: 34,
-        height: 34,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: appearance.buttonContainerColor.withValues(alpha: 0.55),
-            borderRadius: shape,
-            border: Border.all(
-              color: appearance.dividerColor.withValues(alpha: 0.35),
-              width: 1,
-            ),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            borderRadius: shape,
-            child: InkWell(
-              borderRadius: shape,
-              onTap: onToggle,
-              child: Center(
-                child: Icon(
-                  darkThemeActive
-                      ? Icons.light_mode_outlined
-                      : Icons.dark_mode_outlined,
-                  size: 16,
-                  color: appearance.itemColor.withValues(alpha: 0.85),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => ThemeBottomThemeToggleButton(
+    appearance: appearance,
+    darkThemeActive: darkThemeActive,
+    onToggle: onToggle,
+  );
 }
 
 class _ToolbarIconButton extends StatelessWidget {
@@ -1089,31 +1058,12 @@ class _ToolbarIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: SizedBox(
-        width: 34,
-        height: 34,
-        child: Material(
-          color: active
-              ? appearance.selectedContainerColor.withValues(alpha: 0.35)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTap: onClick,
-            child: Center(
-              child: Icon(
-                icon,
-                size: 17,
-                color: active
-                    ? appearance.statusAvailableColor
-                    : appearance.itemColor.withValues(alpha: 0.78),
-              ),
-            ),
-          ),
-        ),
-      ),
+    return ThemeDrawerToolbarIconButton(
+      icon: icon,
+      tooltip: tooltip,
+      appearance: appearance,
+      onClick: onClick,
+      active: active,
     );
   }
 }

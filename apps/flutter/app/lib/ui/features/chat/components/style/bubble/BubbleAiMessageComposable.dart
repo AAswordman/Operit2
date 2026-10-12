@@ -152,9 +152,7 @@ class _BubbleAiMessageComposableState extends State<BubbleAiMessageComposable> {
       showThinkingProcess: showThinkingProcess,
       forceExpandGroups: widget.expandThinkToolsGroups,
     );
-    final effectiveBubbleImageStyle = widget.transparentSurface
-        ? null
-        : widget.bubbleImageStyle;
+    final effectiveBubbleImageStyle = widget.bubbleImageStyle;
     final bubbleShape = widget.bubbleRoundedCornersEnabled
         ? const BorderRadius.all(Radius.circular(16))
         : BorderRadius.zero;

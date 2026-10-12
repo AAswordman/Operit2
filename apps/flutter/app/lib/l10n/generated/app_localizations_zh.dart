@@ -2482,6 +2482,19 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get settingsAppearanceThemeLibraryTab => '主题库';
+
+  @override
+  String get settingsAppearancePersonalThemeSummary => '全局主题 · 本节点个人外观';
+
+  @override
+  String get settingsAppearancePackageThemeSummary => '全局主题 · 主题包 · 视觉设置只读';
+
+  @override
+  String get settingsAppearancePackageVisualsReadOnly =>
+      '主题包的配色、背景、气泡、字体与输入样式为只读。请在主题库显式选择个人外观后编辑。';
+
+  @override
   String get settingsAppearanceThemeSection => '主题';
 
   @override

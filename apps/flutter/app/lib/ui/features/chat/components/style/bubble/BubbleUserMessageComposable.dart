@@ -76,9 +76,7 @@ class _BubbleUserMessageComposableState
       isUser: true,
     );
     final effectiveBubbleImageStyle =
-        isHiddenPlaceholder || widget.transparentSurface
-        ? null
-        : widget.bubbleImageStyle;
+        isHiddenPlaceholder ? null : widget.bubbleImageStyle;
     final bubbleShape = widget.bubbleRoundedCornersEnabled
         ? const BorderRadius.all(Radius.circular(16))
         : BorderRadius.zero;

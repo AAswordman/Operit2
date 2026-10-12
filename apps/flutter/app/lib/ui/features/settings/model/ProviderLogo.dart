@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:operit_theme/operit_theme.dart';
 
 /// Maps provider type IDs to their bundled brand logo assets.
 const Map<String, String> providerLogoAssets = <String, String>{
@@ -151,18 +152,11 @@ class _ProviderLogoInitial extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final trimmedName = name.trim();
     final initial = trimmedName.isEmpty ? '?' : trimmedName.substring(0, 1);
-    return Text(
-      initial.toUpperCase(),
-      textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-        fontWeight: FontWeight.w700,
-        fontSize: size * 0.78,
-        height: 1,
-        color: colorScheme.onSurfaceVariant,
-      ),
+    return ThemeComposerProviderInitial(
+      initial: initial.toUpperCase(),
+      size: size,
     );
   }
 }
