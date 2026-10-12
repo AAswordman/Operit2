@@ -60,25 +60,17 @@ jobs:
         shell: pwsh
         run: fvm install --skip-pub-get
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
-          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
-
-      - name: Install LLVM
-        shell: pwsh
-        run: choco install llvm --no-progress --limit-output --yes
-
-      - name: Check build environment
-        shell: pwsh
-        run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
-
+      # Pre-cache must run AFTER `fvm install` so .fvm/flutter_sdk is a valid
+      # symlink/junction to the FVM-managed SDK. Running it earlier writes into
+      # a plain directory that `fvm install` later replaces, losing the cache.
       - name: Pre-cache Windows engine artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $sdk = "apps/flutter/app/.fvm/flutter_sdk"
+          if (-not (Test-Path (Join-Path $sdk "bin\flutter.bat"))) {
+            throw "Flutter SDK not found at $sdk - is .fvm/flutter_sdk a valid FVM link?"
+          }
           $version = "3.41.10-ohos-0.0.2-beta.operit.1"
           $base = "https://github.com/AAswordman/flutter-ohos/releases/download/$version"
           $cacheDir = Join-Path $sdk "bin/cache/artifacts/windows-sdk"
@@ -108,6 +100,20 @@ jobs:
           Set-Content -Path $stampFile -Value $version -NoNewline -Encoding ascii
           Write-Output "Wrote stamp: $version"
           Get-ChildItem $cacheDir | Select-Object Name
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+
+      - name: Install LLVM
+        shell: pwsh
+        run: choco install llvm --no-progress --limit-output --yes
+
+      - name: Check build environment
+        shell: pwsh
+        run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
       - name: Build and package Windows app
         if: inputs.products != 'cli'
