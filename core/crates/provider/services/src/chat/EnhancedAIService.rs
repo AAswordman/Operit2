@@ -592,41 +592,117 @@ impl SystemPromptComposer for RuntimeSystemPromptComposer {
                 "executionContext".to_string(),
                 self.executionContext.clone(),
             );
-            SystemPromptConfig::getSystemPromptWithCustomPrompts(SystemPromptWithCustomOptions {
-                base: SystemPromptOptions {
-                    chat_id: request.chat_id.clone(),
-                    workspace_path: request.workspace_path.clone(),
-                    workspace_folders: request.workspace_folders.clone(),
-                    workspace_path_mappings,
-                    use_english,
-                    custom_system_prompt_template,
-                    enable_tools: true,
-                    has_image_recognition: request.has_image_recognition,
-                    chat_model_has_direct_image: request.chat_model_has_direct_image,
-                    has_audio_recognition: request.has_audio_recognition,
-                    has_video_recognition: request.has_video_recognition,
-                    chat_model_has_direct_audio: request.chat_model_has_direct_audio,
-                    chat_model_has_direct_video: request.chat_model_has_direct_video,
-                    use_tool_call_api: request.use_tool_call_api,
-                    tool_exposure_mode: match request.tool_exposure_mode {
-                        ToolExposureMode::Full => SystemToolExposureMode::FULL,
-                        ToolExposureMode::Cli => SystemToolExposureMode::CLI,
+            let mut composed_prompt = SystemPromptConfig::getSystemPromptWithCustomPrompts(
+                SystemPromptWithCustomOptions {
+                    base: SystemPromptOptions {
+                        chat_id: request.chat_id.clone(),
+                        workspace_path: request.workspace_path.clone(),
+                        workspace_folders: request.workspace_folders.clone(),
+                        workspace_path_mappings,
+                        use_english,
+                        custom_system_prompt_template,
+                        enable_tools: true,
+                        has_image_recognition: request.has_image_recognition,
+                        chat_model_has_direct_image: request.chat_model_has_direct_image,
+                        has_audio_recognition: request.has_audio_recognition,
+                        has_video_recognition: request.has_video_recognition,
+                        chat_model_has_direct_audio: request.chat_model_has_direct_audio,
+                        chat_model_has_direct_video: request.chat_model_has_direct_video,
+                        use_tool_call_api: request.use_tool_call_api,
+                        tool_exposure_mode: match request.tool_exposure_mode {
+                            ToolExposureMode::Full => SystemToolExposureMode::FULL,
+                            ToolExposureMode::Cli => SystemToolExposureMode::CLI,
+                        },
+                        host_environment,
+                        enabled_packages,
+                        mcp_servers,
+                        skill_packages,
+                        hook_metadata: hookMetadata,
+                        ..SystemPromptOptions::default()
                     },
-                    host_environment,
-                    enabled_packages,
-                    mcp_servers,
-                    skill_packages,
-                    hook_metadata: hookMetadata,
-                    ..SystemPromptOptions::default()
+                    custom_intro_prompt: request.intro_prompt.clone(),
+                    enable_group_orchestration_hint: request.enable_group_orchestration_hint,
+                    group_orchestration_role_name: request.ai_name.clone(),
+                    group_participant_names_text,
                 },
-                custom_intro_prompt: request.intro_prompt.clone(),
-                enable_group_orchestration_hint: request.enable_group_orchestration_hint,
-                group_orchestration_role_name: request.ai_name.clone(),
-                group_participant_names_text,
-            })
-            .await
+            )
+            .await?;
+            // The binding can move between turns through a manual UI switch or
+            // a user pin; without this section the model only sees stale tool
+            // results from earlier turns and keeps switching blindly.
+            if let Some(route_status) = chat_route_status_section(
+                context.runtimeStorageHost.clone(),
+                request.chat_id.clone(),
+                use_english,
+            ) {
+                composed_prompt.push_str(&route_status);
+            }
+            Ok(composed_prompt)
         })
     }
+}
+
+/// Appends the per-turn execution-node status for one chat.
+///
+/// Returns None on single-device spaces, missing bindings, or storage errors:
+/// the section is an awareness aid, never a hard dependency.
+#[allow(non_snake_case)]
+fn chat_route_status_section(
+    runtimeStorageHost: Option<std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>>,
+    chatId: Option<String>,
+    useEnglish: bool,
+) -> Option<String> {
+    let chatId = chatId?;
+    let storageHost = runtimeStorageHost?;
+    let binding = operit_store::CoreNodeBindingStore::CoreNodeBindingStore::new(storageHost.clone())
+        .ok()?
+        .bindingOptional(&chatId)
+        .ok()??;
+    let spaceStore = operit_store::CoreSpaceStore::CoreSpaceStore::new(storageHost.clone());
+    let space = spaceStore.initialize().ok()?;
+    if space.members.len() <= 1 {
+        return None;
+    }
+    let localNodeId = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storageHost)
+        .initialize()
+        .ok()?
+        .nodeId;
+    let displayName = spaceStore
+        .deviceProfiles()
+        .ok()?
+        .get(&binding.nodeId)
+        .map(|profile| profile.displayName.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| binding.nodeId.clone());
+    let place = if binding.nodeId == localNodeId {
+        if useEnglish { "local" } else { "本机" }
+    } else if useEnglish {
+        "remote"
+    } else {
+        "远程设备"
+    };
+    let policy = if binding.locked {
+        if useEnglish {
+            "The user pinned this chat in the UI: switch_core cannot change the node. \
+             If another device is needed, ask the user to unlock it in the chat input \
+             menu's execution-node section."
+        } else {
+            "该节点已由用户在界面锁定：switch_core 无法切换；需要更换时请让用户在聊天输入\
+             菜单的「执行节点」中解锁。"
+        }
+    } else if useEnglish {
+        "The node is auto-dispatched: you may switch it with switch_core when the task \
+         needs another device."
+    } else {
+        "节点由 AI 自动调度：任务需要其他设备时可用 switch_core 切换。"
+    };
+    Some(if useEnglish {
+        format!(
+            "\n\n[Execution node] This chat runs on device \"{displayName}\" ({place}). {policy}"
+        )
+    } else {
+        format!("\n\n[执行节点] 当前会话在设备「{displayName}」（{place}）上执行。{policy}")
+    })
 }
 
 impl EnhancedAIService {
