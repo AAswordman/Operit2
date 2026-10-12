@@ -30,6 +30,7 @@ operit-model = { path = "../../foundation/model" }
 operit-plugin-sdk = { path = "../../plugin/sdk" }
 operit-providers = { path = "../../provider/services" }
 operit-store = { path = "../../persistence/store" }
+operit-theme-contract = { path = "../../theme/contract" }
 operit-tools = { path = "../../tool/services", default-features = false }
 operit-util = { path = "../../foundation/util" }
 reqwest.workspace = true

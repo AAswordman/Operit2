@@ -10,6 +10,9 @@ pub mod CoreNodeBindingStore;
 pub mod CoreNodeIdentityStore;
 #[path = "CoreSpaceStore.rs"]
 pub mod CoreSpaceStore;
+#[cfg(feature = "full")]
+#[path = "ThemeLibraryStore.rs"]
+pub mod ThemeLibraryStore;
 #[path = "NetworkControlStore.rs"]
 pub mod NetworkControlStore;
 #[path = "PluginStorage.rs"]
@@ -42,6 +45,8 @@ pub use RuntimeStorePaths::*;
 #[cfg(feature = "full")]
 pub use SqliteStore::*;
 pub use SyncOperationStore::*;
+#[cfg(feature = "full")]
+pub use ThemeLibraryStore::*;
 #[cfg(feature = "full")]
 pub mod dao;
 #[cfg(feature = "full")]

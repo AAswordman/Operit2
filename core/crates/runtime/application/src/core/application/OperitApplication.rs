@@ -28,10 +28,17 @@ use operit_store::CoreNodeBindingStore::{CoreNodeBindingStore, BINDING_SYNC_DOMA
 use operit_store::NetworkControlStore::{NetworkControlStore, NETWORK_CONTROL_SYNC_DOMAIN};
 use operit_store::PluginStorage::{self, PLUGIN_STORAGE_SYNC_DOMAIN};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
-use operit_store::PreferencesDataStore::StateFlow;
+use operit_store::PreferencesDataStore::{Flow, StateFlow};
 use operit_store::PreferencesDataStore::{PreferencesDataStore, PreferencesSyncedEntry};
 use operit_store::RuntimeFileSyncStore::{
     RuntimeFileSyncReference, RuntimeFileSyncStore, RUNTIME_FILE_SYNC_DOMAIN,
+};
+use operit_store::ThemeLibraryStore::{
+    ThemeInstallReceipt, ThemeLibraryEntry, ThemeLibraryItem, ThemeLibraryStore, ThemeNodeState,
+    ThemeSelection,
+};
+use operit_theme_contract::{
+    validate_theme_package, validate_theme_package_with_expectation, ThemeValidationReceipt,
 };
 use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultHostSecretStore, setDefaultRuntimeSqliteHost,
@@ -58,6 +65,31 @@ use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeSto
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::Mutex as AsyncMutex;
+
+/// One in-memory asset handed to the preview surface. It is not a library
+/// record and is never written by the preview API.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemePreviewAsset {
+    pub path: String,
+    /// Theme media crosses the CoreLink boundary as MessagePack bin data.
+    /// Without this annotation serde treats `Vec<u8>` as an integer array,
+    /// while the generated Dart proxy correctly expects `Uint8List`/bin.
+    #[serde(with = "serde_bytes")]
+    pub bytes: Vec<u8>,
+}
+
+/// Receipt for the preview phase. It deliberately carries no selection or
+/// persistence result.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemePreviewReceipt {
+    pub validation: ThemeValidationReceipt,
+    pub theme_id: String,
+    pub version: String,
+    pub theme_json: String,
+    pub assets: Vec<ThemePreviewAsset>,
+}
 
 use operit_util::AppLogger::AppLogger;
 use operit_util::OperitPaths;
@@ -1157,6 +1189,171 @@ impl OperitApplication {
             .readBlobChunk(&contentHash, offset, length)
     }
 
+    /// Runs the complete in-memory package validator without persistence.
+    #[allow(non_snake_case)]
+    pub fn inspectThemeArchive(
+        &self,
+        archiveBytes: Vec<u8>,
+    ) -> Result<ThemeValidationReceipt, String> {
+        Ok(self.validateThemeArchive(&archiveBytes)?.receipt().clone())
+    }
+
+    /// Builds an in-memory preview payload. This phase does not write the
+    /// archive, library metadata or CoreNode selection.
+    #[allow(non_snake_case)]
+    pub fn previewThemeArchive(
+        &self,
+        archiveBytes: Vec<u8>,
+    ) -> Result<ThemePreviewReceipt, String> {
+        let package = self.validateThemeArchive(&archiveBytes)?;
+        let themeJson = String::from_utf8(package.theme().canonical_bytes())
+            .map_err(|error| error.to_string())?;
+        let assets = package
+            .receipt()
+            .files
+            .iter()
+            .filter(|file| file.path == "preview.png" || file.path.starts_with("assets/"))
+            .map(|file| {
+                let bytes = package
+                    .file_bytes(&file.path)
+                    .ok_or_else(|| format!("validated preview asset disappeared: {}", file.path))?;
+                Ok(ThemePreviewAsset {
+                    path: file.path.clone(),
+                    bytes: bytes.to_vec(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(ThemePreviewReceipt {
+            validation: package.receipt().clone(),
+            theme_id: package.manifest().theme_id.clone(),
+            version: package.manifest().version.clone(),
+            theme_json: themeJson,
+            assets,
+        })
+    }
+
+    /// Commits a validated package to the Space-owned theme library. Import
+    /// does not change the current CoreNode selection.
+    #[allow(non_snake_case)]
+    pub fn importThemeArchive(
+        &self,
+        archiveBytes: Vec<u8>,
+        expectedArchiveBytes: usize,
+        expectedArchiveSha256: String,
+    ) -> Result<ThemeInstallReceipt, String> {
+        let package = validate_theme_package_with_expectation(
+            &archiveBytes, crate::CORE_VERSION, expectedArchiveBytes, &expectedArchiveSha256,
+        ).map_err(|error| error.to_string())?;
+        let storage = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for theme library storage".to_string()
+        })?;
+        ThemeLibraryStore::new(storage).importValidated(&package)
+    }
+
+    /// Applies a package already present in the Space library to this
+    /// CoreNode. It never changes another node's selection.
+    #[allow(non_snake_case)]
+    pub fn applyTheme(
+        &self,
+        themeId: String,
+        archiveSha256: String,
+    ) -> Result<ThemeInstallReceipt, String> {
+        let storage = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for theme selection".to_string()
+        })?;
+        let store = ThemeLibraryStore::new(storage);
+        let entry = store.theme(&themeId, &archiveSha256)?;
+        let package = self.validateThemeArchive(&store.packageBytes(&entry)?)?;
+        store.applyValidated(&package)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn listThemeLibrary(&self) -> Result<Vec<ThemeLibraryItem>, String> {
+        self.themeLibraryStore()?.listLibrary()
+    }
+
+    /// Removes a theme package from the Space-owned library when not active on this node.
+    #[allow(non_snake_case)]
+    pub fn deleteTheme(
+        &self,
+        themeId: String,
+        archiveSha256: String,
+    ) -> Result<(), String> {
+        self.themeLibraryStore()?.deleteTheme(&themeId, &archiveSha256)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn nodeThemeState(&self) -> Result<ThemeNodeState, String> {
+        self.themeLibraryStore()?.nodeState()
+    }
+
+    #[allow(non_snake_case)]
+    pub fn nodeThemeStateFlow(&self) -> Result<Flow<ThemeNodeState>, String> {
+        Ok(self.themeLibraryStore()?.nodeStateFlow())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn initializeNodeThemeAppearance(&self, snapshotJson: String) -> Result<ThemeNodeState, String> {
+        self.themeLibraryStore()?.initializeAppearance(&snapshotJson)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn updateNodeThemeAppearance(&self, updates: BTreeMap<String, String>) -> Result<ThemeNodeState, String> {
+        self.themeLibraryStore()?.updateAppearance(updates)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn selectPersonalThemeAppearance(&self) -> Result<ThemeNodeState, String> {
+        self.themeLibraryStore()?.selectPersonalAppearance()
+    }
+
+    #[allow(non_snake_case)]
+    fn themeLibraryStore(&self) -> Result<ThemeLibraryStore, String> {
+        let storage = self.hostManager.runtimeStorageHost.clone().ok_or_else(||
+            "RuntimeStorageHost is not registered for themes".to_string())?;
+        Ok(ThemeLibraryStore::new(storage))
+    }
+
+    #[allow(non_snake_case)]
+    pub fn listThemes(&self) -> Result<Vec<ThemeLibraryEntry>, String> {
+        let storage = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for theme library storage".to_string()
+        })?;
+        ThemeLibraryStore::new(storage).listThemes()
+    }
+
+    /// Reads the sealed package for a committed library entry. The caller must
+    /// validate the returned bytes before handing assets to a renderer.
+    #[allow(non_snake_case)]
+    pub fn readThemePackage(
+        &self,
+        themeId: String,
+        archiveSha256: String,
+    ) -> Result<Vec<u8>, String> {
+        let storage = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for theme library storage".to_string()
+        })?;
+        let store = ThemeLibraryStore::new(storage);
+        let entry = store.theme(&themeId, &archiveSha256)?;
+        store.packageBytes(&entry)
+    }
+
+    #[allow(non_snake_case)]
+    pub fn currentThemeSelection(&self) -> Result<Option<ThemeSelection>, String> {
+        let storage = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
+            "RuntimeStorageHost is not registered for theme selection".to_string()
+        })?;
+        ThemeLibraryStore::new(storage).currentSelection()
+    }
+
+    #[allow(non_snake_case)]
+    fn validateThemeArchive(
+        &self,
+        archiveBytes: &[u8],
+    ) -> Result<operit_theme_contract::ValidatedThemePackage, String> {
+        validate_theme_package(archiveBytes, crate::CORE_VERSION).map_err(|error| error.to_string())
+    }
+
     /// Creates the persistent sync operation store owned by this application instance.
     #[allow(non_snake_case)]
     fn runtimeSyncOperationStore(&self) -> Result<SyncOperationStore, String> {
@@ -1274,5 +1471,24 @@ fn mergeSyncClock(target: &mut SyncClock, source: SyncClock) {
         if sequence > target.sequenceFor(&deviceId) {
             target.setSequence(deviceId, sequence);
         }
+    }
+}
+
+#[cfg(test)]
+mod theme_preview_wire_tests {
+    use super::ThemePreviewAsset;
+    use operit_link::{toCoreValue, CoreValue};
+
+    #[test]
+    fn preview_asset_bytes_use_messagepack_binary() {
+        let value = toCoreValue(&ThemePreviewAsset {
+            path: "assets/images/example.png".to_string(),
+            bytes: vec![0, 127, 255],
+        })
+        .expect("theme preview asset must convert to a CoreValue map");
+        let CoreValue::Map(fields) = value else {
+            panic!("theme preview asset must convert to a CoreValue map");
+        };
+        assert_eq!(fields.get("bytes"), Some(&CoreValue::Bytes(vec![0, 127, 255])));
     }
 }
