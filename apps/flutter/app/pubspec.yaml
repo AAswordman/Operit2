@@ -27,13 +27,13 @@ dependencies:
   video_player_ohos:
     git:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
-      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/video_player/video_player_ohos
   path_provider: ^2.1.5
   path_provider_ohos:
     git:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
-      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/path_provider/path_provider_ohos
   path: ^1.9.1
   record: ^6.2.1
@@ -49,7 +49,7 @@ dependencies:
   url_launcher_ohos:
     git:
       url: https://github.com/xuanxuan123xuan/flutter_packages.git
-      ref: 35fb467533e174411a117b2a030c15d2a3a9687c
+      ref: fd410050c6842717ee1b851ca7640c294de9568c
       path: packages/url_launcher/url_launcher_ohos
   file_selector: ^1.1.0
   image_picker_android: ^0.8.13+17
