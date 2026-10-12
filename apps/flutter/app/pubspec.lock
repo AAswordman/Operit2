@@ -815,7 +815,7 @@ packages:
       path: "packages/path_provider/path_provider_ohos"
       ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
       resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
+      url: "https://github.com/xuanxuan123xuan/flutter_packages.git"
     source: git
     version: "2.2.1"
   path_provider_platform_interface:
@@ -1140,7 +1140,7 @@ packages:
       path: "packages/url_launcher/url_launcher_ohos"
       ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
       resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
+      url: "https://github.com/xuanxuan123xuan/flutter_packages.git"
     source: git
     version: "6.0.38"
   url_launcher_platform_interface:
@@ -1237,7 +1237,7 @@ packages:
       path: "packages/video_player/video_player_ohos"
       ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
       resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      url: "https://gitee.com/openharmony-sig/flutter_packages.git"
+      url: "https://github.com/xuanxuan123xuan/flutter_packages.git"
     source: git
     version: "1.0.0+1"
   video_player_platform_interface:
