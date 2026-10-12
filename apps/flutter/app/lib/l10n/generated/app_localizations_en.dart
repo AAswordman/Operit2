@@ -4092,6 +4092,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get deviceSpaceBusinessSyncBlocked => 'Business sync blocked';
+
+  @override
+  String get deviceSpaceGrantBusinessSync =>
+      'Set as execution node (with business sync)';
+
+  @override
+  String get deviceSpaceBusinessSyncGranted =>
+      'Execution-node identity assigned; business sync is now allowed';
+
+  @override
   String get deviceSpaceUnpair => 'Unpair device';
 
   @override

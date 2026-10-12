@@ -711,6 +711,20 @@ impl OperitApplication {
         crate::CORE_VERSION.to_string()
     }
 
+    /// Reports whether this node can already run a chat turn from local config.
+    ///
+    /// Peers answer this control-plane query before a route change commits, so
+    /// a missing model replica surfaces as an actionable error instead of a
+    /// failed LLM request with an empty api key.
+    #[allow(non_snake_case)]
+    pub fn chatModelStatus(&self) -> serde_json::Value {
+        let (hasUsableChatModel, reason) = usableChatModelStatus();
+        serde_json::json!({
+            "hasUsableChatModel": hasUsableChatModel,
+            "reason": reason,
+        })
+    }
+
     /// Returns structured in-memory application log entries.
     #[allow(non_snake_case)]
     pub fn logEntries(&self) -> serde_json::Value {
@@ -1259,6 +1273,52 @@ fn synchronizedChatId(operation: &SyncOperation) -> Option<String> {
             .split_once(':')
             .map(|(chatId, _)| chatId.to_string()),
         _ => None,
+    }
+}
+
+/// Judges chat-model readiness from the local functional binding and provider profiles.
+///
+/// An empty api key is reported as unusable: the request layer sends it anyway
+/// and the provider answers 401, which reads like a broken runtime instead of
+/// missing configuration. Local models are exempt from the key requirement.
+fn usableChatModelStatus() -> (bool, String) {
+    use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+    use operit_model::ApiKeyInfo::ApiKeyInfo;
+    use operit_model::FunctionType::FunctionType;
+    use operit_model::ModelConfigData::ApiProviderType;
+
+    let binding = match FunctionalConfigManager::default()
+        .getModelBindingForFunction(FunctionType::CHAT)
+    {
+        Ok(binding) => binding,
+        Err(error) => return (false, format!("no chat model binding: {error}")),
+    };
+    let resolved = match ModelConfigManager::default()
+        .getResolvedModelConfig(&binding.providerId, &binding.modelId)
+    {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            return (
+                false,
+                format!("chat model {}:{} missing: {error}", binding.providerId, binding.modelId),
+            )
+        }
+    };
+    if resolved.apiProviderType == ApiProviderType::LOCAL_MODEL {
+        return (true, format!("local model {}", resolved.modelId));
+    }
+    let hasKey = !resolved.apiKey.trim().is_empty()
+        || resolved
+            .apiKeyPool
+            .iter()
+            .any(|key: &ApiKeyInfo| key.isEnabled && !key.key.trim().is_empty());
+    if hasKey {
+        (true, resolved.providerModelLabel())
+    } else {
+        (
+            false,
+            format!("provider {} has an empty api key", resolved.providerId),
+        )
     }
 }
 

@@ -3929,6 +3929,15 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get deviceSpaceBusinessSyncBlocked => '业务同步被阻止';
+
+  @override
+  String get deviceSpaceGrantBusinessSync => '设为执行节点（含业务同步）';
+
+  @override
+  String get deviceSpaceBusinessSyncGranted => '已设为执行节点，业务同步已放行';
+
+  @override
   String get deviceSpaceUnpair => '解除配对';
 
   @override

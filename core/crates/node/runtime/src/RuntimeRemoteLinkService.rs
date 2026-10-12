@@ -72,6 +72,10 @@ pub struct RuntimeDeviceSpaceDevice {
     #[serde(default)]
     pub relayPath: Option<Vec<String>>,
     pub currentIdentity: Option<RuntimeDeviceSpaceIdentity>,
+    /// True when business replica sync (chat history, model config) may run
+    /// between the reporting device and this member in both directions.
+    #[serde(default)]
+    pub businessSyncAllowed: bool,
 }
 
 /// Describes the identity and effective capabilities currently assigned to one device.
@@ -549,6 +553,9 @@ impl RuntimeRemoteLinkService {
                     online,
                     routePlan.as_ref(),
                     runtimeDeviceSpaceIdentity(&controlState, &deviceId),
+                    self.persistenceSyncService()
+                        .storageReplicationAllowed(&deviceId)
+                        .unwrap_or(false),
                 ))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -610,6 +617,9 @@ impl RuntimeRemoteLinkService {
             true,
             None,
             runtimeDeviceSpaceIdentity(&controlState, &profile.nodeId),
+            self.persistenceSyncService()
+                .storageReplicationAllowed(&profile.nodeId)
+                .unwrap_or(false),
         ))
     }
 
@@ -879,6 +889,11 @@ impl RuntimeRemoteLinkService {
                 "route change target is not reachable in the current device space: {targetNodeId}"
             ));
         }
+        // Reject before any lifecycle side effect: without this the switch
+        // commits and the first turn dies on a missing model configuration.
+        self.persistenceSyncService()
+            .routeTargetReadyForChat(&targetNodeId)
+            .await?;
         self.callChatCoreLifecycle(
             &localNodeId,
             GeneratedRouteLifecycle::BeforeChangeRoute,
@@ -1132,6 +1147,7 @@ fn runtimeDeviceSpaceDevice(
     online: bool,
     routePlan: Option<&CoreSpaceRoutePlan>,
     currentIdentity: Option<RuntimeDeviceSpaceIdentity>,
+    businessSyncAllowed: bool,
 ) -> RuntimeDeviceSpaceDevice {
     // Only a plan with more than one hop reports a relay: a single-hop plan is the
     // direct Peer Link the local device already observes itself.
@@ -1150,6 +1166,7 @@ fn runtimeDeviceSpaceDevice(
         relayHops,
         relayPath,
         currentIdentity,
+        businessSyncAllowed,
     }
 }
 

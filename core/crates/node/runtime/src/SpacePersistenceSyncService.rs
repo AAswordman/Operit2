@@ -435,7 +435,18 @@ impl SpacePersistenceSyncService {
         self.applyRemovedMemberEffects(&remote)?;
         // Admission is not a storage grant. No business RPC, blob transfer or
         // bootstrap reset may run unless both endpoints currently have it.
-        if !self.storageReplicationAllowed(&targetNodeId)? { return Ok(()); }
+        if !self.storageReplicationAllowed(&targetNodeId)? {
+            // Silence here cost a real debugging session: routed chats on the
+            // target then fail with missing model config and nobody can tell
+            // why the replica never arrived.
+            operit_util::AppLogger::AppLogger::w(
+                "SpacePersistenceSync",
+                &format!(
+                    "business replica sync skipped for {targetNodeId}: either endpoint lacks the storage.provide capability, advertises no core version, or is disconnected"
+                ),
+            );
+            return Ok(());
+        }
         self.validateReachableDeviceSpace(&targetNodeId).await?;
         let spaceId = self.state.spaceStore.space()?.spaceId;
         let completed = self.synchronizeNodeOperations(&targetNodeId, limit,
@@ -488,6 +499,44 @@ impl SpacePersistenceSyncService {
             Err(error) if error.code == "SPACE_STORAGE_PERMISSION_DENIED" => Ok(false),
             Err(error) => Err(error.to_string()),
         }
+    }
+
+    /// Verifies that one route-change target can serve a chat turn once this
+    /// node's pre-switch sync has run. Storage replication carries the model
+    /// configuration itself; when it is blocked, the target must already hold
+    /// a usable chat model or the switch would only produce failed requests.
+    #[allow(non_snake_case)]
+    pub(crate) async fn routeTargetReadyForChat(&self, targetNodeId: &str) -> Result<(), String> {
+        if self.storageReplicationAllowed(targetNodeId)? {
+            return Ok(());
+        }
+        let status: serde_json::Value = if targetNodeId == self.state.nodeRouter.localNodeId() {
+            self.callLocal("chatModelStatus", serde_json::Value::Null).await?
+        } else {
+            callRemote(
+                &self.state.nodeRouter,
+                targetNodeId,
+                PeerSyncMethod::ChatModelStatus,
+                serde_json::Value::Null,
+            )
+            .await?
+        };
+        if status
+            .get("hasUsableChatModel")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        let reason = status
+            .get("reason")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        Err(format!(
+            "ROUTE_TARGET_NOT_READY: 目标设备 {targetNodeId} 缺少可用的聊天模型配置（{reason}），\
+             且业务同步被存储能力阻止；请将其身份设为执行节点(Runner)或在该设备上配置模型后重试"
+        ))
     }
 
     /// Summarizes this device's synchronized state for the local-change
