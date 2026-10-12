@@ -1,0 +1,229 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "type": "string",
+      "const": "operit2.theme"
+    },
+    "formatVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "themeApiVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "themeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*){2,}$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 96
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "license": {
+      "type": "string",
+      "enum": [
+        "MIT",
+        "Apache-2.0",
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+        "CC0-1.0",
+        "CC-BY-4.0",
+        "CC-BY-SA-4.0",
+        "OFL-1.1"
+      ]
+    },
+    "minAppVersion": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 96
+    },
+    "platforms": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "android",
+          "ios",
+          "windows",
+          "macos",
+          "linux",
+          "ohos",
+          "web"
+        ]
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 63,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^(theme\\.json|preview\\.png|licenses/([a-z0-9_-]+/)?[a-z0-9_-]+\\.txt|assets/images/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg)|assets/fonts/([a-z0-9_-]+/)?[a-z0-9_-]+\\.ttf)$"
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "application/json",
+              "image/png",
+              "image/jpeg",
+              "image/svg+xml",
+              "font/ttf",
+              "text/plain"
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 33554432
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "path",
+          "mediaType",
+          "bytes",
+          "sha256"
+        ]
+      }
+    },
+    "description": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 2000
+    },
+    "maxAppVersion": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 96
+    },
+    "createdWith": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "studioVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "rendererCommit": {
+          "type": "string",
+          "minLength": 40,
+          "maxLength": 40,
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "flutterRevision": {
+          "type": "string",
+          "minLength": 40,
+          "maxLength": 40,
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "fixtureVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "studioVersion",
+        "rendererCommit",
+        "flutterRevision",
+        "fixtureVersion"
+      ]
+    },
+    "assetLicenses": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "asset": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^assets/(images|fonts)/([a-z0-9_-]+/)?[a-z0-9_-]+\\.(png|jpg|jpeg|svg|ttf)$"
+          },
+          "license": {
+            "type": "string",
+            "enum": [
+              "MIT",
+              "Apache-2.0",
+              "AGPL-3.0-only",
+              "AGPL-3.0-or-later",
+              "CC0-1.0",
+              "CC-BY-4.0",
+              "CC-BY-SA-4.0",
+              "OFL-1.1"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^licenses/([a-z0-9_-]+/)?[a-z0-9_-]+\\.txt$"
+          }
+        },
+        "required": [
+          "asset",
+          "license",
+          "text"
+        ]
+      }
+    }
+  },
+  "required": [
+    "format",
+    "formatVersion",
+    "themeApiVersion",
+    "themeId",
+    "version",
+    "displayName",
+    "author",
+    "license",
+    "minAppVersion",
+    "platforms",
+    "files"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:operit2:theme-manifest:1"
+}
