@@ -7274,6 +7274,24 @@ abstract class AppLocalizations {
   /// **'Direct link established: {device}'**
   String deviceSpaceDirectLinkEstablished(String device);
 
+  /// No description provided for @deviceSpaceBusinessSyncBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Business sync blocked'**
+  String get deviceSpaceBusinessSyncBlocked;
+
+  /// No description provided for @deviceSpaceGrantBusinessSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Set as execution node (with business sync)'**
+  String get deviceSpaceGrantBusinessSync;
+
+  /// No description provided for @deviceSpaceBusinessSyncGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Execution-node identity assigned; business sync is now allowed'**
+  String get deviceSpaceBusinessSyncGranted;
+
   /// No description provided for @deviceSpaceUnpair.
   ///
   /// In en, this message translates to:

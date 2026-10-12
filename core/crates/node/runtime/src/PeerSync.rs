@@ -10,6 +10,7 @@ pub(crate) const NODE_SYNC_TARGET: &str = "$node.sync";
 pub(crate) enum PeerSyncMethod {
     CoreVersion,
     DeviceSpace,
+    ChatModelStatus,
     SyncClock,
     SyncOperationsSince,
     SyncApplyOperations,
@@ -99,6 +100,7 @@ mod tests {
         for method in [
             PeerSyncMethod::CoreVersion,
             PeerSyncMethod::DeviceSpace,
+            PeerSyncMethod::ChatModelStatus,
             PeerSyncMethod::SyncClock,
             PeerSyncMethod::SyncOperationsSince,
             PeerSyncMethod::SyncApplyOperations,

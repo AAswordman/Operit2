@@ -823,7 +823,10 @@ fn builtinRoles() -> BTreeMap<String, NetworkControlRole> {
         ),
         builtinRole("relay", "Relay", ["network.relay"]),
         builtinRole("storage", "Storage", ["storage.provide"]),
-        builtinRole("runner", "Runner", ["runtime.execute"]),
+        // A runner executes chats on behalf of the space, which requires the
+        // business replica (chat history, model config) only storage.provide
+        // unlocks; a runner without it cannot serve routed chats at all.
+        builtinRole("runner", "Runner", ["runtime.execute", "storage.provide"]),
         builtinRole("auditor", "Auditor", ["network.audit.read"]),
     ]
     .into_iter()

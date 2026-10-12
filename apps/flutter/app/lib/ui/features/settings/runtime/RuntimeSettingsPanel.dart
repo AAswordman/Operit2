@@ -290,7 +290,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     final projected = _projectedDevice(deviceId);
     final status =
         '${_remoteProbeLabel(probeState, l10n)}'
-        '${_reachabilitySuffix(l10n, projected)}';
+        '${_reachabilitySuffix(l10n, projected)}'
+        '${_businessSyncSuffix(l10n, projected)}';
     final path = _relayPathText(l10n, names, projected);
     return _DeviceSpaceRow(
       leading: _pairedLeading(probeState),
@@ -405,7 +406,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     final icon = device.online ? Icons.lan_outlined : Icons.link_off_outlined;
     final status =
         '${_onlineText(l10n, device.online)}'
-        '${_reachabilitySuffix(l10n, device)}';
+        '${_reachabilitySuffix(l10n, device)}'
+        '${_businessSyncSuffix(l10n, device)}';
     final path = _relayPathText(l10n, names, device);
     return _DeviceSpaceRow(
       leading: Icon(icon, color: device.online ? scheme.primary : scheme.error),
@@ -479,6 +481,25 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
         MenuItemButton(
           onPressed: () => unawaited(_assignMemberIdentity(device, l10n)),
           child: Text(l10n.settingsRuntimeControlAssignIdentity),
+        ),
+      // A member without business replica sync cannot serve routed chats
+      // (no chat history, no model config). Offering the runner identity —
+      // whose built-in capability set includes storage.provide — is the
+      // one-tap fix; the generic assign dialog remains the precise tool.
+      if (!device.businessSyncAllowed &&
+          _localHasCapability('network.identity.assign') &&
+          _localHasCapability('storage.provide'))
+        MenuItemButton(
+          onPressed: () => _runDeviceCommand(
+            () => _clients.server.runtimeRemoteLinkService.setDeviceSpaceIdentity(
+              assignment: generated.NetworkControlIdentityAssignment(
+                nodeId: device.deviceId,
+                roleId: 'runner',
+              ),
+            ),
+            l10n.deviceSpaceBusinessSyncGranted,
+          ),
+          child: Text(l10n.deviceSpaceGrantBusinessSync),
         ),
       if (!isolated && _localHasCapability('network.connections.disconnect'))
         MenuItemButton(
@@ -643,6 +664,18 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     }
     final hops = device.relayHops;
     return ' · ${hops == null ? l10n.deviceSpaceDirectLink : l10n.deviceSpaceRelayHops(hops)}';
+  }
+
+  /// Appends the blocked-business-sync warning; an allowed replica stays
+  /// unsurfaced so ordinary rows keep their compact online/relay summary.
+  String _businessSyncSuffix(
+    AppLocalizations l10n,
+    generated.RuntimeDeviceSpaceDevice? device,
+  ) {
+    if (device == null || device.businessSyncAllowed) {
+      return '';
+    }
+    return ' · ${l10n.deviceSpaceBusinessSyncBlocked}';
   }
 
   /// Renders the planned relay path from this device through every hop to the member.

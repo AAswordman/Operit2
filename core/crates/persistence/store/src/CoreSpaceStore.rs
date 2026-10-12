@@ -2396,6 +2396,40 @@ mod tests {
             .expect("default user execution capability must materialize"));
     }
 
+    /// Verifies the runner identity carries storage.provide so it can receive
+    /// the business replica (chat history, model config) a routed chat requires.
+    #[test]
+    fn network_control_runner_identity_provides_business_replica_storage() {
+        let host = Arc::new(MemoryStorageHost::default());
+        let spaceStore = CoreSpaceStore::new(host.clone());
+        initializeTestDeviceProfile(&spaceStore);
+        let control =
+            NetworkControlStore::new(host).expect("network control store must initialize");
+        control
+            .bootstrapCurrentSpace()
+            .expect("Space creator must bootstrap administrator policy");
+        addTestSpaceMember(&spaceStore, "runner-member");
+        control
+            .admitMember("runner-member".to_string())
+            .expect("administrator must admit a member");
+        control
+            .setIdentity(NetworkControlIdentityAssignment {
+                nodeId: "runner-member".into(),
+                roleId: "runner".into(),
+            })
+            .expect("administrator must assign the runner identity");
+
+        assert!(control
+            .nodeHasCapability("runner-member", "runtime.execute", None)
+            .expect("runner execution capability must materialize"));
+        assert!(
+            control
+                .nodeHasCapability("runner-member", "storage.provide", None)
+                .expect("runner storage capability must be evaluated"),
+            "runner must hold storage.provide: routed chats need the business replica"
+        );
+    }
+
     /// Verifies removal revokes elevated roles and readmission restores only ordinary membership.
     #[test]
     fn network_control_removal_does_not_restore_prior_elevated_roles() {

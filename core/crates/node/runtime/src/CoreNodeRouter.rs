@@ -3469,6 +3469,82 @@ mod tests {
         router.networkControlStore.disconnectNode("sync-peer".into()).unwrap();
         assert!(router.routedCall("sync-peer".into(), request).await.result.is_err());
     }
+
+    /// A same-space member may query the chat model status over the control
+    /// plane without any storage grant; the query must land on the local
+    /// application target so the answer reflects that node's own configuration.
+    #[tokio::test]
+    async fn chat_model_status_answers_through_control_plane_peer_sync() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let mut router = testCoreNodeRouter("model-local", "model-peer", "model-binding");
+        router.installNodeServices(NodeServices::new(TestPeerService::new(
+            "model-local".into(), "model-peer".into(), Arc::new(TestClientEndpoint),
+        ))).unwrap();
+        // The fixture peer is runner, which now carries storage.provide; drop
+        // to the plain user identity to prove the query needs no storage grant.
+        router.networkControlStore.clearIdentity("model-peer".into()).unwrap();
+        let calledMethods = Arc::new(StdMutex::new(Vec::<String>::new()));
+        let localRuntime = Arc::make_mut(&mut router.localCore);
+        localRuntime.targetForSchema = Arc::new(|schema: &str| {
+            if schema == "application" { Some("core/server.application") } else { None }
+        });
+        localRuntime.applicationClient = Arc::new(TestApplicationStatusClient {
+            calledMethods: calledMethods.clone(),
+        });
+        let request = RoutedCoreRequest {
+            spaceId: router.spaceStore.space().unwrap().spaceId,
+            originNodeId: "model-peer".into(),
+            targetNodeId: "model-local".into(),
+            ttl: 0,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload: PeerSyncMethod::ChatModelStatus.request("model-status".into(), CoreValue::Null),
+        };
+        let value = router.routedCall("model-peer".into(), request).await.result
+            .expect("chat model status must answer without storage capabilities");
+        assert_eq!(
+            calledMethods.lock().unwrap().as_slice(),
+            ["chatModelStatus"],
+            "the query must reach the local application target",
+        );
+        let status: serde_json::Value = operit_link::fromCoreValue(value)
+            .expect("chat model status must decode as JSON");
+        assert_eq!(status["hasUsableChatModel"], serde_json::Value::Bool(false));
+        assert!(status["reason"].is_string(), "the answer must stay actionable");
+    }
+
+    /// Stands in for the application dispatch and records the requested methods.
+    struct TestApplicationStatusClient {
+        calledMethods: Arc<StdMutex<Vec<String>>>,
+    }
+
+    #[async_trait(?Send)]
+    impl CoreLinkSharedClient for TestApplicationStatusClient {
+        /// Records the application method and answers with a fixed status.
+        async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+            self.calledMethods.lock().unwrap().push(request.methodName.clone());
+            let result = operit_link::toCoreValue(serde_json::json!({
+                "hasUsableChatModel": false,
+                "reason": "no chat model binding",
+            }))
+            .map_err(|error| CoreLinkError::internal(error.to_string()));
+            CoreCallResponse { requestId: request.requestId, result }
+        }
+
+        /// Watch surfaces are unused by this application stub.
+        #[allow(non_snake_case)]
+        async fn watchSnapshot(
+            &self,
+            _request: CoreWatchRequest,
+        ) -> Result<CoreEvent, CoreLinkError> {
+            Err(CoreLinkError::internal("watch is unused in this test"))
+        }
+
+        /// Watch surfaces are unused by this application stub.
+        async fn watch(&self, _request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
+            Err(CoreLinkError::internal("watch is unused in this test"))
+        }
+    }
     /// A handoff must use the admitted peer sync surface, never the local-only application target.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn route_handoff_installs_binding_through_peer_sync() {
@@ -3522,6 +3598,10 @@ mod tests {
         router.installNodeServices(NodeServices::new(TestPeerService::new(
             "storage-local".into(), "storage-peer".into(), Arc::new(TestClientEndpoint),
         ))).unwrap();
+        // The shared fixture assigns runner, whose built-in capability set now
+        // includes storage.provide; this test exercises non-storage members,
+        // so the peer falls back to the plain user identity.
+        router.networkControlStore.clearIdentity("storage-peer".into()).unwrap();
         let request = RoutedCoreRequest {
             spaceId: router.spaceStore.space().unwrap().spaceId,
             originNodeId: "storage-peer".into(), targetNodeId: "storage-local".into(),
@@ -3595,6 +3675,9 @@ mod tests {
         let _guard = routeTestGlobalLock().lock().await;
         installTestRuntimeScheduler();
         let router = testCoreNodeRouter("worker-local", "worker-peer", "worker-binding");
+        // The fixture peer is runner, which now carries storage.provide; this
+        // test needs a member without replica access, so fall back to user.
+        router.networkControlStore.clearIdentity("worker-peer".into()).unwrap();
         let endpoint = TestRoutedCallEndpoint::newPolicyOnly();
         let link = installTestPeer(&router, "worker-peer".into(), endpoint.clone()).unwrap();
         let worker = crate::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
