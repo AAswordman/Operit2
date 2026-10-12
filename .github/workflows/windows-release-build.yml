@@ -74,9 +74,41 @@ jobs:
         shell: pwsh
         run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
-      # GitHub Actions runners cannot reliably reach gitee.com (connection
-      # reset), but the OpenHarmony flutter_packages repo is mirrored on
-      # GitHub.  Rewrite the gitee URL so `flutter pub get` can clone it.
+      - name: Pre-cache Windows engine artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdk = "apps/flutter/app/.fvm/flutter_sdk"
+          $version = "3.41.10-ohos-0.0.2-beta.operit.1"
+          $base = "https://github.com/AAswordman/flutter-ohos/releases/download/$version"
+          $cacheDir = Join-Path $sdk "bin/cache/artifacts/windows-sdk"
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+
+          $targets = @(
+            @{ Dir = "windows-x64"; Zip = "windows-x64-debug.zip" },
+            @{ Dir = "windows-x64-profile"; Zip = "windows-x64-profile.zip" },
+            @{ Dir = "windows-x64-release"; Zip = "windows-x64-release.zip" }
+          )
+
+          foreach ($t in $targets) {
+            $zipPath = Join-Path $env:TEMP $t.Zip
+            Write-Output "Downloading $($t.Zip) ..."
+            curl.exe -L --fail --retry 3 --retry-delay 5 -o $zipPath "$base/$($t.Zip)" --max-time 600
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to download $($t.Zip) (curl exit code $LASTEXITCODE)"
+            }
+            $dest = Join-Path $cacheDir $t.Dir
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Write-Output "Extracting $($t.Zip) to $dest ..."
+            Expand-Archive -Path $zipPath -DestinationPath $dest -Force
+            Remove-Item $zipPath -Force
+          }
+
+          $stampFile = Join-Path $sdk "bin/cache/windows-sdk.stamp"
+          Set-Content -Path $stampFile -Value $version -NoNewline -Encoding ascii
+          Write-Output "Wrote stamp: $version"
+          Get-ChildItem $cacheDir | Select-Object Name
+
       - name: Build and package Windows app
         if: inputs.products != 'cli'
         shell: pwsh
