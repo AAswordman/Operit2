@@ -813,8 +813,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/path_provider/path_provider_ohos"
-      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      ref: "fd410050c6842717ee1b851ca7640c294de9568c"
+      resolved-ref: "fd410050c6842717ee1b851ca7640c294de9568c"
       url: "https://github.com/xuanxuan123xuan/flutter_packages.git"
     source: git
     version: "2.2.1"
@@ -1138,8 +1138,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/url_launcher/url_launcher_ohos"
-      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      ref: "fd410050c6842717ee1b851ca7640c294de9568c"
+      resolved-ref: "fd410050c6842717ee1b851ca7640c294de9568c"
       url: "https://github.com/xuanxuan123xuan/flutter_packages.git"
     source: git
     version: "6.0.38"
@@ -1235,8 +1235,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/video_player/video_player_ohos"
-      ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
-      resolved-ref: "35fb467533e174411a117b2a030c15d2a3a9687c"
+      ref: "fd410050c6842717ee1b851ca7640c294de9568c"
+      resolved-ref: "fd410050c6842717ee1b851ca7640c294de9568c"
       url: "https://github.com/xuanxuan123xuan/flutter_packages.git"
     source: git
     version: "1.0.0+1"
