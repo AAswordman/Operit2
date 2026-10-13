@@ -725,6 +725,28 @@ impl OperitApplication {
         })
     }
 
+    /// Returns this node's full model provider configuration as sync JSON.
+    #[allow(non_snake_case)]
+    pub fn exportModelProviders(&self) -> Result<String, String> {
+        ModelConfigManager::default().exportAllProviders()
+    }
+
+    /// Imports model providers pushed from a trusted paired peer.
+    ///
+    /// Control-plane model sync deliberately bypasses the storage-replication
+    /// gate: credentials travel over the authenticated peer link and are
+    /// written by the receiving node into its own encrypted store.
+    #[allow(non_snake_case)]
+    pub fn syncModelConfig(&self, providersJson: String) -> Result<serde_json::Value, String> {
+        let result = ModelConfigManager::default()
+            .importAllProvidersFromBackupContent(&providersJson)?;
+        Ok(serde_json::json!({
+            "new": result.new,
+            "updated": result.updated,
+            "skipped": result.skipped,
+        }))
+    }
+
     /// Returns structured in-memory application log entries.
     #[allow(non_snake_case)]
     pub fn logEntries(&self) -> serde_json::Value {

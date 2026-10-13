@@ -3938,6 +3938,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceBusinessSyncGranted => '已设为执行节点，业务同步已放行';
 
   @override
+  String get deviceSpaceSyncModelConfig => '同步模型配置到该设备';
+
+  @override
+  String deviceSpaceModelConfigSynced(int added, int updated) {
+    return '模型配置已同步：新增 $added，更新 $updated';
+  }
+
+  @override
+  String get deviceSpaceAutoModelSync => '远程缺少模型时自动同步模型配置';
+
+  @override
+  String get deviceSpaceAutoModelSyncHint => '将聊天切换到没有可用模型的设备时，先自动推送本设备的模型配置。';
+
+  @override
   String get deviceSpaceUnpair => '解除配对';
 
   @override

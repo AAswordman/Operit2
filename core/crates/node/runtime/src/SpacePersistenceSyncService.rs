@@ -501,17 +501,44 @@ impl SpacePersistenceSyncService {
         }
     }
 
-    /// Verifies that one route-change target can serve a chat turn once this
-    /// node's pre-switch sync has run. Storage replication carries the model
-    /// configuration itself; when it is blocked, the target must already hold
-    /// a usable chat model or the switch would only produce failed requests.
+    /// Reads whether route changes may auto-push this device's model config.
     #[allow(non_snake_case)]
-    pub(crate) async fn routeTargetReadyForChat(&self, targetNodeId: &str) -> Result<(), String> {
-        if self.storageReplicationAllowed(targetNodeId)? {
-            return Ok(());
-        }
-        let status: serde_json::Value = if targetNodeId == self.state.nodeRouter.localNodeId() {
-            self.callLocal("chatModelStatus", serde_json::Value::Null).await?
+    pub fn autoModelSyncEnabled(&self) -> Result<bool, String> {
+        let store = operit_store::PreferencesDataStore::CoreNodeStateStore::newWithStorage(
+            self.state.localRuntime.runtimeStorageHost(),
+            "runtime/link_access/auto_model_sync.preferences.json",
+        );
+        let preferences = store.data().map_err(|error| error.to_string())?;
+        Ok(preferences
+            .get(&operit_store::PreferencesDataStore::stringPreferencesKey("enabled"))
+            .is_some_and(|value| value == "true"))
+    }
+
+    /// Toggles auto-pushing this device's model config on route changes.
+    #[allow(non_snake_case)]
+    pub fn setAutoModelSyncEnabled(&self, enabled: bool) -> Result<(), String> {
+        let store = operit_store::PreferencesDataStore::CoreNodeStateStore::newWithStorage(
+            self.state.localRuntime.runtimeStorageHost(),
+            "runtime/link_access/auto_model_sync.preferences.json",
+        );
+        let mut preferences = store.data().map_err(|error| error.to_string())?;
+        preferences.set(
+            &operit_store::PreferencesDataStore::stringPreferencesKey("enabled"),
+            if enabled { "true".to_string() } else { "false".to_string() },
+        );
+        store
+            .replaceRecoverably(preferences)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Queries one node's chat model readiness over the control plane.
+    #[allow(non_snake_case)]
+    async fn targetChatModelStatus(
+        &self,
+        targetNodeId: &str,
+    ) -> Result<serde_json::Value, String> {
+        if targetNodeId == self.state.nodeRouter.localNodeId() {
+            self.callLocal("chatModelStatus", serde_json::Value::Null).await
         } else {
             callRemote(
                 &self.state.nodeRouter,
@@ -519,13 +546,59 @@ impl SpacePersistenceSyncService {
                 PeerSyncMethod::ChatModelStatus,
                 serde_json::Value::Null,
             )
-            .await?
+            .await
+        }
+    }
+
+    /// Pushes this device's model provider configuration to one node.
+    #[allow(non_snake_case)]
+    async fn pushLocalModelConfig(
+        &self,
+        targetNodeId: &str,
+    ) -> Result<serde_json::Value, String> {
+        let providersJson: String = self
+            .callLocal("exportModelProviders", serde_json::Value::Null)
+            .await?;
+        callRemote(
+            &self.state.nodeRouter,
+            targetNodeId,
+            PeerSyncMethod::SyncModelConfig,
+            serde_json::json!({ "providersJson": providersJson }),
+        )
+        .await
+    }
+
+    /// Verifies that one route-change target can serve a chat turn once this
+    /// node's pre-switch sync has run. Storage replication carries the model
+    /// configuration itself; when it is blocked, the target must already hold
+    /// a usable chat model — or the auto-sync opt-in pushes this device's
+    /// configuration over the control plane before the switch commits.
+    #[allow(non_snake_case)]
+    pub(crate) async fn routeTargetReadyForChat(&self, targetNodeId: &str) -> Result<(), String> {
+        if self.storageReplicationAllowed(targetNodeId)? {
+            return Ok(());
+        }
+        let usable = |status: &serde_json::Value| {
+            status
+                .get("hasUsableChatModel")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
         };
-        if status
-            .get("hasUsableChatModel")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false)
-        {
+        let status = self.targetChatModelStatus(targetNodeId).await?;
+        if !usable(&status) && targetNodeId != self.state.nodeRouter.localNodeId() {
+            if self.autoModelSyncEnabled()? {
+                self.pushLocalModelConfig(targetNodeId).await?;
+                let refreshed = self.targetChatModelStatus(targetNodeId).await?;
+                if usable(&refreshed) {
+                    operit_util::AppLogger::AppLogger::i(
+                        "SpacePersistenceSync",
+                        &format!("model config auto-synced to {targetNodeId} before route change"),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+        if usable(&status) || usable(&self.targetChatModelStatus(targetNodeId).await?) {
             return Ok(());
         }
         let reason = status
@@ -535,7 +608,8 @@ impl SpacePersistenceSyncService {
             .to_string();
         Err(format!(
             "ROUTE_TARGET_NOT_READY: 目标设备 {targetNodeId} 缺少可用的聊天模型配置（{reason}），\
-             且业务同步被存储能力阻止；请将其身份设为执行节点(Runner)或在该设备上配置模型后重试"
+             且业务同步被存储能力阻止；可在本设备开启「远程缺少模型时自动同步」、\
+             将其身份设为执行节点(Runner)或在该设备上配置模型后重试"
         ))
     }
 

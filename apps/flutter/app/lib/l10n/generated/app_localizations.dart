@@ -7292,6 +7292,30 @@ abstract class AppLocalizations {
   /// **'Execution-node identity assigned; business sync is now allowed'**
   String get deviceSpaceBusinessSyncGranted;
 
+  /// No description provided for @deviceSpaceSyncModelConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync model config to this device'**
+  String get deviceSpaceSyncModelConfig;
+
+  /// No description provided for @deviceSpaceModelConfigSynced.
+  ///
+  /// In en, this message translates to:
+  /// **'Model config synced: {added} added, {updated} updated'**
+  String deviceSpaceModelConfigSynced(int added, int updated);
+
+  /// No description provided for @deviceSpaceAutoModelSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-sync model config when the remote lacks a model'**
+  String get deviceSpaceAutoModelSync;
+
+  /// No description provided for @deviceSpaceAutoModelSyncHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Before a chat switches to a device without a usable model, push this device\'s model configuration to it first.'**
+  String get deviceSpaceAutoModelSyncHint;
+
   /// No description provided for @deviceSpaceUnpair.
   ///
   /// In en, this message translates to:

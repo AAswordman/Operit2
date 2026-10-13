@@ -228,6 +228,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     final rows = _deviceRows(l10n);
     if (rows.isEmpty) {
       return <Widget>[
+        _AutoModelSyncSwitch(clients: _clients),
         Text(
           l10n.settingsRuntimeNoPairedRemote,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -237,6 +238,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
       ];
     }
     return <Widget>[
+      _AutoModelSyncSwitch(clients: _clients),
       for (var index = 0; index < rows.length; index++) ...<Widget>[
         if (index > 0) const SizedBox(height: 10),
         rows[index],
@@ -501,6 +503,12 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
           ),
           child: Text(l10n.deviceSpaceGrantBusinessSync),
         ),
+      // Model credentials travel over the authenticated control plane, so
+      // this works even when storage replication is blocked for the member.
+      MenuItemButton(
+        onPressed: _busy ? null : () => unawaited(_syncModelConfig(device, l10n)),
+        child: Text(l10n.deviceSpaceSyncModelConfig),
+      ),
       if (!isolated && _localHasCapability('network.connections.disconnect'))
         MenuItemButton(
           onPressed: () => _runDeviceCommand(
@@ -802,6 +810,42 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
   }
 
   /// Assigns one of the locally assignable identities to a Space member.
+  /// Pushes this device's model provider configuration to one space member.
+  ///
+  /// Works regardless of the storage-replication gate: the credentials travel
+  /// over the authenticated control plane and the receiving node writes them
+  /// into its own encrypted store.
+  Future<void> _syncModelConfig(
+    generated.RuntimeDeviceSpaceDevice device,
+    AppLocalizations l10n,
+  ) async {
+    setState(() => _busy = true);
+    try {
+      final providersJson =
+          await _clients.preferencesModelConfigManager.exportAllProviders();
+      final result = await _clients.server.runtimeRemoteLinkService
+          .pushModelConfigToNode(
+        targetNodeId: device.deviceId,
+        providersJson: providersJson,
+      );
+      int resultField(String name) =>
+          result is Map ? (result[name] as num?)?.toInt() ?? 0 : 0;
+      if (mounted) {
+        _showDeviceFeedback(
+          l10n.deviceSpaceModelConfigSynced(
+            resultField('new'),
+            resultField('updated'),
+          ),
+        );
+      }
+      await _refreshCurrentDeviceSpace();
+    } catch (error) {
+      if (mounted) _showDeviceFeedback(error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _assignMemberIdentity(
     generated.RuntimeDeviceSpaceDevice device,
     AppLocalizations l10n,
@@ -1925,4 +1969,106 @@ String _remoteProbeLabel(_PairedRemoteProbeState state, AppLocalizations l10n) {
     _PairedRemoteProbeState.removedFromSpace =>
       l10n.settingsRuntimePairedRemovedFromSpace,
   };
+}
+
+/// Local opt-in: when a chat is routed to a member whose business replica is
+/// blocked, the route change first auto-pushes this device's model config.
+class _AutoModelSyncSwitch extends StatefulWidget {
+  const _AutoModelSyncSwitch({required this.clients});
+
+  final GeneratedCoreProxyClients clients;
+
+  @override
+  State<_AutoModelSyncSwitch> createState() => _AutoModelSyncSwitchState();
+}
+
+class _AutoModelSyncSwitchState extends State<_AutoModelSyncSwitch> {
+  Future<bool>? _enabled;
+
+  Future<bool> _load() =>
+      widget.clients.server.runtimeRemoteLinkService.autoModelSyncEnabled();
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AutoModelSyncSwitch oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.clients != widget.clients) {
+      _enabled = _load();
+    }
+  }
+
+  Future<void> _toggle(bool enabled) async {
+    setState(() {
+      _enabled = widget.clients.server.runtimeRemoteLinkService
+          .setAutoModelSyncEnabled(enabled: enabled)
+          .then((_) => enabled);
+    });
+    try {
+      await widget.clients.server.runtimeRemoteLinkService
+          .setAutoModelSyncEnabled(enabled: enabled);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
+      setState(() => _enabled = _load());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return FutureBuilder<bool>(
+      future: _enabled,
+      builder: (context, snapshot) {
+        final enabled = snapshot.data ?? false;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                Icons.sync_outlined,
+                size: 16,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      l10n.deviceSpaceAutoModelSync,
+                      style: textTheme.bodySmall,
+                    ),
+                    Text(
+                      l10n.deviceSpaceAutoModelSyncHint,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant
+                            .withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: enabled,
+                onChanged: snapshot.connectionState == ConnectionState.waiting
+                    ? null
+                    : _toggle,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }

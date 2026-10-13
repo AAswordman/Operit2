@@ -1049,6 +1049,48 @@ impl RuntimeRemoteLinkService {
         Ok(())
     }
 
+    /// Pushes this device's model provider configuration to one space member.
+    ///
+    /// Control-plane transfer over the authenticated peer link; it deliberately
+    /// bypasses the storage-replication gate so a runner without
+    /// storage.provide can still receive model credentials.
+    #[allow(non_snake_case)]
+    pub async fn pushModelConfigToNode(
+        &self,
+        targetNodeId: String,
+        providersJson: String,
+    ) -> Result<serde_json::Value, String> {
+        if targetNodeId == self.nodeRouter.localNodeId() {
+            return Err("current device already owns its model configuration".to_string());
+        }
+        let space = self.spaceStore.initialize()?;
+        if !space.members.iter().any(|member| member == &targetNodeId) {
+            return Err(format!(
+                "target is not a member of the current device space: {targetNodeId}"
+            ));
+        }
+        let request = PeerSyncMethod::SyncModelConfig.request(
+            operit_link::nextCoreRouteRequestId("core-model-config-sync"),
+            toCoreValue(serde_json::json!({ "providersJson": providersJson }))
+                .map_err(|error| error.to_string())?,
+        );
+        let response = self.nodeRouter.callNode(targetNodeId, request).await;
+        let value = response.result.map_err(|error| error.to_string())?;
+        fromCoreValue(value).map_err(|error| error.to_string())
+    }
+
+    /// Reads whether route changes may auto-push this device's model config.
+    #[allow(non_snake_case)]
+    pub fn autoModelSyncEnabled(&self) -> Result<bool, String> {
+        self.persistenceSyncService().autoModelSyncEnabled()
+    }
+
+    /// Toggles auto-pushing this device's model config on route changes.
+    #[allow(non_snake_case)]
+    pub fn setAutoModelSyncEnabled(&self, enabled: bool) -> Result<(), String> {
+        self.persistenceSyncService().setAutoModelSyncEnabled(enabled)
+    }
+
     /// Invokes one route lifecycle callback on an explicit CoreNode target.
     #[allow(non_snake_case)]
     async fn callChatCoreLifecycle(

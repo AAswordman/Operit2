@@ -4103,6 +4103,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'Execution-node identity assigned; business sync is now allowed';
 
   @override
+  String get deviceSpaceSyncModelConfig => 'Sync model config to this device';
+
+  @override
+  String deviceSpaceModelConfigSynced(int added, int updated) {
+    return 'Model config synced: $added added, $updated updated';
+  }
+
+  @override
+  String get deviceSpaceAutoModelSync =>
+      'Auto-sync model config when the remote lacks a model';
+
+  @override
+  String get deviceSpaceAutoModelSyncHint =>
+      'Before a chat switches to a device without a usable model, push this device\'s model configuration to it first.';
+
+  @override
   String get deviceSpaceUnpair => 'Unpair device';
 
   @override
