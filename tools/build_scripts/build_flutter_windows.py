@@ -7,6 +7,8 @@ from common import (
     DIST_DIR,
     FLUTTER_APP_DIR,
     compress_zip,
+    ensure_typescript,
+    ensure_workflow_pnpm_deps,
     flutter_command,
     flutter_pub_get,
     generate_dart_proxy_artifacts,
@@ -15,6 +17,10 @@ from common import (
     require_command,
     run,
 )
+
+# Must match the version pinned by the plugin buildin packages and the
+# repository TypeScript pin used by the other build scripts.
+TYPESCRIPT_VERSION = "5.9.3"
 
 
 # Parses command-line options for the Windows Flutter build.
@@ -36,6 +42,14 @@ def main() -> int:
     # both invoke .venv/Scripts/python.exe.  Provision it before the build
     # so those steps do not fail on CI runners that have no .venv yet.
     prepare_python_command()
+    # The Flutter native-assets hook (hook/build.dart) runs
+    # plugins/tools/sync_plugin_packages.py, which compiles the TypeScript
+    # plugins with the repository-managed tsc and packs the script-packed
+    # workflow ToolPkg with corepack pnpm.  Provision both before the build
+    # so the hook does not fail with "TypeScript compiler not found" and
+    # abort the build at "Building native assets failed".
+    ensure_typescript(TYPESCRIPT_VERSION)
+    ensure_workflow_pnpm_deps()
     if not args.skip_proxy_generation:
         generate_dart_proxy_artifacts()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
