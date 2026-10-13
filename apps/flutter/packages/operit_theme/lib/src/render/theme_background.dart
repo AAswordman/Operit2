@@ -46,16 +46,12 @@ class ThemeBackground extends StatelessWidget {
                     curve: Curves.easeOutCubic,
                     color: Theme.of(context).colorScheme.surface,
                   ),
-                  AnimatedSwitcher(
-                    duration: _backgroundDuration,
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    child: hasMedia
-                        ? media!
-                        : const SizedBox.expand(
-                            key: ValueKey<String>('empty-theme-background'),
-                          ),
-                  ),
+                  if (hasMedia)
+                    media!
+                  else
+                    const SizedBox.expand(
+                      key: ValueKey<String>('empty-theme-background'),
+                    ),
                 ],
               ),
             ),

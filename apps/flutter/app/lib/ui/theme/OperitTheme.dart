@@ -910,7 +910,10 @@ class OperitThemeController {
         _stagedIdentity == selectedIdentity &&
         _stagedVisual != null;
     _themeIsPreparing = !hasStaged &&
-        (revalidatePackage || !_hasLoadedState || _themeLoadError != null || selectedIdentity != _preparedIdentity);
+        (revalidatePackage ||
+            !_hasLoadedState ||
+            _themeLoadError != null ||
+            (selectedIdentity != null && selectedIdentity != _preparedIdentity));
     // Mode/scale/visibility edits reuse prepared package resources and preserve
     // the live app subtree. A new or failed visual identity uses the barrier.
     if (_themeIsPreparing) _onChanged();

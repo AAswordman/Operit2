@@ -170,67 +170,76 @@ double _dominantCornerRadius(BorderRadius borderRadius) {
   ].reduce(math.max);
 }
 
-class BubbleImageBackgroundSurface extends StatefulWidget {
+class BubbleImageBackgroundSurface extends StatelessWidget {
   /// Creates a painted bubble image background from an imported theme asset.
   const BubbleImageBackgroundSurface({super.key, required this.imageStyle});
 
   final BubbleImageStyle imageStyle;
 
-  /// Creates the state that owns the decoded UI image.
   @override
-  State<BubbleImageBackgroundSurface> createState() =>
+  Widget build(BuildContext context) {
+    return _ResolvedBubbleImageSurface(
+      resolver: ThemeAssetScope.of(context),
+      imageStyle: imageStyle,
+    );
+  }
+}
+
+class _ResolvedBubbleImageSurface extends StatefulWidget {
+  const _ResolvedBubbleImageSurface({
+    required this.resolver,
+    required this.imageStyle,
+  });
+
+  final ThemeAssetResolver resolver;
+  final BubbleImageStyle imageStyle;
+
+  @override
+  State<_ResolvedBubbleImageSurface> createState() =>
       _BubbleImageBackgroundSurfaceState();
 }
 
 class _BubbleImageBackgroundSurfaceState
-    extends State<BubbleImageBackgroundSurface> {
+    extends State<_ResolvedBubbleImageSurface> {
   ui.Image? _image;
   int _loadToken = 0;
-  ThemeAssetResolver? _resolver;
   Object? _loadError;
   StackTrace? _loadStack;
 
-  /// Resolves bytes through the caller-owned asset source, without Core or I/O.
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final resolver = ThemeAssetScope.of(context);
-    if (!identical(_resolver, resolver)) {
-      _resolver = resolver;
-      unawaited(_loadImage());
-    }
+  void initState() {
+    super.initState();
+    _bind();
   }
 
-  /// Reloads the image when the referenced runtime asset changes.
+  /// Reloads the image when the referenced runtime asset or resolver changes.
   @override
-  void didUpdateWidget(covariant BubbleImageBackgroundSurface oldWidget) {
+  void didUpdateWidget(covariant _ResolvedBubbleImageSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.imageStyle.imagePath != widget.imageStyle.imagePath) {
-      unawaited(_loadImage());
+    if (oldWidget.imageStyle.imagePath != widget.imageStyle.imagePath ||
+        !identical(oldWidget.resolver, widget.resolver)) {
+      _bind();
     }
   }
 
-  /// Decodes bytes supplied by the resolver; errors remain visible as errors.
-  Future<void> _loadImage() async {
+  void _bind() {
     final token = ++_loadToken;
     _loadError = null;
     _loadStack = null;
     _image?.dispose();
     _image = null;
+    final resolver = widget.resolver;
+    if (resolver is ThemeDecodedImageResolver) {
+      _image = resolver.tryCloneImage(widget.imageStyle.imagePath);
+    } else {
+      unawaited(_loadImage(resolver, token));
+    }
+  }
+
+  /// Decodes bytes supplied by the resolver; errors remain visible as errors.
+  Future<void> _loadImage(ThemeAssetResolver resolver, int token) async {
     try {
-      final resolver = _resolver;
-      if (resolver is ThemeDecodedImageResolver) {
-        final image = resolver.tryCloneImage(widget.imageStyle.imagePath);
-        if (!mounted || token != _loadToken) {
-          image?.dispose();
-          return;
-        }
-        setState(() {
-          _image = image;
-        });
-        return;
-      }
-      final bytes = await _resolver!.readBytes(widget.imageStyle.imagePath);
+      final bytes = await resolver.readBytes(widget.imageStyle.imagePath);
       final image = await decodeThemeImageBytes(
         widget.imageStyle.imagePath,
         bytes,
