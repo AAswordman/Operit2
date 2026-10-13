@@ -572,7 +572,10 @@ impl SpacePersistenceSyncService {
     /// node's pre-switch sync has run. Storage replication carries the model
     /// configuration itself; when it is blocked, the target must already hold
     /// a usable chat model — or the auto-sync opt-in pushes this device's
-    /// configuration over the control plane before the switch commits.
+    /// configuration over the control plane before the switch commits. The
+    /// control plane carries only the model configuration, so such a target
+    /// serves the turn without replicated chat history; that degradation is
+    /// the caller's explicit opt-in.
     #[allow(non_snake_case)]
     pub(crate) async fn routeTargetReadyForChat(&self, targetNodeId: &str) -> Result<(), String> {
         if self.storageReplicationAllowed(targetNodeId)? {
@@ -584,21 +587,38 @@ impl SpacePersistenceSyncService {
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false)
         };
-        let status = self.targetChatModelStatus(targetNodeId).await?;
-        if !usable(&status) && targetNodeId != self.state.nodeRouter.localNodeId() {
-            if self.autoModelSyncEnabled()? {
-                self.pushLocalModelConfig(targetNodeId).await?;
-                let refreshed = self.targetChatModelStatus(targetNodeId).await?;
-                if usable(&refreshed) {
-                    operit_util::AppLogger::AppLogger::i(
+        let mut status = self.targetChatModelStatus(targetNodeId).await?;
+        if !usable(&status)
+            && targetNodeId != self.state.nodeRouter.localNodeId()
+            && self.autoModelSyncEnabled()?
+        {
+            // A denied or failed push (this device is not an identity
+            // administrator, or the transfer itself failed) must not replace
+            // the actionable ROUTE_TARGET_NOT_READY guidance with an internal
+            // denial code; log it and let the final error explain the options.
+            match self.pushLocalModelConfig(targetNodeId).await {
+                Ok(_) => {
+                    status = self.targetChatModelStatus(targetNodeId).await?;
+                    if usable(&status) {
+                        operit_util::AppLogger::AppLogger::i(
+                            "SpacePersistenceSync",
+                            &format!(
+                                "model config auto-synced to {targetNodeId} before route change"
+                            ),
+                        );
+                    }
+                }
+                Err(error) => {
+                    operit_util::AppLogger::AppLogger::w(
                         "SpacePersistenceSync",
-                        &format!("model config auto-synced to {targetNodeId} before route change"),
+                        &format!(
+                            "auto model sync to {targetNodeId} before route change failed: {error}"
+                        ),
                     );
-                    return Ok(());
                 }
             }
         }
-        if usable(&status) || usable(&self.targetChatModelStatus(targetNodeId).await?) {
+        if usable(&status) {
             return Ok(());
         }
         let reason = status
@@ -609,7 +629,10 @@ impl SpacePersistenceSyncService {
         Err(format!(
             "ROUTE_TARGET_NOT_READY: 目标设备 {targetNodeId} 缺少可用的聊天模型配置（{reason}），\
              且业务同步被存储能力阻止；可在本设备开启「远程缺少模型时自动同步」、\
-             将其身份设为执行节点(Runner)或在该设备上配置模型后重试"
+             将其身份设为执行节点(Runner)或在该设备上配置模型后重试 \
+             / Target device {targetNodeId} has no usable chat model ({reason}) and business \
+             replica sync is blocked by storage capabilities; enable auto model sync on this \
+             device, set its identity to Runner, or configure a model on it, then retry."
         ))
     }
 

@@ -5,6 +5,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../../../../../../l10n/generated/app_localizations.dart';
+
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../common/contributions/ChatUiContributionModels.dart';
@@ -809,13 +811,14 @@ class _ChatRouteNodeSectionState extends State<_ChatRouteNodeSection> {
   }
 
   Future<void> _selectNode(String nodeId, bool locked) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       await widget.viewModel.setChatRoute(widget.chatId, nodeId, locked);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('执行节点切换失败：$error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.chatRouteSwitchFailed(error.toString()))),
+        );
       }
     }
   }
@@ -830,6 +833,7 @@ class _ChatRouteNodeSectionState extends State<_ChatRouteNodeSection> {
         return StreamBuilder<core_proxy.RuntimeDeviceSpaceSnapshot>(
           stream: _devices,
           builder: (context, spaceSnapshot) {
+            final l10n = AppLocalizations.of(context)!;
             final devices =
                 spaceSnapshot.data?.topology.devices ??
                 const <core_proxy.RuntimeDeviceSpaceDevice>[];
@@ -841,31 +845,31 @@ class _ChatRouteNodeSectionState extends State<_ChatRouteNodeSection> {
             }
             String summary;
             if (!locked) {
-              summary = '自动（AI 调度）';
+              summary = l10n.chatRouteAutoTitle;
             } else if (pinnedDevice != null) {
               summary = pinnedDevice.online
                   ? pinnedDevice.deviceName
-                  : '${pinnedDevice.deviceName}（离线）';
+                  : '${pinnedDevice.deviceName}${l10n.chatRouteOfflineSuffix}';
             } else {
               final fallback =
                   status?.ownerIsLocal ?? false
-                  ? '本机'
+                  ? l10n.chatRouteThisDevice
                   : status?.ownerPlatform ?? '';
               summary = status?.ownerReachable ?? false
                   ? fallback
-                  : '$fallback（离线）';
+                  : '$fallback${l10n.chatRouteOfflineSuffix}';
             }
             return _MenuSection(
               icon: Icons.dns_outlined,
-              title: '执行节点',
+              title: l10n.chatRouteSectionTitle,
               value: locked ? '$summary 🔒' : summary,
               expanded: widget.expanded,
               onTap: widget.onToggle,
               children: <Widget>[
                 _RouteNodeRow(
                   icon: Icons.auto_awesome_outlined,
-                  title: '自动（AI 调度）',
-                  subtitle: '由 AI 根据任务需要切换设备',
+                  title: l10n.chatRouteAutoTitle,
+                  subtitle: l10n.chatRouteAutoSubtitle,
                   selected: !locked,
                   onTap: () => _selectNode('', false),
                 ),
@@ -877,7 +881,7 @@ class _ChatRouteNodeSectionState extends State<_ChatRouteNodeSection> {
                     title: device.deviceName,
                     subtitle: device.online
                         ? device.platform
-                        : '${device.platform}（离线）',
+                        : '${device.platform}${l10n.chatRouteOfflineSuffix}',
                     selected: locked && device.deviceId == ownerNodeId,
                     onTap: () => _selectNode(device.deviceId, true),
                   ),

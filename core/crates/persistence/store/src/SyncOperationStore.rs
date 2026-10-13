@@ -348,7 +348,7 @@ impl SyncOperationStore {
         let mut operationLog = lockSyncState(&operationLog, "operation log")?;
         self.loadOperationLogIndex(originDeviceId, &mut operationLog)?;
         let mut clock = self
-            .loadCachedJson(&mut clockState, &self.clockPath())?
+            .loadRebuildableCachedJson(&mut clockState, &self.clockPath())?
             .clone();
         let sequence = clock
             .sequenceFor(originDeviceId)
@@ -492,7 +492,7 @@ impl SyncOperationStore {
 
         let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
         let mut clock = self
-            .loadCachedJson(&mut clockState, &self.clockPath())?
+            .loadRebuildableCachedJson(&mut clockState, &self.clockPath())?
             .clone();
         let mut clockChanged = false;
         let mut appendedOrigins = BTreeSet::new();
@@ -714,7 +714,7 @@ impl SyncOperationStore {
     pub fn localClock(&self) -> Result<SyncClock, SyncOperationStoreError> {
         let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
         Ok(self
-            .loadCachedJson(&mut clockState, &self.clockPath())?
+            .loadRebuildableCachedJson(&mut clockState, &self.clockPath())?
             .clone())
     }
 
@@ -911,7 +911,7 @@ impl SyncOperationStore {
     ) -> Result<(), SyncOperationStoreError> {
         let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
         let mut clock = self
-            .loadCachedJson(&mut clockState, &self.clockPath())?
+            .loadRebuildableCachedJson(&mut clockState, &self.clockPath())?
             .clone();
         if !self.observeOperationWithClock(operation, &mut clock)? {
             return Ok(());
@@ -1142,7 +1142,7 @@ impl SyncOperationStore {
     pub fn devices(&self) -> Result<Vec<String>, SyncOperationStoreError> {
         let mut devicesState = lockSyncState(&self.sharedState.devices, "devices")?;
         Ok(self
-            .loadCachedJson(&mut devicesState, &self.devicesPath())?
+            .loadRebuildableCachedJson(&mut devicesState, &self.devicesPath())?
             .clone())
     }
 
@@ -1203,7 +1203,7 @@ impl SyncOperationStore {
         }
         let mut devicesState = lockSyncState(&self.sharedState.devices, "devices")?;
         let mut devices = self
-            .loadCachedJson(&mut devicesState, &self.devicesPath())?
+            .loadRebuildableCachedJson(&mut devicesState, &self.devicesPath())?
             .clone();
         let previousLength = devices.len();
         for deviceId in deviceIds {
@@ -1236,6 +1236,11 @@ impl SyncOperationStore {
     }
 
     /// Loads one JSON metadata value once into its process-shared shard cache.
+    ///
+    /// Strict on purpose: the export floors are policy state ("operations
+    /// recorded before this device joined the space must not be exported
+    /// again") that cannot be derived from the operation log, so a corrupted
+    /// document must fail loudly instead of silently resetting the boundary.
     #[allow(non_snake_case)]
     fn loadCachedJson<'a, T>(
         &self,
@@ -1246,7 +1251,27 @@ impl SyncOperationStore {
         T: serde::de::DeserializeOwned + Default + serde::Serialize,
     {
         if !state.loaded {
-            state.value = self.readJsonTolerant(path)?;
+            state.value = self.readJson(path)?;
+            state.loaded = true;
+        }
+        Ok(&state.value)
+    }
+
+    /// Same shard-cache load for documents that are fully rebuildable from
+    /// the operation log: the vector clock is recomputed from log sequences
+    /// and device registrations re-enter on the next local operation, so a
+    /// corrupted cache may degrade to defaults and be rewritten.
+    #[allow(non_snake_case)]
+    fn loadRebuildableCachedJson<'a, T>(
+        &self,
+        state: &'a mut SyncOperationCachedValue<T>,
+        path: &str,
+    ) -> Result<&'a T, SyncOperationStoreError>
+    where
+        T: serde::de::DeserializeOwned + Default + serde::Serialize,
+    {
+        if !state.loaded {
+            state.value = self.readRebuildableJson(path)?;
             state.loaded = true;
         }
         Ok(&state.value)
@@ -1255,17 +1280,17 @@ impl SyncOperationStore {
     /// Reads one rebuildable sync metadata cache, tolerating a corrupted document.
     ///
     /// A hard kill mid-write can leave a zero-filled file behind (observed on
-    /// NTFS). Every document loaded here is derived from the operation log, so
-    /// a broken file must degrade to the default and be rewritten instead of
-    /// failing every store operation at startup.
+    /// NTFS). Only unreadable content (broken JSON, invalid UTF-8) counts as
+    /// corruption and degrades to the default with a rewrite; I/O failures
+    /// must surface to the caller instead of masquerading as corruption.
     #[allow(non_snake_case)]
-    fn readJsonTolerant<T>(&self, path: &str) -> Result<T, SyncOperationStoreError>
+    fn readRebuildableJson<T>(&self, path: &str) -> Result<T, SyncOperationStoreError>
     where
         T: serde::de::DeserializeOwned + Default + serde::Serialize,
     {
         match self.readJson(path) {
             Ok(value) => Ok(value),
-            Err(error) => {
+            Err(error @ (SyncOperationStoreError::Json(_) | SyncOperationStoreError::Message(_))) => {
                 operit_util::AppLogger::AppLogger::w(
                     "SyncOperationStore",
                     &format!(
@@ -1276,6 +1301,7 @@ impl SyncOperationStore {
                 let _ = self.writeJson(path, &default);
                 Ok(default)
             }
+            Err(error) => Err(error),
         }
     }
 

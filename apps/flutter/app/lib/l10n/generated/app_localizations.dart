@@ -7316,6 +7316,42 @@ abstract class AppLocalizations {
   /// **'Before a chat switches to a device without a usable model, push this device\'s model configuration to it first.'**
   String get deviceSpaceAutoModelSyncHint;
 
+  /// No description provided for @chatRouteSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Execution node'**
+  String get chatRouteSectionTitle;
+
+  /// No description provided for @chatRouteAutoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto (AI scheduling)'**
+  String get chatRouteAutoTitle;
+
+  /// No description provided for @chatRouteAutoSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The AI switches devices as tasks require'**
+  String get chatRouteAutoSubtitle;
+
+  /// No description provided for @chatRouteThisDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get chatRouteThisDevice;
+
+  /// No description provided for @chatRouteOfflineSuffix.
+  ///
+  /// In en, this message translates to:
+  /// **' (offline)'**
+  String get chatRouteOfflineSuffix;
+
+  /// No description provided for @chatRouteSwitchFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to switch execution node: {error}'**
+  String chatRouteSwitchFailed(String error);
+
   /// No description provided for @deviceSpaceUnpair.
   ///
   /// In en, this message translates to:

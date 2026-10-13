@@ -705,4 +705,28 @@ mod tests {
         serde_json::from_str::<SyncClock>(&content)
             .expect("rewritten clock cache must be valid JSON");
     }
+
+    /// The export floor is policy state ("operations recorded before this
+    /// device joined the space must not be exported again"), not a rebuildable
+    /// cache: corruption must fail loudly instead of silently resetting the
+    /// privacy boundary.
+    #[test]
+    fn corrupted_export_floor_fails_instead_of_resetting() {
+        use crate::SyncOperationStore::SyncOperationStoreError;
+
+        let host = Arc::new(MemoryStorageHost::default());
+        host.writeBytes("runtime/sync/export_floors.json", &[0u8; 64])
+            .expect("test host must accept the corrupted fixture");
+
+        let error = SyncOperationStore::new(host.clone(), "runtime/sync".to_string())
+            .exportFloorFor("device-a")
+            .expect_err("a corrupted export floor must surface as an error");
+        assert!(
+            matches!(
+                error,
+                SyncOperationStoreError::Json(_) | SyncOperationStoreError::Message(_)
+            ),
+            "unreadable content must surface as a content error, got {error:?}"
+        );
+    }
 }

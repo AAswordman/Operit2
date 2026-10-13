@@ -5871,6 +5871,7 @@ mod tests {
                     displayName: display_name.to_string(),
                     capabilities: Vec::new(),
                 }),
+                businessSyncAllowed: false,
             }
         };
         DeviceManagerModal {
@@ -6216,6 +6217,7 @@ mod tests {
             relayHops: None,
             relayPath: None,
             currentIdentity: None,
+            businessSyncAllowed: false,
         };
         RuntimeDeviceSpaceTopology {
             currentDeviceId: "self".to_string(),

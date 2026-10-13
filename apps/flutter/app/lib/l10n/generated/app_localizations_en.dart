@@ -4119,6 +4119,27 @@ class AppLocalizationsEn extends AppLocalizations {
       'Before a chat switches to a device without a usable model, push this device\'s model configuration to it first.';
 
   @override
+  String get chatRouteSectionTitle => 'Execution node';
+
+  @override
+  String get chatRouteAutoTitle => 'Auto (AI scheduling)';
+
+  @override
+  String get chatRouteAutoSubtitle =>
+      'The AI switches devices as tasks require';
+
+  @override
+  String get chatRouteThisDevice => 'This device';
+
+  @override
+  String get chatRouteOfflineSuffix => ' (offline)';
+
+  @override
+  String chatRouteSwitchFailed(String error) {
+    return 'Failed to switch execution node: $error';
+  }
+
+  @override
   String get deviceSpaceUnpair => 'Unpair device';
 
   @override

@@ -207,12 +207,15 @@ fn registerPublicTools(handler: &mut AIToolHandler, context: &HostManager) {
                                 .unwrap_or_else(|| binding.nodeId.clone());
                             let reason = if binding.nodeId == targetNodeId {
                                 format!(
-                                    "会话已由用户锁定在设备 {currentLabel} 上执行，无需切换。"
+                                    "会话已由用户锁定在设备 {currentLabel} 上执行，无需切换。\
+                                     / The chat is already pinned by the user to device {currentLabel}; no switch is needed."
                                 )
                             } else {
                                 format!(
                                     "用户已将该会话的执行节点锁定为 {currentLabel}，switch_core 无法切换；\
-                                     请告知用户在聊天输入菜单的「执行节点」中解锁后重试，或直接继续当前设备上的任务。"
+                                     请告知用户在聊天输入菜单的「执行节点」中解锁后重试，或直接继续当前设备上的任务。\
+                                     / The user pinned this chat's execution node to {currentLabel}, so switch_core cannot move it; \
+                                     ask the user to unlock it via the chat input menu's execution-node section, or continue on the current device."
                                 )
                             };
                             return toolErrorResult(tool, reason);

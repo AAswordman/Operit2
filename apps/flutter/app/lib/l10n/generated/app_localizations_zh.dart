@@ -3952,6 +3952,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceAutoModelSyncHint => '将聊天切换到没有可用模型的设备时，先自动推送本设备的模型配置。';
 
   @override
+  String get chatRouteSectionTitle => '执行节点';
+
+  @override
+  String get chatRouteAutoTitle => '自动（AI 调度）';
+
+  @override
+  String get chatRouteAutoSubtitle => '由 AI 根据任务需要切换设备';
+
+  @override
+  String get chatRouteThisDevice => '本机';
+
+  @override
+  String get chatRouteOfflineSuffix => '（离线）';
+
+  @override
+  String chatRouteSwitchFailed(String error) {
+    return '执行节点切换失败：$error';
+  }
+
+  @override
   String get deviceSpaceUnpair => '解除配对';
 
   @override

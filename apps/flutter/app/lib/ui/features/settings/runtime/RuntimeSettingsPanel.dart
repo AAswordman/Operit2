@@ -505,10 +505,13 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
         ),
       // Model credentials travel over the authenticated control plane, so
       // this works even when storage replication is blocked for the member.
-      MenuItemButton(
-        onPressed: _busy ? null : () => unawaited(_syncModelConfig(device, l10n)),
-        child: Text(l10n.deviceSpaceSyncModelConfig),
-      ),
+      // Receivers only accept pushes from identity administrators, so the
+      // entry stays hidden for local identities without that capability.
+      if (_localHasCapability('network.identity.assign'))
+        MenuItemButton(
+          onPressed: _busy ? null : () => unawaited(_syncModelConfig(device, l10n)),
+          child: Text(l10n.deviceSpaceSyncModelConfig),
+        ),
       if (!isolated && _localHasCapability('network.connections.disconnect'))
         MenuItemButton(
           onPressed: () => _runDeviceCommand(
@@ -2003,14 +2006,14 @@ class _AutoModelSyncSwitchState extends State<_AutoModelSyncSwitch> {
   }
 
   Future<void> _toggle(bool enabled) async {
+    final request = widget.clients.server.runtimeRemoteLinkService
+        .setAutoModelSyncEnabled(enabled: enabled)
+        .then((_) => enabled);
     setState(() {
-      _enabled = widget.clients.server.runtimeRemoteLinkService
-          .setAutoModelSyncEnabled(enabled: enabled)
-          .then((_) => enabled);
+      _enabled = request;
     });
     try {
-      await widget.clients.server.runtimeRemoteLinkService
-          .setAutoModelSyncEnabled(enabled: enabled);
+      await request;
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

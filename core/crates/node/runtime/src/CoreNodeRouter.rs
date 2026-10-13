@@ -11,7 +11,7 @@ use operit_link::{CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, C
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingRecord, CoreNodeBindingStore};
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceRoutePlan, CoreSpaceStore};
-use operit_store::NetworkControlStore::NetworkControlStore;
+use operit_store::NetworkControlStore::{NetworkControlStore, NETWORK_IDENTITY_ASSIGN_CAPABILITY};
 use operit_store::PreferencesDataStore::StateFlow;
 use serde::{Deserialize, Serialize};
 use operit_tools::runtime_support::{CoreNodeToolRuntime, RuntimeCoreNodeRouteState, RuntimeCoreNodeStatus};
@@ -1960,6 +1960,9 @@ impl CoreNodeRouter {
                     if method.requiresStorageProvider() {
                         self.requirePeerStorageProviders(&request.originNodeId, &request.targetNodeId)?;
                     }
+                    if method == PeerSyncMethod::SyncModelConfig {
+                        self.requireIdentityAdministrator(&request.originNodeId)?;
+                    }
                     Ok((atTarget, method))
                 })
             {
@@ -3639,6 +3642,44 @@ mod tests {
         router.networkControlStore.clearIdentity("storage-peer".into()).unwrap();
         assert_eq!(router.routedCall("storage-peer".into(), request).await.result.unwrap_err().code,
             "SPACE_STORAGE_PERMISSION_DENIED");
+    }
+
+    /// Model configuration carries live provider credentials; receivers must
+    /// not let ordinary membership overwrite their imported providers.
+    #[tokio::test]
+    async fn only_identity_administrators_may_push_model_configuration() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let mut router = testCoreNodeRouter("model-local", "model-peer", "model-binding");
+        router.installNodeServices(NodeServices::new(TestPeerService::new(
+            "model-local".into(), "model-peer".into(), Arc::new(TestClientEndpoint),
+        ))).unwrap();
+        // The shared fixture assigns runner, which holds no
+        // identity-administration capability; clearing it leaves a plain user.
+        router.networkControlStore.clearIdentity("model-peer".into()).unwrap();
+        let request = RoutedCoreRequest {
+            spaceId: router.spaceStore.space().unwrap().spaceId,
+            originNodeId: "model-peer".into(), targetNodeId: "model-local".into(),
+            ttl: 0, routeKind: RoutedCoreRequestKind::Target,
+            payload: PeerSyncMethod::SyncModelConfig.request("model-push".into(),
+                operit_link::toCoreValue(serde_json::json!({"providersJson": "[]"})).unwrap()),
+        };
+        assert_eq!(
+            router.routedCall("model-peer".into(), request.clone()).await
+                .result.unwrap_err().code,
+            "MODEL_CONFIG_PUSH_DENIED"
+        );
+        router.networkControlStore.setIdentity(operit_store::NetworkControlStore::NetworkControlIdentityAssignment {
+            nodeId: "model-peer".into(), roleId: "admin".into(),
+        }).unwrap();
+        // The gate passes for administrators; the request then leaves the
+        // router and fails in application dispatch, which this fixture does
+        // not wire up — anything but the gate denial proves admission.
+        assert_ne!(
+            router.routedCall("model-peer".into(), request).await
+                .result.unwrap_err().code,
+            "MODEL_CONFIG_PUSH_DENIED"
+        );
     }
 
     struct CountingSyncPush(Arc<AtomicUsize>);

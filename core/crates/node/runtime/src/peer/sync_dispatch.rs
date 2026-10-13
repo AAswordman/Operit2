@@ -10,6 +10,26 @@ impl CoreNodeRouter {
         requireStorageProviders(&self.spaceStore, &self.networkControlStore, originNodeId, targetNodeId)
     }
 
+    /// Model configuration carries live provider credentials, so only members
+    /// entrusted with identity administration may push theirs onto this node;
+    /// ordinary Space membership is not consent to overwrite imported providers.
+    pub(crate) fn requireIdentityAdministrator(
+        &self, originNodeId: &str,
+    ) -> Result<(), CoreLinkError> {
+        let allowed = self
+            .networkControlStore
+            .nodeHasCapability(originNodeId, NETWORK_IDENTITY_ASSIGN_CAPABILITY, None)
+            .map_err(CoreLinkError::internal)?;
+        if allowed {
+            Ok(())
+        } else {
+            Err(CoreLinkError::new(
+                "MODEL_CONFIG_PUSH_DENIED",
+                format!("Node {originNodeId} is not allowed to push model configuration"),
+            ))
+        }
+    }
+
     pub(super) fn guardPeerSyncPush(&self, origin: String, target: String, spaceId: String,
         inner: Box<dyn CoreLinkPushSession>) -> Box<dyn CoreLinkPushSession> {
         Box::new(AuthorizedSyncPush { control: self.networkControlStore.clone(), space: self.spaceStore.clone(),
