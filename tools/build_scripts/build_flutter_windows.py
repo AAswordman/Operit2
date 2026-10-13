@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -23,6 +24,9 @@ from common import (
 # repository TypeScript pin used by the other build scripts.
 TYPESCRIPT_VERSION = "5.9.3"
 
+# Must match the packageManager pin of plugins/packages/buildin/workflow.
+PNPM_VERSION = "10.7.0"
+
 
 def _verbose_enabled() -> bool:
     # TEMPORARY: defaulted on to diagnose the native-assets hook failure in CI.
@@ -31,6 +35,24 @@ def _verbose_enabled() -> bool:
         "false",
         "no",
     )
+
+
+def ensure_corepack_pnpm() -> None:
+    """Enables the corepack pnpm shim for the pinned pnpm version.
+
+    The workflow ToolPkg pack script (pack:toolpkg) invokes a bare `pnpm`
+    internally, which only resolves through the corepack shim.  Without the
+    shim the plugin sync step fails with ERR_PNPM_BAD_PM_VERSION (when an
+    unrelated standalone pnpm is on PATH) or "pnpm: command not found".
+    """
+    corepack = shutil.which("corepack")
+    if corepack is None:
+        raise RuntimeError(
+            "Corepack is required to prepare the workflow ToolPkg dependencies "
+            "(run `corepack enable` first)"
+        )
+    run([corepack, "enable", "pnpm"])
+    run([corepack, "prepare", f"pnpm@{PNPM_VERSION}", "--activate"])
 
 
 # Parses command-line options for the Windows Flutter build.
@@ -59,6 +81,7 @@ def main() -> int:
     # so the hook does not fail with "TypeScript compiler not found" and
     # abort the build at "Building native assets failed".
     ensure_typescript(TYPESCRIPT_VERSION)
+    ensure_corepack_pnpm()
     ensure_workflow_pnpm_deps()
     if not args.skip_proxy_generation:
         generate_dart_proxy_artifacts()
