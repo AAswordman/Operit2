@@ -1835,6 +1835,13 @@
   "chatRouteRemoteOffline": "远程{platform} 离线",
   "chatRouteLoading": "正在读取运行设备",
   "chatRouteUnknown": "运行设备状态未知",
+  "chatRouteSectionTitle": "执行节点",
+  "chatRouteAutoTitle": "自动（AI 调度）",
+  "chatRouteAutoSubtitle": "由 AI 根据任务需要切换设备",
+  "chatRouteThisDevice": "本机",
+  "chatRouteOfflineSuffix": "（离线）",
+  "chatRouteSwitchFailed": "执行节点切换失败：{error}",
+  "@chatRouteSwitchFailed": {"placeholders": {"error": {"type": "String"}}},
   "@chatRouteRemote": {
     "placeholders": {
       "platform": {

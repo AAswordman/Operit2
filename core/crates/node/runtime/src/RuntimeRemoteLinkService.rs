@@ -822,6 +822,13 @@ impl RuntimeRemoteLinkService {
     ) -> Result<(), String> {
         let bindingStore = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
         if targetNodeId.trim().is_empty() {
+            // A chat without a Binding record is already on AI scheduling and
+            // unlocked — older chats never routed anywhere. Selecting "auto"
+            // on such a chat must stay a no-op instead of surfacing a missing
+            // record as a failed switch.
+            if bindingStore.bindingOptional(&chatId)?.is_none() {
+                return Ok(());
+            }
             // The lock flag is enforced on the node currently executing the
             // chat, so the updated record is pushed there without waiting for
             // the next periodic space synchronization round.
@@ -854,7 +861,8 @@ impl RuntimeRemoteLinkService {
             if currentBinding.locked && !userInitiated {
                 return Err(format!(
                     "CHAT_ROUTE_USER_LOCKED: the user pinned chat {chatId} to device {}; \
-                     ask the user to unlock it before switching routes",
+                     ask the user to unlock it before switching routes \
+                     （用户已锁定该会话的执行节点，请让用户解锁后再切换）",
                     currentBinding.nodeId
                 ));
             }
@@ -878,6 +886,15 @@ impl RuntimeRemoteLinkService {
             return Err(format!(
                 "route change target is not reachable in the current device space: {targetNodeId}"
             ));
+        }
+        // A chat created before Binding routing has always executed on this
+        // device; materialize that implicit binding before the lifecycle
+        // hooks run — their space routes resolve the binding server-side.
+        // Concurrent creators collapse: whoever loses the race reads the
+        // winner's record right after. The fresh record is neutral (local,
+        // unlocked), so a later failure leaves routing behavior unchanged.
+        if bindingStore.bindingOptional(&chatId)?.is_none() {
+            let _ = bindingStore.createLocal(&chatId);
         }
         self.callChatCoreLifecycle(
             &localNodeId,

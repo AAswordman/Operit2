@@ -3599,6 +3599,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatRouteUnknown => '运行设备状态未知';
 
   @override
+  String get chatRouteSectionTitle => '执行节点';
+
+  @override
+  String get chatRouteAutoTitle => '自动（AI 调度）';
+
+  @override
+  String get chatRouteAutoSubtitle => '由 AI 根据任务需要切换设备';
+
+  @override
+  String get chatRouteThisDevice => '本机';
+
+  @override
+  String get chatRouteOfflineSuffix => '（离线）';
+
+  @override
+  String chatRouteSwitchFailed(String error) {
+    return '执行节点切换失败：$error';
+  }
+
+  @override
   String edgePairingCodeTitle(String deviceName) {
     return '输入 $deviceName 的配对码';
   }

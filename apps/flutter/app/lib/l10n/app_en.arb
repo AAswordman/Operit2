@@ -1842,6 +1842,13 @@
   "chatRouteRemoteOffline": "Remote {platform} offline",
   "chatRouteLoading": "Loading execution device",
   "chatRouteUnknown": "Execution device status unknown",
+  "chatRouteSectionTitle": "Execution node",
+  "chatRouteAutoTitle": "Auto (AI scheduling)",
+  "chatRouteAutoSubtitle": "The AI switches devices as tasks require",
+  "chatRouteThisDevice": "This device",
+  "chatRouteOfflineSuffix": " (offline)",
+  "chatRouteSwitchFailed": "Failed to switch execution node: {error}",
+  "@chatRouteSwitchFailed": {"placeholders": {"error": {"type": "String"}}},
   "@chatRouteRemote": {
     "placeholders": {
       "platform": {
