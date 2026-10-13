@@ -158,6 +158,13 @@ dependency_overrides:
     path: ../thirdparty/webview_flutter_android
   webview_flutter_platform_interface:
     path: ../thirdparty/webview_flutter_platform_interface
+  # image 4.11.0 declares `archive: ^4.0.9` but calls ZLibDecoder.decodeLazy, which only
+  # exists in archive >= 4.5.0. pdf (via printing) pins archive below 4.1.0, so any fresh
+  # dependency resolution lands on the broken 4.11.0 and the Dart build fails to compile
+  # with "The method 'decodeLazy' isn't defined for the type 'ZLibDecoder'".
+  # Remove this once the bundled Flutter SDK ships Dart >= 3.12 (pdf 3.13.1, which lifts
+  # the archive cap, requires it).
+  image: ">=4.10.0 <4.11.0"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
