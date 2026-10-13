@@ -1243,13 +1243,40 @@ impl SyncOperationStore {
         path: &str,
     ) -> Result<&'a T, SyncOperationStoreError>
     where
-        T: serde::de::DeserializeOwned + Default,
+        T: serde::de::DeserializeOwned + Default + serde::Serialize,
     {
         if !state.loaded {
-            state.value = self.readJson(path)?;
+            state.value = self.readJsonTolerant(path)?;
             state.loaded = true;
         }
         Ok(&state.value)
+    }
+
+    /// Reads one rebuildable sync metadata cache, tolerating a corrupted document.
+    ///
+    /// A hard kill mid-write can leave a zero-filled file behind (observed on
+    /// NTFS). Every document loaded here is derived from the operation log, so
+    /// a broken file must degrade to the default and be rewritten instead of
+    /// failing every store operation at startup.
+    #[allow(non_snake_case)]
+    fn readJsonTolerant<T>(&self, path: &str) -> Result<T, SyncOperationStoreError>
+    where
+        T: serde::de::DeserializeOwned + Default + serde::Serialize,
+    {
+        match self.readJson(path) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                operit_util::AppLogger::AppLogger::w(
+                    "SyncOperationStore",
+                    &format!(
+                        "sync metadata {path} is corrupted and will be rebuilt from defaults: {error}"
+                    ),
+                );
+                let default = T::default();
+                let _ = self.writeJson(path, &default);
+                Ok(default)
+            }
+        }
     }
 
     /// Loads the append-only entity-version journal into its latest-order cache.

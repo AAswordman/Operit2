@@ -680,4 +680,29 @@ mod tests {
             serde_json::from_value(legacy).expect("legacy payload must deserialize");
         assert!(!binding.locked);
     }
+
+    /// A hard kill can leave a zero-filled sync clock behind; the store must
+    /// degrade to defaults and rewrite the file instead of failing startup.
+    #[test]
+    fn corrupted_sync_clock_cache_degrades_to_defaults() {
+        let host = Arc::new(MemoryStorageHost::default());
+        host.writeBytes("runtime/sync/clocks.json", &[0u8; 64])
+            .expect("test host must accept the corrupted fixture");
+
+        let clock = SyncOperationStore::new(host.clone(), "runtime/sync".to_string())
+            .localClock()
+            .expect("corrupted clock cache must degrade to defaults");
+        assert!(
+            clock.sequences.is_empty(),
+            "a corrupted cache must read back as an empty clock"
+        );
+
+        let content = String::from_utf8(
+            host.readBytes("runtime/sync/clocks.json")
+                .expect("the damaged file must be rewritten"),
+        )
+        .expect("rewritten clock cache must be valid UTF-8");
+        serde_json::from_str::<SyncClock>(&content)
+            .expect("rewritten clock cache must be valid JSON");
+    }
 }
