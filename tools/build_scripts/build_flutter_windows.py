@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,15 @@ from common import (
 # Must match the version pinned by the plugin buildin packages and the
 # repository TypeScript pin used by the other build scripts.
 TYPESCRIPT_VERSION = "5.9.3"
+
+
+def _verbose_enabled() -> bool:
+    # TEMPORARY: defaulted on to diagnose the native-assets hook failure in CI.
+    return os.environ.get("OPERIT_FLUTTER_BUILD_VERBOSE", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
 
 # Parses command-line options for the Windows Flutter build.
@@ -54,6 +64,11 @@ def main() -> int:
         generate_dart_proxy_artifacts()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
+    if _verbose_enabled():
+        # The native-assets build hook only reports its failure reason through
+        # trace-level logging, so "Building native assets failed" alone does
+        # not say what broke.  OPERIT_FLUTTER_BUILD_VERBOSE=1 surfaces it.
+        command.append("-v")
     if args.build_name:
         command.extend(["--build-name", args.build_name])
     if args.build_number:
