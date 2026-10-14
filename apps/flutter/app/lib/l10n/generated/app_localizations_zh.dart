@@ -2909,6 +2909,16 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get settingsDataPrivacySection => '隐私';
+
+  @override
+  String get settingsDataThinkingPersistenceTitle => '保存 AI 推理内容';
+
+  @override
+  String get settingsDataThinkingPersistenceDescription =>
+      '将模型的思考（推理）部件保留在会话历史、快照与设备同步中。关闭后，新的回复将不写入其推理过程；重新载入会话后，后续提问也不再携带此前的思考。此开关只影响新写入的内容：不会清除已保存的历史推理，不过滤导入的快照，不停止原始响应日志中的推理记录。';
+
+  @override
   String get settingsDataRuntimeSection => '数据概览';
 
   @override

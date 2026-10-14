@@ -5504,6 +5504,24 @@ abstract class AppLocalizations {
   /// **'The data overview could not be loaded: {error}. You can still export diagnostic logs.'**
   String settingsDataOverviewLoadError(String error);
 
+  /// No description provided for @settingsDataPrivacySection.
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy'**
+  String get settingsDataPrivacySection;
+
+  /// No description provided for @settingsDataThinkingPersistenceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Persist AI reasoning content'**
+  String get settingsDataThinkingPersistenceTitle;
+
+  /// No description provided for @settingsDataThinkingPersistenceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep the model\'s thinking (reasoning) parts in chat history, snapshots, and device sync. Turn off to store new replies without their reasoning trail; after the chat is reloaded, later prompts will also no longer include earlier reasoning. The switch only affects newly written content: it does not delete already stored reasoning from history, does not filter imported snapshots, and does not stop reasoning recorded in the raw response logs.'**
+  String get settingsDataThinkingPersistenceDescription;
+
   /// No description provided for @settingsDataRuntimeSection.
   ///
   /// In en, this message translates to:

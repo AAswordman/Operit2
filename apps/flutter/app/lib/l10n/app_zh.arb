@@ -1425,6 +1425,9 @@
       }
     }
   },
+  "settingsDataPrivacySection": "隐私",
+  "settingsDataThinkingPersistenceTitle": "保存 AI 推理内容",
+  "settingsDataThinkingPersistenceDescription": "将模型的思考（推理）部件保留在会话历史、快照与设备同步中。关闭后，新的回复将不写入其推理过程；重新载入会话后，后续提问也不再携带此前的思考。此开关只影响新写入的内容：不会清除已保存的历史推理，不过滤导入的快照，不停止原始响应日志中的推理记录。",
   "settingsDataRuntimeSection": "数据概览",
   "settingsDataCoreVersion": "当前版本",
   "settingsDataStorageSection": "储存路径",

@@ -3022,6 +3022,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get settingsDataPrivacySection => 'Privacy';
+
+  @override
+  String get settingsDataThinkingPersistenceTitle =>
+      'Persist AI reasoning content';
+
+  @override
+  String get settingsDataThinkingPersistenceDescription =>
+      'Keep the model\'s thinking (reasoning) parts in chat history, snapshots, and device sync. Turn off to store new replies without their reasoning trail; after the chat is reloaded, later prompts will also no longer include earlier reasoning. The switch only affects newly written content: it does not delete already stored reasoning from history, does not filter imported snapshots, and does not stop reasoning recorded in the raw response logs.';
+
+  @override
   String get settingsDataRuntimeSection => 'Data overview';
 
   @override

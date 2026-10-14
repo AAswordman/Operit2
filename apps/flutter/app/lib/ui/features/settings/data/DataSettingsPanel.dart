@@ -131,6 +131,10 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
               .length,
       modelConfigCount:
           (await modelConfigManager.getAllModelSummaries()).length,
+      persistThinkingParts: await widget
+          .clients
+          .preferencesThinkingPersistencePreferences
+          .persistThinkingParts(),
     );
   }
 
@@ -138,6 +142,29 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     setState(() {
       _future = _load();
     });
+  }
+
+  /// Persists the thinking-persistence switch and refreshes the panel.
+  Future<void> _setPersistThinkingParts(bool value) async {
+    setState(() => _busy = true);
+    try {
+      await widget.clients.preferencesThinkingPersistencePreferences
+          .savePersistThinkingParts(persist: value);
+    } catch (error, stackTrace) {
+      // The save did not land. Log it instead of letting the error escape,
+      // then re-read below so the switch falls back to the stored value
+      // rather than staying on the rejected one.
+      ClientLogger.e(
+        'saving the thinking-persistence switch failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+    _reload();
   }
 
   Future<void> _updateTokenStatistics() async {
@@ -904,6 +931,16 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
               ],
             ),
             _SectionCard(
+              title: l10n.settingsDataPrivacySection,
+              children: <Widget>[
+                _ThinkingPersistenceLine(
+                  value: data.persistThinkingParts,
+                  onChanged:
+                      _busy ? null : (value) => _setPersistThinkingParts(value),
+                ),
+              ],
+            ),
+            _SectionCard(
               title: l10n.settingsDataRuntimeSection,
               children: <Widget>[
                 _InfoLine(
@@ -968,6 +1005,7 @@ class _DataSettingsData {
     required this.outputTokens,
     required this.chatHistoryCount,
     required this.modelConfigCount,
+    required this.persistThinkingParts,
   });
 
   final String coreVersion;
@@ -976,6 +1014,49 @@ class _DataSettingsData {
   final int outputTokens;
   final int chatHistoryCount;
   final int modelConfigCount;
+  final bool persistThinkingParts;
+}
+
+/// Renders the thinking-persistence switch in the privacy section.
+class _ThinkingPersistenceLine extends StatelessWidget {
+  const _ThinkingPersistenceLine({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  l10n.settingsDataThinkingPersistenceTitle,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  l10n.settingsDataThinkingPersistenceDescription,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Switch(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
 }
 
 class _StorageLocationLine extends StatelessWidget {

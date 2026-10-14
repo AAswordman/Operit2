@@ -1,3 +1,4 @@
+use crate::data::preferences::ThinkingPersistencePreferences::ThinkingPersistencePreferences;
 use crate::plugins::toolpkg::ToolPkgChatLifecycleHookBridge::{
     ToolPkgChatCreationChat, ToolPkgChatCreationDraft, ToolPkgChatCreationKind,
     ToolPkgChatLifecycleHookBridge,
@@ -14,6 +15,7 @@ use operit_model::ChatHistory::ChatHistory;
 use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
+use operit_model::MessagePart::MessagePartKind;
 use operit_model::FunctionType::FunctionType;
 use operit_model::PluginExtensionTarget::PluginExtensionTarget;
 use operit_model::PromptFunctionType::PromptFunctionType;
@@ -21,7 +23,9 @@ use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::{
     ChatConfigurationDisplayResult, ChatConfigurationPurpose, ChatConfigurationRequest,
 };
-use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow, mutableStateFlow};
+use operit_store::PreferencesDataStore::{
+    PreferencesDataStoreError, mutableStateFlow, MutableStateFlow, StateFlow,
+};
 use operit_store::SyncOperationStore::SyncClock;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_tools::files::PathMapper::PathMapper;
@@ -528,8 +532,49 @@ impl ChatHistoryDelegate {
     }
 
     /// Returns a storage-safe copy of a chat message without a live stream handle.
-    fn persistentChatMessage(mut message: ChatMessage) -> ChatMessage {
+    ///
+    /// Honors the thinking-persistence switch (#179): with the switch off,
+    /// thinking parts stay in memory for the live UI but are not written to
+    /// message_parts, snapshots, or the sync mirror built from them.
+    fn persistentChatMessage(message: ChatMessage) -> ChatMessage {
+        Self::applyThinkingPersistence(
+            message,
+            ThinkingPersistencePreferences::getInstance().persistThinkingParts(),
+        )
+    }
+
+    /// Applies one thinking-persistence read result to a message (#187).
+    ///
+    /// A read failure is not user consent: when the switch cannot be read,
+    /// thinking parts are dropped for this write (fail closed) and the failure
+    /// is logged, instead of silently persisting them the way the old
+    /// `unwrap_or(DEFAULT_PERSIST_THINKING_PARTS)` did. The message itself is
+    /// never aborted — an unreadable preference must not cost a chat write.
+    // services/core has no module-level allow(non_snake_case): without this
+    // attribute the fn name is a new warning (#143 review N4, re-verified).
+    #[allow(non_snake_case)]
+    fn applyThinkingPersistence(
+        mut message: ChatMessage,
+        switchState: Result<bool, PreferencesDataStoreError>,
+    ) -> ChatMessage {
         message.contentStream = None;
+        let persist = match switchState {
+            Ok(persist) => persist,
+            Err(error) => {
+                AppLogger::e(
+                    "ThinkingPersistence",
+                    &format!(
+                        "thinking-persistence switch unreadable, dropping thinking parts for this write: {error}"
+                    ),
+                );
+                false
+            }
+        };
+        if !persist {
+            message
+                .parts
+                .retain(|part| part.kind != MessagePartKind::Thinking);
+        }
         message
     }
 
@@ -1804,7 +1849,7 @@ impl ChatHistoryDelegate {
             .expect("No active chat");
         let selectedVariantIndex = self
             .chatHistoryManager
-            .addMessageVariant(chatId.clone(), timestamp, message)
+            .addMessageVariant(chatId.clone(), timestamp, Self::persistentChatMessage(message))
             .expect("ChatHistoryManager.addMessageVariant must succeed");
         let persistedVariant = self
             .chatHistoryManager
@@ -2338,9 +2383,10 @@ impl ChatHistoryDelegate {
                 chat_message_trace_summary(&message)
             ),
         );
+        let writableMessage = Self::persistentChatMessage(message.clone());
         let clock = self
             .chatHistoryManager
-            .commitAssistantMessageSegment(chatId.clone(), message.clone(), chatMetrics)
+            .commitAssistantMessageSegment(chatId.clone(), writableMessage.clone(), chatMetrics)
             .map_err(|error| error.to_string())?;
         let persistedMessage = self
             .chatHistoryManager
@@ -2570,6 +2616,66 @@ mod tests {
     use operit_model::MessagePart::MessagePart;
     use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
     use std::sync::Arc;
+
+    /// Builds a message carrying one markdown part and one thinking part.
+    fn message_with_thinking_part() -> ChatMessage {
+        let mut message =
+            ChatMessage::new_with_markdown_timestamp("ai".to_string(), "answer".to_string(), 123);
+        message.parts = vec![
+            MessagePart::markdown("part-0".to_string(), 0, "answer".to_string()),
+            MessagePart::thinking("part-1".to_string(), 1, "private reasoning".to_string()),
+        ];
+        message
+    }
+
+    fn thinking_part_count(message: &ChatMessage) -> usize {
+        message
+            .parts
+            .iter()
+            .filter(|part| part.kind == MessagePartKind::Thinking)
+            .count()
+    }
+
+    /// #187: an unreadable switch must not be read as user consent — the
+    /// write drops thinking parts instead of persisting them.
+    #[test]
+    fn thinking_persistence_read_failure_drops_thinking_parts() {
+        let stored = ChatHistoryDelegate::applyThinkingPersistence(
+            message_with_thinking_part(),
+            Err(PreferencesDataStoreError::Message(
+                "preferences read failed".to_string(),
+            )),
+        );
+        assert_eq!(
+            thinking_part_count(&stored),
+            0,
+            "read failure must fail closed, not persist thinking parts"
+        );
+        assert_eq!(stored.parts.len(), 1, "non-thinking parts must survive");
+        assert!(stored.contentStream.is_none());
+    }
+
+    /// The switch ON keeps thinking parts, and still strips the live stream.
+    #[test]
+    fn thinking_persistence_switch_on_keeps_thinking_parts() {
+        let stored = ChatHistoryDelegate::applyThinkingPersistence(
+            message_with_thinking_part(),
+            Ok(true),
+        );
+        assert_eq!(thinking_part_count(&stored), 1);
+        assert!(stored.contentStream.is_none());
+    }
+
+    /// The switch OFF strips thinking parts (unchanged #179 behavior).
+    #[test]
+    fn thinking_persistence_switch_off_drops_thinking_parts() {
+        let stored = ChatHistoryDelegate::applyThinkingPersistence(
+            message_with_thinking_part(),
+            Ok(false),
+        );
+        assert_eq!(thinking_part_count(&stored), 0);
+        assert_eq!(stored.parts.len(), 1);
+    }
 
     /// Verifies that a persistence refresh keeps the active stream projection intact.
     #[test]

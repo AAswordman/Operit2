@@ -38,6 +38,8 @@ pub mod SttConfigManager;
 pub mod ThemeConfigManager;
 #[path = "ThemePreferenceSnapshot.rs"]
 pub mod ThemePreferenceSnapshot;
+#[path = "ThinkingPersistencePreferences.rs"]
+pub mod ThinkingPersistencePreferences;
 #[path = "TtsConfigManager.rs"]
 pub mod TtsConfigManager;
 #[path = "UserPreferencesManager.rs"]
@@ -65,6 +67,7 @@ pub use SkillVisibilityPreferences::*;
 pub use SttConfigManager::*;
 pub use ThemeConfigManager::*;
 pub use ThemePreferenceSnapshot::validateThemePreferenceSnapshot;
+pub use ThinkingPersistencePreferences::*;
 pub use TtsConfigManager::*;
 pub use UserPreferencesManager::*;
 pub use WaifuPreferences::*;
